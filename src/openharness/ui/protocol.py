@@ -108,6 +108,8 @@ class BackendEvent(BaseModel):
     plan_mode: str | None = None
     swarm_teammates: list[dict[str, Any]] | None = None
     swarm_notifications: list[dict[str, Any]] | None = None
+    # Terminal-state reason for line_complete events
+    reason: str | None = None
 
     @classmethod
     def ready(
@@ -124,6 +126,10 @@ class BackendEvent(BaseModel):
             bridge_sessions=[],
             commands=commands,
         )
+
+    @classmethod
+    def line_complete(cls, *, reason: str = "completed", detail: str | None = None) -> "BackendEvent":
+        return cls(type="line_complete", reason=reason, message=detail)
 
     @classmethod
     def state_snapshot(cls, state: AppState) -> "BackendEvent":

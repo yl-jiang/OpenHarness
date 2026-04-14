@@ -6,6 +6,7 @@ import asyncio
 import os
 import shlex
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -25,6 +26,24 @@ class BackgroundTaskManager:
         self._output_locks: dict[str, asyncio.Lock] = {}
         self._input_locks: dict[str, asyncio.Lock] = {}
         self._generations: dict[str, int] = {}
+        self._listeners: list[Callable[[TaskRecord, str, str], None]] = []
+
+    def on_task_change(self, callback: Callable[[TaskRecord, str, str], None]) -> None:
+        """Register a callback fired whenever a task status changes.
+
+        The callback receives ``(task, old_status, new_status)``.
+        """
+        self._listeners.append(callback)
+
+    def _set_task_status(self, task: TaskRecord, new_status: str) -> None:
+        """Update task status and notify registered listeners."""
+        old_status = task.status
+        task.status = new_status
+        for listener in self._listeners:
+            try:
+                listener(task, old_status, new_status)
+            except Exception:  # noqa: BLE001 – never let a listener crash the manager
+                pass
 
     async def create_shell_task(
         self,
@@ -140,7 +159,7 @@ class BackgroundTaskManager:
             process.kill()
             await process.wait()
 
-        task.status = "killed"
+        self._set_task_status(task, "killed")
         task.ended_at = time.time()
         return task
 
@@ -184,7 +203,7 @@ class BackgroundTaskManager:
         task = self._tasks[task_id]
         task.return_code = return_code
         if task.status != "killed":
-            task.status = "completed" if return_code == 0 else "failed"
+            self._set_task_status(task, "completed" if return_code == 0 else "failed")
         task.ended_at = time.time()
         self._processes.pop(task_id, None)
         self._waiters.pop(task_id, None)
@@ -247,7 +266,7 @@ class BackgroundTaskManager:
 
         restart_count = int(task.metadata.get("restart_count", "0")) + 1
         task.metadata["restart_count"] = str(restart_count)
-        task.status = "running"
+        self._set_task_status(task, "running")
         task.started_at = time.time()
         task.ended_at = None
         task.return_code = None

@@ -329,6 +329,16 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			clearAssistantDelta();
 			setBusy(false);
 			setBusyLabel(undefined);
+			// Surface non-completed finish reasons to the user as a system message.
+			if (event.reason === 'max_turns_exceeded') {
+				flushTranscriptItems();
+				startTransition(() => {
+					setTranscript((items) => [
+						...items,
+						{role: 'system', text: '⚠️ Reached the maximum number of turns. Send a message to continue.'},
+					]);
+				});
+			}
 			return;
 		}
 		if ((event.type === 'tool_started' || event.type === 'tool_completed') && event.item) {

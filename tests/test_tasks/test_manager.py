@@ -82,3 +82,32 @@ async def test_stop_task(tmp_path: Path, monkeypatch):
     updated = manager.get_task(task.id)
     assert updated is not None
     assert updated.status == "killed"
+
+
+@pytest.mark.asyncio
+async def test_task_manager_on_task_change_fires_callback_when_task_stopped(
+    tmp_path: Path, monkeypatch
+):
+    """on_task_change callback must fire with (task, old_status, new_status)
+    when a task transitions from 'running' to 'killed' via stop_task()."""
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    manager = BackgroundTaskManager()
+
+    changes: list[tuple[str, str, str]] = []  # (task_id, old_status, new_status)
+
+    def _on_change(task, old_status: str, new_status: str) -> None:
+        changes.append((task.id, old_status, new_status))
+
+    manager.on_task_change(_on_change)
+
+    task = await manager.create_shell_task(
+        command="sleep 30",
+        description="sleeper",
+        cwd=tmp_path,
+    )
+    await manager.stop_task(task.id)
+
+    assert any(
+        task_id == task.id and old == "running" and new == "killed"
+        for task_id, old, new in changes
+    ), f"Expected 'running' -> 'killed' transition for {task.id}; got {changes}"

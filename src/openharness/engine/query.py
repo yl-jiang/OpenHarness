@@ -32,6 +32,7 @@ from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.base import ToolRegistry
+from openharness.utils.trace import trace_event
 
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
 REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
@@ -413,6 +414,11 @@ async def run_query(
     compact_state = AutoCompactState()
     reactive_compact_attempted = False
     last_compaction_result: tuple[list[ConversationMessage], bool] = (messages, False)
+    session_id = None
+    if isinstance(context.tool_metadata, dict):
+        raw_session_id = context.tool_metadata.get("session_id")
+        if isinstance(raw_session_id, str) and raw_session_id:
+            session_id = raw_session_id
 
     async def _stream_compaction(
         *,
@@ -465,6 +471,7 @@ async def run_query(
 
         final_message: ConversationMessage | None = None
         usage = UsageSnapshot()
+        stop_reason: str | None = None
 
         try:
             async for event in context.api_client.stream_message(
@@ -491,8 +498,17 @@ async def run_query(
                 if isinstance(event, ApiMessageCompleteEvent):
                     final_message = event.message
                     usage = event.usage
+                    stop_reason = event.stop_reason
         except Exception as exc:
             error_msg = str(exc)
+            trace_event(
+                "query_api_exception",
+                component="query_loop",
+                session_id=session_id,
+                model=context.model,
+                turn_count=turn_count,
+                error=error_msg,
+            )
             if not reactive_compact_attempted and _is_prompt_too_long_error(exc):
                 reactive_compact_attempted = True
                 yield StatusEvent(message=REACTIVE_COMPACT_STATUS_MESSAGE), None
@@ -516,12 +532,32 @@ async def run_query(
                 coordinator_context_message = messages.pop()
 
         messages.append(final_message)
+        trace_event(
+            "api_message_complete",
+            component="query_loop",
+            session_id=session_id,
+            model=context.model,
+            turn_count=turn_count,
+            stop_reason=stop_reason,
+            text_length=len(final_message.text),
+            tool_use_count=len(final_message.tool_uses),
+            message_count=len(messages),
+        )
         yield AssistantTurnComplete(message=final_message, usage=usage), usage
 
         if coordinator_context_message is not None:
             messages.append(coordinator_context_message)
 
         if not final_message.tool_uses:
+            trace_event(
+                "query_turn_finished_without_tool_use",
+                component="query_loop",
+                session_id=session_id,
+                model=context.model,
+                turn_count=turn_count,
+                text_length=len(final_message.text),
+                message_count=len(messages),
+            )
             return
 
         tool_calls = final_message.tool_uses
@@ -556,6 +592,16 @@ async def run_query(
                 ), None
 
         messages.append(ConversationMessage(role="user", content=tool_results))
+        trace_event(
+            "tool_results_appended",
+            component="query_loop",
+            session_id=session_id,
+            model=context.model,
+            turn_count=turn_count,
+            tool_result_count=len(tool_results),
+            error_count=sum(1 for result in tool_results if result.is_error),
+            message_count=len(messages),
+        )
 
     if context.max_turns is not None:
         raise MaxTurnsExceeded(context.max_turns)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from openharness.engine.stream_events import (
     AssistantTurnComplete,
     CompactProgressEvent,
     StatusEvent,
+    StreamFinished,
     ToolExecutionCompleted,
     ToolExecutionStarted,
 )
@@ -230,6 +232,228 @@ async def test_query_engine_executes_tool_calls(tmp_path: Path, monkeypatch):
     assert isinstance(events[-1], AssistantTurnComplete)
     assert "alpha and beta" in events[-1].message.text
     assert len(engine.messages) == 4
+
+
+@pytest.mark.asyncio
+async def test_query_engine_auto_continues_after_empty_stop_following_tool_results(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    sample = tmp_path / "hello.txt"
+    sample.write_text("alpha\nbeta\n", encoding="utf-8")
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            TextBlock(text="I will inspect the file."),
+                            ToolUseBlock(
+                                id="toolu_empty_stop",
+                                name="read_file",
+                                input={"path": str(sample), "offset": 0, "limit": 2},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=4, output_tokens=3),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[]),
+                    usage=UsageSnapshot(input_tokens=2, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="The file contains alpha and beta.")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=6, output_tokens=4),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("inspect the file thoroughly")]
+
+    assistant_turns = [event for event in events if isinstance(event, AssistantTurnComplete)]
+    status_events = [event for event in events if isinstance(event, StatusEvent)]
+
+    assert assistant_turns[-1].message.text == "The file contains alpha and beta."
+    assert not any(event.message.text == "" for event in assistant_turns)
+    assert any("continuing automatically" in (event.message or "").lower() for event in status_events)
+    assert engine.messages[-1].text == "The file contains alpha and beta."
+    assert len(engine.messages) == 4
+
+
+@pytest.mark.asyncio
+async def test_query_engine_continues_again_after_two_silent_stops_with_progress_between(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """When meaningful progress occurs between two consecutive silent stops, the engine
+    must reset its continuation counter and fire auto-continue a second time.
+
+    This reproduces the production scenario captured in the trace log where:
+      round 1: tool work → silent stop → auto-continue #1 (succeeds)
+      round 2: more tool work → silent stop again → (BUG: was capped at 1, never continued)
+      round 3: model delivers final answer
+    """
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    sample = tmp_path / "data.txt"
+    sample.write_text("x\ny\n", encoding="utf-8")
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                # Round 1: tool work
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_r1",
+                                name="read_file",
+                                input={"path": str(sample), "offset": 0, "limit": 2},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=4, output_tokens=3),
+                ),
+                # Silent stop #1: empty end_turn after tool result
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[]),
+                    usage=UsageSnapshot(input_tokens=2, output_tokens=1),
+                ),
+                # Round 2 (after auto-continue #1): MORE tool work — meaningful progress
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_r2",
+                                name="read_file",
+                                input={"path": str(sample), "offset": 0, "limit": 2},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=4, output_tokens=3),
+                ),
+                # Silent stop #2: empty end_turn AGAIN after second tool result
+                # Engine must reset attempt counter because meaningful progress occurred
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[]),
+                    usage=UsageSnapshot(input_tokens=2, output_tokens=1),
+                ),
+                # Round 3 (after auto-continue #2): final visible answer
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="Done: data has x and y.")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=6, output_tokens=4),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("analyse the data thoroughly")]
+
+    assistant_turns = [e for e in events if isinstance(e, AssistantTurnComplete)]
+    status_events = [e for e in events if isinstance(e, StatusEvent)]
+
+    # The engine must reach the final turn with visible text
+    assert assistant_turns[-1].message.text == "Done: data has x and y."
+    # Two auto-continue status messages must have been emitted
+    continuation_statuses = [e for e in status_events if "continuing automatically" in (e.message or "").lower()]
+    assert len(continuation_statuses) == 2, (
+        f"Expected 2 auto-continue status events, got {len(continuation_statuses)}: "
+        f"{[e.message for e in status_events]}"
+    )
+    # Final public history ends with the visible answer
+    assert engine.messages[-1].text == "Done: data has x and y."
+
+
+@pytest.mark.asyncio
+async def test_query_engine_writes_trace_file_for_silent_stop_flow(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    trace_path = tmp_path / "runtime-trace.jsonl"
+    monkeypatch.setenv("OPENHARNESS_TRACE_FILE", str(trace_path))
+
+    sample = tmp_path / "hello.txt"
+    sample.write_text("alpha\nbeta\n", encoding="utf-8")
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            TextBlock(text="I will inspect the file."),
+                            ToolUseBlock(
+                                id="toolu_trace_stop",
+                                name="read_file",
+                                input={"path": str(sample), "offset": 0, "limit": 2},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=4, output_tokens=3),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[]),
+                    usage=UsageSnapshot(input_tokens=2, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="The file contains alpha and beta.")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=6, output_tokens=4),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    _ = [event async for event in engine.submit_message("inspect the file thoroughly")]
+
+    records = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    assert any(
+        record["event"] == "api_message_complete"
+        and record.get("text_length") == 0
+        and record.get("tool_use_count") == 0
+        for record in records
+    )
+    assert any(
+        record["event"] == "silent_stop_check"
+        and record.get("matched") is True
+        for record in records
+    )
+    assert any(
+        record["event"] == "auto_continue_triggered"
+        and record.get("attempt") == 1
+        for record in records
+    )
 
 
 @pytest.mark.asyncio
@@ -820,3 +1044,133 @@ async def test_query_engine_applies_path_rules_to_write_file_targets_in_full_aut
     assert tool_results[0].is_error is True
     assert "matches deny rule" in tool_results[0].output
     assert target.exists() is False
+
+
+@pytest.mark.asyncio
+async def test_query_engine_yields_stream_finished_when_auto_continue_exhausted(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """When auto-continue budget is exhausted the engine must yield
+    StreamFinished(reason='auto_continue_exhausted') as the final event.
+
+    With _MAX_AUTO_CONTINUE_ABSOLUTE patched to 1:
+      round 1: tool work -> silent stop -> auto-continue #1
+      round 2: more tool work -> silent stop -> budget exhausted -> StreamFinished
+    """
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    monkeypatch.setattr("openharness.engine.query_engine._MAX_AUTO_CONTINUE_ABSOLUTE", 1)
+    sample = tmp_path / "data.txt"
+    sample.write_text("x\ny\n", encoding="utf-8")
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                # Round 1: tool work
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_ex1",
+                                name="read_file",
+                                input={"path": str(sample), "offset": 0, "limit": 2},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=4, output_tokens=3),
+                ),
+                # Silent stop #1: empty end_turn after tool result
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[]),
+                    usage=UsageSnapshot(input_tokens=2, output_tokens=1),
+                ),
+                # Round 2 (after auto-continue #1): MORE tool work
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_ex2",
+                                name="read_file",
+                                input={"path": str(sample), "offset": 0, "limit": 2},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=4, output_tokens=3),
+                ),
+                # Silent stop #2: budget exhausted (_MAX_AUTO_CONTINUE_ABSOLUTE=1)
+                _FakeResponse(
+                    message=ConversationMessage(role="assistant", content=[]),
+                    usage=UsageSnapshot(input_tokens=2, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("analyse the data")]
+
+    stream_finished = [e for e in events if isinstance(e, StreamFinished)]
+    assert len(stream_finished) == 1, (
+        f"Expected exactly one StreamFinished event; got {len(stream_finished)}: "
+        f"{[e for e in events]}"
+    )
+    assert stream_finished[0].reason == "auto_continue_exhausted"
+
+
+@pytest.mark.asyncio
+async def test_query_engine_max_turns_exceeded_yields_stream_finished_not_exception(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """When max_turns is reached the engine must yield StreamFinished(reason='max_turns_exceeded')
+    and must NOT raise MaxTurnsExceeded as an exception.
+
+    max_turns=1 with a tool-calling model needs 2 API calls (call + follow-up);
+    the engine must catch MaxTurnsExceeded internally and convert it to an event.
+    """
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    sample = tmp_path / "data.txt"
+    sample.write_text("hello\n", encoding="utf-8")
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                # Single tool-calling response; needs a follow-up but max_turns=1
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_mt1",
+                                name="read_file",
+                                input={"path": str(sample), "offset": 0, "limit": 1},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=4, output_tokens=3),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        max_turns=1,
+    )
+
+    # Must NOT raise MaxTurnsExceeded
+    events = [event async for event in engine.submit_message("read the file")]
+
+    stream_finished = [e for e in events if isinstance(e, StreamFinished)]
+    assert len(stream_finished) == 1, (
+        f"Expected exactly one StreamFinished event; got {len(stream_finished)}: "
+        f"{[e for e in events]}"
+    )
+    assert stream_finished[0].reason == "max_turns_exceeded"
