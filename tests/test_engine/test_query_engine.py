@@ -19,6 +19,7 @@ from openharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
+    ErrorEvent,
     StatusEvent,
     StreamFinished,
     ToolExecutionCompleted,
@@ -105,6 +106,16 @@ class PromptTooLongThenSuccessApiClient:
             return
         yield ApiMessageCompleteEvent(
             message=ConversationMessage(role="assistant", content=[TextBlock(text="after reactive compact")]),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            stop_reason=None,
+        )
+
+
+class EmptyAssistantApiClient:
+    async def stream_message(self, request):
+        del request
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[]),
             usage=UsageSnapshot(input_tokens=1, output_tokens=1),
             stop_reason=None,
         )
