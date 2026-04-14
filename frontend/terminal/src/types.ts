@@ -89,4 +89,6 @@ export type BackendEvent = {
 	plan_mode?: string | null;
 	swarm_teammates?: SwarmTeammateSnapshot[] | null;
 	swarm_notifications?: SwarmNotificationSnapshot[] | null;
+	// Terminal-state reason for line_complete events
+	reason?: string | null;
 };

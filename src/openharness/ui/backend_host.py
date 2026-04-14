@@ -24,6 +24,7 @@ from openharness.engine.stream_events import (
     ErrorEvent,
     StatusEvent,
     StreamEvent,
+    StreamFinished,
     ToolExecutionCompleted,
     ToolExecutionStarted,
 )
@@ -32,6 +33,7 @@ from openharness.tasks import get_task_manager
 from openharness.ui.protocol import BackendEvent, FrontendRequest, TranscriptItem
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 from openharness.services.session_backend import SessionBackend
+from openharness.utils.trace import trace_event
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +80,17 @@ class ReactBackendHost:
         # Track last tool input per name for rich event emission
         self._last_tool_inputs: dict[str, dict] = {}
 
+    def _trace(self, event: str, **fields: object) -> None:
+        session_id: str | None = None
+        if self._bundle is not None:
+            session_id = self._bundle.session_id
+        trace_event(
+            event,
+            component="backend_host",
+            session_id=session_id,
+            **fields,
+        )
+
     async def run(self) -> int:
         self._bundle = await build_runtime(
             model=self._config.model,
@@ -100,6 +113,22 @@ class ReactBackendHost:
             extra_plugin_roots=self._config.extra_plugin_roots,
         )
         await start_runtime(self._bundle)
+        self._trace(
+            "backend_host_start",
+            cwd=self._bundle.cwd,
+            model=self._bundle.engine.model,
+        )
+        # Push tasks_snapshot to frontend whenever any task changes status.
+        def _on_task_change(task, old_status: str, new_status: str) -> None:  # noqa: ARG001
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(
+                    self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
+                )
+            except RuntimeError:
+                pass  # No running loop; skip push (not expected in production)
+
+        get_task_manager().on_task_change(_on_task_change)
         await self._emit(
             BackendEvent.ready(
                 self._bundle.app_state.get(),
@@ -113,6 +142,11 @@ class ReactBackendHost:
         try:
             while self._running:
                 request = await self._request_queue.get()
+                self._trace(
+                    "frontend_request_dequeued",
+                    request_type=request.type,
+                    busy=self._busy,
+                )
                 if request.type == "shutdown":
                     await self._emit(BackendEvent(type="shutdown"))
                     break
@@ -193,6 +227,12 @@ class ReactBackendHost:
 
     async def _process_line(self, line: str, *, transcript_line: str | None = None) -> bool:
         assert self._bundle is not None
+        self._trace(
+            "backend_process_line_start",
+            line=line,
+            transcript_line=transcript_line or "",
+            busy=self._busy,
+        )
         await self._emit(
             BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=transcript_line or line))
         )
@@ -202,11 +242,43 @@ class ReactBackendHost:
                 BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text=message))
             )
 
+        finish_reason: list[str] = ["completed"]  # mutable holder; updated by _render_event
+
         async def _render_event(event: StreamEvent) -> None:
+            if isinstance(event, StreamFinished):
+                finish_reason[0] = event.reason
+                self._trace(
+                    "backend_stream_event",
+                    event_type="stream_finished",
+                    reason=event.reason,
+                    detail=event.detail,
+                )
+                if event.reason == "auto_continue_exhausted":
+                    await self._emit(
+                        BackendEvent(
+                            type="transcript_item",
+                            item=TranscriptItem(
+                                role="system",
+                                text="⚠️ The model stopped without completing the task. You can send a message to continue.",
+                            ),
+                        )
+                    )
+                return
             if isinstance(event, AssistantTextDelta):
+                self._trace(
+                    "backend_stream_event",
+                    event_type="assistant_delta",
+                    text_length=len(event.text),
+                )
                 await self._emit(BackendEvent(type="assistant_delta", message=event.text))
                 return
             if isinstance(event, CompactProgressEvent):
+                self._trace(
+                    "backend_stream_event",
+                    event_type="compact_progress",
+                    message=event.message,
+                    compact_phase=event.phase,
+                )
                 await self._emit(
                     BackendEvent(
                         type="compact_progress",
@@ -220,6 +292,12 @@ class ReactBackendHost:
                 )
                 return
             if isinstance(event, AssistantTurnComplete):
+                self._trace(
+                    "backend_stream_event",
+                    event_type="assistant_complete",
+                    text_length=len(event.message.text.strip()),
+                    tool_use_count=len(event.message.tool_uses),
+                )
                 await self._emit(
                     BackendEvent(
                         type="assistant_complete",
@@ -230,6 +308,11 @@ class ReactBackendHost:
                 await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
                 return
             if isinstance(event, ToolExecutionStarted):
+                self._trace(
+                    "backend_stream_event",
+                    event_type="tool_started",
+                    tool_name=event.tool_name,
+                )
                 self._last_tool_inputs[event.tool_name] = event.tool_input or {}
                 await self._emit(
                     BackendEvent(
@@ -246,6 +329,13 @@ class ReactBackendHost:
                 )
                 return
             if isinstance(event, ToolExecutionCompleted):
+                self._trace(
+                    "backend_stream_event",
+                    event_type="tool_completed",
+                    tool_name=event.tool_name,
+                    is_error=event.is_error,
+                    output_length=len(event.output),
+                )
                 await self._emit(
                     BackendEvent(
                         type="tool_completed",
@@ -285,12 +375,22 @@ class ReactBackendHost:
                     await self._emit(BackendEvent(type="plan_mode_change", plan_mode=new_mode))
                 return
             if isinstance(event, ErrorEvent):
+                self._trace(
+                    "backend_stream_event",
+                    event_type="error",
+                    message=event.message,
+                )
                 await self._emit(BackendEvent(type="error", message=event.message))
                 await self._emit(
                     BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text=event.message))
                 )
                 return
             if isinstance(event, StatusEvent):
+                self._trace(
+                    "backend_stream_event",
+                    event_type="status",
+                    message=event.message,
+                )
                 await self._emit(
                     BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text=event.message))
                 )
@@ -308,7 +408,14 @@ class ReactBackendHost:
         )
         await self._emit(self._status_snapshot())
         await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
-        await self._emit(BackendEvent(type="line_complete"))
+        # Use the finish reason captured by _render_event (defaults to "completed")
+        await self._emit(BackendEvent.line_complete(reason=finish_reason[0]))
+        self._trace(
+            "backend_process_line_complete",
+            line=line,
+            should_continue=should_continue,
+            finish_reason=finish_reason[0],
+        )
         return should_continue
 
     async def _apply_select_command(self, command_name: str, value: str) -> bool:

@@ -57,6 +57,22 @@ class StatusEvent:
 
 
 @dataclass(frozen=True)
+class StreamFinished:
+    """Terminal event yielded by the engine when streaming ends for a non-normal reason.
+
+    Emitted when auto-continue budget is exhausted or max_turns is exceeded.
+    Normal completion (model returns text and stops) does NOT emit this event.
+    Callers should default to ``reason="completed"`` when this event is absent.
+    """
+
+    reason: Literal[
+        "auto_continue_exhausted",
+        "max_turns_exceeded",
+    ]
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
 class CompactProgressEvent:
     """Structured progress event for conversation compaction."""
 
@@ -86,4 +102,5 @@ StreamEvent = (
     | ErrorEvent
     | StatusEvent
     | CompactProgressEvent
+    | StreamFinished
 )
