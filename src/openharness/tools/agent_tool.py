@@ -37,13 +37,10 @@ def _is_claude_only_model(model: str) -> bool:
 
 def _resolve_spawn_model(
     *,
-    requested_model: str | None,
     agent_default_model: str | None,
     current_model: str | None,
     current_provider: str | None,
 ) -> str | None:
-    if requested_model:
-        return requested_model
     if agent_default_model is None or agent_default_model == "inherit":
         return current_model
     if current_provider and not is_claude_family_provider(current_provider) and _is_claude_only_model(agent_default_model):
@@ -60,7 +57,6 @@ class AgentToolInput(BaseModel):
         default=None,
         description="Agent type for definition lookup (e.g. 'general-purpose', 'Explore', 'worker')",
     )
-    model: str | None = Field(default=None)
     command: str | None = Field(default=None, description="Override spawn command")
     team: str | None = Field(default=None, description="Optional team to attach the agent to")
     mode: str = Field(
@@ -77,10 +73,6 @@ class AgentTool(BaseTool):
     input_model = AgentToolInput
 
     async def execute(self, arguments: AgentToolInput, context: ToolExecutionContext) -> ToolResult:
-        current_model = _context_value(context, "current_model")
-        current_provider = _context_value(context, "current_provider")
-        current_api_format = _context_value(context, "current_api_format")
-        current_base_url = _context_value(context, "current_base_url")
         session_id = _context_value(context, "session_id")
         logger.event(
             "agent_tool_execute_start",
@@ -88,7 +80,6 @@ class AgentTool(BaseTool):
             description=arguments.description,
             mode=arguments.mode,
             subagent_type=arguments.subagent_type,
-            requested_model=arguments.model,
             team=arguments.team or "default",
             prompt_length=len(arguments.prompt),
             cwd=str(context.cwd),
@@ -112,11 +103,11 @@ class AgentTool(BaseTool):
         # Resolve team and agent name for the swarm backend
         team = arguments.team or "default"
         agent_name = arguments.subagent_type or "agent"
+
         resolved_model = _resolve_spawn_model(
-            requested_model=arguments.model,
             agent_default_model=agent_def.model if agent_def else None,
-            current_model=current_model,
-            current_provider=current_provider,
+            current_model=_context_value(context, "current_model"),
+            current_provider=_context_value(context, "current_provider"),
         )
 
         # Use subprocess backend so spawned agents are registered in
@@ -133,9 +124,9 @@ class AgentTool(BaseTool):
             cwd=str(context.cwd),
             parent_session_id=session_id or "main",
             model=resolved_model,
-            api_format=current_api_format,
-            base_url=current_base_url,
-            provider=current_provider,
+            api_format=_context_value(context, "current_api_format"),
+            base_url=_context_value(context, "current_base_url"),
+            provider=_context_value(context, "current_provider"),
             system_prompt=agent_def.system_prompt if agent_def else None,
             permissions=agent_def.permissions if agent_def else [],
             session_id=session_id,
