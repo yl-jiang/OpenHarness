@@ -10,14 +10,14 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 
 import httpx
-import logging
+from openharness.utils.log import get_logger
 
 from openharness.channels.bus.events import OutboundMessage
 from openharness.channels.bus.queue import MessageBus
 from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import DingTalkConfig
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 try:
     from dingtalk_stream import (

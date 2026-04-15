@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import fnmatch
-import logging
+from openharness.utils.log import get_logger
 from dataclasses import dataclass
 
 from openharness.config.settings import PermissionSettings
 from openharness.permissions.modes import PermissionMode
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Paths that are always denied regardless of permission mode or user config.
 # These protect high-value credential and key material from LLM-directed access
@@ -67,7 +67,7 @@ class PermissionChecker:
             if isinstance(pattern, str) and pattern.strip():
                 self._path_rules.append(PathRule(pattern=pattern.strip(), allow=allow))
             else:
-                log.warning(
+                logger.warning(
                     "Skipping path rule with missing, empty, or non-string 'pattern' field: %r",
                     rule,
                 )

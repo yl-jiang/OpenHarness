@@ -3,7 +3,7 @@
 import asyncio
 import re
 
-import logging
+from openharness.utils.log import get_logger
 from slack_sdk.socket_mode.request import SocketModeRequest
 from slack_sdk.socket_mode.response import SocketModeResponse
 from slack_sdk.socket_mode.websockets import SocketModeClient
@@ -15,7 +15,7 @@ from openharness.channels.bus.queue import MessageBus
 from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import SlackConfig
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SlackChannel(BaseChannel):

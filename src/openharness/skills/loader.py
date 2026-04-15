@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from openharness.utils.log import get_logger
 from pathlib import Path
 from typing import Iterable
 
@@ -14,7 +14,7 @@ from openharness.skills.bundled import get_bundled_skills
 from openharness.skills.registry import SkillRegistry
 from openharness.skills.types import SkillDefinition
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def get_user_skills_dir() -> Path:

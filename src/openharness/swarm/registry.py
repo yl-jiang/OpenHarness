@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from openharness.utils.log import get_logger
 import os
 import shutil
 from typing import TYPE_CHECKING, Any
@@ -14,7 +14,7 @@ from openharness.swarm.types import BackendDetectionResult, BackendType, Teammat
 if TYPE_CHECKING:
     pass
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # ---------------------------------------------------------------------------

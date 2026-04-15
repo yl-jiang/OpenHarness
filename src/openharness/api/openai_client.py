@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
+from openharness.utils.log import get_logger
 from typing import Any, AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
 
@@ -33,7 +33,7 @@ from openharness.engine.messages import (
     ToolUseBlock,
 )
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 MAX_RETRIES = 3
 BASE_DELAY = 1.0
@@ -257,7 +257,7 @@ class OpenAICompatibleClient:
                     raise self._translate_error(exc) from exc
 
                 delay = min(BASE_DELAY * (2 ** attempt), MAX_DELAY)
-                log.warning(
+                logger.warning(
                     "OpenAI API request failed (attempt %d/%d), retrying in %.1fs: %s",
                     attempt + 1, MAX_RETRIES + 1, delay, exc,
                 )

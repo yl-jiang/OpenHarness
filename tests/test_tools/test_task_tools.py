@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from pathlib import Path
 
 import pytest
 
 from openharness.coordinator.coordinator_mode import get_team_registry
+from openharness.swarm.types import SpawnResult
 from openharness.tasks import get_task_manager
 from openharness.tools.agent_tool import AgentTool, AgentToolInput
 from openharness.tools.base import ToolExecutionContext
@@ -144,6 +147,10 @@ async def test_agent_tool_uses_subprocess_backend_and_task_is_pollable(
     )
     assert record.command is not None
     assert "--task-worker" in record.command
+    await manager.stop_task(task_id)
+    waiter = manager._waiters.get(task_id)  # type: ignore[attr-defined]
+    if waiter is not None:
+        await asyncio.wait_for(waiter, timeout=5)
 
 
 @pytest.mark.asyncio
@@ -227,3 +234,144 @@ async def test_agent_tool_supports_remote_and_teammate_modes(tmp_path: Path, mon
         assert result.is_error is False
         # Output format: "Spawned agent X (task_id=Y, backend=Z)"
         assert "agent" in result.output.lower() or "task_id" in result.output.lower()
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_writes_trace_records_for_spawn_flow(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    trace_path = tmp_path / "agent-tool-trace.jsonl"
+    monkeypatch.setenv("OPENHARNESS_TRACE_FILE", str(trace_path))
+    context = ToolExecutionContext(cwd=tmp_path)
+
+    result = await AgentTool().execute(
+        AgentToolInput(
+            description="trace spawn path",
+            prompt="hello",
+            subagent_type="trace-worker",
+        ),
+        context,
+    )
+
+    assert result.is_error is False
+    match = re.search(r"task_id=(\S+?)[,)]", result.output)
+    assert match, f"Could not parse task_id from output: {result.output}"
+
+    records = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(
+        record["event"] == "agent_tool_execute_start"
+        and record.get("description") == "trace spawn path"
+        and record.get("subagent_type") == "trace-worker"
+        for record in records
+    )
+    assert any(
+        record["event"] == "subprocess_backend_spawn_start"
+        and record.get("agent_id") == "trace-worker@default"
+        for record in records
+    )
+    assert any(
+        record["event"] == "agent_tool_spawn_result"
+        and record.get("backend_type") == "subprocess"
+        and record.get("task_id") == match.group(1)
+        for record in records
+    )
+    manager = get_task_manager()
+    await manager.stop_task(match.group(1))
+    waiter = manager._waiters.get(match.group(1))  # type: ignore[attr-defined]
+    if waiter is not None:
+        await asyncio.wait_for(waiter, timeout=5)
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_inherits_parent_model_for_claude_only_builtin_on_non_claude_provider(
+    tmp_path: Path, monkeypatch
+):
+    captured = {}
+
+    class _FakeExecutor:
+        type = "subprocess"
+
+        async def spawn(self, config):
+            captured["config"] = config
+            return SpawnResult(
+                task_id="t-inherit",
+                agent_id=f"{config.name}@{config.team}",
+                backend_type="subprocess",
+            )
+
+    class _FakeRegistry:
+        def get_executor(self, backend):
+            assert backend == "subprocess"
+            return _FakeExecutor()
+
+    monkeypatch.setattr("openharness.tools.agent_tool.get_backend_registry", lambda: _FakeRegistry())
+
+    result = await AgentTool().execute(
+        AgentToolInput(
+            description="inherit current Kimi model",
+            prompt="inspect the repo",
+            subagent_type="Explore",
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "session_id": "sess-123",
+                "current_model": "Kimi-K2.5",
+                "current_provider": "moonshot",
+                "current_api_format": "openai",
+                "current_base_url": "https://api.moonshot.cn/v1",
+            },
+        ),
+    )
+
+    assert result.is_error is False
+    config = captured["config"]
+    assert config.model == "Kimi-K2.5"
+    assert config.api_format == "openai"
+    assert config.base_url == "https://api.moonshot.cn/v1"
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_keeps_claude_builtin_model_on_claude_provider(
+    tmp_path: Path, monkeypatch
+):
+    captured = {}
+
+    class _FakeExecutor:
+        type = "subprocess"
+
+        async def spawn(self, config):
+            captured["config"] = config
+            return SpawnResult(
+                task_id="t-claude",
+                agent_id=f"{config.name}@{config.team}",
+                backend_type="subprocess",
+            )
+
+    class _FakeRegistry:
+        def get_executor(self, backend):
+            assert backend == "subprocess"
+            return _FakeExecutor()
+
+    monkeypatch.setattr("openharness.tools.agent_tool.get_backend_registry", lambda: _FakeRegistry())
+
+    result = await AgentTool().execute(
+        AgentToolInput(
+            description="keep builtin haiku",
+            prompt="inspect the repo",
+            subagent_type="Explore",
+        ),
+        ToolExecutionContext(
+            cwd=tmp_path,
+            metadata={
+                "session_id": "sess-claude",
+                "current_model": "claude-sonnet-4-6",
+                "current_provider": "anthropic",
+                "current_api_format": "anthropic",
+                "current_base_url": "https://relay.example.com",
+            },
+        ),
+    )
+
+    assert result.is_error is False
+    config = captured["config"]
+    assert config.model == "haiku"

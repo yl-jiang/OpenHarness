@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+from openharness.utils.log import get_logger
 from typing import Any
 
 
@@ -11,7 +11,7 @@ from openharness.channels.bus.queue import MessageBus
 from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import Config
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ChannelManager:

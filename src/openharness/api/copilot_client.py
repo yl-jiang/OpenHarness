@@ -11,7 +11,7 @@ is required.
 
 from __future__ import annotations
 
-import logging
+from openharness.utils.log import get_logger
 from typing import AsyncIterator
 
 from openai import AsyncOpenAI
@@ -27,7 +27,7 @@ from openharness.api.copilot_auth import (
 from openharness.api.errors import AuthenticationFailure
 from openharness.api.openai_client import OpenAICompatibleClient
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Header constants
@@ -103,7 +103,7 @@ class CopilotClient:
         # Swap the underlying SDK client so Copilot headers are used.
         self._inner._client = raw_openai  # noqa: SLF001
 
-        log.info(
+        logger.info(
             "CopilotClient initialised (api_base=%s, enterprise=%s)",
             base_url,
             ent_url or "none",

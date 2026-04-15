@@ -36,12 +36,29 @@ from openharness.state import AppState, AppStateStore
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
 from openharness.tools import ToolRegistry, create_default_tool_registry
 from openharness.keybindings import load_keybindings
+from openharness.utils.log import get_logger
 
 PermissionPrompt = Callable[[str, str], Awaitable[bool]]
 AskUserPrompt = Callable[[str], Awaitable[str]]
 SystemPrinter = Callable[[str], Awaitable[None]]
 StreamRenderer = Callable[[StreamEvent], Awaitable[None]]
 ClearHandler = Callable[[], Awaitable[None]]
+
+logger = get_logger(__name__)
+
+
+def _sync_runtime_tool_metadata(
+    tool_metadata: dict[str, object],
+    *,
+    settings,
+    provider_name: str,
+) -> None:
+    active_profile_name, _ = settings.resolve_profile()
+    tool_metadata["current_model"] = settings.model
+    tool_metadata["current_provider"] = provider_name
+    tool_metadata["current_api_format"] = settings.api_format
+    tool_metadata["current_base_url"] = settings.base_url or ""
+    tool_metadata["current_active_profile"] = active_profile_name
 
 
 @dataclass
@@ -116,11 +133,32 @@ class RuntimeBundle:
 
 def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
     """Build the appropriate API client for the resolved settings."""
+    active_profile_name, active_profile = settings.resolve_profile()
+    resolved_model = settings.model or active_profile.resolved_model
 
     def _safe_resolve_auth():
         try:
-            return settings.resolve_auth()
-        except (ValueError, Exception):
+            resolved = settings.resolve_auth()
+            logger.event(
+                "runtime_auth_resolution_succeeded",
+                active_profile=active_profile_name,
+                provider=active_profile.provider,
+                api_format=active_profile.api_format,
+                model=resolved_model,
+                auth_kind=resolved.auth_kind,
+                auth_source=resolved.source,
+            )
+            return resolved
+        except (ValueError, Exception) as exc:
+            logger.event(
+                "runtime_auth_resolution_failed",
+                active_profile=active_profile_name,
+                provider=active_profile.provider,
+                api_format=active_profile.api_format,
+                model=resolved_model,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
             print(
                 "Error: No API key configured.\n"
                 "  Run `oh auth login` to set up authentication, or set the\n"
@@ -257,6 +295,15 @@ async def build_runtime(
     from uuid import uuid4
 
     session_id = uuid4().hex[:12]
+    logger.event(
+        "runtime_build_session_created",
+        session_id=session_id,
+        cwd=str(Path(cwd).resolve()),
+        model=settings.model,
+        provider=provider.name,
+        auth_status=auth_status(settings),
+        permission_mode=settings.permission.mode.value,
+    )
 
     restored_metadata = {
         "permission_mode": settings.permission.mode.value,
@@ -277,6 +324,11 @@ async def build_runtime(
     if isinstance(restore_tool_metadata, dict):
         for key, value in restore_tool_metadata.items():
             restored_metadata[key] = value
+    _sync_runtime_tool_metadata(
+        restored_metadata,
+        settings=settings,
+        provider_name=provider.name,
+    )
 
     engine = QueryEngine(
         api_client=resolved_api_client,
@@ -439,6 +491,11 @@ def sync_app_state(bundle: RuntimeBundle) -> None:
     if bundle.enforce_max_turns:
         bundle.engine.set_max_turns(settings.max_turns)
     provider = detect_provider(settings)
+    _sync_runtime_tool_metadata(
+        bundle.engine.tool_metadata,
+        settings=settings,
+        provider_name=provider.name,
+    )
     bundle.app_state.set(
         model=settings.model,
         permission_mode=settings.permission.mode.value,

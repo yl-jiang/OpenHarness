@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from openharness.utils.log import get_logger
 from typing import Any
 
 from openharness.config.settings import (
@@ -22,7 +22,7 @@ from openharness.auth.storage import (
     store_credential,
 )
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Providers that OpenHarness knows about.
 _KNOWN_PROVIDERS = [
@@ -300,7 +300,7 @@ class AuthManager:
         updated = self.settings.model_copy(update={"active_profile": name}).materialize_active_profile()
         self._settings = updated
         self.save_settings()
-        log.info("Switched active profile to %s", name)
+        logger.info("Switched active profile to %s", name)
 
     def upsert_profile(self, name: str, profile: ProviderProfile) -> None:
         """Create or replace a provider profile."""
@@ -407,7 +407,7 @@ class AuthManager:
                 self._settings = updated.materialize_active_profile()
                 self.save_settings()
             except Exception as exc:
-                log.warning("Could not sync api_key to settings: %s", exc)
+                logger.warning("Could not sync api_key to settings: %s", exc)
 
     def store_profile_credential(self, profile_name: str, key: str, value: str) -> None:
         """Store a credential using the active storage namespace for a profile."""
@@ -422,7 +422,7 @@ class AuthManager:
                 self._settings = updated.materialize_active_profile()
                 self.save_settings()
             except Exception as exc:
-                log.warning("Could not sync api_key to settings: %s", exc)
+                logger.warning("Could not sync api_key to settings: %s", exc)
 
     def clear_credential(self, provider: str) -> None:
         """Remove all stored credentials for the given provider."""
@@ -434,7 +434,7 @@ class AuthManager:
                 self._settings = updated.materialize_active_profile()
                 self.save_settings()
             except Exception as exc:
-                log.warning("Could not clear api_key from settings: %s", exc)
+                logger.warning("Could not clear api_key from settings: %s", exc)
 
     def clear_profile_credential(self, profile_name: str) -> None:
         """Remove credentials stored for a specific profile."""
@@ -448,4 +448,4 @@ class AuthManager:
                 self._settings = updated.materialize_active_profile()
                 self.save_settings()
             except Exception as exc:
-                log.warning("Could not clear api_key from settings: %s", exc)
+                logger.warning("Could not clear api_key from settings: %s", exc)

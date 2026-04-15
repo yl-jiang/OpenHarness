@@ -1279,18 +1279,12 @@ def main(
         return
 
     import asyncio
-    import logging
+    from openharness.utils.log import configure_logging
 
     if debug:
-        logging.basicConfig(
-            level=logging.DEBUG,
-            format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
-            stream=sys.stderr,
-        )
-        logging.getLogger("openharness").setLevel(logging.DEBUG)
+        configure_logging(debug=True)
     elif os.environ.get("OPENHARNESS_LOG_LEVEL"):
-        lvl = getattr(logging, os.environ["OPENHARNESS_LOG_LEVEL"].upper(), logging.WARNING)
-        logging.basicConfig(level=lvl, format="%(asctime)s [%(name)s] %(levelname)s %(message)s", stream=sys.stderr)
+        configure_logging(level=os.environ["OPENHARNESS_LOG_LEVEL"])
 
     if dangerously_skip_permissions:
         permission_mode = "full_auto"

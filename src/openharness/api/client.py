@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
+from openharness.utils.log import get_logger
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Callable, Protocol
@@ -26,7 +26,7 @@ from openharness.auth.external import (
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import ConversationMessage, assistant_message_from_api
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Retry configuration
 MAX_RETRIES = 3
@@ -178,7 +178,7 @@ class AnthropicApiClient:
 
                 delay = _get_retry_delay(attempt, exc)
                 status = getattr(exc, "status_code", "?")
-                log.warning(
+                logger.warning(
                     "API request failed (attempt %d/%d, status=%s), retrying in %.1fs: %s",
                     attempt + 1, MAX_RETRIES + 1, status, delay, exc,
                 )

@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-import logging
+from openharness.utils.log import get_logger
 from collections import OrderedDict
 
 
@@ -11,7 +11,7 @@ from openharness.channels.bus.queue import MessageBus
 from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import WhatsAppConfig
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class WhatsAppChannel(BaseChannel):

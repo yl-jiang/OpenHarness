@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-import logging
+from openharness.utils.log import get_logger
 import os
 from pathlib import Path
 from typing import Any, Iterable
@@ -27,7 +27,7 @@ from openharness.plugins.types import LoadedPlugin, PluginCommandDefinition
 from openharness.skills.loader import _parse_skill_markdown
 from openharness.skills.types import SkillDefinition
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def get_user_plugins_dir() -> Path:

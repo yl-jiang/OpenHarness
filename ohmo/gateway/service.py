@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import logging
+from openharness.utils.log import get_logger
 import os
 import os.path
 import signal
@@ -29,7 +29,7 @@ from ohmo.workspace import (
     initialize_workspace,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 

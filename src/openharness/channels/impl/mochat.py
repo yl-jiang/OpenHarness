@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-import logging
+from openharness.utils.log import get_logger
 
 from openharness.channels.bus.events import OutboundMessage
 from openharness.channels.bus.queue import MessageBus
@@ -18,7 +18,7 @@ from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import MochatConfig
 from openharness.utils.helpers import get_data_path
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 try:
     import socketio

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-import logging
+from openharness.utils.log import get_logger
 import mimetypes
 from pathlib import Path
 import json
@@ -32,7 +32,7 @@ from ohmo.prompts import build_ohmo_system_prompt
 from ohmo.session_storage import OhmoSessionBackend
 from ohmo.workspace import get_plugins_dir, get_skills_dir, initialize_workspace
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _CHANNEL_THINKING_PHRASES = (
     "🤔 想一想…",

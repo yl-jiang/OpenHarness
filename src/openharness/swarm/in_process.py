@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
+from openharness.utils.log import get_logger
 import time
 import uuid
 from contextvars import ContextVar
@@ -42,7 +42,7 @@ from openharness.swarm.types import (
     TeammateSpawnConfig,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Abort controller

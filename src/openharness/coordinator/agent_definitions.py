@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from openharness.utils.log import get_logger
 from pathlib import Path
 from typing import Any, Literal
 
@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from openharness.config.paths import get_config_dir
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants

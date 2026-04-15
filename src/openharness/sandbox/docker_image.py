@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+from openharness.utils.log import get_logger
 import shutil
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _DEFAULT_IMAGE = "openharness-sandbox:latest"
 

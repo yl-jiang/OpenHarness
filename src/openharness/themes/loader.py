@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import logging
+from openharness.utils.log import get_logger
 from pathlib import Path
 
 from openharness.themes.builtin import BUILTIN_THEMES
 from openharness.themes.schema import ThemeConfig
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def get_custom_themes_dir() -> Path:

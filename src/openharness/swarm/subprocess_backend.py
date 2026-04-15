@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from typing import TYPE_CHECKING
 
 from openharness.swarm.spawn_utils import (
@@ -18,11 +17,12 @@ from openharness.swarm.types import (
     TeammateSpawnConfig,
 )
 from openharness.tasks.manager import get_task_manager
+from openharness.utils.log import get_logger
 
 if TYPE_CHECKING:
     pass
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SubprocessBackend:
@@ -54,9 +54,34 @@ class SubprocessBackend:
 
         flags = build_inherited_cli_flags(
             model=config.model,
+            api_format=config.api_format,
+            base_url=config.base_url,
             plan_mode_required=config.plan_mode_required,
         )
-        extra_env = build_inherited_env_vars()
+        extra_env = build_inherited_env_vars(
+            model=config.model,
+            api_format=config.api_format,
+            base_url=config.base_url,
+            provider=config.provider,
+        )
+        trace_session_id = config.session_id or config.parent_session_id or None
+        logger.event(
+            "subprocess_backend_spawn_start",
+            session_id=trace_session_id,
+            agent_id=agent_id,
+            team=config.team,
+            agent_name=config.name,
+            cwd=config.cwd,
+            requested_model=config.model,
+            inherited_api_format=config.api_format,
+            inherited_base_url=config.base_url,
+            inherited_provider=config.provider,
+            prompt_length=len(config.prompt),
+            permission_count=len(config.permissions),
+            plan_mode_required=config.plan_mode_required,
+            env_keys=sorted(extra_env.keys()),
+            flag_count=len(flags),
+        )
 
         # Build environment export prefix for shell invocation
         env_prefix = " ".join(f"{k}={v!r}" for k, v in extra_env.items())
@@ -67,6 +92,14 @@ class SubprocessBackend:
         else:
             cmd_parts = [teammate_cmd, "--task-worker"] + flags
         command = f"{env_prefix} {' '.join(cmd_parts)}" if env_prefix else " ".join(cmd_parts)
+        logger.event(
+            "subprocess_backend_command_built",
+            session_id=trace_session_id,
+            agent_id=agent_id,
+            command_head=cmd_parts[0] if cmd_parts else "",
+            command_length=len(command),
+            command_has_task_worker="--task-worker" in command,
+        )
 
         manager = get_task_manager()
         try:
@@ -79,7 +112,21 @@ class SubprocessBackend:
                 command=command,
             )
         except Exception as exc:
-            logger.error("Failed to spawn teammate %s: %s", agent_id, exc)
+            logger.exception(
+                "Failed to spawn teammate %s",
+                agent_id,
+                session_id=trace_session_id,
+                agent_id=agent_id,
+            )
+            logger.event(
+                "subprocess_backend_spawn_result",
+                session_id=trace_session_id,
+                agent_id=agent_id,
+                success=False,
+                backend_type=self.type,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
             return SpawnResult(
                 task_id="",
                 agent_id=agent_id,
@@ -89,7 +136,16 @@ class SubprocessBackend:
             )
 
         self._agent_tasks[agent_id] = record.id
-        logger.debug("Spawned teammate %s as task %s", agent_id, record.id)
+        logger.debug("Spawned teammate %s as task %s", agent_id, record.id, agent_id=agent_id, task_id=record.id)
+        logger.event(
+            "subprocess_backend_spawn_result",
+            session_id=trace_session_id,
+            agent_id=agent_id,
+            success=True,
+            backend_type=self.type,
+            task_id=record.id,
+            task_type=record.type,
+        )
         return SpawnResult(
             task_id=record.id,
             agent_id=agent_id,
@@ -118,7 +174,7 @@ class SubprocessBackend:
 
         manager = get_task_manager()
         await manager.write_to_task(task_id, json.dumps(payload))
-        logger.debug("Sent message to %s (task %s)", agent_id, task_id)
+        logger.debug("Sent message to %s (task %s)", agent_id, task_id, agent_id=agent_id, task_id=task_id)
 
     async def shutdown(self, agent_id: str, *, force: bool = False) -> bool:
         """Terminate a subprocess teammate.
@@ -133,19 +189,19 @@ class SubprocessBackend:
         """
         task_id = self._agent_tasks.get(agent_id)
         if task_id is None:
-            logger.warning("shutdown() called for unknown agent %s", agent_id)
+            logger.warning("shutdown() called for unknown agent %s", agent_id, agent_id=agent_id)
             return False
 
         manager = get_task_manager()
         try:
             await manager.stop_task(task_id)
         except ValueError as exc:
-            logger.debug("stop_task for %s: %s", task_id, exc)
+            logger.debug("stop_task for %s: %s", task_id, exc, agent_id=agent_id, task_id=task_id)
             # Task may have already finished — still clean up mapping
         finally:
             self._agent_tasks.pop(agent_id, None)
 
-        logger.debug("Shut down teammate %s (task %s)", agent_id, task_id)
+        logger.debug("Shut down teammate %s (task %s)", agent_id, task_id, agent_id=agent_id, task_id=task_id)
         return True
 
     def get_task_id(self, agent_id: str) -> str | None:

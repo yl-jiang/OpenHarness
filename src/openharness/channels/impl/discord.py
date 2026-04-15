@@ -6,7 +6,7 @@ from typing import Any
 
 import httpx
 import websockets
-import logging
+from openharness.utils.log import get_logger
 
 from openharness.channels.bus.events import OutboundMessage
 from openharness.channels.bus.queue import MessageBus
@@ -14,7 +14,7 @@ from openharness.channels.impl.base import BaseChannel, resolve_channel_media_di
 from openharness.config.schema import DiscordConfig
 from openharness.utils.helpers import split_message
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DISCORD_API_BASE = "https://discord.com/api/v10"
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024  # 20MB

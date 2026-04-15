@@ -96,6 +96,8 @@ def get_teammate_command() -> str:
 def build_inherited_cli_flags(
     *,
     model: str | None = None,
+    api_format: str | None = None,
+    base_url: str | None = None,
     permission_mode: str | None = None,
     plan_mode_required: bool = False,
     settings_path: str | None = None,
@@ -145,6 +147,12 @@ def build_inherited_cli_flags(
     if model:
         flags.extend(["--model", shlex.quote(model)])
 
+    # --- API format / base URL ---------------------------------------------
+    if api_format:
+        flags.extend(["--api-format", shlex.quote(api_format)])
+    if base_url:
+        flags.extend(["--base-url", shlex.quote(base_url)])
+
     # --- Settings path propagation ----------------------------------------
     # Ensures teammates load the same settings JSON as the leader process.
     if settings_path:
@@ -168,7 +176,13 @@ def build_inherited_cli_flags(
     return flags
 
 
-def build_inherited_env_vars() -> dict[str, str]:
+def build_inherited_env_vars(
+    *,
+    model: str | None = None,
+    api_format: str | None = None,
+    base_url: str | None = None,
+    provider: str | None = None,
+) -> dict[str, str]:
     """Build environment variables to forward to spawned teammates.
 
     Always includes ``OPENHARNESS_AGENT_TEAMS=1`` plus any provider/proxy
@@ -188,6 +202,15 @@ def build_inherited_env_vars() -> dict[str, str]:
         value = os.environ.get(key)
         if value:
             env[key] = value
+
+    if model:
+        env["OPENHARNESS_MODEL"] = model
+    if api_format:
+        env["OPENHARNESS_API_FORMAT"] = api_format
+    if base_url:
+        env["OPENHARNESS_BASE_URL"] = base_url
+    if provider:
+        env["OPENHARNESS_PROVIDER"] = provider
 
     return env
 
