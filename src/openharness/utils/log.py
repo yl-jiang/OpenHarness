@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import traceback
@@ -43,7 +45,10 @@ _CONFIG_LOCK = threading.Lock()
 _FILE_LOCK = threading.Lock()
 _LOGGER_NAME = "openharness"
 _SINK_IDS: list[int] = []
-_CURRENT_CONFIG: tuple[str, str, str] | None = None
+_CURRENT_CONFIG: tuple[str, str, str, str, str] | None = None
+_DEFAULT_ROTATION = "10 MB"
+_DEFAULT_RETENTION = "30 days"
+_SIZE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)", re.IGNORECASE)
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -95,10 +100,85 @@ def _format_exception(record: dict[str, Any]) -> str:
     return "".join(traceback.format_exception(exception.type, exception.value, exception.traceback)).rstrip()
 
 
-def _write_json_line(path: Path, payload: dict[str, Any]) -> None:
+def _parse_size(size_str: str) -> int:
+    match = _SIZE_PATTERN.search(size_str)
+    if not match:
+        return 10 * 1024 * 1024
+    value = float(match.group(1))
+    unit = match.group(2).upper()
+    multipliers = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
+    return int(value * multipliers.get(unit, 1))
+
+
+def _parse_retention_days(retention_str: str) -> int:
+    retention_str = retention_str.strip().lower()
+    match = re.match(r"^(\d+)\s*(day|days)?$", retention_str)
+    if not match:
+        return 30
+    return int(match.group(1))
+
+
+def _do_rotate(path: Path) -> None:
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    backup = path.with_name(f"{path.stem}.{timestamp}{path.suffix}")
+    counter = 0
+    while backup.exists():
+        counter += 1
+        backup = path.with_name(f"{path.stem}.{timestamp}_{counter}{path.suffix}")
+    path.rename(backup)
+
+
+def _cleanup_old_files(path: Path, retention: str) -> None:
+    days = _parse_retention_days(retention)
+    if days <= 0:
+        return
+    cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
+    for f in path.parent.glob(f"{path.stem}.*{path.suffix}"):
+        if f == path:
+            continue
+        try:
+            name = f.stem
+            prefix = f"{path.stem}."
+            if not name.startswith(prefix):
+                continue
+            rest = name[len(prefix) :]
+            date_part = rest.split("_")[0]
+            file_date = datetime.datetime.strptime(date_part, "%Y-%m-%d")
+            if file_date < cutoff:
+                f.unlink()
+        except Exception:
+            pass
+
+
+def _maybe_rotate(path: Path, *, rotation: str, retention: str) -> None:
+    if not path.exists():
+        return
+
+    if _SIZE_PATTERN.search(rotation):
+        size_limit = _parse_size(rotation)
+        if path.stat().st_size >= size_limit:
+            _do_rotate(path)
+    else:
+        mtime = datetime.datetime.fromtimestamp(path.stat().st_mtime)
+        now = datetime.datetime.now()
+        if mtime.date() != now.date():
+            _do_rotate(path)
+
+    if retention:
+        _cleanup_old_files(path, retention)
+
+
+def _write_json_line(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    rotation: str = _DEFAULT_ROTATION,
+    retention: str = _DEFAULT_RETENTION,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str)
     with _FILE_LOCK:
+        _maybe_rotate(path, rotation=rotation, retention=retention)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(encoded)
             handle.write("\n")
@@ -151,13 +231,18 @@ def _build_console_sink(stream: IO[str]):
     return _sink
 
 
-def _build_jsonl_sink(path_resolver):
+def _build_jsonl_sink(
+    path_resolver,
+    *,
+    rotation: str = _DEFAULT_ROTATION,
+    retention: str = _DEFAULT_RETENTION,
+):
     def _sink(message) -> None:
         record = message.record
         path = path_resolver(record)
         if path is None:
             return
-        _write_json_line(path, _payload_from_record(record))
+        _write_json_line(path, _payload_from_record(record), rotation=rotation, retention=retention)
 
     return _sink
 
@@ -209,12 +294,16 @@ def configure_logging(
     console_stream: IO[str] | None = None,
     log_file: str | Path | None = None,
     reset: bool = False,
+    rotation: str | None = None,
+    retention: str | None = None,
 ) -> None:
     global _CURRENT_CONFIG
     level_name = _resolve_level_name(debug=debug, level=level)
     stream = console_stream or sys.stderr
     app_log_path = Path(log_file).expanduser() if log_file is not None else get_default_log_path()
-    desired_config = (level_name, str(app_log_path), str(id(stream)))
+    rotation = rotation or os.environ.get("OPENHARNESS_LOG_ROTATION") or _DEFAULT_ROTATION
+    retention = retention or os.environ.get("OPENHARNESS_LOG_RETENTION") or _DEFAULT_RETENTION
+    desired_config = (level_name, str(app_log_path), str(id(stream)), rotation, retention)
 
     with _CONFIG_LOCK:
         if reset:
@@ -225,7 +314,12 @@ def configure_logging(
             _remove_sinks_locked()
 
         _SINK_IDS.append(_loguru_logger.add(_build_console_sink(stream), level=level_name, colorize=False))
-        _SINK_IDS.append(_loguru_logger.add(_build_jsonl_sink(lambda _record: app_log_path), level="DEBUG"))
+        _SINK_IDS.append(
+            _loguru_logger.add(
+                _build_jsonl_sink(lambda _record: app_log_path, rotation=rotation, retention=retention),
+                level="DEBUG",
+            )
+        )
         _SINK_IDS.append(_loguru_logger.add(_build_jsonl_sink(_trace_path_for_record), level="DEBUG"))
 
         _CURRENT_CONFIG = desired_config
