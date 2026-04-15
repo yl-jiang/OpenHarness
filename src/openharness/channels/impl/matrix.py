@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from openharness.utils.log import get_logger
 import mimetypes
 from pathlib import Path
 from typing import Any, TypeAlias
@@ -40,7 +41,7 @@ from openharness.channels.impl.base import BaseChannel
 from openharness.config.loader import get_data_dir
 from openharness.utils.helpers import safe_filename
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 TYPING_NOTICE_TIMEOUT_MS = 30_000
 # Must stay below TYPING_NOTICE_TIMEOUT_MS so the indicator doesn't expire mid-processing.

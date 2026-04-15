@@ -17,9 +17,9 @@ from openharness.channels.impl.base import resolve_channel_media_dir
 from openharness.config.schema import FeishuConfig
 
 import importlib.util
-import logging
+from openharness.utils.log import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 FEISHU_AVAILABLE = importlib.util.find_spec("lark_oapi") is not None
 

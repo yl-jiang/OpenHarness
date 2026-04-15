@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+from openharness.utils.log import get_logger
 from collections.abc import Awaitable, Callable
 
 from openharness.channels.bus.events import OutboundMessage
@@ -12,7 +12,7 @@ from openharness.channels.bus.queue import MessageBus
 from ohmo.gateway.router import session_key_for_message
 from ohmo.gateway.runtime import OhmoSessionRuntimePool
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def _content_snippet(text: str, *, limit: int = 160) -> str:

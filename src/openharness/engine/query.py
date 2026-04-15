@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,12 +31,12 @@ from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.base import ToolRegistry
-from openharness.utils.trace import trace_event
+from openharness.utils.log import get_logger
 
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
 REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 PermissionPrompt = Callable[[str, str], Awaitable[bool]]
@@ -501,9 +500,8 @@ async def run_query(
                     stop_reason = event.stop_reason
         except Exception as exc:
             error_msg = str(exc)
-            trace_event(
+            logger.event(
                 "query_api_exception",
-                component="query_loop",
                 session_id=session_id,
                 model=context.model,
                 turn_count=turn_count,
@@ -532,9 +530,8 @@ async def run_query(
                 coordinator_context_message = messages.pop()
 
         messages.append(final_message)
-        trace_event(
+        logger.event(
             "api_message_complete",
-            component="query_loop",
             session_id=session_id,
             model=context.model,
             turn_count=turn_count,
@@ -549,9 +546,8 @@ async def run_query(
             messages.append(coordinator_context_message)
 
         if not final_message.tool_uses:
-            trace_event(
+            logger.event(
                 "query_turn_finished_without_tool_use",
-                component="query_loop",
                 session_id=session_id,
                 model=context.model,
                 turn_count=turn_count,
@@ -591,7 +587,7 @@ async def run_query(
             tool_results = []
             for tc, result in zip(tool_calls, raw_results):
                 if isinstance(result, BaseException):
-                    log.exception(
+                    logger.exception(
                         "tool execution raised: name=%s id=%s",
                         tc.name,
                         tc.id,
@@ -612,9 +608,8 @@ async def run_query(
                 ), None
 
         messages.append(ConversationMessage(role="user", content=tool_results))
-        trace_event(
+        logger.event(
             "tool_results_appended",
-            component="query_loop",
             session_id=session_id,
             model=context.model,
             turn_count=turn_count,
@@ -646,11 +641,11 @@ async def _execute_tool_call(
                 is_error=True,
             )
 
-    log.debug("tool_call start: %s id=%s", tool_name, tool_use_id)
+    logger.debug("tool_call start: %s id=%s", tool_name, tool_use_id)
 
     tool = context.tool_registry.get(tool_name)
     if tool is None:
-        log.warning("unknown tool: %s", tool_name)
+        logger.warning("unknown tool: %s", tool_name)
         return ToolResultBlock(
             tool_use_id=tool_use_id,
             content=f"Unknown tool: {tool_name}",
@@ -660,7 +655,7 @@ async def _execute_tool_call(
     try:
         parsed_input = tool.input_model.model_validate(tool_input)
     except Exception as exc:
-        log.warning("invalid input for %s: %s", tool_name, exc)
+        logger.warning("invalid input for %s: %s", tool_name, exc)
         return ToolResultBlock(
             tool_use_id=tool_use_id,
             content=f"Invalid input for {tool_name}: {exc}",
@@ -672,7 +667,7 @@ async def _execute_tool_call(
     # directory-scoped roots such as `glob`/`grep`.
     _file_path = _resolve_permission_file_path(context.cwd, tool_input, parsed_input)
     _command = _extract_permission_command(tool_input, parsed_input)
-    log.debug("permission check: %s read_only=%s path=%s cmd=%s",
+    logger.debug("permission check: %s read_only=%s path=%s cmd=%s",
               tool_name, tool.is_read_only(parsed_input), _file_path, _command and _command[:80])
     decision = context.permission_checker.evaluate(
         tool_name,
@@ -682,24 +677,24 @@ async def _execute_tool_call(
     )
     if not decision.allowed:
         if decision.requires_confirmation and context.permission_prompt is not None:
-            log.debug("permission prompt for %s: %s", tool_name, decision.reason)
+            logger.debug("permission prompt for %s: %s", tool_name, decision.reason)
             confirmed = await context.permission_prompt(tool_name, decision.reason)
             if not confirmed:
-                log.debug("permission denied by user for %s", tool_name)
+                logger.debug("permission denied by user for %s", tool_name)
                 return ToolResultBlock(
                     tool_use_id=tool_use_id,
                     content=decision.reason or f"Permission denied for {tool_name}",
                     is_error=True,
                 )
         else:
-            log.debug("permission blocked for %s: %s", tool_name, decision.reason)
+            logger.debug("permission blocked for %s: %s", tool_name, decision.reason)
             return ToolResultBlock(
                 tool_use_id=tool_use_id,
                 content=decision.reason or f"Permission denied for {tool_name}",
                 is_error=True,
             )
 
-    log.debug("executing %s ...", tool_name)
+    logger.debug("executing %s ...", tool_name)
     t0 = time.monotonic()
     result = await tool.execute(
         parsed_input,
@@ -713,7 +708,7 @@ async def _execute_tool_call(
         ),
     )
     elapsed = time.monotonic() - t0
-    log.debug("executed %s in %.2fs err=%s output_len=%d",
+    logger.debug("executed %s in %.2fs err=%s output_len=%d",
               tool_name, elapsed, result.is_error, len(result.output or ""))
     tool_result = ToolResultBlock(
         tool_use_id=tool_use_id,

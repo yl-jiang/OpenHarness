@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
@@ -111,3 +112,42 @@ async def test_task_manager_on_task_change_fires_callback_when_task_stopped(
         task_id == task.id and old == "running" and new == "killed"
         for task_id, old, new in changes
     ), f"Expected 'running' -> 'killed' transition for {task.id}; got {changes}"
+
+
+@pytest.mark.asyncio
+async def test_create_agent_task_writes_trace_records_for_failed_lifecycle(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    trace_path = tmp_path / "task-manager-trace.jsonl"
+    monkeypatch.setenv("OPENHARNESS_TRACE_FILE", str(trace_path))
+    manager = BackgroundTaskManager()
+
+    task = await manager.create_agent_task(
+        prompt="ready",
+        description="trace-agent",
+        cwd=tmp_path,
+        command="while read line; do echo \"AUTH_FAIL:$line\"; echo \"401 unauthorized\" >&2; exit 7; done",
+    )
+
+    await asyncio.wait_for(manager._waiters[task.id], timeout=5)  # type: ignore[attr-defined]
+
+    records = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(
+        record["event"] == "task_manager_create_agent_task"
+        and record.get("task_id") == task.id
+        and record.get("task_type") == "local_agent"
+        for record in records
+    )
+    assert any(
+        record["event"] == "task_manager_process_start"
+        and record.get("task_id") == task.id
+        for record in records
+    )
+    assert any(
+        record["event"] == "task_manager_process_exit"
+        and record.get("task_id") == task.id
+        and record.get("return_code") == 7
+        and record.get("status") == "failed"
+        and "AUTH_FAIL:ready" in str(record.get("output_tail", ""))
+        and "401 unauthorized" in str(record.get("output_tail", ""))
+        for record in records
+    )

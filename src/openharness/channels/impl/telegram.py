@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import re
 
-import logging
+from openharness.utils.log import get_logger
 from telegram import BotCommand, ReplyParameters, Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 from telegram.request import HTTPXRequest
@@ -16,7 +16,7 @@ from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import TelegramConfig
 from openharness.utils.helpers import split_message
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 TELEGRAM_MAX_MESSAGE_LEN = 4000  # Telegram message character limit
 

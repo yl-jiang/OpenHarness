@@ -13,7 +13,10 @@ from uuid import uuid4
 
 from openharness.config.paths import get_tasks_dir
 from openharness.tasks.types import TaskRecord, TaskStatus, TaskType
+from openharness.utils.log import get_logger
 from openharness.utils.shell import create_shell_subprocess
+
+logger = get_logger(__name__)
 
 
 class BackgroundTaskManager:
@@ -39,6 +42,15 @@ class BackgroundTaskManager:
         """Update task status and notify registered listeners."""
         old_status = task.status
         task.status = new_status
+        logger.event(
+            "task_manager_task_status_change",
+            task_id=task.id,
+            task_type=task.type,
+            old_status=old_status,
+            new_status=new_status,
+            return_code=task.return_code,
+            description=task.description,
+        )
         for listener in self._listeners:
             try:
                 listener(task, old_status, new_status)
@@ -86,6 +98,7 @@ class BackgroundTaskManager:
         command: str | None = None,
     ) -> TaskRecord:
         """Start a local agent task as a subprocess."""
+        command_override_supplied = command is not None
         if command is None:
             effective_api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
             if not effective_api_key:
@@ -102,6 +115,18 @@ class BackgroundTaskManager:
             description=description,
             cwd=cwd,
             task_type=task_type,
+        )
+        logger.event(
+            "task_manager_create_agent_task",
+            task_id=record.id,
+            task_type=task_type,
+            description=description,
+            cwd=str(Path(cwd).resolve()),
+            prompt_length=len(prompt),
+            requested_model=model,
+            has_command_override=command_override_supplied,
+            command_head=(command.split(maxsplit=1)[0] if command else None),
+            command_has_task_worker="--task-worker" in command if command else False,
         )
         updated = replace(record, prompt=prompt)
         if task_type != "local_agent":
@@ -161,6 +186,12 @@ class BackgroundTaskManager:
 
         self._set_task_status(task, "killed")
         task.ended_at = time.time()
+        logger.event(
+            "task_manager_stop_task",
+            task_id=task.id,
+            task_type=task.type,
+            return_code=task.return_code,
+        )
         return task
 
     async def write_to_task(self, task_id: str, data: str) -> None:
@@ -205,6 +236,18 @@ class BackgroundTaskManager:
         if task.status != "killed":
             self._set_task_status(task, "completed" if return_code == 0 else "failed")
         task.ended_at = time.time()
+        output_tail = ""
+        if return_code != 0:
+            output_tail = self.read_task_output(task_id, max_bytes=800).strip()
+        logger.event(
+            "task_manager_process_exit",
+            task_id=task.id,
+            task_type=task.type,
+            return_code=return_code,
+            status=task.status,
+            duration_s=(task.ended_at - task.started_at) if task.started_at and task.ended_at else None,
+            output_tail=output_tail,
+        )
         self._processes.pop(task_id, None)
         self._waiters.pop(task_id, None)
 
@@ -232,6 +275,16 @@ class BackgroundTaskManager:
 
         generation = self._generations.get(task_id, 0) + 1
         self._generations[task_id] = generation
+        command = task.command or ""
+        logger.event(
+            "task_manager_process_start",
+            task_id=task.id,
+            task_type=task.type,
+            generation=generation,
+            cwd=task.cwd,
+            command_head=(command.split(maxsplit=1)[0] if command else None),
+            command_has_task_worker="--task-worker" in command,
+        )
         process = await create_shell_subprocess(
             task.command,
             cwd=task.cwd,
@@ -270,6 +323,12 @@ class BackgroundTaskManager:
         task.started_at = time.time()
         task.ended_at = None
         task.return_code = None
+        logger.event(
+            "task_manager_restart_agent_task",
+            task_id=task.id,
+            task_type=task.type,
+            restart_count=restart_count,
+        )
         return await self._start_process(task.id)
 
 

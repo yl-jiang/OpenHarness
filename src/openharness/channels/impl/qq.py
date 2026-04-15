@@ -1,7 +1,7 @@
 """QQ channel implementation using botpy SDK."""
 
 import asyncio
-import logging
+from openharness.utils.log import get_logger
 from collections import deque
 from typing import TYPE_CHECKING
 
@@ -11,7 +11,7 @@ from openharness.channels.bus.queue import MessageBus
 from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import QQConfig
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 try:
     import botpy

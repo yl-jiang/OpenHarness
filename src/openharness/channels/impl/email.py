@@ -6,7 +6,7 @@ import imaplib
 import re
 import smtplib
 import ssl
-import logging
+from openharness.utils.log import get_logger
 from datetime import date
 from email import policy
 from email.header import decode_header, make_header
@@ -21,7 +21,7 @@ from openharness.channels.bus.queue import MessageBus
 from openharness.channels.impl.base import BaseChannel
 from openharness.config.schema import EmailConfig
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class EmailChannel(BaseChannel):

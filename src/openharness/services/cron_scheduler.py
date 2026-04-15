@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
 import signal
 import sys
@@ -26,9 +25,10 @@ from openharness.services.cron import (
     validate_cron_expression,
 )
 from openharness.sandbox import SandboxUnavailableError
+from openharness.utils.log import configure_logging, get_logger
 from openharness.utils.shell import create_shell_subprocess
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 TICK_INTERVAL_SECONDS = 30
 """How often the scheduler checks for due jobs."""
@@ -307,13 +307,8 @@ async def run_scheduler_loop(*, once: bool = False) -> None:
 
 def _run_daemon() -> None:
     """Entry point for the scheduler subprocess."""
-    log_file = get_logs_dir() / "cron_scheduler.log"
-    log_file.parent.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(
-        filename=str(log_file),
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s",
-    )
+    log_file = get_logs_dir() / "cron_scheduler.jsonl"
+    configure_logging(level="INFO", log_file=log_file)
     asyncio.run(run_scheduler_loop())
 
 
@@ -345,7 +340,7 @@ def start_daemon() -> int:
 def scheduler_status() -> dict[str, Any]:
     """Return a status dict about the scheduler."""
     pid = read_pid()
-    log_path = get_logs_dir() / "cron_scheduler.log"
+    log_path = get_logs_dir() / "cron_scheduler.jsonl"
     jobs = load_cron_jobs()
     enabled = [j for j in jobs if j.get("enabled", True)]
     return {

@@ -10,6 +10,7 @@ const WRITE_TOOLS = new Set([
 	'Write', 'Edit', 'MultiEdit', 'NotebookEdit',
 	'Bash', 'computer', 'str_replace_editor',
 ]);
+const ACTIVE_TASK_STATUSES = new Set(['pending', 'running']);
 
 function PlanModeIndicator({
 	mode,
@@ -66,7 +67,7 @@ function StatusBarInner({
 	const {theme} = useTheme();
 	const model = String(status.model ?? 'unknown');
 	const mode = String(status.permission_mode ?? 'default');
-	const taskCount = tasks.length;
+	const taskCount = tasks.filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
 	const mcpCount = Number(status.mcp_connected ?? 0);
 	const inputTokens = Number(status.input_tokens ?? 0);
 	const outputTokens = Number(status.output_tokens ?? 0);

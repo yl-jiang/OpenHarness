@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from openharness.utils.log import get_logger
 
 from openharness.engine.messages import ConversationMessage
 from openharness.personalization.extractor import (
@@ -16,7 +16,7 @@ from openharness.personalization.rules import (
     save_local_rules,
 )
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def update_rules_from_session(messages: list[ConversationMessage]) -> int:
@@ -57,7 +57,7 @@ def update_rules_from_session(messages: list[ConversationMessage]) -> int:
         save_local_rules(rules_md)
 
     new_count = len(merged["facts"]) - len(existing.get("facts", []))
-    log.info(
+    logger.info(
         "Personalization: %d new facts extracted (%d total)",
         max(new_count, 0),
         len(merged["facts"]),

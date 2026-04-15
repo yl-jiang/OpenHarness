@@ -17,7 +17,7 @@ The GitHub OAuth token (and optional enterprise URL) are persisted to
 from __future__ import annotations
 
 import json
-import logging
+from openharness.utils.log import get_logger
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,7 +28,7 @@ import httpx
 from openharness.config.paths import get_config_dir
 from openharness.utils.fs import atomic_write_text
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -105,7 +105,7 @@ def save_copilot_auth(token: str, *, enterprise_url: str | None = None) -> None:
         json.dumps(payload, indent=2) + "\n",
         mode=0o600,
     )
-    log.info("Copilot auth saved to %s", path)
+    logger.info("Copilot auth saved to %s", path)
 
 
 def load_copilot_auth() -> CopilotAuthInfo | None:
@@ -123,7 +123,7 @@ def load_copilot_auth() -> CopilotAuthInfo | None:
             enterprise_url=data.get("enterprise_url"),
         )
     except (json.JSONDecodeError, KeyError, OSError) as exc:
-        log.warning("Failed to read Copilot auth file: %s", exc)
+        logger.warning("Failed to read Copilot auth file: %s", exc)
         return None
 
 
@@ -142,7 +142,7 @@ def clear_github_token() -> None:
     path = _auth_file_path()
     if path.exists():
         path.unlink()
-        log.info("Copilot auth cleared.")
+        logger.info("Copilot auth cleared.")
 
 
 # ---------------------------------------------------------------------------

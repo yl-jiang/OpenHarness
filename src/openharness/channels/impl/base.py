@@ -1,7 +1,7 @@
 """Base channel interface for chat platforms."""
 
 import os
-import logging
+from openharness.utils.log import get_logger
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -10,7 +10,7 @@ from openharness.channels.bus.events import InboundMessage, OutboundMessage
 from openharness.channels.bus.queue import MessageBus
 from openharness.config.paths import get_data_dir
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def resolve_channel_media_dir(channel_name: str) -> Path:

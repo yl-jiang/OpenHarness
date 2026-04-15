@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import logging
+from openharness.utils.log import get_logger
 
 from pydantic import BaseModel, Field
 
@@ -11,7 +11,7 @@ from openharness.swarm.types import TeammateMessage
 from openharness.tasks.manager import get_task_manager
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SendMessageToolInput(BaseModel):

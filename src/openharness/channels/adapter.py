@@ -13,7 +13,7 @@ OutboundMessage back to the bus for delivery by ChannelManager.
 from __future__ import annotations
 
 import asyncio
-import logging
+from openharness.utils.log import get_logger
 from typing import TYPE_CHECKING
 
 from openharness.channels.bus.events import InboundMessage, OutboundMessage
@@ -23,7 +23,7 @@ from openharness.engine.stream_events import AssistantTextDelta, AssistantTurnCo
 if TYPE_CHECKING:
     from openharness.engine.query_engine import QueryEngine
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ChannelBridge:

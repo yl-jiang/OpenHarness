@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import logging
+from openharness.utils.log import get_logger
 import re
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Patterns that indicate environment-specific facts worth capturing
 _FACT_PATTERNS: list[tuple[str, str, re.Pattern]] = [

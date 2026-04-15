@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-import logging
 import os
 import sys
 from dataclasses import dataclass
@@ -33,11 +32,9 @@ from openharness.tasks import get_task_manager
 from openharness.ui.protocol import BackendEvent, FrontendRequest, TranscriptItem
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 from openharness.services.session_backend import SessionBackend
-from openharness.utils.trace import trace_event
+from openharness.utils.log import get_logger
 
-log = logging.getLogger(__name__)
-
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _PROTOCOL_PREFIX = "OHJSON:"
 
@@ -80,17 +77,6 @@ class ReactBackendHost:
         # Track last tool input per name for rich event emission
         self._last_tool_inputs: dict[str, dict] = {}
 
-    def _trace(self, event: str, **fields: object) -> None:
-        session_id: str | None = None
-        if self._bundle is not None:
-            session_id = self._bundle.session_id
-        trace_event(
-            event,
-            component="backend_host",
-            session_id=session_id,
-            **fields,
-        )
-
     async def run(self) -> int:
         self._bundle = await build_runtime(
             model=self._config.model,
@@ -113,8 +99,9 @@ class ReactBackendHost:
             extra_plugin_roots=self._config.extra_plugin_roots,
         )
         await start_runtime(self._bundle)
-        self._trace(
+        logger.event(
             "backend_host_start",
+            session_id=self._bundle.session_id,
             cwd=self._bundle.cwd,
             model=self._bundle.engine.model,
         )
@@ -142,8 +129,9 @@ class ReactBackendHost:
         try:
             while self._running:
                 request = await self._request_queue.get()
-                self._trace(
+                logger.event(
                     "frontend_request_dequeued",
+                    session_id=self._bundle.session_id if self._bundle is not None else None,
                     request_type=request.type,
                     busy=self._busy,
                 )
@@ -227,8 +215,9 @@ class ReactBackendHost:
 
     async def _process_line(self, line: str, *, transcript_line: str | None = None) -> bool:
         assert self._bundle is not None
-        self._trace(
+        logger.event(
             "backend_process_line_start",
+            session_id=self._bundle.session_id,
             line=line,
             transcript_line=transcript_line or "",
             busy=self._busy,
@@ -247,8 +236,9 @@ class ReactBackendHost:
         async def _render_event(event: StreamEvent) -> None:
             if isinstance(event, StreamFinished):
                 finish_reason[0] = event.reason
-                self._trace(
+                logger.event(
                     "backend_stream_event",
+                    session_id=self._bundle.session_id,
                     event_type="stream_finished",
                     reason=event.reason,
                     detail=event.detail,
@@ -265,16 +255,18 @@ class ReactBackendHost:
                     )
                 return
             if isinstance(event, AssistantTextDelta):
-                self._trace(
+                logger.event(
                     "backend_stream_event",
+                    session_id=self._bundle.session_id,
                     event_type="assistant_delta",
                     text_length=len(event.text),
                 )
                 await self._emit(BackendEvent(type="assistant_delta", message=event.text))
                 return
             if isinstance(event, CompactProgressEvent):
-                self._trace(
+                logger.event(
                     "backend_stream_event",
+                    session_id=self._bundle.session_id,
                     event_type="compact_progress",
                     message=event.message,
                     compact_phase=event.phase,
@@ -292,8 +284,9 @@ class ReactBackendHost:
                 )
                 return
             if isinstance(event, AssistantTurnComplete):
-                self._trace(
+                logger.event(
                     "backend_stream_event",
+                    session_id=self._bundle.session_id,
                     event_type="assistant_complete",
                     text_length=len(event.message.text.strip()),
                     tool_use_count=len(event.message.tool_uses),
@@ -308,8 +301,9 @@ class ReactBackendHost:
                 await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
                 return
             if isinstance(event, ToolExecutionStarted):
-                self._trace(
+                logger.event(
                     "backend_stream_event",
+                    session_id=self._bundle.session_id,
                     event_type="tool_started",
                     tool_name=event.tool_name,
                 )
@@ -329,8 +323,9 @@ class ReactBackendHost:
                 )
                 return
             if isinstance(event, ToolExecutionCompleted):
-                self._trace(
+                logger.event(
                     "backend_stream_event",
+                    session_id=self._bundle.session_id,
                     event_type="tool_completed",
                     tool_name=event.tool_name,
                     is_error=event.is_error,
@@ -375,8 +370,9 @@ class ReactBackendHost:
                     await self._emit(BackendEvent(type="plan_mode_change", plan_mode=new_mode))
                 return
             if isinstance(event, ErrorEvent):
-                self._trace(
+                logger.event(
                     "backend_stream_event",
+                    session_id=self._bundle.session_id,
                     event_type="error",
                     message=event.message,
                 )
@@ -386,8 +382,9 @@ class ReactBackendHost:
                 )
                 return
             if isinstance(event, StatusEvent):
-                self._trace(
+                logger.event(
                     "backend_stream_event",
+                    session_id=self._bundle.session_id,
                     event_type="status",
                     message=event.message,
                 )
@@ -410,8 +407,9 @@ class ReactBackendHost:
         await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
         # Use the finish reason captured by _render_event (defaults to "completed")
         await self._emit(BackendEvent.line_complete(reason=finish_reason[0]))
-        self._trace(
+        logger.event(
             "backend_process_line_complete",
+            session_id=self._bundle.session_id,
             line=line,
             should_continue=should_continue,
             finish_reason=finish_reason[0],
@@ -800,7 +798,7 @@ class ReactBackendHost:
             try:
                 return await asyncio.wait_for(future, timeout=300)
             except asyncio.TimeoutError:
-                log.warning("Permission request %s timed out after 300s, denying", request_id)
+                logger.warning("Permission request %s timed out after 300s, denying", request_id)
                 return False
             finally:
                 self._permission_requests.pop(request_id, None)
@@ -825,7 +823,7 @@ class ReactBackendHost:
             self._question_requests.pop(request_id, None)
 
     async def _emit(self, event: BackendEvent) -> None:
-        log.debug("emit event: type=%s tool=%s", event.type, getattr(event, "tool_name", None))
+        logger.debug("emit event: type=%s tool=%s", event.type, getattr(event, "tool_name", None))
         async with self._write_lock:
             payload = _PROTOCOL_PREFIX + event.model_dump_json() + "\n"
             buffer = getattr(sys.stdout, "buffer", None)

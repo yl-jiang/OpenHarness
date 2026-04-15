@@ -14,7 +14,7 @@ from openharness.engine.stream_events import AssistantTurnComplete, StatusEvent,
 from openharness.hooks import HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolRegistry
-from openharness.utils.trace import trace_event
+from openharness.utils.log import get_logger
 
 _INTERNAL_AUTO_CONTINUE_PROMPT = (
     "<openharness-internal:auto-continue>\n"
@@ -33,6 +33,8 @@ _MAX_CONSECUTIVE_SILENT_STOPS = 1
 # Hard absolute ceiling across the whole guard loop, regardless of progress,
 # to prevent runaway loops on a pathological model.
 _MAX_AUTO_CONTINUE_ABSOLUTE = 5
+
+logger = get_logger(__name__)
 
 
 class QueryEngine:
@@ -144,15 +146,6 @@ class QueryEngine:
             content=[TextBlock(text=f"# Coordinator User Context\n\n{worker_tools_context}")],
         )
 
-    def _trace(self, event: str, **fields: object) -> None:
-        session_id = self._tool_metadata.get("session_id")
-        trace_event(
-            event,
-            component="query_engine",
-            session_id=str(session_id) if isinstance(session_id, str) and session_id else None,
-            **fields,
-        )
-
     @staticmethod
     def _is_internal_message(message: ConversationMessage) -> bool:
         if message.role != "user":
@@ -162,6 +155,7 @@ class QueryEngine:
 
     @classmethod
     def _public_messages(cls, messages: list[ConversationMessage]) -> list[ConversationMessage]:
+        """Filter out internal-only messages that should not be exposed to render_event handlers."""
         return [message for message in messages if not cls._is_internal_message(message)]
 
     @staticmethod
@@ -207,7 +201,7 @@ class QueryEngine:
                 return bool(turn.message.tool_uses or turn.message.text.strip())
 
             try:
-                async for event, usage in run_query(context, query_messages):
+                async for event, usage in run_query(context, query_messages):  # this loop only pass throughs events from run_query
                     if usage is not None:
                         self._cost_tracker.add(usage)
                     if pending_turn_complete is not None and not isinstance(event, AssistantTurnComplete):
@@ -217,8 +211,9 @@ class QueryEngine:
                         yield pending_turn_complete   # yield the pending AssistantTurnComplete before yielding the next event, which is not an AssistantTurnComplete
                         pending_turn_complete = None
                     if isinstance(event, AssistantTurnComplete):
-                        self._trace(
+                        logger.event(
                             "assistant_turn_complete",
+                            session_id=self._tool_metadata.get("session_id"),
                             text_length=len(event.message.text),
                             tool_use_count=len(event.message.tool_uses),
                             message_count=len(query_messages),
@@ -232,8 +227,9 @@ class QueryEngine:
                         continue
                     yield event  # normal non-AssistantTurnComplete event, just yield it right away
             except MaxTurnsExceeded as exc:
-                self._trace(
+                logger.event(
                     "max_turns_exceeded",
+                    session_id=self._tool_metadata.get("session_id"),
                     max_turns=exc.max_turns,
                     message_count=len(query_messages),
                 )
@@ -249,8 +245,9 @@ class QueryEngine:
 
             if pending_turn_complete is not None:
                 matched_silent_stop = self._should_auto_continue_after_silent_stop(query_messages)
-                self._trace(
+                logger.event(
                     "silent_stop_check",
+                    session_id=self._tool_metadata.get("session_id"),
                     matched=matched_silent_stop,
                     consecutive_silent_stops=consecutive_silent_stops,
                     total_auto_continues=total_auto_continues,
@@ -276,8 +273,9 @@ class QueryEngine:
                         query_messages.pop()
                         query_messages.append(ConversationMessage.from_user_text(_INTERNAL_AUTO_CONTINUE_PROMPT))
                         self._messages = self._public_messages(query_messages)
-                        self._trace(
+                        logger.event(
                             "auto_continue_triggered",
+                            session_id=self._tool_metadata.get("session_id"),
                             attempt=total_auto_continues,
                             consecutive_silent_stops=consecutive_silent_stops,
                             message_count=len(query_messages),
@@ -288,8 +286,9 @@ class QueryEngine:
                 self._messages = self._public_messages(query_messages)
                 yield pending_turn_complete
                 if matched_silent_stop and not can_continue:
-                    self._trace(
+                    logger.event(
                         "auto_continue_exhausted",
+                        session_id=self._tool_metadata.get("session_id"),
                         consecutive_silent_stops=consecutive_silent_stops,
                         total_auto_continues=total_auto_continues,
                         message_count=len(query_messages),
@@ -325,8 +324,9 @@ class QueryEngine:
             if isinstance(prompt, ConversationMessage)
             else ConversationMessage.from_user_text(prompt)
         )
-        self._trace(
+        logger.event(
             "submit_message_start",
+            session_id=self._tool_metadata.get("session_id"),
             prompt_length=len(user_message.text),
             message_count_before=len(self._messages),
         )
@@ -355,15 +355,17 @@ class QueryEngine:
             query_messages.append(coordinator_context)
         async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):
             yield event
-        self._trace(
+        logger.event(
             "submit_message_end",
+            session_id=self._tool_metadata.get("session_id"),
             message_count_after=len(self._messages),
         )
 
     async def continue_pending(self, *, max_turns: int | None = None) -> AsyncIterator[StreamEvent]:
         """Continue an interrupted tool loop without appending a new user message."""
-        self._trace(
+        logger.event(
             "continue_pending_start",
+            session_id=self._tool_metadata.get("session_id"),
             max_turns=max_turns if max_turns is not None else self._max_turns,
             message_count_before=len(self._messages),
         )
@@ -386,7 +388,8 @@ class QueryEngine:
         query_messages = list(self._messages)
         async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):
             yield event
-        self._trace(
+        logger.event(
             "continue_pending_end",
+            session_id=self._tool_metadata.get("session_id"),
             message_count_after=len(self._messages),
         )

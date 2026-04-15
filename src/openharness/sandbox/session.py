@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import atexit
-import logging
+from openharness.utils.log import get_logger
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from openharness.config import Settings
     from openharness.sandbox.docker_backend import DockerSandboxSession
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _active_session: DockerSandboxSession | None = None
 

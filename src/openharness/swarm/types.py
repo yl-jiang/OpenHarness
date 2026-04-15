@@ -276,6 +276,15 @@ class TeammateSpawnConfig:
     model: str | None = None
     """Model override for this teammate."""
 
+    api_format: str | None = None
+    """API format override for this teammate."""
+
+    base_url: str | None = None
+    """Base URL override for this teammate."""
+
+    provider: str | None = None
+    """Detected provider name for this teammate."""
+
     system_prompt: str | None = None
     """System prompt resolved from workflow config."""
 

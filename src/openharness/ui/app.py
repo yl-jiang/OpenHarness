@@ -11,6 +11,9 @@ from openharness.engine.stream_events import StreamEvent
 from openharness.ui.backend_host import run_backend_host
 from openharness.ui.react_launcher import launch_react_tui
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
+from openharness.utils.log import get_logger
+
+logger = get_logger(__name__)
 
 
 def _decode_task_worker_line(raw: str) -> str:
@@ -32,7 +35,6 @@ def _decode_task_worker_line(raw: str) -> str:
         if isinstance(text, str):
             return text.strip()
     return stripped
-
 
 async def run_repl(
     *,
@@ -128,19 +130,53 @@ async def run_task_worker(
     async def _clear_output() -> None:
         return None
 
-    bundle = await build_runtime(
+    logger.event(
+        "task_worker_start",
         cwd=cwd,
         model=model,
         max_turns=max_turns,
-        base_url=base_url,
-        system_prompt=system_prompt,
-        api_key=api_key,
         api_format=api_format,
-        api_client=api_client,
-        permission_prompt=_noop_permission,
-        ask_user_prompt=_noop_ask,
-        enforce_max_turns=max_turns is not None,
         permission_mode=permission_mode,
+    )
+    try:
+        bundle = await build_runtime(
+            cwd=cwd,
+            model=model,
+            max_turns=max_turns,
+            base_url=base_url,
+            system_prompt=system_prompt,
+            api_key=api_key,
+            api_format=api_format,
+            api_client=api_client,
+            permission_prompt=_noop_permission,
+            ask_user_prompt=_noop_ask,
+            enforce_max_turns=max_turns is not None,
+            permission_mode=permission_mode,
+        )
+    except BaseException as exc:
+        logger.event(
+            "task_worker_runtime_build_failed",
+            cwd=cwd,
+            model=model,
+            api_format=api_format,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        raise
+
+    state_store = bundle.app_state
+    state_getter = getattr(state_store, "get", None)
+    state = state_getter() if callable(state_getter) else state_store
+    settings_getter = getattr(bundle, "current_settings", None)
+    settings = settings_getter() if callable(settings_getter) else None
+    logger.event(
+        "task_worker_runtime_ready",
+        session_id=bundle.session_id,
+        cwd=bundle.cwd,
+        model=getattr(bundle.engine, "model", None),
+        provider=getattr(state, "provider", None) or getattr(settings, "provider", None),
+        auth_status=getattr(state, "auth_status", None),
+        api_format=getattr(settings, "api_format", None),
     )
     await start_runtime(bundle)
     try:
@@ -151,18 +187,35 @@ async def run_task_worker(
             line = _decode_task_worker_line(raw)
             if not line:
                 continue
-            await handle_line(
+            logger.event(
+                "task_worker_input_received",
+                session_id=bundle.session_id,
+                raw_length=len(raw),
+                line_length=len(line),
+                is_json_payload=raw.lstrip().startswith("{"),
+            )
+            should_continue = await handle_line(
                 bundle,
                 line,
                 print_system=_print_system,
                 render_event=_render_event,
                 clear_output=_clear_output,
             )
+            logger.event(
+                "task_worker_handle_line_complete",
+                session_id=bundle.session_id,
+                line_length=len(line),
+                should_continue=should_continue,
+            )
             # Background agent tasks are one-shot workers. If the coordinator
             # needs to send a follow-up later, BackgroundTaskManager already
             # knows how to restart the task and write the next stdin payload.
             break
     finally:
+        logger.event(
+            "task_worker_shutdown",
+            session_id=bundle.session_id,
+        )
         await close_runtime(bundle)
 
 

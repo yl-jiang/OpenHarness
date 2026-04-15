@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import logging
+from openharness.utils.log import get_logger
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,7 +29,7 @@ from openharness.engine.stream_events import CompactProgressEvent
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.services.token_estimation import estimate_tokens
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Constants (from Claude Code microCompact.ts / autoCompact.ts)
@@ -730,7 +730,7 @@ def microcompact_messages(
         msg.content = new_content
 
     if tokens_saved > 0:
-        log.info("Microcompact cleared %d tool results, saved ~%d tokens", len(clear_set), tokens_saved)
+        logger.info("Microcompact cleared %d tool results, saved ~%d tokens", len(clear_set), tokens_saved)
 
     return messages, tokens_saved
 
@@ -1020,7 +1020,7 @@ async def compact_conversation(
     messages, tokens_freed = microcompact_messages(messages, keep_recent=DEFAULT_KEEP_RECENT)
 
     pre_compact_tokens = estimate_message_tokens(messages)
-    log.info("Compacting conversation: %d messages, ~%d tokens", len(messages), pre_compact_tokens)
+    logger.info("Compacting conversation: %d messages, ~%d tokens", len(messages), pre_compact_tokens)
 
     # Step 2: split into older (summarize) and newer (preserve)
     older = messages[:-preserve_recent]
@@ -1218,7 +1218,7 @@ async def compact_conversation(
                 details={"reason": ERROR_MESSAGE_INCOMPLETE_RESPONSE},
             ),
         )
-        log.warning("Compact summary was empty — returning original messages")
+        logger.warning("Compact summary was empty — returning original messages")
         return _build_passthrough_compaction_result(
             messages,
             trigger=trigger,
@@ -1297,7 +1297,7 @@ async def compact_conversation(
     compaction_result.compact_metadata["post_compact_message_count"] = len(post_compact_messages)
     compaction_result.compact_metadata["post_compact_token_count"] = post_compact_tokens
     compaction_result.boundary_marker = create_compact_boundary_message(compaction_result.compact_metadata)
-    log.info(
+    logger.info(
         "Compaction done: %d -> %d messages, ~%d -> ~%d tokens (saved ~%d)",
         len(messages), len(post_compact_messages),
         pre_compact_tokens, post_compact_tokens,
@@ -1365,7 +1365,7 @@ async def auto_compact_if_needed(
     ):
         return messages, False
 
-    log.info("Auto-compact triggered (failures=%d)", state.consecutive_failures)
+    logger.info("Auto-compact triggered (failures=%d)", state.consecutive_failures)
     _record_compact_checkpoint(
         carryover_metadata,
         checkpoint=f"query_{trigger}_triggered",
@@ -1392,7 +1392,7 @@ async def auto_compact_if_needed(
         context_window_tokens=context_window_tokens,
         auto_compact_threshold_tokens=auto_compact_threshold_tokens,
     ):
-        log.info("Microcompact freed ~%d tokens, auto-compact no longer needed", tokens_freed)
+        logger.info("Microcompact freed ~%d tokens, auto-compact no longer needed", tokens_freed)
         return messages, True
 
     context_collapsed = try_context_collapse(messages, preserve_recent=preserve_recent)
@@ -1505,7 +1505,7 @@ async def auto_compact_if_needed(
             token_count=estimate_message_tokens(messages),
             details={"reason": str(exc), "consecutive_failures": state.consecutive_failures},
         )
-        log.error(
+        logger.error(
             "Auto-compact failed (attempt %d/%d): %s",
             state.consecutive_failures,
             MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES,

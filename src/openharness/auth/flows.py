@@ -6,14 +6,14 @@ performs the interactive authentication and returns the obtained credential.
 
 from __future__ import annotations
 
-import logging
+from openharness.utils.log import get_logger
 import platform
 import subprocess
 import sys
 from abc import ABC, abstractmethod
 from typing import Any
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AuthFlow(ABC):

@@ -16,7 +16,7 @@ data; they are **not** encryption and must not be used to protect secrets.
 from __future__ import annotations
 
 import json
-import logging
+from openharness.utils.log import get_logger
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -25,7 +25,7 @@ from openharness.config.paths import get_config_dir
 from openharness.utils.file_lock import exclusive_file_lock
 from openharness.utils.fs import atomic_write_text
 
-log = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _CREDS_FILE_NAME = "credentials.json"
 _KEYRING_SERVICE = "openharness"
@@ -62,7 +62,7 @@ def _load_creds_file() -> dict[str, Any]:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as exc:
-        log.warning("Failed to read credentials file: %s", exc)
+        logger.warning("Failed to read credentials file: %s", exc)
         return {}
 
 
@@ -105,7 +105,7 @@ def _keyring_available() -> bool:
     except ImportError:
         _keyring_usable = False
     except Exception as exc:
-        log.info("System keyring unavailable, using file backend: %s", exc)
+        logger.info("System keyring unavailable, using file backend: %s", exc)
         _keyring_usable = False
     return _keyring_usable
 
@@ -132,16 +132,16 @@ def store_credential(provider: str, key: str, value: str, *, use_keyring: bool |
             import keyring
 
             keyring.set_password(_KEYRING_SERVICE, _keyring_key(provider, key), value)
-            log.debug("Stored %s/%s in keyring", provider, key)
+            logger.debug("Stored %s/%s in keyring", provider, key)
             return
         except Exception as exc:
-            log.warning("Keyring store failed, falling back to file: %s", exc)
+            logger.warning("Keyring store failed, falling back to file: %s", exc)
 
     with exclusive_file_lock(_creds_lock_path()):
         data = _load_creds_file()
         data.setdefault(provider, {})[key] = value
         _save_creds_file(data)
-    log.debug("Stored %s/%s in credentials file", provider, key)
+    logger.debug("Stored %s/%s in credentials file", provider, key)
 
 
 def load_credential(provider: str, key: str, *, use_keyring: bool | None = None) -> str | None:
@@ -157,7 +157,7 @@ def load_credential(provider: str, key: str, *, use_keyring: bool | None = None)
             if value is not None:
                 return value
         except Exception as exc:
-            log.warning("Keyring load failed, falling back to file: %s", exc)
+            logger.warning("Keyring load failed, falling back to file: %s", exc)
 
     data = _load_creds_file()
     return data.get(provider, {}).get(key)
@@ -187,7 +187,7 @@ def clear_provider_credentials(provider: str, *, use_keyring: bool | None = None
         if provider in data:
             del data[provider]
             _save_creds_file(data)
-    log.debug("Cleared credentials for provider: %s", provider)
+    logger.debug("Cleared credentials for provider: %s", provider)
 
 
 def list_stored_providers() -> list[str]:
@@ -202,7 +202,7 @@ def store_external_binding(binding: ExternalAuthBinding) -> None:
         entry = data.setdefault(binding.provider, {})
         entry["external_binding"] = asdict(binding)
         _save_creds_file(data)
-    log.debug("Stored external auth binding for provider: %s", binding.provider)
+    logger.debug("Stored external auth binding for provider: %s", binding.provider)
 
 
 def load_external_binding(provider: str) -> ExternalAuthBinding | None:
@@ -222,7 +222,7 @@ def load_external_binding(provider: str) -> ExternalAuthBinding | None:
             profile_label=str(raw.get("profile_label", "") or ""),
         )
     except KeyError:
-        log.warning("Ignoring malformed external auth binding for provider: %s", provider)
+        logger.warning("Ignoring malformed external auth binding for provider: %s", provider)
         return None
 
 

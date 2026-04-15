@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import logging
+from openharness.utils.log import get_logger
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -13,7 +13,7 @@ from openharness.config import Settings
 from openharness.platforms import get_platform, get_platform_capabilities
 from openharness.sandbox.adapter import SandboxAvailability, SandboxUnavailableError
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 def get_docker_availability(settings: Settings) -> SandboxAvailability:

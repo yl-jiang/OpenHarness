@@ -19,7 +19,6 @@ from openharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
-    ErrorEvent,
     StatusEvent,
     StreamFinished,
     ToolExecutionCompleted,
