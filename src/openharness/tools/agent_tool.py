@@ -122,14 +122,16 @@ class AgentTool(BaseTool):
             team=team,
             prompt=arguments.prompt,
             cwd=str(context.cwd),
-            parent_session_id=session_id or "main",
+            parent_session_id="main",
             model=resolved_model,
             api_format=_context_value(context, "current_api_format"),
             base_url=_context_value(context, "current_base_url"),
             provider=_context_value(context, "current_provider"),
+            command=arguments.command,
             system_prompt=agent_def.system_prompt if agent_def else None,
             permissions=agent_def.permissions if agent_def else [],
             session_id=session_id,
+            task_type=arguments.mode,
         )
 
         try:
