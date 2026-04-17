@@ -18,6 +18,7 @@ from loguru import logger as _loguru_logger
 from openharness.config.paths import get_logs_dir
 
 __all__ = [
+    "_DISABLE_CONSOLE",
     "configure_logging",
     "get_default_log_path",
     "get_logger",
@@ -287,11 +288,15 @@ def get_trace_path(*, session_id: str | None = None) -> Path | None:
     return get_logs_dir() / f"runtime-trace-{suffix}.jsonl"
 
 
+# Sentinel to indicate "no console output" (distinct from None which means use default)
+_DISABLE_CONSOLE = object()
+
+
 def configure_logging(
     *,
     debug: bool = False,
     level: str | int | None = None,
-    console_stream: IO[str] | None = None,
+    console_stream: IO[str] | None | object = None,
     log_file: str | Path | None = None,
     reset: bool = False,
     rotation: str | None = None,
@@ -299,21 +304,24 @@ def configure_logging(
 ) -> None:
     global _CURRENT_CONFIG
     level_name = _resolve_level_name(debug=debug, level=level)
-    stream = console_stream or sys.stderr
+    disable_console = console_stream is _DISABLE_CONSOLE
+    stream = None if disable_console else (console_stream or sys.stderr)
     app_log_path = Path(log_file).expanduser() if log_file is not None else get_default_log_path()
     rotation = rotation or os.environ.get("OPENHARNESS_LOG_ROTATION") or _DEFAULT_ROTATION
     retention = retention or os.environ.get("OPENHARNESS_LOG_RETENTION") or _DEFAULT_RETENTION
-    desired_config = (level_name, str(app_log_path), str(id(stream)), rotation, retention)
+    stream_id = "disabled" if disable_console else str(id(stream))
+    desired_config = (level_name, str(app_log_path), stream_id, rotation, retention)
 
     with _CONFIG_LOCK:
-        if reset:
-            _remove_sinks_locked()
-        elif _CURRENT_CONFIG == desired_config:
+        if not reset and _CURRENT_CONFIG == desired_config:
             return
-        elif _CURRENT_CONFIG is not None:
-            _remove_sinks_locked()
 
-        _SINK_IDS.append(_loguru_logger.add(_build_console_sink(stream), level=level_name, colorize=False))
+        # Clear any pre-existing loguru sinks before registering OpenHarness-managed
+        # sinks so the library's default stderr sink cannot leak logs into TUI mode.
+        _remove_sinks_locked()
+
+        if stream is not None:
+            _SINK_IDS.append(_loguru_logger.add(_build_console_sink(stream), level=level_name, colorize=False))
         _SINK_IDS.append(
             _loguru_logger.add(
                 _build_jsonl_sink(lambda _record: app_log_path, rotation=rotation, retention=retention),
