@@ -755,7 +755,7 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     profile_has_base_url = active_profile.base_url is not None
     profile_explicit_model = (active_profile.last_model or "").strip()
     profile_has_explicit_model = bool(profile_explicit_model) and profile_explicit_model.lower() not in {"", "default"}
-    profile_has_api_key = bool(active_profile.api_key.strip())
+    profile_api_key = (active_profile.api_key or "").strip()
 
     # --- model ---
     openharness_model = os.environ.get("OPENHARNESS_MODEL")
@@ -795,7 +795,7 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     if auto_compact_threshold_tokens:
         updates["auto_compact_threshold_tokens"] = int(auto_compact_threshold_tokens)
 
-    if profile_has_api_key:
+    if profile_api_key:
         updates["api_key"] = active_profile.api_key.strip()
     elif (settings.api_key.strip()):
         updates["api_key"] = settings.api_key.strip()

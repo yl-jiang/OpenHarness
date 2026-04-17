@@ -705,17 +705,30 @@ async def _execute_tool_call(
     )
     logger.debug("executing %s ...", tool_name)
     t0 = time.monotonic()
-    result = await tool.execute(
-        parsed_input,
-        ToolExecutionContext(
-            cwd=context.cwd,
-            metadata={
-                "tool_registry": context.tool_registry,
-                "ask_user_prompt": context.ask_user_prompt,
-                **(context.tool_metadata or {}),
-            },
-        ),
-    )
+    try:
+        result = await tool.execute(
+            parsed_input,
+            ToolExecutionContext(
+                cwd=context.cwd,
+                metadata={
+                    "tool_registry": context.tool_registry,
+                    "ask_user_prompt": context.ask_user_prompt,
+                    **(context.tool_metadata or {}),
+                },
+            ),
+        )
+    except Exception as exc:
+        logger.exception(
+            "tool execution raised: name=%s id=%s",
+            tool_name,
+            tool_use_id,
+            exc_info=exc,
+        )
+        return ToolResultBlock(
+            tool_use_id=tool_use_id,
+            content=f"Tool {tool_name} failed: {type(exc).__name__}: {exc}",
+            is_error=True,
+        )
     elapsed = time.monotonic() - t0
     logger.debug("executed %s in %.2fs err=%s output_len=%d",
               tool_name, elapsed, result.is_error, len(result.output or ""))

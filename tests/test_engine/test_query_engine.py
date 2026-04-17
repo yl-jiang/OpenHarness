@@ -907,6 +907,34 @@ async def test_execute_tool_call_returns_actionable_reason_when_user_denies_conf
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_call_returns_error_when_tool_raises(tmp_path: Path):
+    class ExplodingInput(BaseModel):
+        pass
+
+    class ExplodingTool(BaseTool):
+        name = "explode"
+        description = "Raise an exception"
+        input_model = ExplodingInput
+
+        async def execute(self, arguments: ExplodingInput, context: ToolExecutionContext) -> ToolResult:
+            del arguments, context
+            raise RuntimeError("boom")
+
+    registry = ToolRegistry()
+    registry.register(ExplodingTool())
+
+    result = await _execute_tool_call(
+        _tool_context(tmp_path, registry, PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        "explode",
+        "toolu_explode",
+        {},
+    )
+
+    assert result.is_error is True
+    assert result.content == "Tool explode failed: RuntimeError: boom"
+
+
+@pytest.mark.asyncio
 async def test_query_engine_executes_ask_user_tool(tmp_path: Path):
     async def _answer(question: str) -> str:
         assert question == "Which color?"

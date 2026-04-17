@@ -12,6 +12,20 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 VALID_STATUSES = {"pending", "in_progress", "completed", "cancelled"}
 
 
+def _resolve_project_root(start: Path) -> Path:
+    """Resolve the active project root from the current working directory."""
+    current = start.expanduser().resolve()
+    if current.is_file():
+        current = current.parent
+    fallback = current
+    while True:
+        if (current / ".git").exists() or (current / "pyproject.toml").exists():
+            return current
+        if current.parent == current:
+            return fallback
+        current = current.parent
+
+
 class TodoStore:
     """
     In-memory todo list. One instance per AIAgent (one per session).
@@ -22,8 +36,9 @@ class TodoStore:
       - status: pending | in_progress | completed | cancelled
     """
 
-    def __init__(self):
+    def __init__(self, project_root: Path | None = None):
         self._items: List[Dict[str, str]] = []
+        self._project_root = _resolve_project_root(project_root or Path.cwd())
 
     def write(self, todos: List[Dict[str, Any]], merge: bool = False) -> List[Dict[str, str]]:
         """
@@ -136,16 +151,8 @@ class TodoStore:
         return {"id": item_id, "content": content, "status": status}
 
     def _persist_to_file(self) -> None:
-        """Write the current todo list to project root TODO.md in human-readable format."""
-        # Locate project root by walking upward from this file
-        current = Path(__file__).resolve()
-        root = current.parent
-        while root.parent != root:
-            if (root / ".git").exists() or (root / "pyproject.toml").exists():
-                break
-            root = root.parent
-
-        md_path = root / "TODO.md"
+        """Write the current todo list to the active project TODO.md."""
+        md_path = self._project_root / "TODO.md"
 
         status_order = {"in_progress": 0, "pending": 1, "completed": 2, "cancelled": 3}
         status_headers = {
@@ -170,11 +177,7 @@ class TodoStore:
                 lines.append(f"- {item['content']}  `({item['id']})`")
             lines.append("")
 
-        try:
-            md_path.write_text("\n".join(lines), encoding="utf-8")
-        except Exception:
-            # Silently ignore write failures (e.g., read-only filesystem)
-            pass
+        md_path.write_text("\n".join(lines), encoding="utf-8")
 
     @staticmethod
     def _dedupe_by_id(todos: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -229,26 +232,35 @@ class TodoWriteTool(BaseTool):
     description = TODO_TOOL_DESCRIPTION
     input_model = TodoWriteToolInput
 
-    async def execute(self, 
-                      todos: TodoWriteToolInput, 
-                      context: ToolExecutionContext=None) -> ToolResult:
+    def is_read_only(self, arguments: TodoWriteToolInput) -> bool:
+        return arguments.todos is None
+
+    async def execute(
+        self,
+        arguments: TodoWriteToolInput,
+        context: ToolExecutionContext,
+    ) -> ToolResult:
         """
         Single entry point for the todo tool. Reads or writes depending on params.
 
         Args:
-            todos: if provided, write these items. If None, read current list.
+            arguments: if provided, write these items. If None, read current list.
             merge: if True, update by id. If False (default), replace entire list.
             store: the TodoStore instance from the AIAgent.
 
         Returns:
             JSON string with the full current list and summary metadata.
         """
-        if context.metadata.get('todo_store', None) is None:
-            return ToolResult(output="TodoStore not initialized", is_error=True)
+        store = context.metadata.get("todo_store")
+        if not isinstance(store, TodoStore):
+            store = TodoStore(context.cwd)
+            context.metadata["todo_store"] = store
 
-        store: TodoStore = context.metadata['todo_store']
-        if todos is not None:
-            items = store.write(todos.items, todos.merge)
+        if arguments.todos is not None:
+            items = store.write(
+                [item.model_dump(mode="json") for item in arguments.todos],
+                arguments.merge,
+            )
         else:
             items = store.read()
 
@@ -258,13 +270,18 @@ class TodoWriteTool(BaseTool):
         completed = sum(1 for i in items if i["status"] == "completed")
         cancelled = sum(1 for i in items if i["status"] == "cancelled")
 
-        return ToolResult(output=json.dumps({
-            "todos": items,
-            "summary": {
-                "total": len(items),
-                "pending": pending,
-                "in_progress": in_progress,
-                "completed": completed,
-                "cancelled": cancelled,
-            },
-        }, ensure_ascii=False))
+        return ToolResult(
+            output=json.dumps(
+                {
+                    "todos": items,
+                    "summary": {
+                        "total": len(items),
+                        "pending": pending,
+                        "in_progress": in_progress,
+                        "completed": completed,
+                        "cancelled": cancelled,
+                    },
+                },
+                ensure_ascii=False,
+            )
+        )

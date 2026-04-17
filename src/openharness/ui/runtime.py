@@ -251,7 +251,7 @@ async def build_runtime(
     tool_registry = create_default_tool_registry(mcp_manager)
     provider = detect_provider(settings)
     bridge_manager = get_bridge_manager()
-    todo_store = TodoStore()
+    todo_store = TodoStore(Path(cwd))
     app_state = AppStateStore(
         AppState(
             # Show the effective runtime model (after CLI/env/profile merges),

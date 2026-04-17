@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -122,10 +123,17 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
     assert "Helpful pytest notes." in skill_result.output
 
     todo_result = await TodoWriteTool().execute(
-        TodoWriteToolInput(item="wire commands"),
+        TodoWriteToolInput(
+            todos=[{"id": "wire-commands", "content": "wire commands", "status": "pending"}],
+        ),
         ToolExecutionContext(cwd=tmp_path),
     )
+    todo_payload = json.loads(todo_result.output)
     assert todo_result.is_error is False
+    assert todo_payload["summary"]["total"] == 1
+    assert todo_payload["todos"] == [
+        {"id": "wire-commands", "content": "wire commands", "status": "pending"}
+    ]
     assert "wire commands" in (tmp_path / "TODO.md").read_text(encoding="utf-8")
 
     config_result = await ConfigTool().execute(
@@ -136,27 +144,61 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_todo_write_upsert(tmp_path: Path):
+async def test_todo_write_merge_and_read(tmp_path: Path):
     tool = TodoWriteTool()
     ctx = ToolExecutionContext(cwd=tmp_path)
 
-    await tool.execute(TodoWriteToolInput(item="task A"), ctx)
-    await tool.execute(TodoWriteToolInput(item="task B"), ctx)
+    initial = await tool.execute(
+        TodoWriteToolInput(
+            todos=[
+                {"id": "task-a", "content": "task A", "status": "in_progress"},
+                {"id": "task-b", "content": "task B", "status": "pending"},
+            ]
+        ),
+        ctx,
+    )
+    assert initial.is_error is False
+    assert json.loads(initial.output)["summary"] == {
+        "total": 2,
+        "pending": 1,
+        "in_progress": 1,
+        "completed": 0,
+        "cancelled": 0,
+    }
 
-    # Marking done should update in-place, not append a duplicate
-    result = await tool.execute(TodoWriteToolInput(item="task A", checked=True), ctx)
+    result = await tool.execute(
+        TodoWriteToolInput(
+            todos=[
+                {"id": "task-a", "content": "task A", "status": "completed"},
+                {"id": "task-c", "content": "task C", "status": "pending"},
+            ],
+            merge=True,
+        ),
+        ctx,
+    )
+    payload = json.loads(result.output)
     assert result.is_error is False
+    assert payload["todos"] == [
+        {"id": "task-a", "content": "task A", "status": "completed"},
+        {"id": "task-b", "content": "task B", "status": "pending"},
+        {"id": "task-c", "content": "task C", "status": "pending"},
+    ]
+    assert payload["summary"] == {
+        "total": 3,
+        "pending": 2,
+        "in_progress": 0,
+        "completed": 1,
+        "cancelled": 0,
+    }
 
+    read_back = await tool.execute(TodoWriteToolInput(), ctx)
+    assert json.loads(read_back.output) == payload
     content = (tmp_path / "TODO.md").read_text(encoding="utf-8")
     assert content.count("task A") == 1
-    assert "- [x] task A" in content
-    assert "- [ ] task A" not in content
-    assert "- [ ] task B" in content
-
-    # Calling again with same state is a no-op
-    noop = await tool.execute(TodoWriteToolInput(item="task A", checked=True), ctx)
-    assert "No change" in noop.output
-    assert (tmp_path / "TODO.md").read_text(encoding="utf-8").count("task A") == 1
+    assert "## ⬜ Pending" in content
+    assert "## ✅ Completed" in content
+    assert "task B" in content
+    assert "task C" in content
 
 
 @pytest.mark.asyncio
