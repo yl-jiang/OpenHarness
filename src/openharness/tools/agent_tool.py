@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from openharness.config.settings import is_claude_family_provider
 from openharness.coordinator.agent_definitions import get_agent_definition
 from openharness.coordinator.coordinator_mode import get_team_registry
 from openharness.swarm.registry import get_backend_registry
@@ -14,14 +13,6 @@ from openharness.utils.log import get_logger
 
 logger = get_logger(__name__)
 
-_CLAUDE_ONLY_MODELS = frozenset({
-    "haiku",
-    "sonnet",
-    "opus",
-    "sonnet[1m]",
-    "opus[1m]",
-    "opusplan",
-})
 
 def _context_value(context: ToolExecutionContext, key: str) -> str | None:
     if not isinstance(context.metadata, dict):
@@ -30,20 +21,12 @@ def _context_value(context: ToolExecutionContext, key: str) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
-def _is_claude_only_model(model: str) -> bool:
-    normalized = model.strip().lower()
-    return normalized in _CLAUDE_ONLY_MODELS or normalized.startswith("claude-")
-
-
 def _resolve_spawn_model(
     *,
     agent_default_model: str | None,
     current_model: str | None,
-    current_provider: str | None,
 ) -> str | None:
     if agent_default_model is None or agent_default_model == "inherit":
-        return current_model
-    if current_provider and not is_claude_family_provider(current_provider) and _is_claude_only_model(agent_default_model):
         return current_model
     return agent_default_model
 
@@ -107,7 +90,6 @@ class AgentTool(BaseTool):
         resolved_model = _resolve_spawn_model(
             agent_default_model=agent_def.model if agent_def else None,
             current_model=_context_value(context, "current_model"),
-            current_provider=_context_value(context, "current_provider"),
         )
 
         # Use subprocess backend so spawned agents are registered in

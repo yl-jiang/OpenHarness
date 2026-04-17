@@ -458,7 +458,7 @@ async def run_query(
             yield progress_queue.get_nowait(), None
         last_compaction_result = await task
         return
-
+    
     turn_count = 0
     while context.max_turns is None or turn_count < context.max_turns:
         turn_count += 1

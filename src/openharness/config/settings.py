@@ -115,6 +115,7 @@ class ProviderProfile(BaseModel):
     auth_source: str
     default_model: str
     base_url: str | None = None
+    api_key: str | None = None
     last_model: str | None = None
     credential_slot: str | None = None
     allowed_models: list[str] = Field(default_factory=list)
@@ -754,6 +755,7 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     profile_has_base_url = active_profile.base_url is not None
     profile_explicit_model = (active_profile.last_model or "").strip()
     profile_has_explicit_model = bool(profile_explicit_model) and profile_explicit_model.lower() not in {"", "default"}
+    profile_has_api_key = bool(active_profile.api_key.strip())
 
     # --- model ---
     openharness_model = os.environ.get("OPENHARNESS_MODEL")
@@ -793,8 +795,12 @@ def _apply_env_overrides(settings: Settings) -> Settings:
     if auto_compact_threshold_tokens:
         updates["auto_compact_threshold_tokens"] = int(auto_compact_threshold_tokens)
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    if api_key:
+    if profile_has_api_key:
+        updates["api_key"] = active_profile.api_key.strip()
+    elif (settings.api_key.strip()):
+        updates["api_key"] = settings.api_key.strip()
+    else:
+        api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
         updates["api_key"] = api_key
 
     api_format = os.environ.get("OPENHARNESS_API_FORMAT")

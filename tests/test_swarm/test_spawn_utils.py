@@ -60,3 +60,20 @@ def test_build_inherited_cli_flags_forward_runtime_overrides():
         "--base-url",
         "https://api.moonshot.cn/v1",
     ]
+
+
+def test_build_inherited_cli_flags_inherit_model_excluded():
+    """model='inherit' must NOT produce a --model flag so the subprocess
+    picks up the parent's model from the OPENHARNESS_MODEL env var."""
+    flags = build_inherited_cli_flags(model="inherit")
+    assert "--model" not in flags
+
+
+def test_build_inherited_cli_flags_none_model_excluded():
+    flags = build_inherited_cli_flags(model=None)
+    assert "--model" not in flags
+
+
+def test_build_inherited_cli_flags_empty_string_model_excluded():
+    flags = build_inherited_cli_flags(model="")
+    assert "--model" not in flags
