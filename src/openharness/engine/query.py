@@ -694,6 +694,15 @@ async def _execute_tool_call(
                 is_error=True,
             )
 
+    logger.event(
+        "tool_execution_request",
+        tool_name=tool_name,
+        tool_use_id=tool_use_id,
+        tool_input=tool_input,
+        is_read_only=tool.is_read_only(parsed_input),
+        file_path=_file_path,
+        command=_command,
+    )
     logger.debug("executing %s ...", tool_name)
     t0 = time.monotonic()
     result = await tool.execute(
