@@ -47,6 +47,10 @@ dev = [
     "mypy>=1.10.0",
 ]
 
+[[tool.uv.index]]
+url = "https://mirrors.aliyun.com/pypi/simple"
+default = true
+
 [project.scripts]
 openharness = "openharness.cli:app"
 oh = "openharness.cli:app"
@@ -85,7 +89,3 @@ target-version = "py311"
 [tool.mypy]
 python_version = "3.11"
 strict = true
-
-[[tool.uv.index]]
-url = "https://mirrors.aliyun.com/pypi/simple"
-default = true

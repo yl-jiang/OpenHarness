@@ -42,6 +42,30 @@ def test_logger_event_writes_structured_records_to_app_and_trace_files(tmp_path,
     assert trace_records[-1]["session_id"] == "sess-123"
 
 
+def test_logger_file_keeps_utf8_text_readable(tmp_path, monkeypatch) -> None:
+    app_log = tmp_path / "openharness.jsonl"
+    monkeypatch.setenv("OPENHARNESS_LOG_FILE", str(app_log))
+    reset_logging()
+    configure_logging(console_stream=io.StringIO())
+
+    logger = get_logger("openharness.ui.runtime")
+    logger.info(
+        "处理任务完成",
+        line="调研一下这个project，先列todo，然后逐条进行",
+        status="完成",
+        emoji="✅",
+    )
+
+    raw = app_log.read_text(encoding="utf-8")
+    assert "处理任务完成" in raw
+    assert "调研一下这个project，先列todo，然后逐条进行" in raw
+    assert '"status": "完成"' in raw
+    assert '"emoji": "✅"' in raw
+    assert "\\u5904\\u7406" not in raw
+    assert "\\u8c03\\u7814" not in raw
+    assert "\\u2705" not in raw
+
+
 def test_logger_console_output_is_pretty_and_contextual(tmp_path, monkeypatch) -> None:
     app_log = tmp_path / "openharness.jsonl"
     console = io.StringIO()

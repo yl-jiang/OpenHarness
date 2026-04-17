@@ -73,7 +73,19 @@ async def test_task_and_todo_flow_across_registry(tmp_path: Path, monkeypatch):
     search_result = await tool_search.execute(tool_search.input_model(query="task"), context)
     assert "task_create" in search_result.output
 
-    await todo_write.execute(todo_write.input_model(item="integration flow item"), context)
+    todo_result = await todo_write.execute(
+        todo_write.input_model(
+            todos=[
+                {
+                    "id": "integration-flow-item",
+                    "content": "integration flow item",
+                    "status": "pending",
+                }
+            ]
+        ),
+        context,
+    )
+    assert todo_result.is_error is False
     assert "integration flow item" in (tmp_path / "TODO.md").read_text(encoding="utf-8")
 
     create_result = await task_create.execute(

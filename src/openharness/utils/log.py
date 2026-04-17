@@ -176,7 +176,7 @@ def _write_json_line(
     retention: str = _DEFAULT_RETENTION,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    encoded = json.dumps(payload, ensure_ascii=True, sort_keys=True, default=str)
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
     with _FILE_LOCK:
         _maybe_rotate(path, rotation=rotation, retention=retention)
         with path.open("a", encoding="utf-8") as handle:
