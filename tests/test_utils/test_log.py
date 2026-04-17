@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from openharness.utils.log import configure_logging, get_default_log_path, get_logger, reset_logging
@@ -88,6 +91,46 @@ def test_logger_console_output_is_pretty_and_contextual(tmp_path, monkeypatch) -
     assert "session_id=worker-session" in output
     assert "provider=anthropic" in output
     assert "model=claude-sonnet-4-6" in output
+
+
+def test_configure_logging_removes_preexisting_console_sink_when_console_disabled(
+    tmp_path, monkeypatch
+) -> None:
+    app_log = tmp_path / "openharness.jsonl"
+    repo_root = Path(__file__).resolve().parents[2]
+    python_path_parts = [str(repo_root / "src")]
+    existing_python_path = os.environ.get("PYTHONPATH")
+    if existing_python_path:
+        python_path_parts.append(existing_python_path)
+
+    env = os.environ.copy()
+    env["OPENHARNESS_LOG_FILE"] = str(app_log)
+    env["PYTHONPATH"] = os.pathsep.join(python_path_parts)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "from openharness.utils.log import _DISABLE_CONSOLE, configure_logging, get_logger; "
+                "configure_logging(console_stream=_DISABLE_CONSOLE); "
+                "get_logger('openharness.ui.backend_host').info("
+                "'backend log should stay off stderr', event='backend_event')"
+            ),
+        ],
+        cwd=str(repo_root),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+    app_records = _read_json_lines(app_log)
+    assert app_records[-1]["message"] == "backend log should stay off stderr"
+    assert app_records[-1]["event"] == "backend_event"
 
 
 def test_trace_event_uses_unified_logger_backend(tmp_path, monkeypatch) -> None:
