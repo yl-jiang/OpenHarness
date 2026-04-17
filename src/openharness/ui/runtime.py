@@ -35,6 +35,7 @@ from openharness.prompts import build_runtime_system_prompt
 from openharness.state import AppState, AppStateStore
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
 from openharness.tools import ToolRegistry, create_default_tool_registry
+from openharness.tools.todo_write_tool import TodoStore
 from openharness.keybindings import load_keybindings
 from openharness.utils.log import get_logger
 
@@ -250,6 +251,7 @@ async def build_runtime(
     tool_registry = create_default_tool_registry(mcp_manager)
     provider = detect_provider(settings)
     bridge_manager = get_bridge_manager()
+    todo_store = TodoStore()
     app_state = AppStateStore(
         AppState(
             # Show the effective runtime model (after CLI/env/profile merges),
@@ -353,6 +355,7 @@ async def build_runtime(
             "extra_skill_dirs": normalized_skill_dirs,
             "extra_plugin_roots": normalized_plugin_roots,
             "session_id": session_id,
+            "todo_store": todo_store,
             **restored_metadata,
         },
     )
