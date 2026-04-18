@@ -1,5 +1,3 @@
-"""Conversation message models used by the query engine."""
-
 from __future__ import annotations
 
 import base64
@@ -154,6 +152,47 @@ def serialize_content_block(block: ContentBlock) -> dict[str, Any]:
         "content": block.content,
         "is_error": block.is_error,
     }
+
+
+def _is_text_only(msg: ConversationMessage) -> bool:
+    """Return True iff every content block in the message is a TextBlock."""
+    return bool(msg.content) and all(isinstance(b, TextBlock) for b in msg.content)
+
+
+def normalize_messages_for_api(
+    messages: list[ConversationMessage],
+) -> list[ConversationMessage]:
+    """Normalise a post-compaction message list before sending to any LLM provider.
+
+    Consecutive ``user`` messages whose content consists entirely of
+    :class:`TextBlock` objects are merged into a single user message with one
+    :class:`TextBlock` whose ``text`` is the concatenation of all constituent
+    texts joined by ``"\\n\\n"``.
+
+    All other combinations — tool-result-only user messages, assistant messages,
+    mixed-content user messages — are left untouched.
+
+    The input list is never mutated; a new list is always returned.
+    """
+    if not messages:
+        return []
+    merged: list[ConversationMessage] = []
+    for msg in messages:
+        if (
+            merged
+            and merged[-1].role == "user"
+            and msg.role == "user"
+            and _is_text_only(merged[-1])
+            and _is_text_only(msg)
+        ):
+            combined_text = merged[-1].text + "\n\n" + msg.text
+            merged[-1] = ConversationMessage(
+                role="user",
+                content=[TextBlock(text=combined_text)],
+            )
+        else:
+            merged.append(ConversationMessage(role=msg.role, content=list(msg.content)))
+    return merged
 
 
 def assistant_message_from_api(raw_message: Any) -> ConversationMessage:
