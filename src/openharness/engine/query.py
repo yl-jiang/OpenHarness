@@ -17,6 +17,7 @@ from openharness.api.client import (
 )
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import ConversationMessage, ToolResultBlock
+from openharness.engine.messages import normalize_messages_for_api
 from openharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
@@ -468,6 +469,13 @@ async def run_query(
         messages, was_compacted = last_compaction_result
         # ---------------------------------------------------------------
 
+        if was_compacted:
+            todo_msg = context.tool_metadata['todo_store'].format_for_injection()
+            if todo_msg is not None:
+                messages.append(ConversationMessage.from_user_content(todo_msg))
+
+        messages = normalize_messages_for_api(messages)
+
         final_message: ConversationMessage | None = None
         usage = UsageSnapshot()
         stop_reason: str | None = None
@@ -513,6 +521,7 @@ async def run_query(
                 async for event, usage in _stream_compaction(trigger="reactive", force=True):
                     yield event, usage
                 messages, was_compacted = last_compaction_result
+                messages = normalize_messages_for_api(messages)
                 if was_compacted:
                     continue
             if "connect" in error_msg.lower() or "timeout" in error_msg.lower() or "network" in error_msg.lower():
