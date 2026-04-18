@@ -507,13 +507,16 @@ async def run_query(
                     usage = event.usage
                     stop_reason = event.stop_reason
         except Exception as exc:
-            error_msg = str(exc)
+            # str(exc) can be empty for some exception types; use repr as fallback
+            error_msg = str(exc) or repr(exc)
             logger.event(
                 "query_api_exception",
                 session_id=session_id,
                 model=context.model,
                 turn_count=turn_count,
                 error=error_msg,
+                exc_type=type(exc).__name__,
+                exc_repr=repr(exc),
             )
             if not reactive_compact_attempted and _is_prompt_too_long_error(exc):
                 reactive_compact_attempted = True

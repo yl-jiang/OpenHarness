@@ -254,15 +254,20 @@ class OpenAICompatibleClient:
             except Exception as exc:
                 last_error = exc
                 if attempt >= MAX_RETRIES or not self._is_retryable(exc):
+                    logger.warning(
+                        "OpenAI API request failed (non-retryable): type=%s repr=%r",
+                        type(exc).__name__,
+                        repr(exc),
+                    )
                     raise self._translate_error(exc) from exc
 
                 delay = min(BASE_DELAY * (2 ** attempt), MAX_DELAY)
                 logger.warning(
-                    "OpenAI API request failed (attempt %d/%d), retrying in %.1fs: %s",
-                    attempt + 1, MAX_RETRIES + 1, delay, exc,
+                    "OpenAI API request failed (attempt %d/%d), retrying in %.1fs: type=%s repr=%r",
+                    attempt + 1, MAX_RETRIES + 1, delay, type(exc).__name__, repr(exc),
                 )
                 yield ApiRetryEvent(
-                    message=str(exc),
+                    message=str(exc) or repr(exc),
                     attempt=attempt + 1,
                     max_attempts=MAX_RETRIES + 1,
                     delay_seconds=delay,
@@ -400,7 +405,21 @@ class OpenAICompatibleClient:
     @staticmethod
     def _translate_error(exc: Exception) -> OpenHarnessApiError:
         status = getattr(exc, "status_code", None)
-        msg = str(exc)
+        # Some exceptions (e.g. httpx timeouts, certain openai errors) have
+        # an empty str() representation; fall back to progressively richer sources.
+        msg = (
+            str(exc)
+            or getattr(exc, "message", None)
+            or getattr(exc, "detail", None)
+            or repr(exc)
+        )
+        logger.warning(
+            "API exception caught: type=%s status=%s msg=%r repr=%r",
+            type(exc).__name__,
+            status,
+            str(exc),
+            repr(exc),
+        )
         if status == 401 or status == 403:
             return AuthenticationFailure(msg)
         if status == 429:
