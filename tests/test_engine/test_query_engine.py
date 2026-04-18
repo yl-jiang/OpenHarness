@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -398,76 +397,6 @@ async def test_query_engine_continues_again_after_two_silent_stops_with_progress
 
 
 @pytest.mark.asyncio
-async def test_query_engine_writes_trace_file_for_silent_stop_flow(
-    tmp_path: Path,
-    monkeypatch,
-):
-    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
-    trace_path = tmp_path / "runtime-trace.jsonl"
-    monkeypatch.setenv("OPENHARNESS_TRACE_FILE", str(trace_path))
-
-    sample = tmp_path / "hello.txt"
-    sample.write_text("alpha\nbeta\n", encoding="utf-8")
-
-    engine = QueryEngine(
-        api_client=FakeApiClient(
-            [
-                _FakeResponse(
-                    message=ConversationMessage(
-                        role="assistant",
-                        content=[
-                            TextBlock(text="I will inspect the file."),
-                            ToolUseBlock(
-                                id="toolu_trace_stop",
-                                name="read_file",
-                                input={"path": str(sample), "offset": 0, "limit": 2},
-                            ),
-                        ],
-                    ),
-                    usage=UsageSnapshot(input_tokens=4, output_tokens=3),
-                ),
-                _FakeResponse(
-                    message=ConversationMessage(role="assistant", content=[]),
-                    usage=UsageSnapshot(input_tokens=2, output_tokens=1),
-                ),
-                _FakeResponse(
-                    message=ConversationMessage(
-                        role="assistant",
-                        content=[TextBlock(text="The file contains alpha and beta.")],
-                    ),
-                    usage=UsageSnapshot(input_tokens=6, output_tokens=4),
-                ),
-            ]
-        ),
-        tool_registry=create_default_tool_registry(),
-        permission_checker=PermissionChecker(PermissionSettings()),
-        cwd=tmp_path,
-        model="claude-test",
-        system_prompt="system",
-    )
-
-    _ = [event async for event in engine.submit_message("inspect the file thoroughly")]
-
-    records = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-
-    assert any(
-        record["event"] == "api_message_complete"
-        and record.get("text_length") == 0
-        and record.get("tool_use_count") == 0
-        for record in records
-    )
-    assert any(
-        record["event"] == "silent_stop_check"
-        and record.get("matched") is True
-        for record in records
-    )
-    assert any(
-        record["event"] == "auto_continue_triggered"
-        and record.get("attempt") == 1
-        for record in records
-    )
-
-
 @pytest.mark.asyncio
 async def test_query_engine_coordinator_mode_uses_coordinator_prompt_and_runs_agent_loop(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))

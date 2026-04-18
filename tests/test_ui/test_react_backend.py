@@ -174,34 +174,6 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_backend_host_writes_trace_file_for_line_lifecycle(tmp_path: Path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
-    trace_path = tmp_path / "backend-trace.jsonl"
-    monkeypatch.setenv("OPENHARNESS_TRACE_FILE", str(trace_path))
-
-    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("hello from react backend")))
-    host._bundle = await build_runtime(api_client=StaticApiClient("hello from react backend"))
-    events = []
-
-    async def _emit(event):
-        events.append(event)
-
-    host._emit = _emit  # type: ignore[method-assign]
-    await start_runtime(host._bundle)
-    try:
-        should_continue = await host._process_line("hi")
-    finally:
-        await close_runtime(host._bundle)
-
-    assert should_continue is True
-    records = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert any(record["event"] == "backend_process_line_start" and record.get("line") == "hi" for record in records)
-    assert any(record["event"] == "backend_stream_event" and record.get("event_type") == "assistant_complete" for record in records)
-    assert any(record["event"] == "backend_process_line_complete" and record.get("should_continue") is True for record in records)
-
-
 @pytest.mark.asyncio
 async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

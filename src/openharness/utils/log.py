@@ -22,12 +22,10 @@ __all__ = [
     "configure_logging",
     "get_default_log_path",
     "get_logger",
-    "get_trace_path",
     "log_event",
     "reset_logging",
 ]
 
-_FALSEY_ENV_VALUES = {"", "0", "false", "no", "off"}
 _LEVELS_BY_NUMBER = {
     10: "DEBUG",
     20: "INFO",
@@ -50,12 +48,6 @@ _CURRENT_CONFIG: tuple[str, str, str, str, str] | None = None
 _DEFAULT_ROTATION = "10 MB"
 _DEFAULT_RETENTION = "30 days"
 _SIZE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)", re.IGNORECASE)
-
-
-def _is_truthy(value: str | None) -> bool:
-    if value is None:
-        return False
-    return value.strip().lower() not in _FALSEY_ENV_VALUES
 
 
 def _normalize_component(name: str | None) -> str:
@@ -201,14 +193,6 @@ def _payload_from_record(record: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _trace_path_for_record(record: dict[str, Any]) -> Path | None:
-    fields = record["extra"].get("fields", {})
-    if "event" not in fields:
-        return None
-    session_id = fields.get("session_id")
-    return get_trace_path(session_id=session_id if isinstance(session_id, str) else None)
-
-
 def _build_console_sink(stream: IO[str]):
     def _sink(message) -> None:
         record = message.record
@@ -275,19 +259,6 @@ def get_default_log_path() -> Path:
     return get_logs_dir() / "openharness.jsonl"
 
 
-def get_trace_path(*, session_id: str | None = None) -> Path | None:
-    explicit = os.environ.get("OPENHARNESS_TRACE_FILE")
-    if explicit:
-        return Path(explicit).expanduser()
-
-    enabled = os.environ.get("OPENHARNESS_TRACE")
-    if not _is_truthy(enabled):
-        return None
-
-    suffix = session_id or str(os.getpid())
-    return get_logs_dir() / f"runtime-trace-{suffix}.jsonl"
-
-
 # Sentinel to indicate "no console output" (distinct from None which means use default)
 _DISABLE_CONSOLE = object()
 
@@ -320,6 +291,11 @@ def configure_logging(
         # sinks so the library's default stderr sink cannot leak logs into TUI mode.
         _remove_sinks_locked()
 
+        # Auto-rotate existing log file on startup so prior runs don't clutter
+        # the current investigation (especially in TUI development loops).
+        if app_log_path.exists():
+            _do_rotate(app_log_path)
+
         if stream is not None:
             _SINK_IDS.append(_loguru_logger.add(_build_console_sink(stream), level=level_name, colorize=False))
         _SINK_IDS.append(
@@ -328,7 +304,6 @@ def configure_logging(
                 level="DEBUG",
             )
         )
-        _SINK_IDS.append(_loguru_logger.add(_build_jsonl_sink(_trace_path_for_record), level="DEBUG"))
 
         _CURRENT_CONFIG = desired_config
 

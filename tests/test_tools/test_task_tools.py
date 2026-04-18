@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import re
 from pathlib import Path
 
@@ -252,50 +251,6 @@ async def test_agent_tool_supports_remote_and_teammate_modes(tmp_path: Path, mon
 
 
 @pytest.mark.asyncio
-async def test_agent_tool_writes_trace_records_for_spawn_flow(tmp_path: Path, monkeypatch):
-    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
-    trace_path = tmp_path / "agent-tool-trace.jsonl"
-    monkeypatch.setenv("OPENHARNESS_TRACE_FILE", str(trace_path))
-    context = ToolExecutionContext(cwd=tmp_path)
-
-    result = await AgentTool().execute(
-        AgentToolInput(
-            description="trace spawn path",
-            prompt="hello",
-            subagent_type="trace-worker",
-        ),
-        context,
-    )
-
-    assert result.is_error is False
-    match = re.search(r"task_id=(\S+?)[,)]", result.output)
-    assert match, f"Could not parse task_id from output: {result.output}"
-
-    records = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    assert any(
-        record["event"] == "agent_tool_execute_start"
-        and record.get("description") == "trace spawn path"
-        and record.get("subagent_type") == "trace-worker"
-        for record in records
-    )
-    assert any(
-        record["event"] == "subprocess_backend_spawn_start"
-        and record.get("agent_id") == "trace-worker@default"
-        for record in records
-    )
-    assert any(
-        record["event"] == "agent_tool_spawn_result"
-        and record.get("backend_type") == "subprocess"
-        and record.get("task_id") == match.group(1)
-        for record in records
-    )
-    manager = get_task_manager()
-    await manager.stop_task(match.group(1))
-    waiter = manager._waiters.get(match.group(1))  # type: ignore[attr-defined]
-    if waiter is not None:
-        await asyncio.wait_for(waiter, timeout=5)
-
-
 @pytest.mark.asyncio
 async def test_agent_tool_inherits_parent_model_for_claude_only_builtin_on_non_claude_provider(
     tmp_path: Path, monkeypatch
