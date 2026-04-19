@@ -109,26 +109,26 @@ async def test_real_skill_content_quality() -> tuple[bool, str]:
 
 
 async def test_skill_tool_with_real_skill() -> tuple[bool, str]:
-    """Test SkillTool with a real anthropic skill (pdf)."""
-    from openharness.tools.skill_tool import SkillTool, SkillToolInput
+    """Test load_skill with a real anthropic skill (pdf)."""
+    from openharness.tools.load_skill_tool import LoadSkillTool, LoadSkillToolInput
     from openharness.tools.base import ToolExecutionContext
 
-    tool = SkillTool()
+    tool = LoadSkillTool()
     result = await tool.execute(
-        SkillToolInput(name="pdf"),
+        LoadSkillToolInput(name="pdf"),
         ToolExecutionContext(cwd=Path("."), metadata={}),
     )
     if result.is_error:
         # Try another skill name
         result = await tool.execute(
-            SkillToolInput(name="xlsx"),
+            LoadSkillToolInput(name="xlsx"),
             ToolExecutionContext(cwd=Path("."), metadata={}),
         )
     if result.is_error:
         return False, f"No real skills loadable: {result.output}"
     if len(result.output) < 200:
         return False, f"Skill content too short: {len(result.output)} chars"
-    return True, f"SkillTool loaded real skill: {len(result.output)} chars"
+    return True, f"load_skill loaded real skill: {len(result.output)} chars"
 
 
 async def test_skills_in_prompt_with_real() -> tuple[bool, str]:

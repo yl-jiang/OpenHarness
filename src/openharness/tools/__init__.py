@@ -27,7 +27,8 @@ from openharness.tools.notebook_edit_tool import NotebookEditTool
 from openharness.tools.read_mcp_resource_tool import ReadMcpResourceTool
 from openharness.tools.remote_trigger_tool import RemoteTriggerTool
 from openharness.tools.send_message_tool import SendMessageTool
-from openharness.tools.skill_tool import SkillTool
+from openharness.tools.load_skill_tool import LoadSkillTool
+from openharness.tools.write_skill_tool import WriteSkillTool
 from openharness.tools.sleep_tool import SleepTool
 from openharness.tools.task_create_tool import TaskCreateTool
 from openharness.tools.task_get_tool import TaskGetTool
@@ -58,7 +59,8 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         McpAuthTool(),
         GlobTool(),
         GrepTool(),
-        SkillTool(),
+        LoadSkillTool(),
+        WriteSkillTool(),
         ToolSearchTool(),
         WebFetchTool(),
         WebSearchTool(),

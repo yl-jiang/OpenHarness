@@ -138,7 +138,7 @@ async def test_skill_and_config_flow_across_registry(tmp_path: Path, monkeypatch
     context = ToolExecutionContext(cwd=tmp_path, metadata={"tool_registry": registry})
 
     config = registry.get("config")
-    skill = registry.get("skill")
+    skill = registry.get("load_skill")
 
     set_result = await config.execute(
         config.input_model(action="set", key="theme", value="night-owl"),

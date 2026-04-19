@@ -176,7 +176,8 @@ _WORKER_TOOLS = [
     "task_get",
     "task_list",
     "task_output",
-    "skill",
+    "load_skill",
+    "write_skill",
 ]
 
 _SIMPLE_WORKER_TOOLS = ["bash", "file_read", "file_edit"]

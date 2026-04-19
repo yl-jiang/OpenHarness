@@ -295,8 +295,24 @@ def _record_tool_carryover(
 ) -> None:
     if is_error:
         return
+    _carryover_state(context, tool_name=tool_name, tool_input=tool_input,
+                     tool_output=tool_output, resolved_file_path=resolved_file_path)
+    _carryover_log(context, tool_name=tool_name, tool_input=tool_input,
+                   tool_output=tool_output, resolved_file_path=resolved_file_path)
+
+
+def _carryover_state(
+    context: QueryContext,
+    *,
+    tool_name: str,
+    tool_input: dict[str, object],
+    tool_output: str,
+    resolved_file_path: str | None,
+) -> None:
+    """Update context awareness (active artifacts, verified work, agent state)."""
     if resolved_file_path is not None:
         _remember_active_artifact(context.tool_metadata, resolved_file_path)
+
     if tool_name == "read_file" and resolved_file_path is not None:
         offset = int(tool_input.get("offset") or 0)
         limit = int(tool_input.get("limit") or 200)
@@ -311,15 +327,17 @@ def _record_tool_carryover(
             context.tool_metadata,
             f"Inspected file {resolved_file_path} (lines {offset + 1}-{offset + limit})",
         )
-    elif tool_name == "skill":
-        _remember_skill_invocation(
-            context.tool_metadata,
-            skill_name=str(tool_input.get("name") or ""),
-        )
+    elif tool_name == "load_skill":
         skill_name = str(tool_input.get("name") or "").strip()
+        _remember_skill_invocation(context.tool_metadata, skill_name=skill_name)
         if skill_name:
             _remember_active_artifact(context.tool_metadata, f"skill:{skill_name}")
             _remember_verified_work(context.tool_metadata, f"Loaded skill {skill_name}")
+    elif tool_name == "write_skill":
+        skill_name = str(tool_input.get("name") or "").strip()
+        if skill_name:
+            _remember_active_artifact(context.tool_metadata, f"skill:{skill_name}")
+            _remember_verified_work(context.tool_metadata, f"Wrote skill {skill_name}")
     elif tool_name in {"agent", "send_message"}:
         _remember_async_agent_activity(
             context.tool_metadata,
@@ -360,34 +378,36 @@ def _record_tool_carryover(
             context.tool_metadata,
             f"Ran bash command {command[:160]} [{summary[:120]}]",
         )
-    if tool_name == "read_file" and resolved_file_path is not None:
-        _remember_work_log(
-            context.tool_metadata,
-            entry=f"Read file {resolved_file_path}",
-        )
+
+
+def _carryover_log(
+    context: QueryContext,
+    *,
+    tool_name: str,
+    tool_input: dict[str, object],
+    tool_output: str,
+    resolved_file_path: str | None,
+) -> None:
+    """Append a brief entry to the recent work log."""
+    if tool_name == "read_file":
+        path = resolved_file_path or str(tool_input.get("path") or "")
+        _remember_work_log(context.tool_metadata, entry=f"Read file {path}")
     elif tool_name == "bash":
         command = str(tool_input.get("command") or "").strip()
         summary = tool_output.splitlines()[0].strip() if tool_output.strip() else "no output"
-        _remember_work_log(
-            context.tool_metadata,
-            entry=f"Ran bash: {command[:160]} [{summary[:120]}]",
-        )
+        _remember_work_log(context.tool_metadata, entry=f"Ran bash: {command[:160]} [{summary[:120]}]")
     elif tool_name == "grep":
         pattern = str(tool_input.get("pattern") or "").strip()
-        _remember_work_log(
-            context.tool_metadata,
-            entry=f"Searched with grep pattern={pattern[:160]}",
-        )
-    elif tool_name == "skill":
-        _remember_work_log(
-            context.tool_metadata,
-            entry=f"Loaded skill {str(tool_input.get('name') or '').strip()}",
-        )
+        _remember_work_log(context.tool_metadata, entry=f"Searched with grep pattern={pattern[:160]}")
+    elif tool_name == "load_skill":
+        skill_name = str(tool_input.get("name") or "").strip()
+        _remember_work_log(context.tool_metadata, entry=f"Loaded skill {skill_name}")
+    elif tool_name == "write_skill":
+        skill_name = str(tool_input.get("name") or "").strip()
+        action = "updated" if "updated" in tool_output else "created"
+        _remember_work_log(context.tool_metadata, entry=f"Wrote ({action}) skill {skill_name}")
     elif tool_name in {"agent", "send_message"}:
-        _remember_work_log(
-            context.tool_metadata,
-            entry=f"Async agent action via {tool_name}",
-        )
+        _remember_work_log(context.tool_metadata, entry=f"Async agent action via {tool_name}")
     elif tool_name == "enter_plan_mode":
         _remember_work_log(context.tool_metadata, entry="Entered plan mode")
     elif tool_name == "exit_plan_mode":

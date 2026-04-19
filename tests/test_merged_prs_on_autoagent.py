@@ -113,13 +113,13 @@ async def task_diagnose_autoagent():
     print("  Task 1: PR#17 — Use diagnose skill to investigate AutoAgent tests")
     print("=" * 70)
 
-    from openharness.tools.skill_tool import SkillTool
+    from openharness.tools.load_skill_tool import LoadSkillTool
 
     engine = make_anthropic_engine(
         "You are a debugger. Start by loading the 'diagnose' skill to get "
         "a structured debugging procedure. Then follow it to investigate "
         "the AutoAgent codebase for issues. Be concise and report findings.",
-        extra_tools=[SkillTool()],
+        extra_tools=[LoadSkillTool()],
     )
 
     evs = [ev async for ev in engine.submit_message(
@@ -136,7 +136,7 @@ async def task_diagnose_autoagent():
     print(f"  Response: {r['text'][:400]}")
 
     ok = (
-        "skill" in r["tools"]
+        "load_skill" in r["tools"]
         and "bash" in r["tools"]
         and len(r["text"]) > 200
         and any(kw in r["text"].lower() for kw in ["import", "error", "except", "issue", "found"])
@@ -502,7 +502,7 @@ async def task_full_dev_workflow():
     print("  Task 6: ALL PRs — Full development workflow on AutoAgent")
     print("=" * 70)
 
-    from openharness.tools.skill_tool import SkillTool
+    from openharness.tools.load_skill_tool import LoadSkillTool
     from openharness.memory.scan import scan_memory_files
     from openharness.memory.search import find_relevant_memories
     from openharness.services.session_storage import save_session_snapshot, load_session_snapshot
@@ -530,7 +530,7 @@ async def task_full_dev_workflow():
             print("  Step 1: [PR#14] OpenAI client researches AutoAgent...")
             engine1 = make_openai_engine(
                 "You are a researcher. Use tools. Be concise.",
-                extra_tools=[SkillTool()],
+                extra_tools=[LoadSkillTool()],
             )
             evs1 = [ev async for ev in engine1.submit_message(
                 "Read autoagent/core.py (first 30 lines) and autoagent/registry.py (first 30 lines). "
@@ -609,7 +609,7 @@ type: project
                 len(r1["tools"]) >= 1       # PR#14: OpenAI tools worked
                 and len(scanned) >= 1       # PR#12: memory saved + scanned
                 and len(search_results) > 0 # PR#12: search works
-                and "skill" in r3["tools"]  # PR#17: skill loaded
+                and "load_skill" in r3["tools"]  # PR#17: skill loaded
                 and sp.exists()             # PR#16: session saved
                 and len(cron_jobs) >= 1     # PR#16: cron created
                 and len(r7["text"]) > 50    # PR#16: resume worked
