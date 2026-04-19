@@ -14,6 +14,30 @@ from openharness.prompts.claudemd import load_claude_md_prompt
 from openharness.prompts.system_prompt import build_system_prompt
 from openharness.skills.loader import load_skill_registry
 
+SKILLS_GUIDANCE = (
+    "After completing a complex task (5+ tool calls), fixing a tricky error, "
+    "or discovering a non-trivial workflow, save the approach as a "
+    "skill with skill_manage so you can reuse it next time.\n"
+    "When using a skill and finding it outdated, incomplete, or wrong, "
+    "patch it immediately with skill_manage(action='patch') — don't wait to be asked. "
+    "Skills that aren't maintained become liabilities."
+)
+
+TOOL_USE_ENFORCEMENT_GUIDANCE = (
+    "# Tool-use enforcement\n"
+    "You MUST use your tools to take action — do not describe what you would do "
+    "or plan to do without actually doing it. When you say you will perform an "
+    "action (e.g. 'I will run the tests', 'Let me check the file', 'I will create "
+    "the project'), you MUST immediately make the corresponding tool call in the same "
+    "response. Never end your turn with a promise of future action — execute it now.\n"
+    "Keep working until the task is actually complete. Do not stop with a summary of "
+    "what you plan to do next time. If you have tools available that can accomplish "
+    "the task, use them instead of telling the user what you would do.\n"
+    "Every response should either (a) contain tool calls that make progress, or "
+    "(b) deliver a final result to the user. Responses that only describe intentions "
+    "without acting are not acceptable."
+)
+
 
 def _build_skills_section(
     cwd: str | Path,
@@ -32,7 +56,7 @@ def _build_skills_section(
     skills = registry.list_skills()
     if not skills:
         return None
-    lines = [
+    lines = [SKILLS_GUIDANCE] + [
         "# Available Skills",
         "",
         "The following skills are available via the `skill` tool. "
@@ -108,6 +132,8 @@ def build_runtime_system_prompt(
     if not is_coordinator_mode():
         sections.append(_build_delegation_section())
 
+    sections.append(TOOL_USE_ENFORCEMENT_GUIDANCE)
+    
     claude_md = load_claude_md_prompt(cwd)
     if claude_md:
         sections.append(claude_md)

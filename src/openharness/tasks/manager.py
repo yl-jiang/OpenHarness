@@ -71,7 +71,7 @@ class BackgroundTaskManager:
         record = TaskRecord(
             id=task_id,
             type=task_type,
-            status="running",
+            status=TaskStatus.RUNNING,
             description=description,
             cwd=str(Path(cwd).resolve()),
             output_file=output_path,
@@ -146,6 +146,38 @@ class BackgroundTaskManager:
             tasks = [task for task in tasks if task.status == status]
         return sorted(tasks, key=lambda item: item.created_at, reverse=True)
 
+    async def wait_for_tasks(
+        self,
+        task_ids: list[str] | None = None,
+        *,
+        timeout: float = 300.0,
+        poll_interval: float = 2.0,
+    ) -> list[TaskRecord]:
+        """Block until all specified tasks (or all running tasks) reach a terminal state.
+
+        Returns the list of awaited task records after they finish.
+        Raises ``asyncio.TimeoutError`` if the timeout is exceeded.
+        """
+        if task_ids is not None:
+            for tid in task_ids:
+                self._require_task(tid)
+            targets = task_ids
+        else:
+            targets = [tid for tid, t in self._tasks.items() if t.status not in TaskStatus.terminal_states()]
+
+        if not targets:
+            return []
+
+        async def _poll() -> list[TaskRecord]:
+            while True:
+                pending = [tid for tid in targets if self._tasks[tid].status not in TaskStatus.terminal_states()]
+                if not pending:
+                    break
+                await asyncio.sleep(poll_interval)
+            return [self._tasks[tid] for tid in targets]
+
+        return await asyncio.wait_for(_poll(), timeout=timeout)
+
     def update_task(
         self,
         task_id: str,
@@ -173,7 +205,7 @@ class BackgroundTaskManager:
         task = self._require_task(task_id)
         process = self._processes.get(task_id)
         if process is None:
-            if task.status in {"completed", "failed", "killed"}:
+            if task.status in TaskStatus.terminal_states():
                 return task
             raise ValueError(f"Task {task_id} is not running")
 
@@ -185,7 +217,7 @@ class BackgroundTaskManager:
             await process.wait()
         await _close_process_stdin(process)
 
-        self._set_task_status(task, "killed")
+        self._set_task_status(task, TaskStatus.KILLED)
         task.ended_at = time.time()
         logger.event(
             "task_manager_stop_task",
@@ -235,8 +267,8 @@ class BackgroundTaskManager:
 
         task = self._tasks[task_id]
         task.return_code = return_code
-        if task.status != "killed":
-            self._set_task_status(task, "completed" if return_code == 0 else "failed")
+        if task.status != TaskStatus.KILLED:
+            self._set_task_status(task, TaskStatus.COMPLETED if return_code == 0 else TaskStatus.FAILED)
         task.ended_at = time.time()
         output_tail = ""
         if return_code != 0:
@@ -321,7 +353,7 @@ class BackgroundTaskManager:
 
         restart_count = int(task.metadata.get("restart_count", "0")) + 1
         task.metadata["restart_count"] = str(restart_count)
-        self._set_task_status(task, "running")
+        self._set_task_status(task, TaskStatus.RUNNING)
         task.started_at = time.time()
         task.ended_at = None
         task.return_code = None

@@ -195,7 +195,7 @@ class TodoItem(BaseModel):
     status: Literal["pending", "in_progress", "completed", "cancelled"] = Field(description="Current status")
 
 
-class TodoWriteToolInput(BaseModel):
+class TodoToolInput(BaseModel):
     todos: Optional[list[TodoItem]] = Field(
         default=None,
         description="Task items to write. Omit to read current list.",
@@ -225,19 +225,19 @@ TODO_TOOL_DESCRIPTION = (
     "Always returns the full current list."
 )
 
-class TodoWriteTool(BaseTool):
+class TodoTool(BaseTool):
     """Add or update an item in a TODO markdown file."""
 
-    name = "todo_write"
+    name = "todo_tool"
     description = TODO_TOOL_DESCRIPTION
-    input_model = TodoWriteToolInput
+    input_model = TodoToolInput
 
-    def is_read_only(self, arguments: TodoWriteToolInput) -> bool:
+    def is_read_only(self, arguments: TodoToolInput) -> bool:
         return arguments.todos is None
 
     async def execute(
         self,
-        arguments: TodoWriteToolInput,
+        arguments: TodoToolInput,
         context: ToolExecutionContext,
     ) -> ToolResult:
         """
