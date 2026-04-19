@@ -106,20 +106,20 @@ async def test_skills_in_system_prompt() -> tuple[bool, str]:
 
 
 async def test_skill_tool_invocation() -> tuple[bool, str]:
-    """Test that SkillTool can load a skill's content."""
-    from openharness.tools.skill_tool import SkillTool, SkillToolInput
+    """Test that load_skill tool can load a skill's content."""
+    from openharness.tools.load_skill_tool import LoadSkillTool, LoadSkillToolInput
     from openharness.tools.base import ToolExecutionContext
 
-    tool = SkillTool()
+    tool = LoadSkillTool()
     result = await tool.execute(
-        SkillToolInput(name="commit"),
+        LoadSkillToolInput(name="commit"),
         ToolExecutionContext(cwd=Path("."), metadata={}),
     )
     if result.is_error:
-        return False, f"SkillTool error: {result.output}"
+        return False, f"load_skill error: {result.output}"
     if "workflow" not in result.output.lower() and "commit" not in result.output.lower():
         return False, f"Skill content doesn't look right: {result.output[:100]}"
-    return True, f"SkillTool returned {len(result.output)} chars for 'commit' skill"
+    return True, f"load_skill returned {len(result.output)} chars for 'commit' skill"
 
 
 async def test_skill_real_model() -> tuple[bool, str]:
