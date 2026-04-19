@@ -26,7 +26,7 @@ from openharness.tools.lsp_tool import LspTool, LspToolInput
 from openharness.tools.notebook_edit_tool import NotebookEditTool, NotebookEditToolInput
 from openharness.tools.remote_trigger_tool import RemoteTriggerTool, RemoteTriggerToolInput
 from openharness.tools.skill_tool import SkillTool, SkillToolInput
-from openharness.tools.todo_write_tool import TodoWriteTool, TodoWriteToolInput
+from openharness.tools.todo_tool import TodoTool, TodoToolInput
 from openharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
 from openharness.tools import create_default_tool_registry
 
@@ -122,8 +122,8 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
     )
     assert "Helpful pytest notes." in skill_result.output
 
-    todo_result = await TodoWriteTool().execute(
-        TodoWriteToolInput(
+    todo_result = await TodoTool().execute(
+        TodoToolInput(
             todos=[{"id": "wire-commands", "content": "wire commands", "status": "pending"}],
         ),
         ToolExecutionContext(cwd=tmp_path),
@@ -145,11 +145,11 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_todo_write_merge_and_read(tmp_path: Path):
-    tool = TodoWriteTool()
+    tool = TodoTool()
     ctx = ToolExecutionContext(cwd=tmp_path)
 
     initial = await tool.execute(
-        TodoWriteToolInput(
+        TodoToolInput(
             todos=[
                 {"id": "task-a", "content": "task A", "status": "in_progress"},
                 {"id": "task-b", "content": "task B", "status": "pending"},
@@ -167,7 +167,7 @@ async def test_todo_write_merge_and_read(tmp_path: Path):
     }
 
     result = await tool.execute(
-        TodoWriteToolInput(
+        TodoToolInput(
             todos=[
                 {"id": "task-a", "content": "task A", "status": "completed"},
                 {"id": "task-c", "content": "task C", "status": "pending"},
@@ -191,7 +191,7 @@ async def test_todo_write_merge_and_read(tmp_path: Path):
         "cancelled": 0,
     }
 
-    read_back = await tool.execute(TodoWriteToolInput(), ctx)
+    read_back = await tool.execute(TodoToolInput(), ctx)
     assert json.loads(read_back.output) == payload
     content = (tmp_path / "TODO.md").read_text(encoding="utf-8")
     assert content.count("task A") == 1

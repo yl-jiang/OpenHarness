@@ -35,9 +35,10 @@ from openharness.tools.task_list_tool import TaskListTool
 from openharness.tools.task_output_tool import TaskOutputTool
 from openharness.tools.task_stop_tool import TaskStopTool
 from openharness.tools.task_update_tool import TaskUpdateTool
+from openharness.tools.task_wait_tool import TaskWaitTool
 from openharness.tools.team_create_tool import TeamCreateTool
 from openharness.tools.team_delete_tool import TeamDeleteTool
-from openharness.tools.todo_write_tool import TodoWriteTool
+from openharness.tools.todo_tool import TodoTool
 from openharness.tools.tool_search_tool import ToolSearchTool
 from openharness.tools.web_fetch_tool import WebFetchTool
 from openharness.tools.web_search_tool import WebSearchTool
@@ -66,7 +67,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         SleepTool(),
         EnterWorktreeTool(),
         ExitWorktreeTool(),
-        TodoWriteTool(),
+        TodoTool(),
         EnterPlanModeTool(),
         ExitPlanModeTool(),
         CronCreateTool(),
@@ -80,6 +81,7 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         TaskStopTool(),
         TaskOutputTool(),
         TaskUpdateTool(),
+        TaskWaitTool(),
         AgentTool(),
         SendMessageTool(),
         TeamCreateTool(),

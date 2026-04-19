@@ -3,12 +3,41 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Literal
 
 
 TaskType = Literal["local_bash", "local_agent", "remote_agent", "in_process_teammate"]
-TaskStatus = Literal["pending", "running", "completed", "failed", "killed"]
+
+
+class TaskStatus(str, Enum):
+    """Lifecycle states for a background task.
+
+    Inherits from ``str`` so values compare equal to their plain-string
+    equivalents (``TaskStatus.RUNNING == "running"`` is ``True``) and
+    serialise transparently in JSON and log output.
+
+    Allowed transitions::
+
+        (created) → RUNNING → COMPLETED
+                             └→ FAILED
+                   └→ KILLED  (via stop_task)
+    """
+
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    KILLED = "killed"
+
+    def __str__(self) -> str:
+        return self.value
+
+    @classmethod
+    def terminal_states(cls) -> frozenset[TaskStatus]:
+        """States from which no further transition is expected."""
+        return frozenset({cls.COMPLETED, cls.FAILED, cls.KILLED})
 
 
 @dataclass
