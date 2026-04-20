@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 from dataclasses import dataclass, field
 
 import yaml
@@ -152,6 +153,37 @@ class WriteSkillTool(BaseTool):
         "Set overwrite=true to update an existing skill."
     )
     input_model = WriteSkillToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "Skill name used as the directory name under ~/.openharness/skills/. "
+                            "Must be lowercase alphanumeric, hyphens, or underscores (e.g. 'code-review')."
+                        ),
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": (
+                            "Full Markdown content for the SKILL.md file. "
+                            "Must start with YAML frontmatter (--- block) containing name and description fields."
+                        ),
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "Set true to replace an already-existing skill with the same name",
+                        "default": False,
+                    },
+                },
+                "required": ["name", "content"],
+            },
+        }
 
     def is_read_only(self, arguments: WriteSkillToolInput) -> bool:
         del arguments

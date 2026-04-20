@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,22 @@ class AskUserQuestionTool(BaseTool):
     name = "ask_user_question"
     description = "Ask the interactive user a follow-up question and return the answer."
     input_model = AskUserQuestionToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {
+                        "type": "string",
+                        "description": "The exact question to ask the user",
+                    },
+                },
+                "required": ["question"],
+            },
+        }
 
     def is_read_only(self, arguments: AskUserQuestionToolInput) -> bool:
         del arguments

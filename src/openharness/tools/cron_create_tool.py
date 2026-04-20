@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.services.cron import upsert_cron_job, validate_cron_expression
@@ -32,6 +34,39 @@ class CronCreateTool(BaseTool):
         "Use 'oh cron start' to run the scheduler daemon."
     )
     input_model = CronCreateToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Unique cron job name",
+                    },
+                    "schedule": {
+                        "type": "string",
+                        "description": "Cron schedule expression (e.g. '*/5 * * * *' for every 5 minutes, '0 9 * * 1-5' for weekdays at 9am)",
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to run when triggered",
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Optional working directory override",
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "Whether the job is active",
+                        "default": True,
+                    },
+                },
+                "required": ["name", "schedule", "command"],
+            },
+        }
 
     async def execute(
         self,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+from typing import Any
 import re
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -30,6 +31,31 @@ class WebSearchTool(BaseTool):
     name = "web_search"
     description = "Search the web and return compact top results with titles, URLs, and snippets."
     input_model = WebSearchToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results (1-10)",
+                        "default": 5,
+                    },
+                    "search_url": {
+                        "type": "string",
+                        "description": "Optional override for the HTML search endpoint",
+                    },
+                },
+                "required": ["query"],
+            },
+        }
 
     def is_read_only(self, arguments: WebSearchToolInput) -> bool:
         del arguments

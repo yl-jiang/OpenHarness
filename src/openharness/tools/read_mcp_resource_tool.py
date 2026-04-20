@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.mcp.client import McpClientManager, McpServerNotConnectedError
@@ -21,6 +23,26 @@ class ReadMcpResourceTool(BaseTool):
     name = "read_mcp_resource"
     description = "Read an MCP resource by server and URI."
     input_model = ReadMcpResourceToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "server": {
+                        "type": "string",
+                        "description": "MCP server name",
+                    },
+                    "uri": {
+                        "type": "string",
+                        "description": "Resource URI",
+                    },
+                },
+                "required": ["server", "uri"],
+            },
+        }
 
     def __init__(self, manager: McpClientManager) -> None:
         self._manager = manager

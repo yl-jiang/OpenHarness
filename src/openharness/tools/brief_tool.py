@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
@@ -20,6 +22,27 @@ class BriefTool(BaseTool):
     name = "brief"
     description = "Shorten a piece of text for compact display."
     input_model = BriefToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to shorten",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Maximum character count (20-2000)",
+                        "default": 200,
+                    },
+                },
+                "required": ["text"],
+            },
+        }
 
     def is_read_only(self, arguments: BriefToolInput) -> bool:
         del arguments

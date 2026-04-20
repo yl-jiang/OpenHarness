@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.skills import load_skill_registry
@@ -44,6 +46,24 @@ class LoadSkillTool(BaseTool):
         "Do NOT invent skill names — always list first if unsure."
     )
     input_model = LoadSkillToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": (
+                            "Name of the skill to load (case-insensitive). "
+                            "Omit to list all available skills."
+                        ),
+                    },
+                },
+            },
+        }
 
     def is_read_only(self, arguments: LoadSkillToolInput) -> bool:
         del arguments

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.coordinator.agent_definitions import get_agent_definition
@@ -54,6 +56,43 @@ class AgentTool(BaseTool):
     name = "agent"
     description = "Spawn a local background agent task."
     input_model = AgentToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string",
+                        "description": "Short description of the delegated work",
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "Full prompt for the local agent",
+                    },
+                    "subagent_type": {
+                        "type": "string",
+                        "description": "Agent type for definition lookup (e.g. 'general-purpose', 'Explore', 'worker')",
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Override spawn command",
+                    },
+                    "team": {
+                        "type": "string",
+                        "description": "Optional team to attach the agent to",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "Agent mode: local_agent, remote_agent, or in_process_teammate",
+                        "default": "local_agent",
+                    },
+                },
+                "required": ["description", "prompt"],
+            },
+        }
 
     async def execute(self, arguments: AgentToolInput, context: ToolExecutionContext) -> ToolResult:
         session_id = _context_value(context, "session_id")

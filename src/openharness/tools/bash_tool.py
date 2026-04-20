@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from pydantic import BaseModel, Field
 
@@ -27,6 +27,31 @@ class BashTool(BaseTool):
     name = "bash"
     description = "Run a shell command in the local repository."
     input_model = BashToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command to execute",
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Working directory override",
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Timeout in seconds (1-600)",
+                        "default": 600,
+                    },
+                },
+                "required": ["command"],
+            },
+        }
 
     async def execute(self, arguments: BashToolInput, context: ToolExecutionContext) -> ToolResult:
         cwd = Path(arguments.cwd).expanduser() if arguments.cwd else context.cwd

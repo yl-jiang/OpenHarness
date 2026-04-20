@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 import re
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -26,6 +27,35 @@ class EnterWorktreeTool(BaseTool):
     name = "enter_worktree"
     description = "Create a git worktree and return its path."
     input_model = EnterWorktreeToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "branch": {
+                        "type": "string",
+                        "description": "Target branch name for the worktree",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Optional worktree path",
+                    },
+                    "create_branch": {
+                        "type": "boolean",
+                        "default": True,
+                    },
+                    "base_ref": {
+                        "type": "string",
+                        "description": "Base ref when creating a new branch",
+                        "default": "HEAD",
+                    },
+                },
+                "required": ["branch"],
+            },
+        }
 
     async def execute(
         self,

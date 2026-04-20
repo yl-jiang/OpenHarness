@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.services.cron import set_job_enabled
@@ -21,6 +23,26 @@ class CronToggleTool(BaseTool):
     name = "cron_toggle"
     description = "Enable or disable a local cron job by name."
     input_model = CronToggleToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Cron job name",
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True to enable, False to disable",
+                    },
+                },
+                "required": ["name", "enabled"],
+            },
+        }
 
     async def execute(
         self,

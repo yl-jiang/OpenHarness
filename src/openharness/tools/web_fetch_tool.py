@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 from html.parser import HTMLParser
 
 import httpx
@@ -36,6 +37,27 @@ class WebFetchTool(BaseTool):
     name = "web_fetch"
     description = "Fetch one web page and return compact readable text."
     input_model = WebFetchToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "HTTP or HTTPS URL to fetch",
+                    },
+                    "max_chars": {
+                        "type": "integer",
+                        "description": "Maximum characters to return (500-50000)",
+                        "default": 12000,
+                    },
+                },
+                "required": ["url"],
+            },
+        }
 
     async def execute(self, arguments: WebFetchToolInput, context: ToolExecutionContext) -> ToolResult:
         del context

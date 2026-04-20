@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from openharness.utils.log import get_logger
 from typing import Any, AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
@@ -58,8 +59,8 @@ def _token_limit_param_for_model(model: str, max_tokens: int) -> dict[str, int]:
 def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert Anthropic tool schemas to OpenAI function-calling format.
 
-    Anthropic format:
-        {"name": "...", "description": "...", "input_schema": {...}}
+    Tool schema format:
+        {"name": "...", "description": "...", "parameters": {...}}
     OpenAI format:
         {"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
     """
@@ -70,7 +71,7 @@ def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]
             "function": {
                 "name": tool["name"],
                 "description": tool.get("description", ""),
-                "parameters": tool.get("input_schema", {}),
+                "parameters": tool.get("parameters", {}),
             },
         })
     return result
@@ -303,6 +304,11 @@ class OpenAICompatibleClient:
         collected_tool_calls: dict[int, dict[str, Any]] = {}
         finish_reason: str | None = None
         usage_data: dict[str, int] = {}
+        # Buffer for stripping <think>…</think> blocks that some providers
+        # (e.g. MiniMax, DeepSeek) embed in delta.content instead of using a
+        # dedicated reasoning_content field.  We accumulate chunks until the
+        # closing tag is seen, then flush the visible remainder.
+        _think_buf = ""
 
         stream = await self._client.chat.completions.create(**params)
         async for chunk in stream:
@@ -326,10 +332,13 @@ class OpenAICompatibleClient:
             if reasoning_piece:
                 collected_reasoning += reasoning_piece
 
-            # Stream text content to user
+            # Stream text content to user, stripping inline <think> blocks
             if delta.content:
-                collected_content += delta.content
-                yield ApiTextDeltaEvent(text=delta.content)
+                _think_buf += delta.content
+                visible, _think_buf = _strip_think_blocks(_think_buf)
+                if visible:
+                    collected_content += visible
+                    yield ApiTextDeltaEvent(text=visible)
 
             # Accumulate tool calls
             if delta.tool_calls:
@@ -425,3 +434,32 @@ class OpenAICompatibleClient:
         if status == 429:
             return RateLimitFailure(msg)
         return RequestFailure(msg)
+
+
+# Matches complete <think>…</think> blocks (DOTALL so newlines are included).
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+
+def _strip_think_blocks(buf: str) -> tuple[str, str]:
+    """Strip complete ``<think>…</think>`` blocks from *buf* and return
+    ``(visible_text, leftover)``.
+
+    Because streaming chunks can arrive mid-tag, we only emit text that is
+    provably outside a think block:
+
+    * Complete ``<think>…</think>`` pairs are removed with the regex.
+    * If an unclosed ``<think>`` is still open at the end of *buf*, we hold
+      everything from that tag onward in *leftover* and emit only the prefix.
+
+    This keeps the logic to two lines of regex + one index search while still
+    handling cross-chunk tags correctly.
+    """
+    # Remove any fully-closed think blocks first.
+    cleaned = _THINK_RE.sub("", buf)
+
+    # If an unclosed <think> remains, hold it back for the next chunk.
+    open_idx = cleaned.find("<think>")
+    if open_idx != -1:
+        return cleaned[:open_idx], cleaned[open_idx:]
+
+    return cleaned, ""

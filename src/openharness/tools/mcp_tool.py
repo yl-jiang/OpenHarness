@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 from pydantic import BaseModel, Field, create_model
 
@@ -22,6 +23,13 @@ class McpToolAdapter(BaseTool):
         self.name = f"mcp__{server_segment}__{tool_segment}"
         self.description = tool_info.description or f"MCP tool {tool_info.name}"
         self.input_model = _input_model_from_schema(self.name, tool_info.input_schema)
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": dict(self._tool_info.input_schema),
+        }
 
     async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
         del context
@@ -70,3 +78,4 @@ def _sanitize_tool_segment(value: str) -> str:
     if not sanitized[0].isalpha():
         return f"mcp_{sanitized}"
     return sanitized
+

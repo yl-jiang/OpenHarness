@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.services.cron import delete_cron_job
@@ -20,6 +22,22 @@ class CronDeleteTool(BaseTool):
     name = "cron_delete"
     description = "Delete a local cron-style job by name."
     input_model = CronDeleteToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Cron job name",
+                    },
+                },
+                "required": ["name"],
+            },
+        }
 
     async def execute(
         self,

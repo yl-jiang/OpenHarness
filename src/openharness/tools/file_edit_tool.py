@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -24,6 +25,34 @@ class FileEditTool(BaseTool):
     name = "edit_file"
     description = "Edit an existing file by replacing a string."
     input_model = FileEditToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path of the file to edit",
+                    },
+                    "old_str": {
+                        "type": "string",
+                        "description": "Existing text to replace",
+                    },
+                    "new_str": {
+                        "type": "string",
+                        "description": "Replacement text",
+                    },
+                    "replace_all": {
+                        "type": "boolean",
+                        "default": False,
+                    },
+                },
+                "required": ["path", "old_str", "new_str"],
+            },
+        }
 
     async def execute(
         self,

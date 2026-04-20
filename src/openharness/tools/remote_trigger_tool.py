@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.services.cron import get_cron_job
@@ -26,6 +28,27 @@ class RemoteTriggerTool(BaseTool):
     name = "remote_trigger"
     description = "Trigger a configured local cron-style job immediately."
     input_model = RemoteTriggerToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Cron job name",
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Maximum wait time in seconds (1-600)",
+                        "default": 120,
+                    },
+                },
+                "required": ["name"],
+            },
+        }
 
     async def execute(
         self,

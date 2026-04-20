@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,11 +45,25 @@ class BaseTool(ABC):
         return False
 
     def to_api_schema(self) -> dict[str, Any]:
-        """Return the tool schema expected by the Anthropic Messages API."""
+        """Return the tool schema sent to the LLM API (Anthropic format).
+
+        Subclasses **should** override this method to return a hand-crafted,
+        LLM-friendly schema.  The default implementation auto-generates one
+        from the Pydantic ``input_model``, which can produce verbose or
+        ambiguous schemas (e.g. ``anyOf`` with null) that confuse some models.
+        """
+        warnings.warn(
+            f"{type(self).__name__} does not override to_api_schema(). "
+            "The auto-generated Pydantic schema may not be LLM-friendly. "
+            "Override to_api_schema() in your Tool subclass to return a "
+            "hand-crafted, unambiguous schema.",
+            UserWarning,
+            stacklevel=2,
+        )
         return {
             "name": self.name,
             "description": self.description,
-            "input_schema": self.input_model.model_json_schema(),
+            "parameters": self.input_model.model_json_schema(),
         }
 
 

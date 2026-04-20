@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.tasks.manager import get_task_manager
@@ -23,6 +25,34 @@ class TaskUpdateTool(BaseTool):
     name = "task_update"
     description = "Update a task description, progress, or status note."
     input_model = TaskUpdateToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "Task identifier",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Updated task description",
+                    },
+                    "progress": {
+                        "type": "integer",
+                        "description": "Progress percentage (0-100)",
+                    },
+                    "status_note": {
+                        "type": "string",
+                        "description": "Short human-readable task note",
+                    },
+                },
+                "required": ["task_id"],
+            },
+        }
 
     async def execute(
         self,

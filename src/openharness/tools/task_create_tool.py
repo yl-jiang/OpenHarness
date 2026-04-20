@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.tasks.manager import get_task_manager
@@ -26,6 +28,40 @@ class TaskCreateTool(BaseTool):
     name = "task_create"
     description = "Create a background shell or local-agent task."
     input_model = TaskCreateToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "type": {
+                        "type": "string",
+                        "enum": ["local_bash", "local_agent"],
+                        "description": "Task type",
+                        "default": "local_bash",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Short task description",
+                    },
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command for local_bash tasks",
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "description": "Prompt for local_agent tasks",
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "Model override for agent tasks",
+                    },
+                },
+                "required": ["description"],
+            },
+        }
 
     async def execute(self, arguments: TaskCreateToolInput, context: ToolExecutionContext) -> ToolResult:
         manager = get_task_manager()
