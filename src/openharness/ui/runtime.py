@@ -25,6 +25,7 @@ from openharness.engine.messages import (
 )
 from openharness.engine.query import MaxTurnsExceeded
 from openharness.engine.stream_events import StreamEvent
+from openharness.engine.types import ToolMetadataKey
 from openharness.hooks import HookEvent, HookExecutionContext, HookExecutor, load_hook_registry
 from openharness.hooks.hot_reload import HookReloader
 from openharness.mcp.client import McpClientManager
@@ -308,21 +309,21 @@ async def build_runtime(
     )
 
     restored_metadata = {
-        "permission_mode": settings.permission.mode.value,
-        "read_file_state": [],
-        "invoked_skills": [],
-        "async_agent_state": [],
-        "async_agent_tasks": [],
-        "recent_work_log": [],
-        "recent_verified_work": [],
-        "task_focus_state": {
+        ToolMetadataKey.PERMISSION_MODE.value: settings.permission.mode.value,
+        ToolMetadataKey.READ_FILE_STATE.value: [],
+        ToolMetadataKey.INVOKED_SKILLS.value: [],
+        ToolMetadataKey.ASYNC_AGENT_STATE.value: [],
+        ToolMetadataKey.ASYNC_AGENT_TASKS.value: [],
+        ToolMetadataKey.RECENT_WORK_LOG.value: [],
+        ToolMetadataKey.RECENT_VERIFIED_WORK.value: [],
+        ToolMetadataKey.TASK_FOCUS_STATE.value: {
             "goal": "",
             "recent_goals": [],
             "active_artifacts": [],
             "verified_state": [],
             "next_step": "",
         },
-        "compact_checkpoints": [],
+        ToolMetadataKey.COMPACT_CHECKPOINTS.value: [],
     }
     if isinstance(restore_tool_metadata, dict):
         for key, value in restore_tool_metadata.items():

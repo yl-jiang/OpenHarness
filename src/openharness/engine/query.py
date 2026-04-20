@@ -29,6 +29,7 @@ from openharness.engine.stream_events import (
     ToolExecutionCompleted,
     ToolExecutionStarted,
 )
+from openharness.engine.types import ToolMetadataKey
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolExecutionContext
@@ -110,7 +111,7 @@ def _task_focus_state(tool_metadata: dict[str, object] | None) -> dict[str, obje
     if tool_metadata is None:
         return {}
     value = tool_metadata.setdefault(
-        "task_focus_state",
+        ToolMetadataKey.TASK_FOCUS_STATE.value,
         {
             "goal": "",
             "recent_goals": [],
@@ -133,7 +134,7 @@ def _task_focus_state(tool_metadata: dict[str, object] | None) -> dict[str, obje
         "verified_state": [],
         "next_step": "",
     }
-    tool_metadata["task_focus_state"] = replacement
+    tool_metadata[ToolMetadataKey.TASK_FOCUS_STATE.value] = replacement
     return replacement
 
 
@@ -178,7 +179,7 @@ def _remember_verified_work(
     normalized = entry.strip()
     if not normalized:
         return
-    bucket = _tool_metadata_bucket(tool_metadata, "recent_verified_work")
+    bucket = _tool_metadata_bucket(tool_metadata, ToolMetadataKey.RECENT_VERIFIED_WORK)
     _append_capped_unique(bucket, normalized[:320], limit=MAX_TRACKED_VERIFIED_WORK)
     state = _task_focus_state(tool_metadata)
     verified_state = state.setdefault("verified_state", [])
@@ -188,15 +189,16 @@ def _remember_verified_work(
 
 def _tool_metadata_bucket(
     tool_metadata: dict[str, object] | None,
-    key: str,
+    key: ToolMetadataKey | str,
 ) -> list[Any]:
     if tool_metadata is None:
         return []
-    value = tool_metadata.setdefault(key, [])
+    key_str = key.value if isinstance(key, ToolMetadataKey) else key
+    value = tool_metadata.setdefault(key_str, [])
     if isinstance(value, list):
         return value
     replacement: list[Any] = []
-    tool_metadata[key] = replacement
+    tool_metadata[key_str] = replacement
     return replacement
 
 
@@ -208,7 +210,7 @@ def _remember_read_file(
     limit: int,
     output: str,
 ) -> None:
-    bucket = _tool_metadata_bucket(tool_metadata, "read_file_state")
+    bucket = _tool_metadata_bucket(tool_metadata, ToolMetadataKey.READ_FILE_STATE)
     preview_lines = [line.strip() for line in output.splitlines()[:6] if line.strip()]
     entry = {
         "path": path,
@@ -232,7 +234,7 @@ def _remember_skill_invocation(
     *,
     skill_name: str,
 ) -> None:
-    bucket = _tool_metadata_bucket(tool_metadata, "invoked_skills")
+    bucket = _tool_metadata_bucket(tool_metadata, ToolMetadataKey.INVOKED_SKILLS)
     normalized = skill_name.strip()
     if not normalized:
         return
@@ -250,7 +252,7 @@ def _remember_async_agent_activity(
     tool_input: dict[str, object],
     output: str,
 ) -> None:
-    bucket = _tool_metadata_bucket(tool_metadata, "async_agent_state")
+    bucket = _tool_metadata_bucket(tool_metadata, ToolMetadataKey.ASYNC_AGENT_STATE)
     if tool_name == "agent":
         description = str(tool_input.get("description") or tool_input.get("prompt") or "").strip()
         summary = f"Spawned async agent. {description}".strip()
@@ -295,7 +297,7 @@ def _remember_async_agent_task(
     if identity is None:
         return
     agent_id, task_id = identity
-    bucket = _tool_metadata_bucket(tool_metadata, "async_agent_tasks")
+    bucket = _tool_metadata_bucket(tool_metadata, ToolMetadataKey.ASYNC_AGENT_TASKS)
     description = str(tool_input.get("description") or tool_input.get("prompt") or "").strip()
     entry = {
         "agent_id": agent_id,
@@ -320,7 +322,7 @@ def _remember_work_log(
     *,
     entry: str,
 ) -> None:
-    bucket = _tool_metadata_bucket(tool_metadata, "recent_work_log")
+    bucket = _tool_metadata_bucket(tool_metadata, ToolMetadataKey.RECENT_WORK_LOG)
     normalized = entry.strip()
     if not normalized:
         return
@@ -332,7 +334,7 @@ def _remember_work_log(
 def _update_plan_mode(tool_metadata: dict[str, object] | None, mode: str) -> None:
     if tool_metadata is None:
         return
-    tool_metadata["permission_mode"] = mode
+    tool_metadata[ToolMetadataKey.PERMISSION_MODE.value] = mode
 
 
 def _record_tool_carryover(
@@ -875,6 +877,7 @@ def _resolve_permission_file_path(
     raw_input: dict[str, object],
     parsed_input: object,
 ) -> str | None:
+    # Tools involving file reading or modification use one of these three keys('file_path', 'path', 'root') in their input schema, so check them in order
     for key in ("file_path", "path", "root"):
         value = raw_input.get(key)
         if isinstance(value, str) and value.strip():

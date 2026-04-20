@@ -12,21 +12,11 @@ from uuid import uuid4
 from openharness.api.usage import UsageSnapshot
 from openharness.config.paths import get_sessions_dir
 from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
+from openharness.engine.types import ToolMetadataKey
 from openharness.utils.fs import atomic_write_text
 
 
-_PERSISTED_TOOL_METADATA_KEYS = (
-    "permission_mode",
-    "read_file_state",
-    "invoked_skills",
-    "async_agent_state",
-    "async_agent_tasks",
-    "recent_work_log",
-    "recent_verified_work",
-    "task_focus_state",
-    "compact_checkpoints",
-    "compact_last",
-)
+_PERSISTED_TOOL_METADATA_KEYS = tuple(key.value for key in ToolMetadataKey.all_persisted_keys())
 
 
 def _sanitize_metadata(value: Any) -> Any:

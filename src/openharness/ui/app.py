@@ -12,6 +12,7 @@ from openharness.coordinator.coordinator_mode import (
     is_coordinator_mode,
 )
 from openharness.engine.query import MaxTurnsExceeded
+from openharness.engine.types import ToolMetadataKey
 from openharness.prompts.context import build_runtime_system_prompt
 from openharness.tasks.manager import get_task_manager
 
@@ -52,7 +53,7 @@ def _decode_task_worker_line(raw: str) -> str:
 def _async_agent_task_entries(tool_metadata: dict[str, object] | None) -> list[dict[str, object]]:
     if not isinstance(tool_metadata, dict):
         return []
-    value = tool_metadata.get("async_agent_tasks")
+    value = tool_metadata.get(ToolMetadataKey.ASYNC_AGENT_TASKS.value)
     if not isinstance(value, list):
         return []
     return [entry for entry in value if isinstance(entry, dict)]
