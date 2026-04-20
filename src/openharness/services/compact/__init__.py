@@ -26,6 +26,7 @@ from openharness.engine.messages import (
     ToolUseBlock,
 )
 from openharness.engine.stream_events import CompactProgressEvent
+from openharness.engine.types import ToolMetadataKey
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.services.token_estimation import estimate_tokens
 
@@ -162,10 +163,10 @@ def _record_compact_checkpoint(
     if details:
         payload.update(_sanitize_metadata(details))
     if carryover_metadata is not None:
-        checkpoints = carryover_metadata.setdefault("compact_checkpoints", [])
+        checkpoints = carryover_metadata.setdefault(ToolMetadataKey.COMPACT_CHECKPOINTS.value, [])
         if isinstance(checkpoints, list):
             checkpoints.append(payload)
-        carryover_metadata["compact_last"] = payload
+        carryover_metadata[ToolMetadataKey.COMPACT_LAST.value] = payload
     return payload
 
 
@@ -457,7 +458,7 @@ def create_recent_files_attachment_if_needed(
 def create_task_focus_attachment_if_needed(
     metadata: dict[str, Any],
 ) -> CompactAttachment | None:
-    state = metadata.get("task_focus_state")
+    state = metadata.get(ToolMetadataKey.TASK_FOCUS_STATE.value)
     if not isinstance(state, dict):
         return None
     goal = str(state.get("goal") or "").strip()
@@ -524,7 +525,7 @@ def create_recent_verified_work_attachment_if_needed(
 
 
 def create_plan_attachment_if_needed(metadata: dict[str, Any]) -> CompactAttachment | None:
-    permission_mode = str(metadata.get("permission_mode") or "").strip().lower()
+    permission_mode = str(metadata.get(ToolMetadataKey.PERMISSION_MODE.value) or "").strip().lower()
     if permission_mode != "plan":
         return None
     lines = [
@@ -538,7 +539,7 @@ def create_plan_attachment_if_needed(metadata: dict[str, Any]) -> CompactAttachm
         "plan",
         "Plan mode context",
         lines,
-        metadata={"permission_mode": permission_mode, "plan_summary": plan_summary},
+        metadata={ToolMetadataKey.PERMISSION_MODE.value: permission_mode, "plan_summary": plan_summary},
     )
 
 
@@ -612,13 +613,13 @@ def _build_compact_attachments(
     attachment_paths = _extract_attachment_paths(messages)
     builders = [
         create_task_focus_attachment_if_needed(metadata),
-        create_recent_verified_work_attachment_if_needed(metadata.get("recent_verified_work")),
+        create_recent_verified_work_attachment_if_needed(metadata.get(ToolMetadataKey.RECENT_VERIFIED_WORK.value)),
         _create_recent_attachments_attachment_if_needed(attachment_paths),
-        create_recent_files_attachment_if_needed(metadata.get("read_file_state")),
+        create_recent_files_attachment_if_needed(metadata.get(ToolMetadataKey.READ_FILE_STATE.value)),
         create_plan_attachment_if_needed(metadata),
-        create_invoked_skills_attachment_if_needed(metadata.get("invoked_skills")),
-        create_async_agent_attachment_if_needed(metadata.get("async_agent_state")),
-        create_work_log_attachment_if_needed(metadata.get("recent_work_log")),
+        create_invoked_skills_attachment_if_needed(metadata.get(ToolMetadataKey.INVOKED_SKILLS.value)),
+        create_async_agent_attachment_if_needed(metadata.get(ToolMetadataKey.ASYNC_AGENT_STATE.value)),
+        create_work_log_attachment_if_needed(metadata.get(ToolMetadataKey.RECENT_WORK_LOG.value)),
     ]
     attachments.extend(attachment for attachment in builders if attachment is not None)
     return attachments
@@ -635,7 +636,7 @@ def _finalize_compaction_result(result: CompactionResult) -> CompactionResult:
 def _metadata_has_checkpoint(metadata: dict[str, Any] | None, checkpoint: str) -> bool:
     if metadata is None:
         return False
-    checkpoints = metadata.get("compact_checkpoints")
+    checkpoints = metadata.get(ToolMetadataKey.COMPACT_CHECKPOINTS.value)
     if not isinstance(checkpoints, list):
         return False
     return any(isinstance(entry, dict) and entry.get("checkpoint") == checkpoint for entry in checkpoints)
@@ -1274,12 +1275,12 @@ async def compact_conversation(
         "attachments": attachment_paths,
     }
     if carryover_metadata is not None:
-        checkpoints = carryover_metadata.get("compact_checkpoints")
+        checkpoints = carryover_metadata.get(ToolMetadataKey.COMPACT_CHECKPOINTS.value)
         if isinstance(checkpoints, list):
-            compact_metadata["compact_checkpoints"] = checkpoints
-        compact_last = carryover_metadata.get("compact_last")
+            compact_metadata[ToolMetadataKey.COMPACT_CHECKPOINTS.value] = checkpoints
+        compact_last = carryover_metadata.get(ToolMetadataKey.COMPACT_LAST.value)
         if isinstance(compact_last, dict):
-            compact_metadata["compact_last"] = compact_last
+            compact_metadata[ToolMetadataKey.COMPACT_LAST.value] = compact_last
 
     compaction_result = CompactionResult(
         trigger=trigger,
