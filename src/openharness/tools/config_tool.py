@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.config.settings import load_settings, save_settings
@@ -22,6 +24,31 @@ class ConfigTool(BaseTool):
     name = "config"
     description = "Read or update OpenHarness settings."
     input_model = ConfigToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["show", "set"],
+                        "description": "show: display all settings; set: update a setting",
+                        "default": "show",
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "Setting key to update (required when action=set)",
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "New value (required when action=set)",
+                    },
+                },
+            },
+        }
 
     async def execute(self, arguments: ConfigToolInput, context: ToolExecutionContext) -> ToolResult:
         del context

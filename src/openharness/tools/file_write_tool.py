@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,30 @@ class FileWriteTool(BaseTool):
     name = "write_file"
     description = "Create or overwrite a text file in the local repository."
     input_model = FileWriteToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path of the file to write",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full file contents",
+                    },
+                    "create_directories": {
+                        "type": "boolean",
+                        "default": True,
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        }
 
     async def execute(
         self,

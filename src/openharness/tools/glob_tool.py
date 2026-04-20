@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -25,6 +26,31 @@ class GlobTool(BaseTool):
     name = "glob"
     description = "List files matching a glob pattern."
     input_model = GlobToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Glob pattern relative to the working directory",
+                    },
+                    "root": {
+                        "type": "string",
+                        "description": "Optional search root",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results (1-5000)",
+                        "default": 200,
+                    },
+                },
+                "required": ["pattern"],
+            },
+        }
 
     def is_read_only(self, arguments: GlobToolInput) -> bool:
         del arguments

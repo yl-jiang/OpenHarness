@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from openharness.utils.log import get_logger
 
 from pydantic import BaseModel, Field
@@ -27,6 +29,26 @@ class SendMessageTool(BaseTool):
     name = "send_message"
     description = "Send a follow-up message to a running local agent task."
     input_model = SendMessageToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "Target local agent task id or swarm agent_id (name@team)",
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Message to write to the task stdin",
+                    },
+                },
+                "required": ["task_id", "message"],
+            },
+        }
 
     async def execute(self, arguments: SendMessageToolInput, context: ToolExecutionContext) -> ToolResult:
         del context

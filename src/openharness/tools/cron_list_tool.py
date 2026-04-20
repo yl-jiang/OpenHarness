@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 from openharness.services.cron import load_cron_jobs
@@ -19,6 +21,16 @@ class CronListTool(BaseTool):
     name = "cron_list"
     description = "List configured local cron jobs with schedule, status, and next run time."
     input_model = CronListToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        }
 
     def is_read_only(self, arguments: CronListToolInput) -> bool:
         del arguments

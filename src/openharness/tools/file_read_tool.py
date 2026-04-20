@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -23,6 +24,32 @@ class FileReadTool(BaseTool):
     name = "read_file"
     description = "Read a text file from the local repository."
     input_model = FileReadToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path of the file to read",
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Zero-based starting line",
+                        "default": 0,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of lines to return (1-2000)",
+                        "default": 200,
+                    },
+                },
+                "required": ["path"],
+            },
+        }
 
     def is_read_only(self, arguments: FileReadToolInput) -> bool:
         del arguments

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from collections import Counter
 
 from pydantic import BaseModel, Field
@@ -41,6 +42,30 @@ class TaskWaitTool(BaseTool):
         "Pass task_ids to wait for specific tasks, or omit to wait for every running task."
     )
     input_model = TaskWaitToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "List of task IDs to wait for. "
+                            "Omit to wait for ALL currently running tasks."
+                        ),
+                    },
+                    "timeout": {
+                        "type": "number",
+                        "description": "Maximum seconds to wait (1-3600)",
+                        "default": 300.0,
+                    },
+                },
+            },
+        }
 
     def is_read_only(self, arguments: TaskWaitToolInput) -> bool:
         del arguments

@@ -6,6 +6,7 @@ import asyncio
 import re
 import shutil
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -29,6 +30,45 @@ class GrepTool(BaseTool):
     name = "grep"
     description = "Search file contents with a regular expression."
     input_model = GrepToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {
+                        "type": "string",
+                        "description": "Regular expression to search for",
+                    },
+                    "root": {
+                        "type": "string",
+                        "description": "Search root directory",
+                    },
+                    "file_glob": {
+                        "type": "string",
+                        "description": "Glob pattern to filter files",
+                        "default": "**/*",
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "default": True,
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of matches (1-2000)",
+                        "default": 200,
+                    },
+                    "timeout_seconds": {
+                        "type": "integer",
+                        "description": "Search timeout (1-120)",
+                        "default": 20,
+                    },
+                },
+                "required": ["pattern"],
+            },
+        }
 
     def is_read_only(self, arguments: GrepToolInput) -> bool:
         del arguments

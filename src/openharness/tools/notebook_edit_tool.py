@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +28,44 @@ class NotebookEditTool(BaseTool):
     name = "notebook_edit"
     description = "Create or edit a Jupyter notebook cell."
     input_model = NotebookEditToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to the .ipynb file",
+                    },
+                    "cell_index": {
+                        "type": "integer",
+                        "description": "Zero-based cell index",
+                    },
+                    "new_source": {
+                        "type": "string",
+                        "description": "Replacement or appended source for the target cell",
+                    },
+                    "cell_type": {
+                        "type": "string",
+                        "enum": ["code", "markdown"],
+                        "default": "code",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["replace", "append"],
+                        "default": "replace",
+                    },
+                    "create_if_missing": {
+                        "type": "boolean",
+                        "default": True,
+                    },
+                },
+                "required": ["path", "cell_index", "new_source"],
+            },
+        }
 
     async def execute(
         self,

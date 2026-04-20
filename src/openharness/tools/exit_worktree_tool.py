@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -22,6 +23,22 @@ class ExitWorktreeTool(BaseTool):
     name = "exit_worktree"
     description = "Remove a git worktree by path."
     input_model = ExitWorktreeToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Worktree path to remove",
+                    },
+                },
+                "required": ["path"],
+            },
+        }
 
     async def execute(
         self,

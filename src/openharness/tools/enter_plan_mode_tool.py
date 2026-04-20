@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 from openharness.config.settings import load_settings, save_settings
@@ -19,6 +21,16 @@ class EnterPlanModeTool(BaseTool):
     name = "enter_plan_mode"
     description = "Switch permission mode to plan."
     input_model = EnterPlanModeToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        }
 
     async def execute(self, arguments: EnterPlanModeToolInput, context: ToolExecutionContext) -> ToolResult:
         del arguments, context

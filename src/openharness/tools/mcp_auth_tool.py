@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.config.settings import load_settings, save_settings
@@ -24,6 +26,35 @@ class McpAuthTool(BaseTool):
     name = "mcp_auth"
     description = "Configure auth for an MCP server and reconnect active sessions when possible."
     input_model = McpAuthToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "server_name": {
+                        "type": "string",
+                        "description": "Configured MCP server name",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["bearer", "header", "env"],
+                        "description": "Auth mode",
+                    },
+                    "value": {
+                        "type": "string",
+                        "description": "Secret value to persist",
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "Header or env key override",
+                    },
+                },
+                "required": ["server_name", "mode", "value"],
+            },
+        }
 
     async def execute(self, arguments: McpAuthToolInput, context: ToolExecutionContext) -> ToolResult:
         settings = load_settings()

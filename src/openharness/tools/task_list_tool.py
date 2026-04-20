@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -35,6 +36,25 @@ class TaskListTool(BaseTool):
         "Always check with no filter first to get a complete picture before filtering."
     )
     input_model = TaskListToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "running", "completed", "failed", "killed"],
+                        "description": (
+                            "Optional status filter. "
+                            "Omit to list ALL tasks regardless of status."
+                        ),
+                    },
+                },
+            },
+        }
 
     def is_read_only(self, arguments: TaskListToolInput) -> bool:
         del arguments

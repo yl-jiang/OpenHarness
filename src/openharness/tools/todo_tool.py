@@ -232,6 +232,67 @@ class TodoTool(BaseTool):
     description = TODO_TOOL_DESCRIPTION
     input_model = TodoToolInput
 
+    def to_api_schema(self) -> dict[str, Any]:
+        """Return a hand-crafted, LLM-friendly schema for todo_tool.
+
+        Pydantic v2 encodes ``Optional[list[TodoItem]]`` as
+        ``anyOf: [{type: "array", items: {$ref: ...}}, {type: "null"}]``.
+        Many OpenAI-compatible models (e.g. MiniMax, GLM) interpret this as
+        "send null by default", which makes every call a read-only no-op.
+
+        This override emits a clean schema:
+        - ``todos`` is an optional array property (absent = read mode)
+        - No null type, no $ref, no $defs — just a flat, unambiguous object
+        """
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "todos": {
+                        "type": "array",
+                        "description": (
+                            "Task items to write. "
+                            "Omit this field entirely to read the current list."
+                        ),
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "id": {
+                                    "type": "string",
+                                    "description": "Unique item identifier",
+                                },
+                                "content": {
+                                    "type": "string",
+                                    "description": "Task description",
+                                },
+                                "status": {
+                                    "type": "string",
+                                    "enum": [
+                                        "pending",
+                                        "in_progress",
+                                        "completed",
+                                        "cancelled",
+                                    ],
+                                    "description": "Current status",
+                                },
+                            },
+                            "required": ["id", "content", "status"],
+                        },
+                    },
+                    "merge": {
+                        "type": "boolean",
+                        "description": (
+                            "true: update existing items by id, add new ones. "
+                            "false (default): replace the entire list."
+                        ),
+                        "default": False,
+                    },
+                },
+            },
+        }
+
     def is_read_only(self, arguments: TodoToolInput) -> bool:
         return arguments.todos is None
 

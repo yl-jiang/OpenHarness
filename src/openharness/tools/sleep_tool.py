@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
@@ -21,6 +23,22 @@ class SleepTool(BaseTool):
     name = "sleep"
     description = "Sleep for a short duration."
     input_model = SleepToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "seconds": {
+                        "type": "number",
+                        "description": "Duration to sleep (0-30 seconds)",
+                        "default": 1.0,
+                    },
+                },
+            },
+        }
 
     def is_read_only(self, arguments: SleepToolInput) -> bool:
         del arguments

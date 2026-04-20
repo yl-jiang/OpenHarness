@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.coordinator.coordinator_mode import get_team_registry
@@ -21,6 +23,27 @@ class TeamCreateTool(BaseTool):
     name = "team_create"
     description = "Create a lightweight in-memory team for agent tasks."
     input_model = TeamCreateToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Team name",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Team description",
+                        "default": "",
+                    },
+                },
+                "required": ["name"],
+            },
+        }
 
     async def execute(self, arguments: TeamCreateToolInput, context: ToolExecutionContext) -> ToolResult:
         del context

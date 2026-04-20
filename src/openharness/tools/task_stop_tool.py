@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.tasks.manager import get_task_manager
@@ -20,6 +22,22 @@ class TaskStopTool(BaseTool):
     name = "task_stop"
     description = "Stop a background task."
     input_model = TaskStopToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "Task identifier",
+                    },
+                },
+                "required": ["task_id"],
+            },
+        }
 
     async def execute(self, arguments: TaskStopToolInput, context: ToolExecutionContext) -> ToolResult:
         del context

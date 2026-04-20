@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -57,6 +57,49 @@ class LspTool(BaseTool):
         "across the current workspace."
     )
     input_model = LspToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": [
+                            "document_symbol",
+                            "workspace_symbol",
+                            "go_to_definition",
+                            "find_references",
+                            "hover",
+                        ],
+                        "description": "The code intelligence operation to perform",
+                    },
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the source file for file-based operations",
+                    },
+                    "symbol": {
+                        "type": "string",
+                        "description": "Explicit symbol name to look up",
+                    },
+                    "line": {
+                        "type": "integer",
+                        "description": "1-based line number for position-based lookups",
+                    },
+                    "character": {
+                        "type": "integer",
+                        "description": "1-based character offset for position-based lookups",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Substring query for workspace_symbol",
+                    },
+                },
+                "required": ["operation"],
+            },
+        }
 
     def is_read_only(self, arguments: LspToolInput) -> bool:
         del arguments

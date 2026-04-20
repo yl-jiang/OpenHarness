@@ -123,7 +123,7 @@ def _convert_tools_to_codex(tools: list[dict[str, Any]]) -> list[dict[str, Any]]
             "type": "function",
             "name": tool["name"],
             "description": tool.get("description", ""),
-            "parameters": tool.get("input_schema", {}),
+            "parameters": tool.get("parameters", {}),
         }
         for tool in tools
     ]

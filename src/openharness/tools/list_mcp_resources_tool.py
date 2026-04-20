@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 from openharness.mcp.client import McpClientManager
@@ -18,6 +20,16 @@ class ListMcpResourcesTool(BaseTool):
     name = "list_mcp_resources"
     description = "List MCP resources available from connected servers."
     input_model = ListMcpResourcesToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        }
 
     def __init__(self, manager: McpClientManager) -> None:
         self._manager = manager

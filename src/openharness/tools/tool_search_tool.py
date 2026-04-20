@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
@@ -19,6 +21,22 @@ class ToolSearchTool(BaseTool):
     name = "tool_search"
     description = "Search the available tool list by name or description."
     input_model = ToolSearchToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Substring to search in tool names and descriptions",
+                    },
+                },
+                "required": ["query"],
+            },
+        }
 
     def is_read_only(self, arguments: ToolSearchToolInput) -> bool:
         del arguments

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from openharness.coordinator.coordinator_mode import get_team_registry
@@ -20,6 +22,22 @@ class TeamDeleteTool(BaseTool):
     name = "team_delete"
     description = "Delete an in-memory team."
     input_model = TeamDeleteToolInput
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Team name",
+                    },
+                },
+                "required": ["name"],
+            },
+        }
 
     async def execute(self, arguments: TeamDeleteToolInput, context: ToolExecutionContext) -> ToolResult:
         del context
