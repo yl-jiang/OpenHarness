@@ -151,7 +151,8 @@ def test_network_bridge_when_domains_allowed(monkeypatch):
     argv = session._build_run_argv()
 
     net_idx = argv.index("--network")
-    assert argv[net_idx + 1] == "bridge"
+    # Domain-based allow/deny rules are not yet enforced; network stays disabled (fail-closed)
+    assert argv[net_idx + 1] == "none"
 
 
 def test_resource_limits_applied(monkeypatch):

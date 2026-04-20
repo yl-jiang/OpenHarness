@@ -190,7 +190,7 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
             claude_oauth=True,
             auth_token_resolver=lambda: settings.resolve_auth().value,
         )
-    if settings.api_format == "openai":
+    if settings.api_format in ("openai", "openai_compat"):
         auth = _safe_resolve_auth()
         return OpenAICompatibleClient(
             api_key=auth.value,
@@ -312,6 +312,7 @@ async def build_runtime(
         "read_file_state": [],
         "invoked_skills": [],
         "async_agent_state": [],
+        "async_agent_tasks": [],
         "recent_work_log": [],
         "recent_verified_work": [],
         "task_focus_state": {
