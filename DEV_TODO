@@ -1,6 +1,19 @@
-- 借鉴hermes，压缩前调用LLM将与用户相关的信息写入MEMORY.md和USER.md，写入后还原messages list;
-- 优化todo tool，每次压缩后将todo list嵌入messages list（参考hermes的todo_tool.py的实现）；
+## 提示词优化
+
+## 工具优化
+
+[X] 优化todo tool，每次压缩后将todo list嵌入messages list（参考hermes的todo_tool.py的实现）；
+
+## 上下文管理
+
+- 每次传入LLM前对messages list进行一次normalize, 确保下次传入的messages list的前面内容保持一致（kv cache友好）；
+
+## 流程优化
+
 - read_file工具增加文件读取cache机制，如果读取的文件的指定区域内容没有变化，直接返回“file content unchanged”(减少不必要的上下文占用)，否则返回新的内容；
 - read_file工具增加一个clear cache的功能，当触发了上下文压缩后，需要清空之前的缓存；
 - 自动skill沉淀机制：当处理用户发送的消息的过程中，调用工具的次数大于指定数量，在这次消息处理完成后，将调用的工具和调用的参数记录下来，形成一个新的技能，并将这个技能加入到系统中（可以参考hermes的skill_manager.py的实现）。
-- 每次传入LLM前对messages list进行一次normalize, 确保下次传入的messages list的前面内容保持一致（kv cache友好）；
+
+## 记忆系统
+
+- 借鉴hermes，压缩前调用LLM将与用户相关的信息写入MEMORY.md和USER.md，写入后还原messages list;
