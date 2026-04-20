@@ -6,7 +6,7 @@ import asyncio
 import os
 import shlex
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -17,6 +17,8 @@ from openharness.utils.log import get_logger
 from openharness.utils.shell import create_shell_subprocess
 
 logger = get_logger(__name__)
+
+CompletionListener = Callable[[TaskRecord], Awaitable[None] | None]
 
 
 class BackgroundTaskManager:
@@ -30,6 +32,7 @@ class BackgroundTaskManager:
         self._input_locks: dict[str, asyncio.Lock] = {}
         self._generations: dict[str, int] = {}
         self._listeners: list[Callable[[TaskRecord, str, str], None]] = []
+        self._completion_listeners: dict[str, CompletionListener] = {}
 
     def on_task_change(self, callback: Callable[[TaskRecord, str, str], None]) -> None:
         """Register a callback fired whenever a task status changes.
@@ -250,6 +253,33 @@ class BackgroundTaskManager:
             return content[-max_bytes:]
         return content
 
+    def register_completion_listener(self, listener: CompletionListener) -> Callable[[], None]:
+        """Register a callback fired whenever a task reaches a terminal state.
+
+        Returns an unregister callable that removes the listener.
+        """
+        listener_id = uuid4().hex
+        self._completion_listeners[listener_id] = listener
+
+        def _unregister() -> None:
+            self._completion_listeners.pop(listener_id, None)
+
+        return _unregister
+
+    async def _notify_completion_listeners(self, task: TaskRecord) -> None:
+        snapshot = replace(task, metadata=dict(task.metadata))
+        for listener_id, listener in list(self._completion_listeners.items()):
+            try:
+                maybe_awaitable = listener(snapshot)
+                if maybe_awaitable is not None:
+                    await maybe_awaitable
+            except Exception:
+                logger.exception(
+                    "Task completion listener %s failed for task %s",
+                    listener_id,
+                    task.id,
+                )
+
     async def _watch_process(
         self,
         task_id: str,
@@ -284,6 +314,7 @@ class BackgroundTaskManager:
         )
         self._processes.pop(task_id, None)
         self._waiters.pop(task_id, None)
+        await self._notify_completion_listeners(task)
 
     async def _copy_output(self, task_id: str, process: asyncio.subprocess.Process) -> None:
         if process.stdout is None:
