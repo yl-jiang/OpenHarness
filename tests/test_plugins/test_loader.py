@@ -76,7 +76,7 @@ def test_load_plugins_from_project_dir(tmp_path: Path, monkeypatch):
     plugins_root.mkdir(parents=True)
     _write_plugin(plugins_root)
 
-    plugins = load_plugins(Settings(), project)
+    plugins = load_plugins(Settings(allow_project_plugins=True), project)
 
     assert len(plugins) == 1
     plugin = plugins[0]
@@ -95,9 +95,9 @@ def test_plugin_skills_and_hooks_are_merged(tmp_path: Path, monkeypatch):
     plugins_root.mkdir(parents=True)
     _write_plugin(plugins_root)
 
-    skills = load_skill_registry(project).list_skills()
+    skills = load_skill_registry(project, settings=Settings(allow_project_plugins=True)).list_skills()
     assert any(skill.name == "Deploy" and skill.source == "plugin" for skill in skills)
 
-    plugins = load_plugins(Settings(), project)
+    plugins = load_plugins(Settings(allow_project_plugins=True), project)
     hooks = load_hook_registry(Settings(), plugins)
     assert "session_start" in hooks.summary()

@@ -35,7 +35,7 @@ def test_gateway_router_uses_thread_when_present():
         timestamp=datetime.utcnow(),
         metadata={"thread_ts": "t1"},
     )
-    assert session_key_for_message(message) == "slack:c1:t1"
+    assert session_key_for_message(message) == "slack:c1:t1:u1"
 
 
 def test_gateway_router_falls_back_to_chat_scope():
@@ -46,7 +46,7 @@ def test_gateway_router_falls_back_to_chat_scope():
         content="hello",
         timestamp=datetime.utcnow(),
     )
-    assert session_key_for_message(message) == "telegram:chat-1"
+    assert session_key_for_message(message) == "telegram:chat-1:u1"
 
 
 def test_gateway_error_formats_claude_refresh_failure():
@@ -689,7 +689,7 @@ async def test_gateway_bridge_restart_command_requests_gateway_restart():
         "🔄 正在重启 gateway，马上回来。\n"
         "Restarting the gateway now. I'll be back in a moment."
     )
-    assert restart_payloads == [("feishu", "c1", "feishu:c1")]
+    assert restart_payloads == [("feishu", "c1", "feishu:c1:u1")]
 
 
 @pytest.mark.asyncio

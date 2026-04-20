@@ -144,7 +144,8 @@ def build_inherited_cli_flags(
             flags.extend(["--permission-mode", "acceptEdits"])
 
     # --- Model override ----------------------------------------------------
-    if model:
+    # "inherit" means use the parent's model via the OPENHARNESS_MODEL env var.
+    if model and model != "inherit":
         flags.extend(["--model", shlex.quote(model)])
 
     # --- API format / base URL ---------------------------------------------
