@@ -112,3 +112,27 @@ async def test_task_manager_on_task_change_fires_callback_when_task_stopped(
         for task_id, old, new in changes
     ), f"Expected 'running' -> 'killed' transition for {task.id}; got {changes}"
 
+
+
+@pytest.mark.asyncio
+async def test_completion_listener_fires_when_task_finishes(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    manager = BackgroundTaskManager()
+    seen: list[tuple[str, str, int | None]] = []
+    done = asyncio.Event()
+
+    async def _listener(task):
+        seen.append((task.id, task.status, task.return_code))
+        done.set()
+
+    manager.register_completion_listener(_listener)
+
+    task = await manager.create_shell_task(
+        command="printf 'done'",
+        description="listener",
+        cwd=tmp_path,
+    )
+
+    await asyncio.wait_for(done.wait(), timeout=5)
+
+    assert seen == [(task.id, "completed", 0)]

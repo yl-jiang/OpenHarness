@@ -179,7 +179,7 @@ async def test_query_engine_plain_text_reply(tmp_path: Path, monkeypatch):
             ]
         ),
         tool_registry=create_default_tool_registry(),
-        permission_checker=PermissionChecker(PermissionSettings()),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
         cwd=tmp_path,
         model="claude-test",
         system_prompt="system",
@@ -228,7 +228,7 @@ async def test_query_engine_executes_tool_calls(tmp_path: Path, monkeypatch):
             ]
         ),
         tool_registry=create_default_tool_registry(),
-        permission_checker=PermissionChecker(PermissionSettings()),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
         cwd=tmp_path,
         model="claude-test",
         system_prompt="system",
@@ -462,7 +462,7 @@ async def test_query_engine_allows_unbounded_turns_when_max_turns_is_none(tmp_pa
             ]
         ),
         tool_registry=create_default_tool_registry(),
-        permission_checker=PermissionChecker(PermissionSettings()),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
         cwd=tmp_path,
         model="claude-test",
         system_prompt="system",
@@ -1239,3 +1239,92 @@ async def test_query_engine_max_turns_exceeded_yields_stream_finished_not_except
         f"{[e for e in events]}"
     )
     assert stream_finished[0].reason == "max_turns_exceeded"
+
+
+class _RecordingHookExecutor:
+    """Duck-typed hook executor that records every fired event + payload."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[HookEvent, dict]] = []
+
+    async def execute(self, event: HookEvent, payload: dict):
+        from openharness.hooks.types import AggregatedHookResult
+
+        self.calls.append((event, dict(payload)))
+        return AggregatedHookResult(results=[])
+
+
+@pytest.mark.asyncio
+async def test_subagent_stop_hook_fires_when_spawned_agent_finishes(tmp_path: Path, monkeypatch):
+    import asyncio
+
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    recorder = _RecordingHookExecutor()
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_agent_1",
+                                name="agent",
+                                input={
+                                    "description": "quick worker run",
+                                    "prompt": "ready",
+                                    "subagent_type": "worker",
+                                    "mode": "local_agent",
+                                    "command": 'python -u -c "import sys; print(sys.stdin.readline().strip())"',
+                                },
+                            )
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=2, output_tokens=2),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="worker done")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        hook_executor=recorder,  # type: ignore[arg-type]
+    )
+
+    _ = [event async for event in engine.submit_message("run a worker")]
+
+    from openharness.tasks import get_task_manager
+
+    manager = get_task_manager()
+    deadline = asyncio.get_running_loop().time() + 2.0
+    while asyncio.get_running_loop().time() < deadline:
+        subagent_stop_calls = [c for c in recorder.calls if c[0] == HookEvent.SUBAGENT_STOP]
+        if subagent_stop_calls:
+            break
+        await asyncio.sleep(0.05)
+    else:
+        raise AssertionError("subagent_stop hook did not fire")
+
+    subagent_stop_calls = [c for c in recorder.calls if c[0] == HookEvent.SUBAGENT_STOP]
+    assert len(subagent_stop_calls) == 1
+    payload = subagent_stop_calls[0][1]
+    assert payload["event"] == "subagent_stop"
+    assert payload["agent_id"] == "worker@default"
+    assert payload["subagent_type"] == "worker"
+    assert payload["mode"] == "local_agent"
+    assert payload["status"] == "completed"
+    assert payload["return_code"] == 0
+
+    task = manager.get_task(payload["task_id"])
+    assert task is not None
+    assert task.status == "completed"
+
