@@ -438,28 +438,30 @@ class OpenAICompatibleClient:
 
 # Matches complete <think>…</think> blocks (DOTALL so newlines are included).
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+_THINK_OPEN_TAG = "<think>"
 
 
 def _strip_think_blocks(buf: str) -> tuple[str, str]:
-    """Strip complete ``<think>…</think>`` blocks from *buf* and return
-    ``(visible_text, leftover)``.
+    """Strip complete ``<think>…</think>`` blocks and return ``(visible_text, leftover)``.
 
-    Because streaming chunks can arrive mid-tag, we only emit text that is
-    provably outside a think block:
-
-    * Complete ``<think>…</think>`` pairs are removed with the regex.
-    * If an unclosed ``<think>`` is still open at the end of *buf*, we hold
-      everything from that tag onward in *leftover* and emit only the prefix.
-
-    This keeps the logic to two lines of regex + one index search while still
-    handling cross-chunk tags correctly.
+    Complete pairs are removed via regex.  An unclosed ``<think>`` is held in
+    *leftover* so it can be re-evaluated once the closing tag arrives in the
+    next streaming chunk.
     """
-    # Remove any fully-closed think blocks first.
+    # Remove fully-closed blocks.
     cleaned = _THINK_RE.sub("", buf)
 
-    # If an unclosed <think> remains, hold it back for the next chunk.
-    open_idx = cleaned.find("<think>")
+    # Hold back any unclosed <think> for the next chunk.
+    open_idx = cleaned.find(_THINK_OPEN_TAG)
     if open_idx != -1:
         return cleaned[:open_idx], cleaned[open_idx:]
+
+    # Streaming providers may split the opening tag itself across chunk
+    # boundaries (e.g. ``"<thi"`` then ``"nk>..."``). Hold back the longest
+    # suffix that could still become ``<think>`` on the next chunk.
+    max_prefix = min(len(cleaned), len(_THINK_OPEN_TAG) - 1)
+    for prefix_len in range(max_prefix, 0, -1):
+        if _THINK_OPEN_TAG.startswith(cleaned[-prefix_len:]):
+            return cleaned[:-prefix_len], cleaned[-prefix_len:]
 
     return cleaned, ""
