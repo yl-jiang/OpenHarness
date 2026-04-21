@@ -227,25 +227,25 @@ async def test_lsp_tool(tmp_path: Path):
     context = ToolExecutionContext(cwd=tmp_path)
 
     document_symbols = await LspTool().execute(
-        LspToolInput(operation="document_symbol", file_path="pkg/utils.py"),
+        LspToolInput(operation="document_symbol", path="pkg/utils.py"),
         context,
     )
     assert "function greet" in document_symbols.output
 
     definition = await LspTool().execute(
-        LspToolInput(operation="go_to_definition", file_path="pkg/app.py", symbol="greet"),
+        LspToolInput(operation="go_to_definition", path="pkg/app.py", symbol="greet"),
         context,
     )
     assert "pkg/utils.py:1:1" in definition.output
 
     references = await LspTool().execute(
-        LspToolInput(operation="find_references", file_path="pkg/app.py", symbol="greet"),
+        LspToolInput(operation="find_references", path="pkg/app.py", symbol="greet"),
         context,
     )
     assert "pkg/app.py:1:from pkg.utils import greet" in references.output
 
     hover = await LspTool().execute(
-        LspToolInput(operation="hover", file_path="pkg/app.py", symbol="greet"),
+        LspToolInput(operation="hover", path="pkg/app.py", symbol="greet"),
         context,
     )
     assert "Return a greeting." in hover.output

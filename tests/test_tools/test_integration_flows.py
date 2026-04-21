@@ -299,13 +299,13 @@ async def test_lsp_flow_across_registry(tmp_path: Path):
     assert "function greet" in symbol_result.output
 
     definition_result = await lsp.execute(
-        lsp.input_model(operation="go_to_definition", file_path="pkg/app.py", symbol="greet"),
+        lsp.input_model(operation="go_to_definition", path="pkg/app.py", symbol="greet"),
         context,
     )
     assert "pkg/utils.py:1:1" in definition_result.output
 
     hover_result = await lsp.execute(
-        lsp.input_model(operation="hover", file_path="pkg/app.py", symbol="greet"),
+        lsp.input_model(operation="hover", path="pkg/app.py", symbol="greet"),
         context,
     )
     assert "Return a greeting." in hover_result.output
