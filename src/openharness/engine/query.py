@@ -616,6 +616,8 @@ async def run_query(
 
         if final_message is None:
             raise RuntimeError("Model stream finished without a final message")
+        
+        # TODO: call `post_api_request` hook
 
         coordinator_context_message: ConversationMessage | None = None
         if context.system_prompt.startswith("You are a **coordinator**."):
@@ -658,6 +660,24 @@ async def run_query(
             return
 
         tool_calls = final_message.tool_uses
+
+        # TODO: valid mismatched tool names before execution and  try to repair
+        # Implemention: a function to check if all tool_name in tool_calls are in the tool registry, if not, try to repair the tool name (e.g., via fuzzy matching or embedding similarity) 
+        
+        # TODO: if tool_name not in the pre-defined tool registry, collect the helpful error info to model and retry with a clarified prompt, but if hit the max retry limit, return an message contain the statution to user.
+        # ```python
+        # for tc in assistant_message.tool_calls:
+        #     if tc.function.name not in self.valid_tool_names:
+        #         content = f"Tool '{tc.function.name}' does not exist. Available tools: {available}"
+        #     else:
+        #         content = "Skipped: another tool call in this turn used an invalid name. Please retry this tool call."
+        #     messages.append({
+        #         "role": "tool",
+        #         "tool_call_id": tc.id,
+        #         "content": content,
+        #     })
+        # continue
+        # ```
 
         if len(tool_calls) == 1:
             # Single tool: sequential (stream events immediately)
@@ -763,13 +783,9 @@ async def _execute_tool_call(
             is_error=True,
         )
 
-    # Normalize common tool inputs before permission checks so path rules apply
-    # consistently across built-in tools that use `file_path`, `path`, or
-    # directory-scoped roots such as `glob`/`grep`.
     _file_path = _resolve_permission_file_path(context.cwd, tool_input, parsed_input)
     _command = _extract_permission_command(tool_input, parsed_input)
-    logger.debug("permission check: %s read_only=%s path=%s cmd=%s",
-              tool_name, tool.is_read_only(parsed_input), _file_path, _command and _command[:80])
+    logger.debug("permission check: %s read_only=%s path=%s cmd=%s", tool_name, tool.is_read_only(parsed_input), _file_path, _command and _command[:80])
     decision = context.permission_checker.evaluate(
         tool_name,
         is_read_only=tool.is_read_only(parsed_input),
@@ -814,7 +830,6 @@ async def _execute_tool_call(
         file_path=_file_path,
         command=_command,
     )
-    logger.debug("executing %s ...", tool_name)
     t0 = time.monotonic()
     try:
         result = await tool.execute(
@@ -842,8 +857,7 @@ async def _execute_tool_call(
             is_error=True,
         )
     elapsed = time.monotonic() - t0
-    logger.debug("executed %s in %.2fs err=%s output_len=%d",
-              tool_name, elapsed, result.is_error, len(result.output or ""))
+    logger.debug("executed %s in %.2fs err=%s output_len=%d", tool_name, elapsed, result.is_error, len(result.output or ""))
     tool_result = ToolResultBlock(
         tool_use_id=tool_use_id,
         content=result.output,

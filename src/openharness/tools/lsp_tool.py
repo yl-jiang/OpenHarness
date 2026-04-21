@@ -27,7 +27,7 @@ class LspToolInput(BaseModel):
         "find_references",
         "hover",
     ] = Field(description="The code intelligence operation to perform")
-    file_path: str | None = Field(default=None, description="Path to the source file for file-based operations")
+    path: str | None = Field(default=None, description="Path to the source file for file-based operations")
     symbol: str | None = Field(default=None, description="Explicit symbol name to look up")
     line: int | None = Field(default=None, ge=1, description="1-based line number for position-based lookups")
     character: int | None = Field(default=None, ge=1, description="1-based character offset for position-based lookups")
@@ -39,8 +39,8 @@ class LspToolInput(BaseModel):
             if not self.query:
                 raise ValueError("workspace_symbol requires query")
             return self
-        if not self.file_path:
-            raise ValueError(f"{self.operation} requires file_path")
+        if not self.path:
+            raise ValueError(f"{self.operation} requires path")
         if self.operation == "document_symbol":
             return self
         if not self.symbol and self.line is None:
@@ -76,7 +76,7 @@ class LspTool(BaseTool):
                         ],
                         "description": "The code intelligence operation to perform",
                     },
-                    "file_path": {
+                    "path": {
                         "type": "string",
                         "description": "Path to the source file for file-based operations",
                     },
@@ -111,20 +111,20 @@ class LspTool(BaseTool):
             results = workspace_symbol_search(root, arguments.query or "")
             return ToolResult(output=_format_symbol_locations(results, root))
 
-        assert arguments.file_path is not None  # validated above
-        file_path = _resolve_path(root, arguments.file_path)
-        if not file_path.exists():
-            return ToolResult(output=f"File not found: {file_path}", is_error=True)
-        if file_path.suffix != ".py":
+        assert arguments.path is not None  # validated above
+        path = _resolve_path(root, arguments.path)
+        if not path.exists():
+            return ToolResult(output=f"File not found: {path}", is_error=True)
+        if path.suffix != ".py":
             return ToolResult(output="The lsp tool currently supports Python files only.", is_error=True)
 
         if arguments.operation == "document_symbol":
-            return ToolResult(output=_format_symbol_locations(list_document_symbols(file_path), root))
+            return ToolResult(output=_format_symbol_locations(list_document_symbols(path), root))
 
         if arguments.operation == "go_to_definition":
             results = go_to_definition(
                 root=root,
-                file_path=file_path,
+                file_path=path,
                 symbol=arguments.symbol,
                 line=arguments.line,
                 character=arguments.character,
@@ -134,7 +134,7 @@ class LspTool(BaseTool):
         if arguments.operation == "find_references":
             results = find_references(
                 root=root,
-                file_path=file_path,
+                file_path=path,
                 symbol=arguments.symbol,
                 line=arguments.line,
                 character=arguments.character,
@@ -143,7 +143,7 @@ class LspTool(BaseTool):
 
         result = hover(
             root=root,
-            file_path=file_path,
+            file_path=path,
             symbol=arguments.symbol,
             line=arguments.line,
             character=arguments.character,
