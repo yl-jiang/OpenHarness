@@ -335,7 +335,9 @@ class OpenAICompatibleClient:
             # Stream text content to user, stripping inline <think> blocks
             if delta.content:
                 _think_buf += delta.content
-                visible, _think_buf = _strip_think_blocks(_think_buf)
+                visible, _think_buf, inline_reasoning = _strip_think_blocks(_think_buf)
+                if inline_reasoning:
+                    collected_reasoning += inline_reasoning
                 if visible:
                     collected_content += visible
                     yield ApiTextDeltaEvent(text=visible)
@@ -437,24 +439,25 @@ class OpenAICompatibleClient:
 
 
 # Matches complete <think>…</think> blocks (DOTALL so newlines are included).
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+_THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
 _THINK_OPEN_TAG = "<think>"
 
 
-def _strip_think_blocks(buf: str) -> tuple[str, str]:
-    """Strip complete ``<think>…</think>`` blocks and return ``(visible_text, leftover)``.
+def _strip_think_blocks(buf: str) -> tuple[str, str, str]:
+    """Strip complete ``<think>…</think>`` blocks and return ``(visible_text, leftover, reasoning)``.
 
-    Complete pairs are removed via regex.  An unclosed ``<think>`` is held in
-    *leftover* so it can be re-evaluated once the closing tag arrives in the
-    next streaming chunk.
+    Complete pairs are removed and their inner content is returned as *reasoning*.
+    An unclosed ``<think>`` is held in *leftover* so it can be re-evaluated once
+    the closing tag arrives in the next streaming chunk.
     """
-    # Remove fully-closed blocks.
+    # Extract reasoning from fully-closed blocks before removing them.
+    reasoning = "".join(_THINK_RE.findall(buf))
     cleaned = _THINK_RE.sub("", buf)
 
     # Hold back any unclosed <think> for the next chunk.
     open_idx = cleaned.find(_THINK_OPEN_TAG)
     if open_idx != -1:
-        return cleaned[:open_idx], cleaned[open_idx:]
+        return cleaned[:open_idx], cleaned[open_idx:], reasoning
 
     # Streaming providers may split the opening tag itself across chunk
     # boundaries (e.g. ``"<thi"`` then ``"nk>..."``). Hold back the longest
@@ -462,6 +465,6 @@ def _strip_think_blocks(buf: str) -> tuple[str, str]:
     max_prefix = min(len(cleaned), len(_THINK_OPEN_TAG) - 1)
     for prefix_len in range(max_prefix, 0, -1):
         if _THINK_OPEN_TAG.startswith(cleaned[-prefix_len:]):
-            return cleaned[:-prefix_len], cleaned[-prefix_len:]
+            return cleaned[:-prefix_len], cleaned[-prefix_len:], reasoning
 
-    return cleaned, ""
+    return cleaned, "", reasoning

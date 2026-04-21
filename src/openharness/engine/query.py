@@ -661,7 +661,7 @@ async def run_query(
 
         tool_calls = final_message.tool_uses
 
-        # TODO: valid mismatched tool names before execution and  try to repair
+        # TODO: valid mismatched tool names before execution and try to repair
         # Implemention: a function to check if all tool_name in tool_calls are in the tool registry, if not, try to repair the tool name (e.g., via fuzzy matching or embedding similarity) 
         
         # TODO: if tool_name not in the pre-defined tool registry, collect the helpful error info to model and retry with a clarified prompt, but if hit the max retry limit, return an message contain the statution to user.
@@ -785,7 +785,8 @@ async def _execute_tool_call(
 
     _file_path = _resolve_permission_file_path(context.cwd, tool_input, parsed_input)
     _command = _extract_permission_command(tool_input, parsed_input)
-    logger.debug("permission check: %s read_only=%s path=%s cmd=%s", tool_name, tool.is_read_only(parsed_input), _file_path, _command and _command[:80])
+    logger.debug("permission check: %s read_only=%s path=%s cmd=%s", 
+                 tool_name, tool.is_read_only(parsed_input), _file_path, _command and _command[:80])
     decision = context.permission_checker.evaluate(
         tool_name,
         is_read_only=tool.is_read_only(parsed_input),
@@ -857,7 +858,8 @@ async def _execute_tool_call(
             is_error=True,
         )
     elapsed = time.monotonic() - t0
-    logger.debug("executed %s in %.2fs err=%s output_len=%d", tool_name, elapsed, result.is_error, len(result.output or ""))
+    logger.debug("executed %s in %.2fs err=%s output_len=%d", 
+                 tool_name, elapsed, result.is_error, len(result.output or ""))
     tool_result = ToolResultBlock(
         tool_use_id=tool_use_id,
         content=result.output,
@@ -891,7 +893,9 @@ def _resolve_permission_file_path(
     raw_input: dict[str, object],
     parsed_input: object,
 ) -> str | None:
-    # Tools involving file reading or modification use one of these three keys('file_path', 'path', 'root') in their input schema, so check them in order
+    # Tools involving file reading or modification use 
+    # one of these three keys('file_path', 'path', 'root') 
+    # in their input schema, so check them in order
     for key in ("file_path", "path", "root"):
         value = raw_input.get(key)
         if isinstance(value, str) and value.strip():
