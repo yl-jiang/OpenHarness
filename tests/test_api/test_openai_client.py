@@ -14,6 +14,7 @@ from openharness.api.openai_client import (
     _convert_messages_to_openai,
     _convert_tools_to_openai,
     _normalize_openai_base_url,
+    _strip_think_blocks,
     _token_limit_param_for_model,
 )
 from openharness.engine.messages import (
@@ -214,6 +215,28 @@ class TestTokenLimitParams:
 
     def test_legacy_chat_models_keep_max_tokens(self):
         assert _token_limit_param_for_model("gpt-4o", 4096) == {"max_tokens": 4096}
+
+
+class TestThinkBlockStripping:
+    def test_extracts_reasoning_and_keeps_visible_text(self):
+        visible, leftover, reasoning = _strip_think_blocks(
+            "Hi<think>chain-of-thought</think>there"
+        )
+        assert visible == "Hithere"
+        assert leftover == ""
+        assert reasoning == "chain-of-thought"
+
+    def test_keeps_unclosed_think_in_leftover(self):
+        visible, leftover, reasoning = _strip_think_blocks("Hi<think>partial")
+        assert visible == "Hi"
+        assert leftover == "<think>partial"
+        assert reasoning == ""
+
+    def test_handles_split_open_tag_prefix(self):
+        visible, leftover, reasoning = _strip_think_blocks("hello<thi")
+        assert visible == "hello"
+        assert leftover == "<thi"
+        assert reasoning == ""
 
 
 class _FakeUsage:
