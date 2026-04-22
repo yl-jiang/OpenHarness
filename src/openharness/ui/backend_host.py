@@ -348,7 +348,7 @@ class ReactBackendHost:
                 await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
                 await self._emit(self._status_snapshot())
                 # Emit todo_update when TodoWrite tool runs
-                if event.tool_name in ("TodoWrite", "todo_write"):
+                if event.tool_name in ("todo_tool"):
                     tool_input = self._last_tool_inputs.get(event.tool_name, {})
                     # TodoWrite input may have 'todos' list or markdown content field
                     todos = tool_input.get("todos") or tool_input.get("content") or []
