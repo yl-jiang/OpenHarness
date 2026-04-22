@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import openharness.cli_dry_run as cli_dry_run
 import typer
 
 __version__ = "0.1.7"
@@ -1165,6 +1166,12 @@ def main(
         help="Output format with --print: text (default), json, or stream-json",
         rich_help_panel="Output",
     ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview resolved runtime config, skills, commands, and tools without executing the model or tools",
+        rich_help_panel="Output",
+    ),
     # --- Permissions ---
     permission_mode: str | None = typer.Option(
         None,
@@ -1298,6 +1305,42 @@ def main(
         save_settings(settings)
 
     from openharness.ui.app import run_print_mode, run_repl, run_task_worker
+
+    if dry_run and (continue_session or resume is not None):
+        print("Error: --dry-run does not support --continue/--resume yet.", file=sys.stderr)
+        raise typer.Exit(1)
+
+    if dry_run:
+        prompt = print_mode.strip() if print_mode is not None else None
+        if print_mode is not None and not prompt:
+            print("Error: -p/--print requires a prompt value, e.g. -p 'your prompt'", file=sys.stderr)
+            raise typer.Exit(1)
+        preview = cli_dry_run.build_dry_run_preview(
+            prompt=prompt,
+            cwd=cwd,
+            model=model,
+            max_turns=max_turns,
+            base_url=base_url,
+            system_prompt=system_prompt,
+            append_system_prompt=append_system_prompt,
+            api_key=api_key,
+            api_format=api_format,
+            permission_mode=permission_mode,
+        )
+        effective_output_format = output_format or "text"
+        if effective_output_format == "text":
+            print(cli_dry_run.format_dry_run_preview(preview))
+        elif effective_output_format == "json":
+            print(json.dumps(preview, ensure_ascii=False, indent=2))
+        elif effective_output_format == "stream-json":
+            print(json.dumps(preview, ensure_ascii=False))
+        else:
+            print(
+                "Error: --dry-run only supports --output-format text, json, or stream-json",
+                file=sys.stderr,
+            )
+            raise typer.Exit(1)
+        return
 
     # Handle --continue and --resume flags
     if continue_session or resume is not None:
