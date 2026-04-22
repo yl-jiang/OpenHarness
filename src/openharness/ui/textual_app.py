@@ -412,7 +412,14 @@ class OpenHarnessTerminalApp(App[None]):
 
     def _append_line(self, message: str) -> None:
         self.transcript_lines.append(message)
-        self.query_one("#transcript", RichLog).write(message)
+        log = self.query_one("#transcript", RichLog)
+        # Only auto-scroll if the user is already at (or near) the bottom.
+        # This prevents deferred scroll_end calls from fighting with mouse
+        # scroll events and jumping the viewport to an unexpected position.
+        was_at_bottom = log.max_scroll_y == 0 or log.scroll_y >= log.max_scroll_y - 1
+        log.write(message, scroll_end=False)
+        if was_at_bottom:
+            log.scroll_end(animate=False, immediate=True, x_axis=False)
 
     async def _clear_transcript(self) -> None:
         self.query_one("#transcript", RichLog).clear()
