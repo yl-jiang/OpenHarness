@@ -26,7 +26,7 @@ from openharness.engine.messages import (
     ToolUseBlock,
 )
 from openharness.engine.stream_events import CompactProgressEvent
-from openharness.engine.types import ToolMetadataKey
+from openharness.engine.types import TaskFocusStateKey, ToolMetadataKey
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.services.token_estimation import estimate_tokens
 
@@ -461,23 +461,23 @@ def create_task_focus_attachment_if_needed(
     state = metadata.get(ToolMetadataKey.TASK_FOCUS_STATE.value)
     if not isinstance(state, dict):
         return None
-    goal = str(state.get("goal") or "").strip()
+    goal = str(state.get(TaskFocusStateKey.GOAL) or "").strip()
     recent_goals = [
         str(item).strip()
-        for item in state.get("recent_goals", [])
+        for item in state.get(TaskFocusStateKey.RECENT_GOALS, [])
         if str(item).strip()
     ]
     active_artifacts = [
         str(item).strip()
-        for item in state.get("active_artifacts", [])
+        for item in state.get(TaskFocusStateKey.ACTIVE_ARTIFACTS, [])
         if str(item).strip()
     ]
     verified_state = [
         str(item).strip()
-        for item in state.get("verified_state", [])
+        for item in state.get(TaskFocusStateKey.VERIFIED_STATE, [])
         if str(item).strip()
     ]
-    next_step = str(state.get("next_step") or "").strip()
+    next_step = str(state.get(TaskFocusStateKey.NEXT_STEP) or "").strip()
     if not any((goal, recent_goals, active_artifacts, verified_state, next_step)):
         return None
     lines = ["Current working focus to preserve across compaction:"]
