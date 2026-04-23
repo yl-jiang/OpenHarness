@@ -271,6 +271,7 @@ class AuthManager:
     def get_profile_statuses(self) -> dict[str, Any]:
         """Return the available provider profiles and whether their auth is configured."""
         active = self.get_active_profile()
+        active_profile = self.settings.resolve_profile()[1]
         auth_sources = self.get_auth_source_statuses()
         statuses: dict[str, Any] = {}
         for name, profile in self.list_profiles().items():
@@ -280,7 +281,7 @@ class AuthManager:
             if auth_source_uses_api_key(profile.auth_source):
                 storage_provider = credential_storage_provider_name(name, profile)
                 configured = bool(load_credential(storage_provider, "api_key")) or configured
-                if not configured and name == active and getattr(self.settings, "api_key", ""):
+                if not configured and name == active and (getattr(active_profile, "api_key", "") or getattr(self.settings, "api_key", "")):
                     configured = True
                 auth_state = "configured" if configured else "missing"
             statuses[name] = {
