@@ -120,7 +120,14 @@ class ReactBackendHost:
             BackendEvent.ready(
                 self._bundle.app_state.get(),
                 get_task_manager().list_tasks(),
-                [f"/{command.name}" for command in self._bundle.commands.list_commands()],
+                [
+                    entry
+                    for command in self._bundle.commands.list_commands()
+                    for entry in (
+                        [f"/{command.name}"]
+                        + [f"/{command.name} {sub}" for sub in command.subcommands]
+                    )
+                ],
             )
         )
         await self._emit(self._status_snapshot())

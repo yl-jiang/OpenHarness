@@ -8,7 +8,7 @@ import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable, Literal, get_args, Iterable
 
@@ -103,6 +103,7 @@ class SlashCommand:
     handler: CommandHandler
     remote_invocable: bool = True
     remote_admin_opt_in: bool = False
+    subcommands: list[str] = field(default_factory=list)
 
 
 class CommandRegistry:
@@ -1543,10 +1544,10 @@ def create_default_command_registry(
     registry.register(SlashCommand("cost", "Show token usage and estimated cost", _cost_handler))
     registry.register(SlashCommand("usage", "Show usage and token estimates", _usage_handler))
     registry.register(SlashCommand("stats", "Show session statistics", _stats_handler))
-    registry.register(SlashCommand("memory", "Inspect and manage project memory", _memory_handler))
+    registry.register(SlashCommand("memory", "Inspect and manage project memory", _memory_handler, subcommands=["list", "show", "add", "remove"]))
     registry.register(SlashCommand("hooks", "Show configured hooks", _hooks_handler))
     registry.register(SlashCommand("resume", "Restore the latest saved session", _resume_handler))
-    registry.register(SlashCommand("session", "Inspect the current session storage", _session_handler))
+    registry.register(SlashCommand("session", "Inspect the current session storage", _session_handler, subcommands=["show", "ls", "path", "tag", "clear"]))
     registry.register(SlashCommand("export", "Export the current transcript", _export_handler))
     registry.register(SlashCommand("share", "Create a shareable transcript snapshot", _share_handler))
     registry.register(SlashCommand("copy", "Copy the latest response or provided text", _copy_handler))
@@ -1554,15 +1555,15 @@ def create_default_command_registry(
     registry.register(SlashCommand("rewind", "Remove the latest conversation turn(s)", _rewind_handler))
     registry.register(SlashCommand("files", "List files in the current workspace", _files_handler))
     registry.register(SlashCommand("init", "Initialize project OpenHarness files", _init_handler))
-    registry.register(SlashCommand("bridge", "Inspect bridge helpers and spawn bridge sessions", _bridge_handler))
+    registry.register(SlashCommand("bridge", "Inspect bridge helpers and spawn bridge sessions", _bridge_handler, subcommands=["show", "list", "encode", "decode", "sdk", "spawn", "output", "stop"]))
     registry.register(SlashCommand("login", "Show auth status or store an API key", _login_handler))
     registry.register(SlashCommand("logout", "Clear the stored API key", _logout_handler))
     registry.register(SlashCommand("feedback", "Save CLI feedback to the local feedback log", _feedback_handler))
     registry.register(SlashCommand("onboarding", "Show the quickstart guide", _onboarding_handler))
-    registry.register(SlashCommand("skills", "List or show available skills", _skills_handler))
-    registry.register(SlashCommand("config", "Show or update configuration", _config_handler))
-    registry.register(SlashCommand("mcp", "Show MCP status", _mcp_handler))
-    registry.register(SlashCommand("plugin", "Manage plugins", _plugin_handler, remote_invocable=False, remote_admin_opt_in=True))
+    registry.register(SlashCommand("skills", "List or show available skills", _skills_handler, subcommands=["list", "show"]))
+    registry.register(SlashCommand("config", "Show or update configuration", _config_handler, subcommands=["show", "set"]))
+    registry.register(SlashCommand("mcp", "Show MCP status", _mcp_handler, subcommands=["show", "auth"]))
+    registry.register(SlashCommand("plugin", "Manage plugins", _plugin_handler, remote_invocable=False, remote_admin_opt_in=True, subcommands=["list", "enable", "disable", "install", "uninstall"]))
     registry.register(SlashCommand("reload-plugins", "Reload plugin discovery for this workspace", _reload_plugins_handler, remote_invocable=False, remote_admin_opt_in=True))
     registry.register(SlashCommand("permissions", "Show or update permission mode", _permissions_handler, remote_invocable=False, remote_admin_opt_in=True))
     registry.register(SlashCommand("plan", "Toggle plan permission mode", _plan_handler, remote_invocable=False, remote_admin_opt_in=True))
@@ -1573,7 +1574,7 @@ def create_default_command_registry(
     registry.register(SlashCommand("continue", "Continue the previous tool loop if it was interrupted", _continue_handler))
     registry.register(SlashCommand("provider", "Show or switch provider profiles", _provider_handler))
     registry.register(SlashCommand("model", "Show or update the default model", _model_handler))
-    registry.register(SlashCommand("theme", "List, set, show or preview TUI themes", _theme_handler))
+    registry.register(SlashCommand("theme", "List, set, show or preview TUI themes", _theme_handler, subcommands=["show", "list", "set", "preview"]))
     registry.register(SlashCommand("output-style", "Show or update output style", _output_style_handler))
     registry.register(SlashCommand("keybindings", "Show resolved keybindings", _keybindings_handler))
     registry.register(SlashCommand("vim", "Show or update Vim mode", _vim_handler))
@@ -1582,15 +1583,15 @@ def create_default_command_registry(
     registry.register(SlashCommand("diff", "Show git diff output", _diff_handler))
     registry.register(SlashCommand("branch", "Show git branch information", _branch_handler))
     registry.register(SlashCommand("commit", "Show status or create a git commit", _commit_handler))
-    registry.register(SlashCommand("issue", "Show or update project issue context", _issue_handler))
-    registry.register(SlashCommand("pr_comments", "Show or update project PR comments context", _pr_comments_handler))
+    registry.register(SlashCommand("issue", "Show or update project issue context", _issue_handler, subcommands=["show", "set", "clear"]))
+    registry.register(SlashCommand("pr_comments", "Show or update project PR comments context", _pr_comments_handler, subcommands=["show", "add", "clear"]))
     registry.register(SlashCommand("privacy-settings", "Show local privacy and storage settings", _privacy_settings_handler))
     registry.register(SlashCommand("rate-limit-options", "Show ways to reduce provider rate pressure", _rate_limit_options_handler))
     registry.register(SlashCommand("release-notes", "Show recent OpenHarness release notes", _release_notes_handler))
     registry.register(SlashCommand("upgrade", "Show upgrade instructions", _upgrade_handler))
-    registry.register(SlashCommand("agents", "List or inspect agent and teammate tasks", _agents_handler))
-    registry.register(SlashCommand("subagents", "Show subagent usage and inspect worker tasks", _agents_handler))
-    registry.register(SlashCommand("tasks", "Manage background tasks", _tasks_handler))
+    registry.register(SlashCommand("agents", "List or inspect agent and teammate tasks", _agents_handler, subcommands=["show", "list", "help"]))
+    registry.register(SlashCommand("subagents", "Show subagent usage and inspect worker tasks", _agents_handler, subcommands=["show", "list", "help"]))
+    registry.register(SlashCommand("tasks", "Manage background tasks", _tasks_handler, subcommands=["list", "run", "stop", "show", "update", "output"]))
 
     for plugin_command in plugin_commands or ():
         if not plugin_command.user_invocable:
