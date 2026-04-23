@@ -35,6 +35,7 @@ dependencies = [
     "lark-oapi>=1.5.0",
     "jupyter>=1.1.1",
     "loguru>=0.7.3",
+    "keyring>=25.7.0",
 ]
 
 [project.optional-dependencies]
