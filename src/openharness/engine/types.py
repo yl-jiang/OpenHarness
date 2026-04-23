@@ -3,6 +3,31 @@
 from enum import Enum
 
 
+class TaskFocusStateKey(str, Enum):
+    """Field keys for the task_focus_state sub-dict inside tool metadata.
+
+    Single source of truth for the task_focus_state schema.
+    Use ``default_task_focus_state()`` to obtain a fresh default instance.
+    """
+
+    GOAL = "goal"
+    RECENT_GOALS = "recent_goals"
+    ACTIVE_ARTIFACTS = "active_artifacts"
+    VERIFIED_STATE = "verified_state"
+    NEXT_STEP = "next_step"
+
+
+def default_task_focus_state() -> dict[str, object]:
+    """Return a fresh default task_focus_state dict."""
+    return {
+        TaskFocusStateKey.GOAL: "",
+        TaskFocusStateKey.RECENT_GOALS: [],
+        TaskFocusStateKey.ACTIVE_ARTIFACTS: [],
+        TaskFocusStateKey.VERIFIED_STATE: [],
+        TaskFocusStateKey.NEXT_STEP: "",
+    }
+
+
 class ToolMetadataKey(str, Enum):
     """Keys for tool metadata storage in the query context.
     

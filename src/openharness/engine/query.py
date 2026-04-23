@@ -29,7 +29,7 @@ from openharness.engine.stream_events import (
     ToolExecutionCompleted,
     ToolExecutionStarted,
 )
-from openharness.engine.types import ToolMetadataKey
+from openharness.engine.types import TaskFocusStateKey, ToolMetadataKey, default_task_focus_state
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolExecutionContext
@@ -112,28 +112,13 @@ def _task_focus_state(tool_metadata: dict[str, object] | None) -> dict[str, obje
         return {}
     value = tool_metadata.setdefault(
         ToolMetadataKey.TASK_FOCUS_STATE.value,
-        {
-            "goal": "",
-            "recent_goals": [],
-            "active_artifacts": [],
-            "verified_state": [],
-            "next_step": "",
-        },
+        default_task_focus_state(),
     )
     if isinstance(value, dict):
-        value.setdefault("goal", "")
-        value.setdefault("recent_goals", [])
-        value.setdefault("active_artifacts", [])
-        value.setdefault("verified_state", [])
-        value.setdefault("next_step", "")
+        for key, default in default_task_focus_state().items():
+            value.setdefault(key, default)
         return value
-    replacement = {
-        "goal": "",
-        "recent_goals": [],
-        "active_artifacts": [],
-        "verified_state": [],
-        "next_step": "",
-    }
+    replacement = default_task_focus_state()
     tool_metadata[ToolMetadataKey.TASK_FOCUS_STATE.value] = replacement
     return replacement
 
@@ -153,10 +138,10 @@ def remember_user_goal(
     summary = _summarize_focus_text(prompt)
     if not summary:
         return
-    recent_goals = state.setdefault("recent_goals", [])
+    recent_goals = state.setdefault(TaskFocusStateKey.RECENT_GOALS, [])
     if isinstance(recent_goals, list):
         _append_capped_unique(recent_goals, summary, limit=MAX_TRACKED_USER_GOALS)
-    state["goal"] = summary
+    state[TaskFocusStateKey.GOAL] = summary
 
 
 def _remember_active_artifact(
@@ -167,7 +152,7 @@ def _remember_active_artifact(
     if not normalized:
         return
     state = _task_focus_state(tool_metadata)
-    artifacts = state.setdefault("active_artifacts", [])
+    artifacts = state.setdefault(TaskFocusStateKey.ACTIVE_ARTIFACTS, [])
     if isinstance(artifacts, list):
         _append_capped_unique(artifacts, normalized[:240], limit=MAX_TRACKED_ACTIVE_ARTIFACTS)
 
@@ -182,7 +167,7 @@ def _remember_verified_work(
     bucket = _tool_metadata_bucket(tool_metadata, ToolMetadataKey.RECENT_VERIFIED_WORK)
     _append_capped_unique(bucket, normalized[:320], limit=MAX_TRACKED_VERIFIED_WORK)
     state = _task_focus_state(tool_metadata)
-    verified_state = state.setdefault("verified_state", [])
+    verified_state = state.setdefault(TaskFocusStateKey.VERIFIED_STATE, [])
     if isinstance(verified_state, list):
         _append_capped_unique(verified_state, normalized[:320], limit=MAX_TRACKED_VERIFIED_WORK)
 
