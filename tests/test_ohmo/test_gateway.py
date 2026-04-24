@@ -26,16 +26,29 @@ from ohmo.session_storage import save_session_snapshot
 from ohmo.workspace import get_gateway_restart_notice_path, initialize_workspace
 
 
-def test_gateway_router_uses_thread_when_present():
+def test_gateway_router_uses_thread_when_present_in_group():
     message = InboundMessage(
         channel="slack",
         sender_id="u1",
         chat_id="c1",
         content="hello",
         timestamp=datetime.utcnow(),
-        metadata={"thread_ts": "t1"},
+        metadata={"thread_ts": "t1", "chat_type": "group"},
     )
     assert session_key_for_message(message) == "slack:c1:t1:u1"
+
+
+def test_gateway_router_ignores_thread_in_p2p():
+    """thread_id must be ignored in p2p chats so replies don't fragment the session."""
+    message = InboundMessage(
+        channel="feishu",
+        sender_id="ou_abc",
+        chat_id="ou_abc",
+        content="好像没有呢",
+        timestamp=datetime.utcnow(),
+        metadata={"thread_id": "omt_1a8ea6d2f90ddb87", "chat_type": "p2p"},
+    )
+    assert session_key_for_message(message) == "feishu:ou_abc:ou_abc"
 
 
 def test_gateway_router_falls_back_to_chat_scope():
