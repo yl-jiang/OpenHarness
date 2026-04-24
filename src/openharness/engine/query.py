@@ -373,15 +373,14 @@ def _carryover_state(
             context.tool_metadata,
             f"Inspected file {resolved_file_path} (lines {offset + 1}-{offset + limit})",
         )
-    elif tool_name == "load_skill":
+    elif tool_name == "skill_manager":
+        action = str(tool_input.get("action") or "").strip()
         skill_name = str(tool_input.get("name") or "").strip()
-        _remember_skill_invocation(context.tool_metadata, skill_name=skill_name)
-        if skill_name:
+        if action == "load" and skill_name:
+            _remember_skill_invocation(context.tool_metadata, skill_name=skill_name)
             _remember_active_artifact(context.tool_metadata, f"skill:{skill_name}")
             _remember_verified_work(context.tool_metadata, f"Loaded skill {skill_name}")
-    elif tool_name == "write_skill":
-        skill_name = str(tool_input.get("name") or "").strip()
-        if skill_name:
+        elif action in ("write", "patch") and skill_name:
             _remember_active_artifact(context.tool_metadata, f"skill:{skill_name}")
             _remember_verified_work(context.tool_metadata, f"Wrote skill {skill_name}")
     elif tool_name in {"agent", "send_message"}:
@@ -445,13 +444,14 @@ def _carryover_log(
     elif tool_name == "grep":
         pattern = str(tool_input.get("pattern") or "").strip()
         _remember_work_log(context.tool_metadata, entry=f"Searched with grep pattern={pattern[:160]}")
-    elif tool_name == "load_skill":
+    elif tool_name == "skill_manager":
+        action = str(tool_input.get("action") or "").strip()
         skill_name = str(tool_input.get("name") or "").strip()
-        _remember_work_log(context.tool_metadata, entry=f"Loaded skill {skill_name}")
-    elif tool_name == "write_skill":
-        skill_name = str(tool_input.get("name") or "").strip()
-        action = "updated" if "updated" in tool_output else "created"
-        _remember_work_log(context.tool_metadata, entry=f"Wrote ({action}) skill {skill_name}")
+        if action == "load" and skill_name:
+            _remember_work_log(context.tool_metadata, entry=f"Loaded skill {skill_name}")
+        elif action in ("write", "patch") and skill_name:
+            verb = "updated" if "updated" in tool_output else "created"
+            _remember_work_log(context.tool_metadata, entry=f"Wrote ({verb}) skill {skill_name}")
     elif tool_name in {"agent", "send_message"}:
         _remember_work_log(context.tool_metadata, entry=f"Async agent action via {tool_name}")
     elif tool_name == "enter_plan_mode":

@@ -23,8 +23,7 @@ from openharness.tools.grep_tool import GrepTool, GrepToolInput
 from openharness.tools.lsp_tool import LspTool, LspToolInput
 from openharness.tools.notebook_edit_tool import NotebookEditTool, NotebookEditToolInput
 from openharness.tools.remote_trigger_tool import RemoteTriggerTool, RemoteTriggerToolInput
-from openharness.tools.load_skill_tool import LoadSkillTool, LoadSkillToolInput
-from openharness.tools.write_skill_tool import WriteSkillTool, WriteSkillToolInput
+from openharness.tools.skill_manager_tool import SkillManagerTool, SkillManagerToolInput, validate_skill_content
 from openharness.tools.todo_tool import TodoTool, TodoToolInput
 from openharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
 from openharness.tools import create_default_tool_registry
@@ -115,8 +114,8 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
     pytest_dir.mkdir()
     (pytest_dir / "SKILL.md").write_text("# Pytest\nHelpful pytest notes.\n", encoding="utf-8")
 
-    skill_result = await LoadSkillTool().execute(
-        LoadSkillToolInput(name="Pytest"),
+    skill_result = await SkillManagerTool().execute(
+        SkillManagerToolInput(action="load", name="Pytest"),
         ToolExecutionContext(cwd=tmp_path),
     )
     assert "Helpful pytest notes." in skill_result.output
@@ -331,8 +330,8 @@ async def test_write_skill_creates_skill_file(tmp_path: Path, monkeypatch):
     ctx = ToolExecutionContext(cwd=tmp_path)
     content = "---\nname: my-workflow\ndescription: My custom workflow\n---\n# My Workflow\nDo stuff.\n"
 
-    result = await WriteSkillTool().execute(
-        WriteSkillToolInput(name="my-workflow", content=content),
+    result = await SkillManagerTool().execute(
+        SkillManagerToolInput(action="write", name="my-workflow", content=content),
         ctx,
     )
 
@@ -350,8 +349,9 @@ async def test_write_skill_normalises_name_to_lowercase(tmp_path: Path, monkeypa
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     ctx = ToolExecutionContext(cwd=tmp_path)
 
-    result = await WriteSkillTool().execute(
-        WriteSkillToolInput(
+    result = await SkillManagerTool().execute(
+        SkillManagerToolInput(
+            action="write",
             name="MySkill",
             content="---\nname: MySkill\ndescription: A test skill\n---\n\n# MySkill\nSome content.\n",
         ),
@@ -370,8 +370,8 @@ async def test_write_skill_rejects_invalid_name(tmp_path: Path, monkeypatch):
     ctx = ToolExecutionContext(cwd=tmp_path)
 
     for bad_name in ("My Skill", "skill!", "../etc", ""):
-        result = await WriteSkillTool().execute(
-            WriteSkillToolInput(name=bad_name, content="# content\n"),
+        result = await SkillManagerTool().execute(
+            SkillManagerToolInput(action="write", name=bad_name, content="# content\n"),
             ctx,
         )
         assert result.is_error is True, f"Expected error for name={bad_name!r}"
@@ -383,8 +383,8 @@ async def test_write_skill_rejects_empty_content(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     ctx = ToolExecutionContext(cwd=tmp_path)
 
-    result = await WriteSkillTool().execute(
-        WriteSkillToolInput(name="empty-skill", content="   "),
+    result = await SkillManagerTool().execute(
+        SkillManagerToolInput(action="write", name="empty-skill", content="   "),
         ctx,
     )
     assert result.is_error is True
@@ -401,22 +401,22 @@ async def test_write_skill_overwrite_protection(tmp_path: Path, monkeypatch):
     guard_repl = "---\nname: guard\ndescription: Guard skill\n---\n\n# Guard\nReplaced.\n"
 
     # Create it first.
-    await WriteSkillTool().execute(
-        WriteSkillToolInput(name="guard", content=guard_orig),
+    await SkillManagerTool().execute(
+        SkillManagerToolInput(action="write", name="guard", content=guard_orig),
         ctx,
     )
 
     # Second write without overwrite flag should fail.
-    result = await WriteSkillTool().execute(
-        WriteSkillToolInput(name="guard", content=guard_repl),
+    result = await SkillManagerTool().execute(
+        SkillManagerToolInput(action="write", name="guard", content=guard_repl),
         ctx,
     )
     assert result.is_error is True
     assert "overwrite" in result.output.lower()
 
     # With overwrite=True it should succeed and update content.
-    result = await WriteSkillTool().execute(
-        WriteSkillToolInput(name="guard", content=guard_repl, overwrite=True),
+    result = await SkillManagerTool().execute(
+        SkillManagerToolInput(action="write", name="guard", content=guard_repl, overwrite=True),
         ctx,
     )
     assert result.is_error is False
@@ -432,14 +432,14 @@ async def test_write_skill_immediately_loadable(tmp_path: Path, monkeypatch):
     ctx = ToolExecutionContext(cwd=tmp_path)
     content = "---\nname: auto-test\ndescription: Automated test skill\n---\n# Auto Test\nTest content here.\n"
 
-    write_result = await WriteSkillTool().execute(
-        WriteSkillToolInput(name="auto-test", content=content),
+    write_result = await SkillManagerTool().execute(
+        SkillManagerToolInput(action="write", name="auto-test", content=content),
         ctx,
     )
     assert write_result.is_error is False
 
-    load_result = await LoadSkillTool().execute(
-        LoadSkillToolInput(name="auto-test"),
+    load_result = await SkillManagerTool().execute(
+        SkillManagerToolInput(action="load", name="auto-test"),
         ctx,
     )
     assert load_result.is_error is False
@@ -454,19 +454,20 @@ async def test_load_skill_lists_skills_when_name_omitted(tmp_path: Path, monkeyp
 
     # Write two skills so there's something to list.
     for name in ("skill-alpha", "skill-beta"):
-        await WriteSkillTool().execute(
-            WriteSkillToolInput(
+        await SkillManagerTool().execute(
+            SkillManagerToolInput(
+                action="write",
                 name=name,
                 content=f"---\nname: {name}\ndescription: Skill {name}\n---\n\n# {name}\nContent.\n",
             ),
             ctx,
         )
 
-    result = await LoadSkillTool().execute(LoadSkillToolInput(), ctx)
+    result = await SkillManagerTool().execute(SkillManagerToolInput(action="list"), ctx)
     assert result.is_error is False
     assert "skill-alpha" in result.output
     assert "skill-beta" in result.output
-    assert "load_skill" in result.output
+    assert "action='load'" in result.output
 
 
 @pytest.mark.asyncio
@@ -476,16 +477,17 @@ async def test_load_skill_not_found_shows_available(tmp_path: Path, monkeypatch)
     ctx = ToolExecutionContext(cwd=tmp_path)
 
     # Write a known skill.
-    await WriteSkillTool().execute(
-        WriteSkillToolInput(
+    await SkillManagerTool().execute(
+        SkillManagerToolInput(
+            action="write",
             name="existing-skill",
             content="---\nname: existing-skill\ndescription: An existing skill\n---\n\n# Existing Skill\nHello.\n",
         ),
         ctx,
     )
 
-    result = await LoadSkillTool().execute(
-        LoadSkillToolInput(name="nonexistent"),
+    result = await SkillManagerTool().execute(
+        SkillManagerToolInput(action="load", name="nonexistent"),
         ctx,
     )
     assert result.is_error is True
@@ -497,8 +499,6 @@ async def test_load_skill_not_found_shows_available(tmp_path: Path, monkeypatch)
 # ---------------------------------------------------------------------------
 # validate_skill_content unit tests
 # ---------------------------------------------------------------------------
-
-from openharness.tools.write_skill_tool import validate_skill_content
 
 
 _VALID_CONTENT = """\

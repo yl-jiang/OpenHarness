@@ -582,7 +582,7 @@ async def test_query_engine_tracks_recent_read_files_and_skills(tmp_path: Path):
     sample = tmp_path / "hello.txt"
     sample.write_text("alpha\nbeta\n", encoding="utf-8")
     registry = create_default_tool_registry()
-    skill_tool = registry.get("load_skill")
+    skill_tool = registry.get("skill_manager")
     assert skill_tool is not None
 
     async def _fake_skill_execute(arguments, context):
@@ -600,7 +600,7 @@ async def test_query_engine_tracks_recent_read_files_and_skills(tmp_path: Path):
                         role="assistant",
                         content=[
                             ToolUseBlock(name="read_file", input={"path": str(sample)}),
-                            ToolUseBlock(name="load_skill", input={"name": "demo-skill"}),
+                            ToolUseBlock(name="skill_manager", input={"action": "load", "name": "demo-skill"}),
                         ],
                     ),
                     usage=UsageSnapshot(input_tokens=1, output_tokens=1),

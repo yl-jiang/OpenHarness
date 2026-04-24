@@ -123,7 +123,7 @@ async def _run_plugin_flow(temp_root: Path) -> None:
         await manager.connect_all()
         try:
             registry = create_default_tool_registry(manager)
-            skill_tool = registry.get("load_skill")
+            skill_tool = registry.get("skill_manager")
             skill_result = await skill_tool.execute(
                 skill_tool.input_model.model_validate({"name": "FixtureSkill"}),
                 ToolExecutionContext(cwd=project),
