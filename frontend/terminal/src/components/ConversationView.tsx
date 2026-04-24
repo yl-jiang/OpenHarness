@@ -15,10 +15,35 @@ function groupToolPairs(items: TranscriptItem[]): GroupedItem[] {
 	let i = 0;
 	while (i < items.length) {
 		const cur = items[i];
-		const next = items[i + 1];
-		if (cur.role === 'tool' && next?.role === 'tool_result') {
-			result.push([cur, next] as const);
-			i += 2;
+		if (cur.role === 'tool') {
+			// Count consecutive tool calls starting at i (parallel batch)
+			let toolEnd = i + 1;
+			while (toolEnd < items.length && items[toolEnd].role === 'tool') {
+				toolEnd++;
+			}
+			const toolCount = toolEnd - i;
+
+			// Count consecutive tool_results immediately following the batch
+			let resultEnd = toolEnd;
+			while (resultEnd < items.length && items[resultEnd].role === 'tool_result') {
+				resultEnd++;
+			}
+			const resultCount = resultEnd - toolEnd;
+
+			// Pair each tool with its positionally-corresponding result
+			const pairedCount = Math.min(toolCount, resultCount);
+			for (let j = 0; j < pairedCount; j++) {
+				result.push([items[i + j], items[toolEnd + j]] as const);
+			}
+			// Tools that don't yet have a result (still in progress)
+			for (let j = pairedCount; j < toolCount; j++) {
+				result.push(items[i + j]);
+			}
+			// Orphaned results (should not normally occur)
+			for (let j = pairedCount; j < resultCount; j++) {
+				result.push(items[toolEnd + j]);
+			}
+			i = resultEnd;
 		} else {
 			result.push(cur);
 			i++;
