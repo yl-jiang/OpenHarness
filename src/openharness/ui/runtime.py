@@ -197,6 +197,8 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
             api_key=auth.value,
             base_url=settings.base_url,
             timeout=settings.timeout,
+            reasoning_effort=active_profile.reasoning_effort,
+            thinking_extra_body=active_profile.thinking_extra_body,
         )
     auth = _safe_resolve_auth()
     return AnthropicApiClient(

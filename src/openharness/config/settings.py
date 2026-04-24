@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from openharness.hooks.schemas import HookDefinition
 from openharness.mcp.types import McpServerConfig
@@ -121,6 +121,15 @@ class ProviderProfile(BaseModel):
     allowed_models: list[str] = Field(default_factory=list)
     context_window_tokens: int | None = None
     auto_compact_threshold_tokens: int | None = None
+    reasoning_effort: str | None = None
+    thinking_extra_body: dict | None = None
+
+    @model_validator(mode="after")
+    def _infer_thinking_extra_body(self) -> "ProviderProfile":
+        if self.reasoning_effort and self.thinking_extra_body is None:
+            if self.api_format == "openai":
+                self.thinking_extra_body = {"thinking": {"type": "enabled"}}
+        return self
 
     @property
     def resolved_model(self) -> str:
@@ -241,6 +250,15 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             default_model="MiniMax-M2.7",
             base_url="https://api.minimax.io/v1",
         ),
+        "deepseek": ProviderProfile(
+            label="DeepSeek",
+            provider="deepseek",
+            api_format="openai",
+            auth_source="deepseek_api_key",
+            default_model="deepseek-chat",
+            base_url="https://api.deepseek.com/v1",
+            reasoning_effort="high",
+        ),
     }
 
 
@@ -329,6 +347,7 @@ def auth_source_provider_name(auth_source: str) -> str:
         "moonshot_api_key": "moonshot",
         "gemini_api_key": "gemini",
         "minimax_api_key": "minimax",
+        "deepseek_api_key": "deepseek",
     }
     return mapping.get(auth_source, auth_source)
 
@@ -370,6 +389,8 @@ def default_auth_source_for_provider(provider: str, api_format: str | None = Non
         return "gemini_api_key"
     if provider == "minimax":
         return "minimax_api_key"
+    if provider == "deepseek":
+        return "deepseek_api_key"
     if provider == "openai" or api_format == "openai":
         return "openai_api_key"
     return "anthropic_api_key"
@@ -688,6 +709,8 @@ class Settings(BaseModel):
             "dashscope_api_key": "DASHSCOPE_API_KEY",
             "moonshot_api_key": "MOONSHOT_API_KEY",
             "minimax_api_key": "MINIMAX_API_KEY",
+            "deepseek_api_key": "DEEPSEEK_API_KEY",
+            "gemini_api_key": "GEMINI_API_KEY",
         }.get(auth_source)
         if env_var:
             env_value = os.environ.get(env_var, "")
