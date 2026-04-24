@@ -12,6 +12,7 @@ from openharness.channels.bus.events import InboundMessage, OutboundMessage
 from openharness.channels.bus.queue import MessageBus
 from openharness.channels.impl.base import BaseChannel
 from openharness.channels.impl.manager import ChannelManager
+from openharness.channels.impl import SUPPORTED_CHANNELS
 
 __all__ = [
     "BaseChannel",
@@ -19,4 +20,5 @@ __all__ = [
     "InboundMessage",
     "MessageBus",
     "OutboundMessage",
+    "SUPPORTED_CHANNELS",
 ]

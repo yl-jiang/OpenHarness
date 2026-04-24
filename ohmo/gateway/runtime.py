@@ -12,6 +12,7 @@ import os
 import string
 
 from openharness.channels.bus.events import InboundMessage
+from openharness.channels.impl import SUPPORTED_CHANNELS
 from openharness.commands import CommandContext, CommandResult
 from openharness.engine.messages import (
     ConversationMessage,
@@ -570,18 +571,7 @@ def _format_channel_progress(
     compact_trigger: str | None = None,
     attempt: int | None = None,
 ) -> str:
-    if channel not in {
-        "feishu",
-        "telegram",
-        "slack",
-        "discord",
-        "matrix",
-        "whatsapp",
-        "email",
-        "dingtalk",
-        "qq",
-        "wechat",
-    }:
+    if channel not in SUPPORTED_CHANNELS:
         return text
     prefers_chinese = _prefers_chinese_progress(content)
     if kind == "thinking":
