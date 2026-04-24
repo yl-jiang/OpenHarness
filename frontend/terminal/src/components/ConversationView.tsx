@@ -75,14 +75,29 @@ function ConversationViewInner({
 	while (gi < grouped.length) {
 		const group = grouped[gi];
 		if (Array.isArray(group)) {
-			// Find the extent of this consecutive run of ToolPairs
-			let runEnd = gi + 1;
-			while (runEnd < grouped.length && Array.isArray(grouped[runEnd])) {
-				runEnd++;
+			// Collect all ToolPairs in this run.
+			// Empty-text assistant items are transparent separators: skip them
+			// so that sequential single-tool calls also get tree connectors.
+			const runPairs: ToolPair[] = [];
+			let scanIdx = gi;
+			while (scanIdx < grouped.length) {
+				const it = grouped[scanIdx];
+				if (Array.isArray(it)) {
+					runPairs.push(it as ToolPair);
+					scanIdx++;
+				} else {
+					const ti = it as TranscriptItem;
+					if (ti.role === 'assistant' && !ti.text.trim()) {
+						scanIdx++; // consume empty assistant (renders as <> anyway)
+					} else {
+						break;
+					}
+				}
 			}
-			const runLen = runEnd - gi;
-			for (let k = 0; k < runLen; k++) {
-				const pair = grouped[gi + k] as ToolPair;
+			gi = scanIdx;
+
+			const runLen = runPairs.length;
+			runPairs.forEach((pair, k) => {
 				let treePos: TreePos;
 				if (runLen === 1) {
 					treePos = 'single';
@@ -95,15 +110,14 @@ function ConversationViewInner({
 				}
 				elements.push(
 					<ToolCallDisplay
-						key={`tp-${gi + k}`}
+						key={`tp-${gi - runLen + k}`}
 						item={pair[0]}
 						resultItem={pair[1]}
 						outputStyle={outputStyle}
 						treePos={treePos}
 					/>
 				);
-			}
-			gi = runEnd;
+			});
 		} else {
 			const single = group as TranscriptItem;
 			// For unpaired in-progress tools, determine whether they're in a run with paired tools
