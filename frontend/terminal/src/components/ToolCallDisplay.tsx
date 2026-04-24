@@ -4,7 +4,9 @@ import {Box, Text} from 'ink';
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TranscriptItem} from '../types.js';
 
-export function ToolCallDisplay({item, resultItem, outputStyle}: {item: TranscriptItem; resultItem?: TranscriptItem; outputStyle?: string}): React.JSX.Element {
+export type TreePos = 'single' | 'first' | 'middle' | 'last';
+
+export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item: TranscriptItem; resultItem?: TranscriptItem; outputStyle?: string; treePos?: TreePos}): React.JSX.Element {
 	const {theme} = useTheme();
 	const isCodexStyle = outputStyle === 'codex';
 
@@ -33,6 +35,9 @@ export function ToolCallDisplay({item, resultItem, outputStyle}: {item: Transcri
 				const lineCount = resultItem.text.split('\n').filter((l) => l.trim()).length;
 				statusNode = <Text dimColor>{lineCount > 0 ? ` ${lineCount}L` : ''}</Text>;
 			}
+		} else if (!isCodexStyle) {
+			// Tool is still in progress — no result yet
+			statusNode = <Text dimColor> → …</Text>;
 		}
 
 		if (isCodexStyle) {
@@ -52,10 +57,17 @@ export function ToolCallDisplay({item, resultItem, outputStyle}: {item: Transcri
 			);
 		}
 
+		// Tree connector: parallel members use ├─/└─, single tool uses the theme icon
+		const isParallel = treePos !== undefined && treePos !== 'single';
+		const connectorIcon = isParallel
+			? (treePos === 'last' ? '  └─ ' : '  ├─ ')
+			: theme.icons.tool;
+		const connectorColor = isParallel ? theme.colors.muted : theme.colors.accent;
+
 		return (
 			<Box marginLeft={2} flexDirection="column">
 				<Text>
-					<Text color={theme.colors.accent} bold>{theme.icons.tool}</Text>
+					<Text color={connectorColor}>{connectorIcon}</Text>
 					<Text color={theme.colors.accent} bold>{toolName}</Text>
 					<Text dimColor> {summary}</Text>
 					{statusNode}
@@ -111,26 +123,43 @@ function summarizeInput(toolName: string, toolInput?: Record<string, unknown>, f
 		return fallback?.slice(0, 80) ?? '';
 	}
 	const lower = toolName.toLowerCase();
+	// bash
 	if (lower === 'bash' && toolInput.command) {
 		return String(toolInput.command).slice(0, 120);
 	}
-	if ((lower === 'read' || lower === 'fileread') && toolInput.file_path) {
-		return String(toolInput.file_path);
+	// file read — actual tool uses `path`; also accept legacy `file_path`
+	if ((lower === 'read_file' || lower === 'read' || lower === 'fileread') && (toolInput.path || toolInput.file_path)) {
+		const p = String(toolInput.path ?? toolInput.file_path);
+		const limit = toolInput.limit ? ` [${toolInput.limit}L]` : '';
+		return p + limit;
 	}
-	if ((lower === 'write' || lower === 'filewrite') && toolInput.file_path) {
-		return String(toolInput.file_path);
+	// file write / edit
+	if ((lower === 'write_file' || lower === 'write' || lower === 'filewrite') && (toolInput.path || toolInput.file_path)) {
+		return String(toolInput.path ?? toolInput.file_path);
 	}
-	if ((lower === 'edit' || lower === 'fileedit') && toolInput.file_path) {
-		return String(toolInput.file_path);
+	if ((lower === 'edit_file' || lower === 'edit' || lower === 'fileedit' || lower === 'multiedit') && (toolInput.path || toolInput.file_path)) {
+		return String(toolInput.path ?? toolInput.file_path);
 	}
+	// grep — show path when present for context
 	if (lower === 'grep' && toolInput.pattern) {
-		return `/${String(toolInput.pattern)}/`;
+		const inPath = toolInput.path ? ` ${String(toolInput.path)}` : '';
+		return `/${String(toolInput.pattern)}/${inPath}`.trim();
 	}
+	// glob — show path for context
 	if (lower === 'glob' && toolInput.pattern) {
-		return String(toolInput.pattern);
+		const inPath = toolInput.path ? ` in ${String(toolInput.path)}` : '';
+		return String(toolInput.pattern) + inPath;
 	}
-	if (lower === 'agent' && toolInput.description) {
-		return String(toolInput.description);
+	// web tools
+	if ((lower === 'web_fetch' || lower === 'webfetch') && toolInput.url) {
+		return String(toolInput.url).slice(0, 80);
+	}
+	if ((lower === 'web_search' || lower === 'websearch') && toolInput.query) {
+		return `"${String(toolInput.query).slice(0, 70)}"`;
+	}
+	// agents / tasks
+	if ((lower === 'agent' || lower === 'task_create') && toolInput.description) {
+		return String(toolInput.description).slice(0, 80);
 	}
 	// Fallback: show first key=value
 	const entries = Object.entries(toolInput);
