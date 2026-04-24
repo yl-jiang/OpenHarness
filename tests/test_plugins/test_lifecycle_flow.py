@@ -73,9 +73,9 @@ async def test_plugin_install_load_and_uninstall_flow(tmp_path: Path, monkeypatc
     await manager.connect_all()
     try:
         registry = create_default_tool_registry(manager)
-        skill_tool = registry.get("load_skill")
+        skill_tool = registry.get("skill_manager")
         skill_result = await skill_tool.execute(
-            skill_tool.input_model.model_validate({"name": "FixtureSkill"}),
+            skill_tool.input_model.model_validate({"action": "load", "name": "FixtureSkill"}),
             ToolExecutionContext(cwd=project),
         )
         assert "Fixture skill content" in skill_result.output

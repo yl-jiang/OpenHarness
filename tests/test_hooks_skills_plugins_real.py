@@ -156,7 +156,7 @@ async def task_model_invokes_skill_tool():
     from openharness.tools.file_read_tool import FileReadTool
     from openharness.tools.glob_tool import GlobTool
     from openharness.tools.grep_tool import GrepTool
-    from openharness.tools.load_skill_tool import LoadSkillTool
+    from openharness.tools.skill_manager_tool import SkillManagerTool
     import openharness.skills.loader as sl
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -187,7 +187,7 @@ When performing a code review, follow these exact steps:
 
         api = AnthropicApiClient(api_key=API_KEY, base_url=BASE_URL)
         reg = ToolRegistry()
-        for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), LoadSkillTool()]:
+        for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), SkillManagerTool()]:
             reg.register(t)
         checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
 
@@ -215,7 +215,7 @@ When performing a code review, follow these exact steps:
         print(f"  Turns: {r['turns']}")
         print(f"  Response: {r['text'][:400]}")
 
-        skill_invoked = "load_skill" in r["tools"]
+        skill_invoked = "skill_manager" in r["tools"]
         followed_instructions = "grep" in r["tools"]  # skill says to grep for TODO/FIXME
         has_report = any(kw in r["text"].lower() for kw in ["todo", "fixme"])
 
@@ -249,7 +249,7 @@ async def task_plugin_skill_in_agent_loop():
     from openharness.tools.file_read_tool import FileReadTool
     from openharness.tools.glob_tool import GlobTool
     from openharness.tools.grep_tool import GrepTool
-    from openharness.tools.load_skill_tool import LoadSkillTool
+    from openharness.tools.skill_manager_tool import SkillManagerTool
     import openharness.skills.loader as sl
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -292,7 +292,7 @@ To scan for hardcoded secrets:
 
         api = AnthropicApiClient(api_key=API_KEY, base_url=BASE_URL)
         reg = ToolRegistry()
-        for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), LoadSkillTool()]:
+        for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), SkillManagerTool()]:
             reg.register(t)
         checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
 
@@ -320,7 +320,7 @@ To scan for hardcoded secrets:
         print(f"  Turns: {r['turns']}")
         print(f"  Response: {r['text'][:400]}")
 
-        skill_invoked = "load_skill" in r["tools"]
+        skill_invoked = "skill_manager" in r["tools"]
         did_grep = "grep" in r["tools"]
         has_findings = any(kw in r["text"].lower() for kw in ["password", "secret", "token", "api_key", "key"])
 
@@ -355,7 +355,7 @@ async def task_hook_gates_writes_skill_guides():
     from openharness.tools.file_edit_tool import FileEditTool
     from openharness.tools.glob_tool import GlobTool
     from openharness.tools.grep_tool import GrepTool
-    from openharness.tools.load_skill_tool import LoadSkillTool
+    from openharness.tools.skill_manager_tool import SkillManagerTool
     from openharness.hooks.events import HookEvent
     from openharness.hooks.loader import HookRegistry
     from openharness.hooks.schemas import CommandHookDefinition
@@ -428,7 +428,7 @@ def process_v2(data):
 
         reg = ToolRegistry()
         for t in [BashTool(), FileReadTool(), FileWriteTool(), FileEditTool(),
-                  GlobTool(), GrepTool(), LoadSkillTool()]:
+                  GlobTool(), GrepTool(), SkillManagerTool()]:
             reg.register(t)
         checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
 
@@ -458,7 +458,7 @@ def process_v2(data):
         print(f"  Tool errors: {len(r['tool_errors'])}")
         print(f"  Response: {r['text'][:300]}")
 
-        skill_invoked = "load_skill" in r["tools"]
+        skill_invoked = "skill_manager" in r["tools"]
         did_read = "read_file" in r["tools"]
         did_write = "write_file" in r["tools"]
 
@@ -507,7 +507,7 @@ async def task_swarm_teammates_use_skills():
     from openharness.tools.file_read_tool import FileReadTool
     from openharness.tools.glob_tool import GlobTool
     from openharness.tools.grep_tool import GrepTool
-    from openharness.tools.load_skill_tool import LoadSkillTool
+    from openharness.tools.skill_manager_tool import SkillManagerTool
     from openharness.tools.file_write_tool import FileWriteTool
     import openharness.skills.loader as sl
 
@@ -539,7 +539,7 @@ Use grep to search for '^import ' and '^from .* import'. Count unique packages. 
 
         async def run_teammate(name, prompt):
             reg = ToolRegistry()
-            for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), LoadSkillTool(), FileWriteTool()]:
+            for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), SkillManagerTool(), FileWriteTool()]:
                 reg.register(t)
             ctx = QueryContext(
                 api_client=api, tool_registry=reg,
