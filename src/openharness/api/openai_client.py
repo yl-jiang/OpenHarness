@@ -235,7 +235,15 @@ class OpenAICompatibleClient:
     so it can be used as a drop-in replacement in the agent loop.
     """
 
-    def __init__(self, api_key: str, *, base_url: str | None = None, timeout: float | None = None) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str | None = None,
+        timeout: float | None = None,
+        reasoning_effort: str | None = None,
+        thinking_extra_body: dict | None = None,
+    ) -> None:
         kwargs: dict[str, Any] = {"api_key": api_key}
         normalized_base_url = _normalize_openai_base_url(base_url)
         if normalized_base_url:
@@ -243,6 +251,8 @@ class OpenAICompatibleClient:
         if timeout is not None:
             kwargs["timeout"] = timeout
         self._client = AsyncOpenAI(**kwargs)
+        self._reasoning_effort = reasoning_effort
+        self._thinking_extra_body = thinking_extra_body
 
     async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         """Yield text deltas and the final message, matching the Anthropic client interface."""
@@ -293,6 +303,11 @@ class OpenAICompatibleClient:
             "stream_options": {"include_usage": True},
         }
         params.update(_token_limit_param_for_model(request.model, request.max_tokens))
+
+        if self._reasoning_effort:
+            params["reasoning_effort"] = self._reasoning_effort
+            params["extra_body"] = self._thinking_extra_body
+
         if openai_tools:
             params["tools"] = openai_tools
             # Some providers (Kimi) error on empty reasoning_content in

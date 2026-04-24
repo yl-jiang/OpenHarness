@@ -776,6 +776,13 @@ class ReactBackendHost:
                     ("MiniMax-M2.7-highspeed", "MiniMax fast"),
                 ]
             )
+        elif provider_name == "deepseek":
+            families.extend(
+                [
+                    ("deepseek-v4-flash", "DeepSeek V4 Flash (thinking)"),
+                    ("deepseek-v4-pro", "DeepSeek V4 Pro (thinking)"),
+                ]
+            )
 
         seen: set[str] = set()
         options: list[dict[str, object]] = []
