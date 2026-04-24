@@ -365,7 +365,7 @@ def _validate_lsp_flow(cwd: Path, final_text: str, tool_names: list[str], starte
 
 def _validate_cron_flow(cwd: Path, final_text: str, tool_names: list[str], started: int, completed: int) -> tuple[bool, str]:
     del cwd, started, completed
-    required = {"cron_create", "cron_list", "remote_trigger", "cron_delete"}
+    required = {"cron_manager", "remote_trigger"}
     if not required.issubset(set(tool_names)):
         return False, f"missing required tools: {sorted(required - set(tool_names))}"
     if "FINAL_OK_CRON" not in final_text:
@@ -635,14 +635,14 @@ SCENARIOS: dict[str, Scenario] = {
         prompt=(
             "You are running an OpenHarness cron test. "
             "You must use tools. "
-            "1. Use cron_create with name smoke-cron, schedule daily, and command printf 'CRON_SMOKE_OK'. "
-            "2. Use cron_list to verify smoke-cron exists. "
+            "1. Use cron_manager with action=create, name=smoke-cron, schedule=daily, and command=printf 'CRON_SMOKE_OK'. "
+            "2. Use cron_manager with action=list to verify smoke-cron exists. "
             "3. Use remote_trigger with name smoke-cron and verify the output contains CRON_SMOKE_OK. "
-            "4. Use cron_delete to remove smoke-cron. "
+            "4. Use cron_manager with action=delete to remove smoke-cron. "
             "5. Reply with exactly FINAL_OK_CRON and include CRON_SMOKE_OK."
         ),
         expected_final="FINAL_OK_CRON",
-        required_tools=("cron_create", "cron_list", "remote_trigger", "cron_delete"),
+        required_tools=("cron_manager", "remote_trigger"),
         validate=_validate_cron_flow,
     ),
     "worktree_flow": Scenario(
