@@ -279,16 +279,27 @@ class SkillManagerTool(BaseTool):
             return self._list(context)
         if arguments.action == "load":
             return self._load(arguments, context)
+
         if arguments.action == "write":
-            return self._write(arguments)
-        if arguments.action == "patch":
-            return self._patch(arguments)
-        if arguments.action == "delete":
-            return self._delete(arguments)
-        return ToolResult(
-            output=f"Unknown action '{arguments.action}'. Valid actions: list, load, write, patch, delete.",
-            is_error=True,
-        )
+            result = self._write(arguments)
+        elif arguments.action == "patch":
+            result = self._patch(arguments)
+        elif arguments.action == "delete":
+            result = self._delete(arguments)
+        else:
+            return ToolResult(
+                output=f"Unknown action '{arguments.action}'. Valid actions: list, load, write, patch, delete.",
+                is_error=True,
+            )
+
+        # After any mutating action succeeds, refresh the system prompt so
+        # the updated skill list takes effect for the current session.
+        if not result.is_error:
+            refresher = context.metadata.get("system_prompt_refresher")
+            if callable(refresher):
+                refresher()
+
+        return result
 
     # ── list ────────────────────────────────────────────────────────────────
 
