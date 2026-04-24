@@ -240,10 +240,8 @@ async def test_notebook_and_cron_flow_across_registry(tmp_path: Path, monkeypatc
     context = ToolExecutionContext(cwd=tmp_path, metadata={"tool_registry": registry})
 
     notebook = registry.get("notebook_edit")
-    cron_create = registry.get("cron_create")
-    cron_list = registry.get("cron_list")
+    cron_manager = registry.get("cron_manager")
     remote_trigger = registry.get("remote_trigger")
-    cron_delete = registry.get("cron_delete")
 
     notebook_result = await notebook.execute(
         notebook.input_model(path="nb/demo.ipynb", cell_index=0, new_source="print('flow ok')\n"),
@@ -252,11 +250,11 @@ async def test_notebook_and_cron_flow_across_registry(tmp_path: Path, monkeypatc
     assert notebook_result.is_error is False
     assert "flow ok" in (tmp_path / "nb" / "demo.ipynb").read_text(encoding="utf-8")
 
-    await cron_create.execute(
-        cron_create.input_model(name="flow", schedule="0 0 * * *", command="printf 'FLOW_CRON_OK'"),
+    await cron_manager.execute(
+        cron_manager.input_model(action="create", name="flow", schedule="0 0 * * *", command="printf 'FLOW_CRON_OK'"),
         context,
     )
-    list_result = await cron_list.execute(cron_list.input_model(), context)
+    list_result = await cron_manager.execute(cron_manager.input_model(action="list"), context)
     assert "flow" in list_result.output
 
     trigger_result = await remote_trigger.execute(
@@ -265,7 +263,7 @@ async def test_notebook_and_cron_flow_across_registry(tmp_path: Path, monkeypatc
     )
     assert "FLOW_CRON_OK" in trigger_result.output
 
-    delete_result = await cron_delete.execute(cron_delete.input_model(name="flow"), context)
+    delete_result = await cron_manager.execute(cron_manager.input_model(action="delete", name="flow"), context)
     assert delete_result.is_error is False
 
 

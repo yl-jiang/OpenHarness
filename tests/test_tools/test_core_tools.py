@@ -11,9 +11,7 @@ import pytest
 from openharness.tools.bash_tool import BashTool, BashToolInput
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.brief_tool import BriefTool, BriefToolInput
-from openharness.tools.cron_create_tool import CronCreateTool, CronCreateToolInput
-from openharness.tools.cron_delete_tool import CronDeleteTool, CronDeleteToolInput
-from openharness.tools.cron_list_tool import CronListTool, CronListToolInput
+from openharness.tools.cron_manager_tool import CronManagerTool
 from openharness.tools.config_tool import ConfigTool, ConfigToolInput
 from openharness.tools.enter_worktree_tool import EnterWorktreeTool, EnterWorktreeToolInput
 from openharness.tools.exit_worktree_tool import ExitWorktreeTool, ExitWorktreeToolInput
@@ -299,13 +297,13 @@ async def test_cron_and_remote_trigger_tools(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
     context = ToolExecutionContext(cwd=tmp_path)
 
-    create_result = await CronCreateTool().execute(
-        CronCreateToolInput(name="nightly", schedule="0 0 * * *", command="printf 'CRON_OK'"),
+    create_result = await CronManagerTool().execute(
+        CronManagerTool().input_model(action="create", name="nightly", schedule="0 0 * * *", command="printf 'CRON_OK'"),
         context,
     )
     assert create_result.is_error is False
 
-    list_result = await CronListTool().execute(CronListToolInput(), context)
+    list_result = await CronManagerTool().execute(CronManagerTool().input_model(action="list"), context)
     assert "nightly" in list_result.output
 
     trigger_result = await RemoteTriggerTool().execute(
@@ -315,8 +313,8 @@ async def test_cron_and_remote_trigger_tools(tmp_path: Path, monkeypatch):
     assert trigger_result.is_error is False
     assert "CRON_OK" in trigger_result.output
 
-    delete_result = await CronDeleteTool().execute(
-        CronDeleteToolInput(name="nightly"),
+    delete_result = await CronManagerTool().execute(
+        CronManagerTool().input_model(action="delete", name="nightly"),
         context,
     )
     assert delete_result.is_error is False

@@ -25,7 +25,7 @@ from openharness.swarm.permission_sync import (
 
 @pytest.mark.parametrize(
     "tool_name",
-    ["read_file", "glob", "grep", "web_fetch", "web_search", "task_get", "task_list", "cron_list"],
+    ["read_file", "glob", "grep", "web_fetch", "web_search", "task_get", "task_list"],
 )
 def test_is_read_only_true_for_safe_tools(tool_name):
     assert _is_read_only(tool_name) is True

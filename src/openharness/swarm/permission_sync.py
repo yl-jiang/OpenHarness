@@ -83,7 +83,6 @@ _READ_ONLY_TOOLS: frozenset[str] = frozenset(
         "task_get",
         "task_list",
         "task_output",
-        "cron_list",
     }
 )
 
