@@ -355,6 +355,21 @@ async def build_runtime(
             **restored_metadata,
         },
     )
+    # Register a callback so tools (e.g. skill_manager) can refresh the
+    # system prompt immediately after mutating skill files on disk.
+    def _refresh_system_prompt() -> None:
+        fresh_settings = load_settings().merge_cli_overrides(**settings_overrides)
+        engine.set_system_prompt(
+            build_runtime_system_prompt(
+                fresh_settings,
+                cwd=cwd,
+                extra_skill_dirs=normalized_skill_dirs,
+                extra_plugin_roots=normalized_plugin_roots,
+            )
+        )
+
+    engine.tool_metadata["system_prompt_refresher"] = _refresh_system_prompt
+
     # Restore messages from a saved session if provided
     if restore_messages:
         restored = sanitize_conversation_messages(
