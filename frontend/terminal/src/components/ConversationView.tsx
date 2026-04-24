@@ -4,7 +4,7 @@ import {Box, Text} from 'ink';
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TranscriptItem} from '../types.js';
 import {MarkdownText} from './MarkdownText.js';
-import {ToolCallDisplay} from './ToolCallDisplay.js';
+import {ToolCallDisplay, type TreePos} from './ToolCallDisplay.js';
 import {WelcomeBanner} from './WelcomeBanner.js';
 
 type ToolPair = readonly [TranscriptItem, TranscriptItem];
@@ -69,17 +69,88 @@ function ConversationViewInner({
 	const visible = items.slice(-40);
 	const grouped = groupToolPairs(visible);
 
+	// Build rendered elements, detecting consecutive ToolPairs for tree connectors
+	const elements: React.ReactNode[] = [];
+	let gi = 0;
+	while (gi < grouped.length) {
+		const group = grouped[gi];
+		if (Array.isArray(group)) {
+			// Find the extent of this consecutive run of ToolPairs
+			let runEnd = gi + 1;
+			while (runEnd < grouped.length && Array.isArray(grouped[runEnd])) {
+				runEnd++;
+			}
+			const runLen = runEnd - gi;
+			for (let k = 0; k < runLen; k++) {
+				const pair = grouped[gi + k] as ToolPair;
+				let treePos: TreePos;
+				if (runLen === 1) {
+					treePos = 'single';
+				} else if (k === 0) {
+					treePos = 'first';
+				} else if (k === runLen - 1) {
+					treePos = 'last';
+				} else {
+					treePos = 'middle';
+				}
+				elements.push(
+					<ToolCallDisplay
+						key={`tp-${gi + k}`}
+						item={pair[0]}
+						resultItem={pair[1]}
+						outputStyle={outputStyle}
+						treePos={treePos}
+					/>
+				);
+			}
+			gi = runEnd;
+		} else {
+			const single = group as TranscriptItem;
+			// For unpaired in-progress tools, determine whether they're in a run with paired tools
+			if (single.role === 'tool') {
+				// Peek ahead to see if this tool is isolated or adjacent to other tools
+				let runEnd = gi + 1;
+				while (runEnd < grouped.length && !Array.isArray(grouped[runEnd]) && (grouped[runEnd] as TranscriptItem).role === 'tool') {
+					runEnd++;
+				}
+				const runLen = runEnd - gi;
+				for (let k = 0; k < runLen; k++) {
+					const t = grouped[gi + k] as TranscriptItem;
+					let treePos: TreePos;
+					if (runLen === 1) {
+						treePos = 'single';
+					} else if (k === 0) {
+						treePos = 'first';
+					} else if (k === runLen - 1) {
+						treePos = 'last';
+					} else {
+						treePos = 'middle';
+					}
+					elements.push(
+						<ToolCallDisplay
+							key={`t-${gi + k}`}
+							item={t}
+							resultItem={undefined}
+							outputStyle={outputStyle}
+							treePos={treePos}
+						/>
+					);
+				}
+				gi = runEnd;
+			} else {
+				elements.push(
+					<MessageRow key={`m-${gi}`} item={single} theme={theme} outputStyle={outputStyle} />
+				);
+				gi++;
+			}
+		}
+	}
+
 	return (
 		<Box flexDirection="column" flexGrow={1}>
 			{showWelcome && items.length === 0 ? <WelcomeBanner /> : null}
 
-			{grouped.map((group, index) => {
-				if (Array.isArray(group)) {
-					const [toolItem, resultItem] = group as [TranscriptItem, TranscriptItem];
-					return <ToolCallDisplay key={index} item={toolItem} resultItem={resultItem} outputStyle={outputStyle} />;
-				}
-				return <MessageRow key={index} item={group as TranscriptItem} theme={theme} outputStyle={outputStyle} />;
-			})}
+			{elements}
 
 			{assistantBuffer ? (
 				isCodexStyle ? (
@@ -128,12 +199,14 @@ function MessageRow({item, theme, outputStyle}: {item: TranscriptItem; theme: Re
 
 		case 'assistant':
 			if (isCodexStyle) {
+				if (!item.text.trim()) return <></>;
 				return (
 					<Box marginTop={0} marginBottom={0}>
 						<Text>{item.text}</Text>
 					</Box>
 				);
 			}
+			if (!item.text.trim()) return <></>;
 			return (
 				<Box marginTop={1} marginBottom={0} flexDirection="column">
 					<Text>
