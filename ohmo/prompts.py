@@ -24,6 +24,31 @@ def _read_text(path: Path) -> str | None:
     return content or None
 
 
+SKILLS_GUIDANCE = (
+    "After completing a complex task (5+ tool calls), fixing a tricky error, "
+    "or discovering a non-trivial workflow, save the approach as a "
+    "skill with skill_manage so you can reuse it next time.\n"
+    "When using a skill and finding it outdated, incomplete, or wrong, "
+    "patch it immediately with skill_manage(action='patch') — don't wait to be asked. "
+    "Skills that aren't maintained become liabilities."
+)
+
+TOOL_USE_ENFORCEMENT_GUIDANCE = (
+    "# Tool-use enforcement\n"
+    "You MUST use your tools to take action — do not describe what you would do "
+    "or plan to do without actually doing it. When you say you will perform an "
+    "action (e.g. 'I will run the tests', 'Let me check the file', 'I will create "
+    "the project'), you MUST immediately make the corresponding tool call in the same "
+    "response. Never end your turn with a promise of future action — execute it now.\n"
+    "Keep working until the task is actually complete. Do not stop with a summary of "
+    "what you plan to do next time. If you have tools available that can accomplish "
+    "the task, use them instead of telling the user what you would do.\n"
+    "Every response should either (a) contain tool calls that make progress, or "
+    "(b) deliver a final result to the user. Responses that only describe intentions "
+    "without acting are not acceptable."
+)
+
+
 def build_ohmo_system_prompt(
     cwd: str | Path,
     *,
@@ -34,6 +59,10 @@ def build_ohmo_system_prompt(
     """Build the custom base prompt for ohmo sessions."""
     root = get_workspace_root(workspace)
     sections = [get_base_system_prompt()]
+
+    # guidance on skills and tool-use enforcement are core to the ohmo experience, so we include them in every system prompt by default
+    sections.append(r"# skills guidance\n" + SKILLS_GUIDANCE)
+    sections.append(r"# tool-use enforcement\n" + TOOL_USE_ENFORCEMENT_GUIDANCE)
 
     if extra_prompt:
         sections.extend(["# Additional Instructions", extra_prompt.strip()])
