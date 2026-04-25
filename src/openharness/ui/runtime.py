@@ -33,6 +33,7 @@ from openharness.mcp.config import load_mcp_server_configs
 from openharness.permissions import PermissionChecker
 from openharness.plugins import load_plugins
 from openharness.prompts import build_runtime_system_prompt
+from openharness.prompts.environment import detect_git_info
 from openharness.state import AppState, AppStateStore
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
 from openharness.tools import ToolRegistry, create_default_tool_registry
@@ -257,6 +258,7 @@ async def build_runtime(
             for tool in plugin.tools:
                 tool_registry.register(tool)
     provider = detect_provider(settings)
+    _, git_branch = detect_git_info(cwd)
     bridge_manager = get_bridge_manager()
     todo_store = TodoStore(Path(cwd))
     app_state = AppStateStore(
@@ -267,6 +269,7 @@ async def build_runtime(
             permission_mode=settings.permission.mode.value,
             theme=settings.theme,
             cwd=cwd,
+            git_branch=git_branch,
             provider=provider.name,
             auth_status=auth_status(settings),
             base_url=settings.base_url or "",

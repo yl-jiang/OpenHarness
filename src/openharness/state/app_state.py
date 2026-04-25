@@ -13,6 +13,7 @@ class AppState:
     permission_mode: str
     theme: str
     cwd: str = "."
+    git_branch: str | None = None
     provider: str = "unknown"
     auth_status: str = "missing"
     base_url: str = ""
@@ -28,3 +29,5 @@ class AppState:
     bridge_sessions: int = 0
     output_style: str = "default"
     keybindings: dict[str, str] = field(default_factory=dict)
+    input_tokens: int = 0
+    output_tokens: int = 0

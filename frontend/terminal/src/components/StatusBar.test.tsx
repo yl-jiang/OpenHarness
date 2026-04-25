@@ -49,7 +49,10 @@ async function waitForOutputToStabilize(getOutput: () => string): Promise<string
 	throw new Error(`Ink output did not stabilize: ${JSON.stringify(previous)}`);
 }
 
-async function renderStatusBar(tasks: TaskSnapshot[]): Promise<string> {
+async function renderStatusBar(
+	tasks: TaskSnapshot[],
+	status: Record<string, unknown> = {model: 'test-model', permission_mode: 'default'},
+): Promise<string> {
 	const stdout = createTestStdout();
 	let output = '';
 	stdout.on('data', (chunk) => {
@@ -59,7 +62,7 @@ async function renderStatusBar(tasks: TaskSnapshot[]): Promise<string> {
 	const instance = render(
 		<ThemeProvider initialTheme="default">
 			<StatusBar
-				status={{model: 'test-model', permission_mode: 'default'}}
+				status={status}
 				tasks={tasks}
 			/>
 		</ThemeProvider>,
@@ -84,6 +87,62 @@ test('counts only active background tasks in the status bar', async () => {
 		{id: 'task-5', type: 'local_agent', status: 'killed', description: 'killed', metadata: {}},
 	]);
 
-	assert.match(output, /\btasks: 2\b/);
-	assert.doesNotMatch(output, /\btasks: 5\b/);
+	assert.match(output, /⚙️ 2/u);
+	assert.doesNotMatch(output, /⚙️ 5/u);
+});
+
+test('shows cwd and git branch in the status bar', async () => {
+	const output = await renderStatusBar(
+		[],
+		{
+			model: 'test-model',
+			permission_mode: 'default',
+			cwd: '/tmp/demo',
+			git_branch: 'main',
+		},
+	);
+
+	assert.match(output, /📁 \/tmp\/demo/u);
+	assert.match(output, / main/u);
+});
+
+test('shortens home directory cwd in the status bar', async () => {
+	const homeDir = process.env.HOME;
+	assert.ok(homeDir, 'HOME must be set for the status bar path test');
+
+	const output = await renderStatusBar(
+		[],
+		{
+			model: 'test-model',
+			permission_mode: 'default',
+			cwd: `${homeDir}/project/demo`,
+		},
+	);
+
+	assert.match(output, /📁 ~\/project\/demo/u);
+	assert.doesNotMatch(output, new RegExp(`📁 ${homeDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+});
+
+test('uses symbolic labels instead of textual status prefixes', async () => {
+	const output = await renderStatusBar(
+		[{id: 'task-1', type: 'local_agent', status: 'running', description: 'running', metadata: {}}],
+		{
+			model: 'test-model',
+			permission_mode: 'default',
+			cwd: '/tmp/demo',
+			git_branch: 'dev',
+			input_tokens: 1200,
+			output_tokens: 3400,
+			mcp_connected: 2,
+		},
+	);
+
+	assert.doesNotMatch(output, /\bmodel:|\bmode:|\bcwd:|\bbranch:|\btokens:|\btasks:|\bmcp:/);
+	assert.match(output, /🤖 test-model/u);
+	assert.match(output, /⎇  default/u);
+	assert.match(output, /📁 \/tmp\/demo/u);
+	assert.match(output, / dev/u);
+	assert.match(output, /🪙 1\.2k↓ 3\.4k↑/u);
+	assert.match(output, /⚙️ 1/u);
+	assert.match(output, /🔌 2/u);
 });

@@ -1,6 +1,7 @@
 import React, {useEffect, useState} from 'react';
 import {Box, Text} from 'ink';
 
+import {formatDisplayPath} from '../pathDisplay.js';
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TaskSnapshot} from '../types.js';
 
@@ -67,6 +68,8 @@ function StatusBarInner({
 	const {theme} = useTheme();
 	const model = String(status.model ?? 'unknown');
 	const mode = String(status.permission_mode ?? 'default');
+	const cwd = formatDisplayPath(status.cwd);
+	const gitBranch = typeof status.git_branch === 'string' && status.git_branch ? status.git_branch : null;
 	const taskCount = tasks.filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
 	const mcpCount = Number(status.mcp_connected ?? 0);
 	const inputTokens = Number(status.input_tokens ?? 0);
@@ -78,29 +81,37 @@ function StatusBarInner({
 			<Text dimColor>
 				<Text color={theme.colors.primary} bold>OpenHarness</Text>
 				<Text dimColor>{SEP}</Text>
-				<Text dimColor>model: {model}</Text>
+				<Text dimColor>🤖 {model}</Text>
 				{inputTokens > 0 || outputTokens > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>tokens: {formatNum(inputTokens)}{'\u2193'} {formatNum(outputTokens)}{'\u2191'}</Text>
+						<Text dimColor>🪙 {formatNum(inputTokens)}{'\u2193'} {formatNum(outputTokens)}{'\u2191'}</Text>
 					</>
 				) : null}
 				{!isPlanMode ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>mode: {mode}</Text>
+						<Text dimColor>⎇  {mode}</Text>
+					</>
+				) : null}
+				<Text dimColor>{SEP}</Text>
+				<Text dimColor>📁 {cwd}</Text>
+				{gitBranch ? (
+					<>
+						<Text dimColor>{SEP}</Text>
+						<Text dimColor> {gitBranch}</Text>
 					</>
 				) : null}
 				{taskCount > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>tasks: {taskCount}</Text>
+						<Text dimColor>⚙️ {taskCount}</Text>
 					</>
 				) : null}
 				{mcpCount > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>mcp: {mcpCount}</Text>
+						<Text dimColor>🔌 {mcpCount}</Text>
 					</>
 				) : null}
 			</Text>

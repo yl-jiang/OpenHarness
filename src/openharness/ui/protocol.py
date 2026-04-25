@@ -184,6 +184,7 @@ def _state_payload(state: AppState) -> dict[str, Any]:
     return {
         "model": state.model,
         "cwd": state.cwd,
+        "git_branch": state.git_branch,
         "provider": state.provider,
         "auth_status": state.auth_status,
         "base_url": state.base_url,
@@ -201,6 +202,8 @@ def _state_payload(state: AppState) -> dict[str, Any]:
         "bridge_sessions": state.bridge_sessions,
         "output_style": state.output_style,
         "keybindings": dict(state.keybindings),
+        "input_tokens": state.input_tokens,
+        "output_tokens": state.output_tokens,
     }
 
 
