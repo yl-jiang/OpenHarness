@@ -1,5 +1,5 @@
-import React, {useDeferredValue, useEffect, useMemo, useRef, useState} from 'react';
-import {Box, Text, useApp, useInput, useStdin, useStdout} from 'ink';
+import React, {useDeferredValue, useEffect, useMemo, useState} from 'react';
+import {Box, Text, useApp, useInput, useStdin} from 'ink';
 
 import {CommandPicker} from './components/CommandPicker.js';
 import {ConversationView} from './components/ConversationView.js';
@@ -9,13 +9,6 @@ import {SelectModal, type SelectOption} from './components/SelectModal.js';
 import {StatusBar} from './components/StatusBar.js';
 import {SwarmPanel} from './components/SwarmPanel.js';
 import {TodoPanel} from './components/TodoPanel.js';
-import {
-	advanceViewportForNewItems,
-	getTranscriptWindowRange,
-	scrollTranscriptViewport,
-	type TranscriptViewport,
-	selectTranscriptWindow,
-} from './components/transcriptViewport.js';
 import type {TerminalInputStream} from './input/terminalInput.js';
 import {useBackendSession} from './hooks/useBackendSession.js';
 import {ThemeProvider, useTheme} from './theme/ThemeContext.js';
@@ -67,9 +60,8 @@ export function App({config}: {config: FrontendConfig}): React.JSX.Element {
 
 function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const {exit} = useApp();
-	const {stdin} = useStdin();
-	const {stdout, write} = useStdout();
-	const terminalInput = stdin as unknown as TerminalInputStream;
+	const {stdin: _stdin} = useStdin();
+	const _terminalInput = _stdin as unknown as TerminalInputStream;
 	const {theme, setThemeName} = useTheme();
 	const [input, setInput] = useState('');
 	const [completionKey, setCompletionKey] = useState(0);
@@ -81,15 +73,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [selectModal, setSelectModal] = useState<SelectModalState>(null);
 	const [selectIndex, setSelectIndex] = useState(0);
-	const [transcriptViewport, setTranscriptViewport] = useState<TranscriptViewport>({
-		offsetFromBottom: 0,
-		followOutput: true,
-	});
 	const session = useBackendSession(config, () => exit());
-	const previousTranscriptCountRef = useRef(0);
-	const transcriptCountRef = useRef(0);
-	const transcriptWindowSizeRef = useRef(8);
-	const transcriptScrollBlockedRef = useRef(false);
 	const deferredTranscript = useDeferredValue(session.transcript);
 	const deferredAssistantBuffer = useDeferredValue(session.assistantBuffer);
 	const deferredStatus = useDeferredValue(session.status);
@@ -97,43 +81,6 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const deferredTodoMarkdown = useDeferredValue(session.todoMarkdown);
 	const deferredSwarmTeammates = useDeferredValue(session.swarmTeammates);
 	const deferredSwarmNotifications = useDeferredValue(session.swarmNotifications);
-	const transcriptWindowSize = useMemo(() => {
-		const terminalRows = stdout.rows ?? 24;
-		let reservedRows = session.ready ? 8 : 4;
-		if (session.modal) {
-			reservedRows += 8;
-		}
-		if (selectModal) {
-			reservedRows += Math.min(10, selectModal.options.length + 4);
-		}
-		if (deferredTodoMarkdown) {
-			reservedRows += 6;
-		}
-		if (deferredSwarmTeammates.length > 0 || deferredSwarmNotifications.length > 0) {
-			reservedRows += 6;
-		}
-		if (deferredAssistantBuffer) {
-			reservedRows += 4;
-		}
-		return Math.max(8, terminalRows - reservedRows);
-	}, [
-		deferredAssistantBuffer,
-		deferredSwarmNotifications.length,
-		deferredSwarmTeammates.length,
-		deferredTodoMarkdown,
-		selectModal,
-		session.modal,
-		session.ready,
-		stdout.rows,
-	]);
-	const transcriptRange = useMemo(
-		() => getTranscriptWindowRange(deferredTranscript.length, transcriptViewport, transcriptWindowSize),
-		[deferredTranscript.length, transcriptViewport, transcriptWindowSize],
-	);
-	const visibleTranscript = useMemo(
-		() => selectTranscriptWindow(deferredTranscript, transcriptViewport, transcriptWindowSize),
-		[deferredTranscript, transcriptViewport, transcriptWindowSize],
-	);
 
 	useEffect(() => {
 		const nextTheme = session.status.theme;
@@ -141,59 +88,6 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			setThemeName(nextTheme);
 		}
 	}, [session.status.theme, setThemeName]);
-
-	useEffect(() => {
-		transcriptCountRef.current = session.transcript.length;
-	}, [session.transcript.length]);
-
-	useEffect(() => {
-		transcriptWindowSizeRef.current = transcriptWindowSize;
-	}, [transcriptWindowSize]);
-
-	useEffect(() => {
-		transcriptScrollBlockedRef.current = Boolean(session.modal || selectModal);
-	}, [selectModal, session.modal]);
-
-	useEffect(() => {
-		const currentCount = session.transcript.length;
-		const previousCount = previousTranscriptCountRef.current;
-		const appendedCount = Math.max(0, currentCount - previousCount);
-		previousTranscriptCountRef.current = currentCount;
-		if (appendedCount > 0) {
-			setTranscriptViewport((viewport) => advanceViewportForNewItems(viewport, appendedCount));
-			return;
-		}
-		setTranscriptViewport((viewport) => {
-			const clamped = getTranscriptWindowRange(currentCount, viewport, transcriptWindowSize).offsetFromBottom;
-			return {
-				offsetFromBottom: clamped,
-				followOutput: clamped === 0,
-			};
-		});
-	}, [session.transcript.length, transcriptWindowSize]);
-
-	useEffect(() => {
-		write('\u001b[?1000h\u001b[?1006h');
-		const handleMouseInput = (event: Parameters<TerminalInputStream['on']>[1] extends (arg: infer T) => void ? T : never): void => {
-			if (event.kind !== 'wheel' || transcriptScrollBlockedRef.current) {
-				return;
-			}
-			setTranscriptViewport((viewport) => (
-				scrollTranscriptViewport(
-					viewport,
-					event.direction,
-					1,
-					transcriptCountRef.current,
-					transcriptWindowSizeRef.current,
-				)
-			));
-		};
-		terminalInput.on('mouse', handleMouseInput);
-		return () => {
-			terminalInput.off('mouse', handleMouseInput);
-			write('\u001b[?1000l\u001b[?1006l');
-		};
-	}, [terminalInput, write]);
 
 	// Current tool name for spinner
 	const currentToolName = useMemo(() => {
@@ -258,13 +152,11 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			return true;
 		}
 
-		// /permissions → show mode picker
 		if (trimmed === '/permissions' || trimmed === '/permissions show') {
 			session.sendRequest({type: 'select_command', command: 'permissions'});
 			return true;
 		}
 
-		// /plan → toggle plan mode
 		if (trimmed === '/plan') {
 			const currentMode = String(session.status.permission_mode ?? 'default');
 			if (currentMode === 'plan') {
@@ -276,7 +168,6 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			return true;
 		}
 
-		// /resume → request session list from backend (will trigger select_request)
 		if (trimmed === '/resume') {
 			session.sendRequest({type: 'select_command', command: 'resume'});
 			return true;
@@ -288,14 +179,12 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	useInput((chunk, key) => {
 		const isPaste = chunk.length > 1 && !key.ctrl && !key.meta;
 
-		// Ctrl+C → exit
 		if (key.ctrl && chunk === 'c') {
 			session.sendRequest({type: 'shutdown'});
 			exit();
 			return;
 		}
 
-		// Let ink-text-input handle pasted text directly.
 		if (isPaste) {
 			return;
 		}
@@ -321,7 +210,6 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				setSelectModal(null);
 				return;
 			}
-			// Number keys for quick selection
 			const num = parseInt(chunk, 10);
 			if (num >= 1 && num <= selectModal.options.length) {
 				const selected = selectModal.options[num - 1];
@@ -351,7 +239,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			}
 		}
 
-		// --- Permission modal (MUST be before busy check — modal appears while busy) ---
+		// --- Permission modal ---
 		if (session.modal?.kind === 'permission') {
 			if (chunk.toLowerCase() === 'y') {
 				session.sendRequest({
@@ -374,37 +262,14 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			return;
 		}
 
-		// --- Question modal (also appears while busy) ---
+		// --- Question modal ---
 		if (session.modal?.kind === 'question') {
-			return; // Let TextInput in ModalHost handle input
-		}
-
-		if (key.pageUp) {
-			setTranscriptViewport((viewport) => (
-				scrollTranscriptViewport(
-					viewport,
-					'up',
-					Math.max(1, Math.floor(transcriptWindowSize * 0.6)),
-					session.transcript.length,
-					transcriptWindowSize,
-				)
-			));
-			return;
-		}
-		if (key.pageDown) {
-			setTranscriptViewport((viewport) => (
-				scrollTranscriptViewport(
-					viewport,
-					'down',
-					Math.max(1, Math.floor(transcriptWindowSize * 0.6)),
-					session.transcript.length,
-					transcriptWindowSize,
-				)
-			));
 			return;
 		}
 
-		// --- Ignore input while busy ---
+		// PgUp/PgDn intentionally NOT intercepted: scrollback is handled
+		// natively by the terminal emulator (mouse wheel, trackpad, scrollbar).
+
 		if (session.busy) {
 			return;
 		}
@@ -470,9 +335,6 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			setInput(nextIndex === -1 ? '' : (history[history.length - 1 - nextIndex] ?? ''));
 			return;
 		}
-
-		// Note: normal Enter submission is handled by TextInput's onSubmit in
-		// PromptInput.  Do NOT duplicate it here — that causes double requests.
 	});
 
 	const onSubmit = (value: string): void => {
@@ -489,8 +351,6 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		if (!value.trim() || session.busy || !session.ready) {
 			return;
 		}
-		setTranscriptViewport({offsetFromBottom: 0, followOutput: true});
-		// Check if it's an interactive command
 		if (handleCommand(value)) {
 			setHistory((items) => [...items, value]);
 			setHistoryIndex(-1);
@@ -521,20 +381,14 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	}, [scriptIndex, session.busy, session.modal, selectModal]);
 
 	return (
-		<Box flexDirection="column" paddingX={1} height="100%">
-			{/* Conversation area */}
-			<Box flexDirection="column" flexGrow={1}>
-				<ConversationView
-					items={visibleTranscript}
-					assistantBuffer={deferredAssistantBuffer}
-					showWelcome={session.ready && outputStyle !== 'codex'}
-					outputStyle={outputStyle}
-					olderItemCount={transcriptRange.start}
-					newerItemCount={deferredTranscript.length - transcriptRange.end}
-				/>
-			</Box>
+		<Box flexDirection="column" paddingX={1}>
+			<ConversationView
+				transcript={deferredTranscript}
+				assistantBuffer={deferredAssistantBuffer}
+				showWelcome={session.ready && outputStyle !== 'codex'}
+				outputStyle={outputStyle}
+			/>
 
-			{/* Backend modal (permission confirm, question, mcp auth) */}
 			{session.modal ? (
 				<ModalHost
 					modal={session.modal}
@@ -544,7 +398,6 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				/>
 			) : null}
 
-			{/* Frontend select modal (permissions picker, etc.) */}
 			{selectModal ? (
 				<SelectModal
 					title={selectModal.title}
@@ -553,27 +406,22 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				/>
 			) : null}
 
-			{/* Command picker */}
 			{showPicker ? (
 				<CommandPicker hints={commandHints} selectedIndex={pickerIndex} />
 			) : null}
 
-			{/* Todo panel */}
 			{session.ready && deferredTodoMarkdown ? (
 				<TodoPanel markdown={deferredTodoMarkdown} />
 			) : null}
 
-			{/* Swarm panel */}
 			{session.ready && (deferredSwarmTeammates.length > 0 || deferredSwarmNotifications.length > 0) ? (
 				<SwarmPanel teammates={deferredSwarmTeammates} notifications={deferredSwarmNotifications} />
 			) : null}
 
-			{/* Status bar (only after backend is ready) */}
 			{session.ready ? (
 				<StatusBar status={deferredStatus} tasks={deferredTasks} activeToolName={session.busy ? currentToolName : undefined} />
 			) : null}
 
-			{/* Input — show loading indicator until backend is ready */}
 			{!session.ready ? (
 				<Box>
 					<Text color={theme.colors.warning}>Connecting to backend...</Text>

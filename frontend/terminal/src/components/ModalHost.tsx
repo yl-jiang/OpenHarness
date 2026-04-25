@@ -1,23 +1,14 @@
-import React, {useEffect, useState} from 'react';
+import React, {useState} from 'react';
 import {Box, Text, useInput} from 'ink';
 import TextInput from 'ink-text-input';
 
-const WAIT_FRAMES = [
-	'Agent is waiting for your input   ',
-	'Agent is waiting for your input.  ',
-	'Agent is waiting for your input.. ',
-	'Agent is waiting for your input...',
-];
-
 function WaitingAnimation(): React.JSX.Element {
-	const [frame, setFrame] = useState(0);
-	useEffect(() => {
-		const timer = setInterval(() => setFrame((f) => (f + 1) % WAIT_FRAMES.length), 500);
-		return () => clearInterval(timer);
-	}, []);
+	// Kept as a static label to avoid forcing Ink redraws while waiting for
+	// user input — repeated stdout writes make most terminals snap the
+	// viewport back to the bottom, breaking scrollback.
 	return (
 		<Text color="magenta" dimColor>
-			{WAIT_FRAMES[frame]}
+			Agent is waiting for your input...
 		</Text>
 	);
 }

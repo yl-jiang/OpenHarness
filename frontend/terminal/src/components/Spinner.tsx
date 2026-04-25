@@ -1,45 +1,29 @@
-import React, {useEffect, useState} from 'react';
+import React from 'react';
 import {Text} from 'ink';
 
 import {useTheme} from '../theme/ThemeContext.js';
 
-const VERBS = [
-	'Thinking',
-	'Processing',
-	'Analyzing',
-	'Reasoning',
-	'Working',
-	'Computing',
-	'Evaluating',
-	'Considering',
-];
-
+/**
+ * Static "busy" indicator.
+ *
+ * Historically this used setInterval to animate spinner frames, but every tick
+ * forced Ink to redraw the dynamic frame which in turn made most terminals
+ * (Terminal.app, iTerm2, VS Code, Alacritty, …) snap the viewport back to the
+ * cursor position — i.e. the bottom of the screen.  That made it impossible
+ * to scroll back through history while the agent was busy.
+ *
+ * Keeping the indicator perfectly static means Ink's log-update layer skips
+ * redraws entirely when nothing else changes, leaving the terminal scrollback
+ * untouched so the user can browse history with the mouse wheel.  Liveness
+ * is still conveyed via streaming transcript updates and the running tool's
+ * label.
+ */
 export function Spinner({label}: {label?: string}): React.JSX.Element {
 	const {theme} = useTheme();
-	const frames = theme.icons.spinner;
-	const [frame, setFrame] = useState(0);
-	const [verbIndex, setVerbIndex] = useState(0);
-
-	useEffect(() => {
-		const timer = setInterval(() => {
-			setFrame((f) => (f + 1) % frames.length);
-		}, 80);
-		return () => clearInterval(timer);
-	}, [frames.length]);
-
-	useEffect(() => {
-		const timer = setInterval(() => {
-			setVerbIndex((v) => (v + 1) % VERBS.length);
-		}, 3000);
-		return () => clearInterval(timer);
-	}, []);
-
-	const verb = label ?? `${VERBS[verbIndex]}...`;
-
 	return (
 		<Text>
-			<Text color={theme.colors.primary}>{frames[frame]}</Text>
-			<Text dimColor> {verb}</Text>
+			<Text color={theme.colors.primary}>●</Text>
+			<Text dimColor> {label ?? 'Working...'}</Text>
 		</Text>
 	);
 }
