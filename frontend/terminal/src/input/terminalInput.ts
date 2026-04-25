@@ -38,6 +38,30 @@ export type TerminalInputStream = PassThrough & MouseStreamEvents & {
 
 const COMPLETE_MOUSE_SEQUENCE = /^\u001b\[<(\d+);\d+;\d+([Mm])/;
 const PARTIAL_MOUSE_SEQUENCE = /^\u001b\[<[\d;]*$/;
+const BACKSPACE_CONTROL_PATTERN = /[\b\u007f]+/g;
+
+export function chunkTerminalTextForInk(text: string): string[] {
+	if (!text) {
+		return [];
+	}
+
+	const chunks: string[] = [];
+	let cursor = 0;
+	for (const match of text.matchAll(BACKSPACE_CONTROL_PATTERN)) {
+		const start = match.index ?? 0;
+		if (start > cursor) {
+			chunks.push(text.slice(cursor, start));
+		}
+		for (const char of match[0]) {
+			chunks.push(char);
+		}
+		cursor = start + match[0].length;
+	}
+	if (cursor < text.length) {
+		chunks.push(text.slice(cursor));
+	}
+	return chunks;
+}
 
 export function createTerminalInputDecoder(): TerminalInputDecoder {
 	let pending = '';
@@ -106,7 +130,9 @@ export function createTerminalInputStream(
 	const handleData = (chunk: string | Buffer): void => {
 		const decoded = decoder.push(chunk.toString());
 		if (decoded.text) {
-			stream.write(decoded.text);
+			for (const textChunk of chunkTerminalTextForInk(decoded.text)) {
+				stream.write(textChunk);
+			}
 		}
 		for (const mouseEvent of decoded.mouseEvents) {
 			stream.emit('mouse', mouseEvent);
@@ -116,7 +142,9 @@ export function createTerminalInputStream(
 	const handleEnd = (): void => {
 		const decoded = decoder.flush();
 		if (decoded.text) {
-			stream.write(decoded.text);
+			for (const textChunk of chunkTerminalTextForInk(decoded.text)) {
+				stream.write(textChunk);
+			}
 		}
 		stream.end();
 	};

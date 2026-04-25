@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import {createTerminalInputDecoder} from './terminalInput.js';
+import {chunkTerminalTextForInk, createTerminalInputDecoder} from './terminalInput.js';
 
 test('strips mouse wheel and click escape sequences before they reach the text composer', () => {
 	const decoder = createTerminalInputDecoder();
@@ -25,4 +25,14 @@ test('buffers partial mouse escape sequences across chunks', () => {
 	assert.deepEqual(second.mouseEvents, [
 		{kind: 'wheel', direction: 'down', buttonCode: 65},
 	]);
+});
+
+test('splits repeated backspace controls into separate chunks for Ink consumers', () => {
+	assert.deepEqual(chunkTerminalTextForInk('\b\b\b'), ['\b', '\b', '\b']);
+	assert.deepEqual(chunkTerminalTextForInk('\x7f\x7f'), ['\x7f', '\x7f']);
+});
+
+test('preserves normal text chunks while isolating backspace controls', () => {
+	assert.deepEqual(chunkTerminalTextForInk('ab\x7f\x7fcd\b'), ['ab', '\x7f', '\x7f', 'cd', '\b']);
+	assert.deepEqual(chunkTerminalTextForInk('hello'), ['hello']);
 });
