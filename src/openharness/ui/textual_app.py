@@ -7,7 +7,7 @@ import json
 from dataclasses import dataclass
 
 from rich.panel import Panel
-from textual import on
+from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
@@ -409,6 +409,12 @@ class OpenHarnessTerminalApp(App[None]):
 
     def action_quit_session(self) -> None:
         self.exit()
+
+    def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
+        self.query_one("#transcript", RichLog).scroll_up(animate=False)
+
+    def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
+        self.query_one("#transcript", RichLog).scroll_down(animate=False)
 
     def _append_line(self, message: str) -> None:
         self.transcript_lines.append(message)

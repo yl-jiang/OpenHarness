@@ -64,17 +64,21 @@ def _convert_tools_to_openai(tools: list[dict[str, Any]]) -> list[dict[str, Any]
 
     Tool schema format:
         {"name": "...", "description": "...", "parameters": {...}}
+        {"name": "...", "description": "...", "input_schema": {...}}
     OpenAI format:
         {"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
     """
     result = []
     for tool in tools:
+        parameters = tool.get("parameters")
+        if not isinstance(parameters, dict):
+            parameters = tool.get("input_schema", {})
         result.append({
             "type": "function",
             "function": {
                 "name": tool["name"],
                 "description": tool.get("description", ""),
-                "parameters": tool.get("parameters", {}),
+                "parameters": parameters,
             },
         })
     return result

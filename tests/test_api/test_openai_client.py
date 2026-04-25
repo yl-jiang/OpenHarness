@@ -63,6 +63,21 @@ class TestConvertToolsToOpenai:
         assert result[0]["function"]["name"] == "tool_a"
         assert result[1]["function"]["name"] == "tool_b"
 
+    def test_prefers_parameters_when_present(self):
+        tools = [
+            {
+                "name": "read_file",
+                "description": "Read a file",
+                "parameters": {"type": "object", "properties": {"path": {"type": "string"}}},
+                "input_schema": {"type": "object", "properties": {"ignored": {"type": "boolean"}}},
+            }
+        ]
+        result = _convert_tools_to_openai(tools)
+        assert result[0]["function"]["parameters"] == {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+        }
+
 
 class TestConvertMessagesToOpenai:
     """Test Anthropic → OpenAI message format conversion."""

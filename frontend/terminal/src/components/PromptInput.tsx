@@ -29,18 +29,27 @@ export function PromptInput({
 	const {theme} = useTheme();
 
 	return (
-		<Box flexDirection="column">
-			{busy ? (
-				<Box flexDirection="column" marginBottom={0}>
-					<Box>
-						<Spinner label={statusLabel ?? (toolName ? `Running ${toolName}...` : 'Running...')} />
-					</Box>
-				</Box>
-			) : null}
+		<Box
+			flexDirection="column"
+			marginTop={1}
+			borderStyle="round"
+			borderColor={busy ? theme.colors.primary : theme.colors.muted}
+			paddingX={1}
+		>
 			<Box>
-				<Text color={theme.colors.primary} bold>{busy ? '… ' : '> '}</Text>
+				<Text color={theme.colors.primary} bold>Prompt</Text>
+				<Text dimColor> · </Text>
+				{busy ? (
+					<Spinner label={statusLabel ?? (toolName ? `Running ${toolName}...` : 'Running...')} />
+				) : (
+					<Text dimColor>Ready · enter sends immediately</Text>
+				)}
+			</Box>
+			<Box marginTop={1}>
+				<Text color={theme.colors.primary} bold>{busy ? '… ' : '› '}</Text>
 				<TextInput key={inputKey} value={input} onChange={setInput} onSubmit={suppressSubmit || busy ? noop : onSubmit} />
 			</Box>
+			<Text dimColor>/ commands · ↑↓ history · PgUp/PgDn scroll · ctrl+c exit</Text>
 		</Box>
 	);
 }

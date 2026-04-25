@@ -239,6 +239,30 @@ def _group_messages_by_prompt_round(
     return groups
 
 
+def _split_preserving_tool_exchange(
+    messages: list[ConversationMessage],
+    preserve_recent: int,
+) -> tuple[list[ConversationMessage], list[ConversationMessage]]:
+    split_at = max(0, len(messages) - max(0, preserve_recent))
+    while 0 < split_at < len(messages):
+        previous = messages[split_at - 1]
+        current = messages[split_at]
+        if previous.role != "assistant" or current.role != "user":
+            break
+        tool_use_ids = {tool_use.id for tool_use in previous.tool_uses}
+        if not tool_use_ids:
+            break
+        result_ids = {
+            block.tool_use_id
+            for block in current.content
+            if isinstance(block, ToolResultBlock)
+        }
+        if not (tool_use_ids & result_ids):
+            break
+        split_at -= 1
+    return messages[:split_at], messages[split_at:]
+
+
 def _collapse_text(text: str) -> str:
     if len(text) <= CONTEXT_COLLAPSE_TEXT_CHAR_LIMIT:
         return text
@@ -257,8 +281,7 @@ def try_context_collapse(
     if len(messages) <= preserve_recent + 2:
         return None
 
-    older = messages[:-preserve_recent]
-    newer = messages[-preserve_recent:]
+    older, newer = _split_preserving_tool_exchange(messages, preserve_recent)
     changed = False
     collapsed_older: list[ConversationMessage] = []
     for message in older:
@@ -780,8 +803,7 @@ def try_session_memory_compaction(
     """Cheap deterministic compaction for long chats before full LLM compaction."""
     if len(messages) <= preserve_recent + 4:
         return None
-    older = messages[:-preserve_recent]
-    newer = messages[-preserve_recent:]
+    older, newer = _split_preserving_tool_exchange(messages, preserve_recent)
     summary_message = _build_session_memory_message(older)
     if summary_message is None:
         return None
@@ -1024,8 +1046,7 @@ async def compact_conversation(
     logger.info("Compacting conversation: %d messages, ~%d tokens", len(messages), pre_compact_tokens)
 
     # Step 2: split into older (summarize) and newer (preserve)
-    older = messages[:-preserve_recent]
-    newer = messages[-preserve_recent:]
+    older, newer = _split_preserving_tool_exchange(messages, preserve_recent)
 
     # Step 3: build compact request — send older messages + compact prompt
     compact_prompt = get_compact_prompt(custom_instructions)
@@ -1543,8 +1564,7 @@ def compact_messages(
     """Replace older conversation history with a synthetic summary (legacy)."""
     if len(messages) <= preserve_recent:
         return list(messages)
-    older = messages[:-preserve_recent]
-    newer = messages[-preserve_recent:]
+    older, newer = _split_preserving_tool_exchange(messages, preserve_recent)
     summary = summarize_messages(older)
     if not summary:
         return list(newer)

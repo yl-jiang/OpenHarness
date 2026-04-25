@@ -219,3 +219,4 @@ async def test_codex_client_emits_tool_use(monkeypatch):
     assert tool_use.name == "glob"
     assert tool_use.input == {"pattern": "src/**/*.py"}
     assert sink["json"]["tools"][0]["name"] == "glob"
+    assert sink["json"]["tools"][0]["parameters"] == {"type": "object"}
