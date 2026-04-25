@@ -122,6 +122,40 @@ function renderGroup(
 	);
 }
 
+function isAssistantOwnedGroup(group: RenderGroup): boolean {
+	if (group.kind === 'pair' || group.kind === 'tool') {
+		return true;
+	}
+
+	return group.item.role === 'tool_result';
+}
+
+function hasVisibleAssistantHeader(group: RenderGroup): boolean {
+	return group.kind === 'message' && group.item.role === 'assistant' && group.item.text.trim().length > 0;
+}
+
+function shouldRenderAssistantHeaderBeforeGroup(groups: RenderGroup[], index: number, outputStyle?: string): boolean {
+	if (outputStyle === 'codex') {
+		return false;
+	}
+
+	const current = groups[index];
+	if (!current || !isAssistantOwnedGroup(current)) {
+		return false;
+	}
+
+	const previous = groups[index - 1];
+	if (!previous) {
+		return true;
+	}
+
+	if (isAssistantOwnedGroup(previous)) {
+		return false;
+	}
+
+	return !hasVisibleAssistantHeader(previous);
+}
+
 /**
  * Smooth, line-level scrollable transcript panel.
  *
@@ -236,6 +270,11 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 					{showWelcome ? <WelcomeBanner /> : null}
 					{groups.map((group, i) => (
 						<Box key={`g-${group.index}`} flexShrink={0} flexDirection="column">
+							{shouldRenderAssistantHeaderBeforeGroup(groups, i, outputStyle) ? (
+								<Text color={theme.colors.success} bold>
+									assistant
+								</Text>
+							) : null}
 							{renderGroup(group, theme, outputStyle, treePositions[i])}
 						</Box>
 					))}
