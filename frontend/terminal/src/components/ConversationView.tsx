@@ -1,11 +1,19 @@
-import React from 'react';
-import {Box, Text} from 'ink';
+import React, {forwardRef, useEffect, useImperativeHandle, useRef, useState} from 'react';
+import {Box, Text, measureElement} from 'ink';
+import type {DOMElement} from 'ink';
 
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TranscriptItem} from '../types.js';
 import {MarkdownText} from './MarkdownText.js';
 import {ToolCallDisplay, type TreePos} from './ToolCallDisplay.js';
 import {WelcomeBanner} from './WelcomeBanner.js';
+
+export type ConversationViewHandle = {
+	scrollUp(lines: number): void;
+	scrollDown(lines: number): void;
+	scrollToTop(): void;
+	scrollToBottom(): void;
+};
 
 type ToolPair = {kind: 'pair'; call: TranscriptItem; result: TranscriptItem; index: number};
 type SoloTool = {kind: 'tool'; item: TranscriptItem; index: number};
@@ -115,70 +123,145 @@ function renderGroup(
 }
 
 /**
- * Scrollable transcript panel.  Renders the (possibly sliced) transcript in
- * a single overflow:hidden, column-reverse box.  The slice's last item is
- * pinned to the visual bottom, with earlier items stacking upward; anything
- * beyond the box top is clipped.  Item-level scrolling is implemented at
- * the caller by passing a shorter slice — that naturally moves the visible
- * bottom anchor toward the start of the transcript, revealing earlier
- * history above it.
+ * Smooth, line-level scrollable transcript panel.
+ *
+ * Approach: render the full transcript top-to-bottom in a tall content box
+ * (no slicing, no column-reverse), wrap it in a fixed-height viewport with
+ * `overflow: hidden`, then translate the content vertically by setting a
+ * (possibly negative) `marginTop` on it.  After every render we measure the
+ * actual viewport and content heights with `measureElement`, then clamp the
+ * scroll offset and update the margin.
+ *
+ * Scroll semantics (line offset from top of content):
+ *   - paused = false → "follow tail":  marginTop tracks the live tail so the
+ *     bottom of the content stays at the bottom of the viewport.
+ *   - paused = true  → user is browsing history: `scrollFromTop` is fixed at
+ *     the user-chosen position; new content arriving at the bottom does not
+ *     shift the visible window.
+ *   - One wheel tick = 3 lines, PgUp/PgDn = half a viewport, g/Home = top,
+ *     G/End = resume tail.
  */
-function ConversationViewInner({
-	transcript,
-	assistantBuffer,
-	showWelcome,
-	outputStyle,
-}: {
+type ConversationViewInnerProps = {
 	transcript: TranscriptItem[];
 	assistantBuffer: string;
 	showWelcome: boolean;
 	outputStyle?: string;
-}): React.JSX.Element {
-	const {theme} = useTheme();
-	const isCodexStyle = outputStyle === 'codex';
+	onPauseChange?: (paused: boolean) => void;
+};
 
-	const groups = buildGroups(transcript);
-	const treePositions = assignTreePositions(groups);
+const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationViewInnerProps>(
+	function ConversationViewInner(
+		{transcript, assistantBuffer, showWelcome, outputStyle, onPauseChange},
+		forwardedRef,
+	): React.JSX.Element {
+		const {theme} = useTheme();
+		const isCodexStyle = outputStyle === 'codex';
 
-	// We use column-reverse so the *first* DOM child renders at the visual
-	// bottom of the viewport, with subsequent children stacking upward.  When
-	// the children overflow the box, yoga clips the visual top — i.e. the
-	// older content scrolls off the top edge first, exactly like a normal
-	// terminal scrollback view.  Item-level scrolling is implemented at the
-	// caller (App.tsx) by simply slicing `transcript`: a shorter slice means
-	// the slice's last item becomes the new visual bottom, naturally
-	// revealing earlier history above it.
-	const reversedGroupEntries = groups.map((group, i) => ({group, treePos: treePositions[i]})).reverse();
+		const viewportRef = useRef<DOMElement | null>(null);
+		const contentRef = useRef<DOMElement | null>(null);
+		const [viewportHeight, setViewportHeight] = useState(0);
+		const [contentHeight, setContentHeight] = useState(0);
+		const [scrollFromTop, setScrollFromTop] = useState(0);
+		const [paused, setPaused] = useState(false);
 
-	return (
-		<Box flexGrow={1} flexShrink={1} flexDirection="column-reverse" overflow="hidden">
-			{assistantBuffer ? (
-				isCodexStyle ? (
-					<Box flexShrink={0} flexDirection="row" marginTop={0}>
-						<Text>{assistantBuffer}</Text>
-					</Box>
-				) : (
-					<Box flexShrink={0} marginTop={1} marginBottom={0} flexDirection="column">
-						<Text>
-							<Text color={theme.colors.success} bold>
-								{theme.icons.assistant}
-							</Text>
-						</Text>
-						<Box marginLeft={2} flexDirection="column">
-							<MarkdownText content={assistantBuffer} />
+		const groups = buildGroups(transcript);
+		const treePositions = assignTreePositions(groups);
+
+		useEffect(() => {
+			if (viewportRef.current) {
+				const h = measureElement(viewportRef.current).height;
+				if (h !== viewportHeight) setViewportHeight(h);
+			}
+			if (contentRef.current) {
+				const h = measureElement(contentRef.current).height;
+				if (h !== contentHeight) setContentHeight(h);
+			}
+		});
+
+		useEffect(() => {
+			onPauseChange?.(paused);
+		}, [paused, onPauseChange]);
+
+		const maxScroll = Math.max(0, contentHeight - viewportHeight);
+		const effectiveScroll = paused
+			? Math.max(0, Math.min(scrollFromTop, maxScroll))
+			: maxScroll;
+		const marginTop = -effectiveScroll;
+
+		// In follow mode keep `scrollFromTop` mirrored to the live tail so
+		// that the moment the user scrolls up we have a sensible base.
+		useEffect(() => {
+			if (!paused && scrollFromTop !== maxScroll) {
+				setScrollFromTop(maxScroll);
+			}
+		}, [paused, maxScroll, scrollFromTop]);
+
+		useImperativeHandle(
+			forwardedRef,
+			() => ({
+				scrollUp(lines: number) {
+					setPaused(true);
+					setScrollFromTop((s) => {
+						const base = paused ? s : maxScroll;
+						return Math.max(0, base - Math.max(1, Math.floor(lines)));
+					});
+				},
+				scrollDown(lines: number) {
+					setScrollFromTop((s) => {
+						const base = paused ? s : maxScroll;
+						const next = base + Math.max(1, Math.floor(lines));
+						if (next >= maxScroll) {
+							setPaused(false);
+							return maxScroll;
+						}
+						setPaused(true);
+						return next;
+					});
+				},
+				scrollToTop() {
+					setPaused(true);
+					setScrollFromTop(0);
+				},
+				scrollToBottom() {
+					setPaused(false);
+					setScrollFromTop(maxScroll);
+				},
+			}),
+			[paused, maxScroll],
+		);
+
+		return (
+			<Box ref={viewportRef} flexGrow={1} flexShrink={1} flexDirection="column" overflow="hidden">
+				<Box ref={contentRef} flexShrink={0} flexDirection="column" marginTop={marginTop}>
+					{showWelcome ? <WelcomeBanner /> : null}
+					{groups.map((group, i) => (
+						<Box key={`g-${group.index}`} flexShrink={0} flexDirection="column">
+							{renderGroup(group, theme, outputStyle, treePositions[i])}
 						</Box>
-					</Box>
-				)
-			) : null}
-			{reversedGroupEntries.map(({group, treePos}) => (
-				<Box key={`g-${group.index}`} flexShrink={0} flexDirection="column">
-					{renderGroup(group, theme, outputStyle, treePos)}
+					))}
+					{assistantBuffer ? (
+						isCodexStyle ? (
+							<Box flexShrink={0} flexDirection="row" marginTop={0}>
+								<Text>{assistantBuffer}</Text>
+							</Box>
+						) : (
+							<Box flexShrink={0} marginTop={1} marginBottom={0} flexDirection="column">
+								<Text>
+									<Text color={theme.colors.success} bold>
+										{theme.icons.assistant}
+									</Text>
+								</Text>
+								<Box marginLeft={2} flexDirection="column">
+									<MarkdownText content={assistantBuffer} />
+								</Box>
+							</Box>
+						)
+					) : null}
 				</Box>
-			))}
-			{showWelcome ? <WelcomeBanner /> : null}
-		</Box>
-	);
-}
+			</Box>
+		);
+	},
+);
 
 export const ConversationView = React.memo(ConversationViewInner);
 
