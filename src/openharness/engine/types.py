@@ -54,6 +54,8 @@ class ToolMetadataKey(str, Enum):
     TASK_FOCUS_STATE = "task_focus_state"
     COMPACT_CHECKPOINTS = "compact_checkpoints"
     COMPACT_LAST = "compact_last"
+    # Session-only cache: not persisted across sessions.
+    FILE_READ_CACHE = "file_read_cache"
 
     @classmethod
     def all_persisted_keys(cls) -> tuple["ToolMetadataKey", ...]:

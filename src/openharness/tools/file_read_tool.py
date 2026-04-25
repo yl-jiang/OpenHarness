@@ -1,4 +1,4 @@
-"""File reading tool."""
+"""File reading tool with per-span content cache."""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from openharness.engine.types import ToolMetadataKey
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+
+_CACHE_KEY = ToolMetadataKey.FILE_READ_CACHE.value
 
 
 class FileReadToolInput(BaseModel):
@@ -76,6 +79,25 @@ class FileReadTool(BaseTool):
         if path.is_dir():
             return ToolResult(output=f"Cannot read directory: {path}", is_error=True)
 
+        stat = path.stat()
+        mtime_ns: int = stat.st_mtime_ns
+
+        # --- cache check ---------------------------------------------------
+        span = (arguments.offset, arguments.limit)
+        abs_path_str = str(path)
+        cache = _get_cache(context.metadata)
+        cached_entry = cache.get(abs_path_str)
+
+        if (
+            cached_entry is not None
+            and cached_entry.get("mtime_ns") == mtime_ns
+            and span in cached_entry.get("spans", {})
+        ):
+            return ToolResult(
+                output=f"[file content unchanged: {path} lines {arguments.offset + 1}-{arguments.offset + arguments.limit}]"
+            )
+        # -------------------------------------------------------------------
+
         raw = path.read_bytes()
         if b"\x00" in raw:
             return ToolResult(output=f"Binary file cannot be read as text: {path}", is_error=True)
@@ -89,6 +111,11 @@ class FileReadTool(BaseTool):
         ]
         if not numbered:
             return ToolResult(output=f"(no content in selected range for {path})")
+
+        # --- update cache --------------------------------------------------
+        _update_cache(cache, abs_path_str, mtime_ns=mtime_ns, span=span)
+        # -------------------------------------------------------------------
+
         return ToolResult(output="\n".join(numbered))
 
 
@@ -97,3 +124,29 @@ def _resolve_path(base: Path, candidate: str) -> Path:
     if not path.is_absolute():
         path = base / path
     return path.resolve()
+
+
+def _get_cache(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Return (and lazily create) the file-read cache from tool metadata."""
+    if not metadata:
+        return {}
+    entry = metadata.get(_CACHE_KEY)
+    if not isinstance(entry, dict):
+        entry = {}
+        metadata[_CACHE_KEY] = entry
+    return entry
+
+
+def _update_cache(
+    cache: dict[str, Any],
+    abs_path: str,
+    *,
+    mtime_ns: int,
+    span: tuple[int, int],
+) -> None:
+    """Record that *span* was read from *abs_path* at *mtime_ns*."""
+    existing = cache.get(abs_path)
+    if isinstance(existing, dict) and existing.get("mtime_ns") == mtime_ns:
+        existing.setdefault("spans", {})[span] = True
+    else:
+        cache[abs_path] = {"mtime_ns": mtime_ns, "spans": {span: True}}
