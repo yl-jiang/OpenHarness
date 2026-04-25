@@ -74,38 +74,37 @@ function StatusBarInner({
 	const isPlanMode = mode === 'plan' || mode === 'Plan Mode';
 
 	return (
-		<Box flexDirection="column">
-			<Text dimColor>{'─'.repeat(60)}</Text>
-			<Box flexDirection="row" alignItems="center">
-				<Text>
-					<Text color={theme.colors.primary} dimColor>model: {model}</Text>
-					<Text dimColor>{SEP}</Text>
-					{inputTokens > 0 || outputTokens > 0 ? (
-						<>
-							<Text dimColor>tokens: {formatNum(inputTokens)}{'\u2193'} {formatNum(outputTokens)}{'\u2191'}</Text>
-							<Text dimColor>{SEP}</Text>
-						</>
-					) : null}
-					{!isPlanMode ? (
-						<Text dimColor>mode: {mode}</Text>
-					) : null}
-					{taskCount > 0 ? (
-						<>
-							<Text dimColor>{SEP}</Text>
-							<Text dimColor>tasks: {taskCount}</Text>
-						</>
-					) : null}
-					{mcpCount > 0 ? (
-						<>
-							<Text dimColor>{SEP}</Text>
-							<Text dimColor>mcp: {mcpCount}</Text>
-						</>
-					) : null}
-				</Text>
-				{isPlanMode ? (
-					<PlanModeIndicator mode={mode} activeToolName={activeToolName} />
+		<Box flexDirection="column" marginTop={1}>
+			<Text dimColor>
+				<Text color={theme.colors.primary} bold>OpenHarness</Text>
+				<Text dimColor>{SEP}</Text>
+				<Text dimColor>model: {model}</Text>
+				{inputTokens > 0 || outputTokens > 0 ? (
+					<>
+						<Text dimColor>{SEP}</Text>
+						<Text dimColor>tokens: {formatNum(inputTokens)}{'\u2193'} {formatNum(outputTokens)}{'\u2191'}</Text>
+					</>
 				) : null}
-			</Box>
+				{!isPlanMode ? (
+					<>
+						<Text dimColor>{SEP}</Text>
+						<Text dimColor>mode: {mode}</Text>
+					</>
+				) : null}
+				{taskCount > 0 ? (
+					<>
+						<Text dimColor>{SEP}</Text>
+						<Text dimColor>tasks: {taskCount}</Text>
+					</>
+				) : null}
+				{mcpCount > 0 ? (
+					<>
+						<Text dimColor>{SEP}</Text>
+						<Text dimColor>mcp: {mcpCount}</Text>
+					</>
+				) : null}
+			</Text>
+			{isPlanMode ? <PlanModeIndicator mode={mode} activeToolName={activeToolName} /> : null}
 		</Box>
 	);
 }

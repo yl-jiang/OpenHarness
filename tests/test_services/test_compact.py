@@ -8,7 +8,7 @@ import pytest
 
 from openharness.api.client import ApiMessageCompleteEvent
 from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolUseBlock
+from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
 from openharness.hooks import HookEvent
 from openharness.services import (
     build_post_compact_messages,
@@ -53,6 +53,43 @@ def test_compact_and_summarize_messages():
     assert estimate_conversation_tokens(compacted) >= 1
 
 
+def test_legacy_compact_messages_preserves_tool_exchange_boundary():
+    messages = [
+        ConversationMessage(role="user", content=[TextBlock(text="First question")]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="First answer")]),
+        ConversationMessage(role="user", content=[TextBlock(text="Second question")]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="Second answer")]),
+        ConversationMessage(role="user", content=[TextBlock(text="Please inspect the file")]),
+        ConversationMessage(
+            role="assistant",
+            content=[
+                TextBlock(text="Reading it now."),
+                ToolUseBlock(id="toolu_read", name="read_file", input={"path": "README.md"}),
+            ],
+        ),
+        ConversationMessage(
+            role="user",
+            content=[ToolResultBlock(tool_use_id="toolu_read", content="README contents")],
+        ),
+        ConversationMessage(role="assistant", content=[TextBlock(text="The file describes OpenHarness.")]),
+        ConversationMessage(role="user", content=[TextBlock(text="Keep going")]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="Continuing")]),
+        ConversationMessage(role="user", content=[TextBlock(text="What did we learn?")]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="We learned the README basics.")]),
+    ]
+
+    compacted = compact_messages(messages, preserve_recent=6)
+
+    tool_result_index = next(
+        index
+        for index, message in enumerate(compacted)
+        if any(isinstance(block, ToolResultBlock) for block in message.content)
+    )
+    previous = compacted[tool_result_index - 1]
+    assert previous.role == "assistant"
+    assert [tool_use.id for tool_use in previous.tool_uses] == ["toolu_read"]
+
+
 class _CompactApiClient:
     def __init__(self, responses):
         self._responses = list(responses)
@@ -70,6 +107,31 @@ class _CompactApiClient:
             usage=UsageSnapshot(input_tokens=1, output_tokens=1),
             stop_reason=None,
         )
+
+
+class _ValidatingCompactApiClient:
+    async def stream_message(self, request):
+        _assert_tool_calls_have_immediate_results(request.messages)
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="<summary>condensed</summary>")]),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            stop_reason=None,
+        )
+
+
+def _assert_tool_calls_have_immediate_results(messages: list[ConversationMessage]) -> None:
+    for index, message in enumerate(messages):
+        if message.role != "assistant" or not message.tool_uses:
+            continue
+        assert index + 1 < len(messages)
+        next_message = messages[index + 1]
+        assert next_message.role == "user"
+        result_ids = {
+            block.tool_use_id
+            for block in next_message.content
+            if isinstance(block, ToolResultBlock)
+        }
+        assert result_ids == {tool_use.id for tool_use in message.tool_uses}
 
 
 class _HookExecutorStub:
@@ -98,6 +160,47 @@ def test_try_session_memory_compaction_reduces_long_history():
     assert len(rebuilt) < len(messages)
     assert rebuilt[0].text.startswith("[Compact boundary marker]")
     assert any("Session memory summary" in message.text for message in rebuilt)
+
+
+def test_try_session_memory_compaction_preserves_tool_exchange_boundary():
+    messages = [
+        ConversationMessage(role="user", content=[TextBlock(text="First question")]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="First answer")]),
+        ConversationMessage(role="user", content=[TextBlock(text="Second question")]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="Second answer")]),
+        ConversationMessage(role="user", content=[TextBlock(text="Please inspect the file")]),
+        ConversationMessage(
+            role="assistant",
+            content=[
+                TextBlock(text="Reading it now."),
+                ToolUseBlock(id="toolu_read", name="read_file", input={"path": "README.md"}),
+            ],
+        ),
+        ConversationMessage(
+            role="user",
+            content=[ToolResultBlock(tool_use_id="toolu_read", content="README contents")],
+        ),
+        ConversationMessage(role="assistant", content=[TextBlock(text="The file describes OpenHarness.")]),
+        ConversationMessage(role="user", content=[TextBlock(text="Keep going")]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="Continuing")]),
+        ConversationMessage(role="user", content=[TextBlock(text="What did we learn?")]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="We learned the README basics.")]),
+        ConversationMessage(role="user", content=[TextBlock(text="Summarize that context.")]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="Summary follows.")]),
+    ]
+
+    result = try_session_memory_compaction(messages, preserve_recent=8)
+
+    assert result is not None
+    rebuilt = build_post_compact_messages(result)
+    tool_result_index = next(
+        index
+        for index, message in enumerate(rebuilt)
+        if any(isinstance(block, ToolResultBlock) for block in message.content)
+    )
+    previous = rebuilt[tool_result_index - 1]
+    assert previous.role == "assistant"
+    assert [tool_use.id for tool_use in previous.tool_uses] == ["toolu_read"]
 
 
 def test_try_context_collapse_trims_oversized_messages():
@@ -139,6 +242,45 @@ async def test_compact_conversation_retries_after_incomplete_response():
     rebuilt = build_post_compact_messages(compacted)
     assert rebuilt[0].text.startswith("[Compact boundary marker]")
     assert any(message.text.startswith("This session is being continued") for message in rebuilt)
+
+
+@pytest.mark.asyncio
+async def test_compact_conversation_preserves_tool_exchange_boundary_in_summary_request():
+    messages = [
+        ConversationMessage(role="user", content=[TextBlock(text="Please inspect the file")]),
+        ConversationMessage(
+            role="assistant",
+            content=[
+                TextBlock(text="Reading it now."),
+                ToolUseBlock(id="toolu_read", name="read_file", input={"path": "README.md"}),
+            ],
+        ),
+        ConversationMessage(
+            role="user",
+            content=[ToolResultBlock(tool_use_id="toolu_read", content="README contents")],
+        ),
+        ConversationMessage(role="assistant", content=[TextBlock(text="The file describes OpenHarness.")]),
+        ConversationMessage(role="user", content=[TextBlock(text="Keep going")]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="Continuing")]),
+        ConversationMessage(role="user", content=[TextBlock(text="What did we learn?")]),
+    ]
+
+    compacted = await compact_conversation(
+        messages,
+        api_client=_ValidatingCompactApiClient(),
+        model="claude-test",
+        preserve_recent=5,
+    )
+
+    rebuilt = build_post_compact_messages(compacted)
+    tool_result_index = next(
+        index
+        for index, message in enumerate(rebuilt)
+        if any(isinstance(block, ToolResultBlock) for block in message.content)
+    )
+    previous = rebuilt[tool_result_index - 1]
+    assert previous.role == "assistant"
+    assert [tool_use.id for tool_use in previous.tool_uses] == ["toolu_read"]
 
 
 @pytest.mark.asyncio

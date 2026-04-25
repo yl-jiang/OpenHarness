@@ -26,6 +26,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 - `todo_write` tool now updates an existing unchecked item in-place when `checked=True` instead of appending a duplicate `[x]` line.
 - QueryEngine now auto-continues once when a tool-follow-up turn ends with an empty assistant message, preventing React TUI sessions from appearing to stop early until the user manually sends another message.
+- React TUI transcript now keeps the full session history navigable instead of permanently truncating to the most recent 40 items, and scrolling away from the bottom no longer gets pulled back by incoming output. The frontend now tracks an explicit transcript viewport, supports `PgUp` / `PgDn`, and listens for mouse-wheel scroll events in compatible terminals.
 
 - React TUI spinner now stays visible throughout the entire agent turn: `assistant_complete` no longer resets `busy` state prematurely, and `tool_started` explicitly sets `busy=true` so the status bar remains active even when tool calls follow an assistant message. `line_complete` is the sole signal that ends the turn and clears the spinner.
 - Skill loader now uses `yaml.safe_load` to parse SKILL.md frontmatter, correctly handling YAML block scalars (`>`, `|`), quoted values, and other standard YAML constructs instead of naive line-by-line splitting.

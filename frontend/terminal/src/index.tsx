@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import tty from 'node:tty';
 
 import {App} from './App.js';
+import {createTerminalInputStream} from './input/terminalInput.js';
 import type {FrontendConfig} from './types.js';
 
 // Guard against EIO crashes in both stdin reads and setRawMode calls.
@@ -78,4 +79,6 @@ process.on('exit', () => {
 	}
 });
 
-render(<App config={config} />, {stdin: stdinStream});
+render(<App config={config} />, {
+	stdin: createTerminalInputStream(stdinStream) as unknown as NodeJS.ReadStream & {fd: 0},
+});

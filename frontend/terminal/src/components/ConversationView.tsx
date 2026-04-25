@@ -57,17 +57,19 @@ function ConversationViewInner({
 	assistantBuffer,
 	showWelcome,
 	outputStyle,
+	olderItemCount = 0,
+	newerItemCount = 0,
 }: {
 	items: TranscriptItem[];
 	assistantBuffer: string;
 	showWelcome: boolean;
 	outputStyle?: string;
+	olderItemCount?: number;
+	newerItemCount?: number;
 }): React.JSX.Element {
 	const {theme} = useTheme();
 	const isCodexStyle = outputStyle === 'codex';
-	// Show the most recent items that fit the viewport
-	const visible = items.slice(-40);
-	const grouped = groupToolPairs(visible);
+	const grouped = groupToolPairs(items);
 
 	// Build rendered elements, detecting consecutive ToolPairs for tree connectors
 	const elements: React.ReactNode[] = [];
@@ -162,6 +164,7 @@ function ConversationViewInner({
 
 	return (
 		<Box flexDirection="column" flexGrow={1}>
+			<ViewportBanner olderItemCount={olderItemCount} newerItemCount={newerItemCount} />
 			{showWelcome && items.length === 0 ? <WelcomeBanner /> : null}
 
 			{elements}
@@ -188,6 +191,31 @@ function ConversationViewInner({
 
 export const ConversationView = React.memo(ConversationViewInner);
 
+function ViewportBanner({
+	olderItemCount,
+	newerItemCount,
+}: {
+	olderItemCount: number;
+	newerItemCount: number;
+}): React.JSX.Element {
+	const {theme} = useTheme();
+	const isReviewingHistory = olderItemCount > 0 || newerItemCount > 0;
+	const statusColor = isReviewingHistory ? theme.colors.warning : theme.colors.success;
+	const statusText = isReviewingHistory ? 'Reviewing history' : 'Live output';
+	const detailText = isReviewingHistory
+		? `${olderItemCount} above · ${newerItemCount} below · PgDn resumes live`
+		: 'Newest responses stay pinned to the bottom';
+
+	return (
+		<Box marginBottom={0}>
+			<Text dimColor>
+				<Text color={statusColor} bold>{statusText}</Text>
+				<Text dimColor> · {detailText}</Text>
+			</Text>
+		</Box>
+	);
+}
+
 function MessageRow({item, theme, outputStyle}: {item: TranscriptItem; theme: ReturnType<typeof useTheme>['theme']; outputStyle?: string}): React.JSX.Element {
 	const isCodexStyle = outputStyle === 'codex';
 	switch (item.role) {
@@ -203,9 +231,10 @@ function MessageRow({item, theme, outputStyle}: {item: TranscriptItem; theme: Re
 				);
 			}
 			return (
-				<Box marginTop={1} marginBottom={0}>
+				<Box marginTop={0} marginBottom={0}>
 					<Text>
-						<Text color={theme.colors.secondary} bold>{theme.icons.user}</Text>
+						<Text color={theme.colors.secondary} bold>you</Text>
+						<Text dimColor> · </Text>
 						<Text>{item.text}</Text>
 					</Text>
 				</Box>
@@ -222,10 +251,8 @@ function MessageRow({item, theme, outputStyle}: {item: TranscriptItem; theme: Re
 			}
 			if (!item.text.trim()) return <></>;
 			return (
-				<Box marginTop={1} marginBottom={0} flexDirection="column">
-					<Text>
-						<Text color={theme.colors.success} bold>{theme.icons.assistant}</Text>
-					</Text>
+				<Box marginTop={0} marginBottom={0} flexDirection="column">
+					<Text color={theme.colors.success} bold>assistant</Text>
 					<Box marginLeft={2} flexDirection="column">
 						<MarkdownText content={item.text} />
 					</Box>
@@ -250,7 +277,8 @@ function MessageRow({item, theme, outputStyle}: {item: TranscriptItem; theme: Re
 			return (
 				<Box marginTop={0}>
 					<Text>
-						<Text color={theme.colors.warning}>{theme.icons.system}</Text>
+						<Text color={theme.colors.warning} bold>system</Text>
+						<Text dimColor> · </Text>
 						<Text color={theme.colors.warning}>{item.text}</Text>
 					</Text>
 				</Box>
@@ -259,7 +287,7 @@ function MessageRow({item, theme, outputStyle}: {item: TranscriptItem; theme: Re
 		case 'status':
 			return (
 				<Box marginTop={0}>
-					<Text color={theme.colors.info}>{item.text}</Text>
+					<Text color={theme.colors.info}>· {item.text}</Text>
 				</Box>
 			);
 

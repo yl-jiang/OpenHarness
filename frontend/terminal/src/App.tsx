@@ -1,5 +1,5 @@
-import React, {useDeferredValue, useEffect, useMemo, useState} from 'react';
-import {Box, Text, useApp, useInput} from 'ink';
+import React, {useDeferredValue, useEffect, useMemo, useRef, useState} from 'react';
+import {Box, Text, useApp, useInput, useStdin, useStdout} from 'ink';
 
 import {CommandPicker} from './components/CommandPicker.js';
 import {ConversationView} from './components/ConversationView.js';
@@ -9,6 +9,14 @@ import {SelectModal, type SelectOption} from './components/SelectModal.js';
 import {StatusBar} from './components/StatusBar.js';
 import {SwarmPanel} from './components/SwarmPanel.js';
 import {TodoPanel} from './components/TodoPanel.js';
+import {
+	advanceViewportForNewItems,
+	getTranscriptWindowRange,
+	scrollTranscriptViewport,
+	type TranscriptViewport,
+	selectTranscriptWindow,
+} from './components/transcriptViewport.js';
+import type {TerminalInputStream} from './input/terminalInput.js';
 import {useBackendSession} from './hooks/useBackendSession.js';
 import {ThemeProvider, useTheme} from './theme/ThemeContext.js';
 import type {FrontendConfig} from './types.js';
@@ -59,6 +67,9 @@ export function App({config}: {config: FrontendConfig}): React.JSX.Element {
 
 function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const {exit} = useApp();
+	const {stdin} = useStdin();
+	const {stdout, write} = useStdout();
+	const terminalInput = stdin as unknown as TerminalInputStream;
 	const {theme, setThemeName} = useTheme();
 	const [input, setInput] = useState('');
 	const [completionKey, setCompletionKey] = useState(0);
@@ -70,7 +81,15 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [selectModal, setSelectModal] = useState<SelectModalState>(null);
 	const [selectIndex, setSelectIndex] = useState(0);
+	const [transcriptViewport, setTranscriptViewport] = useState<TranscriptViewport>({
+		offsetFromBottom: 0,
+		followOutput: true,
+	});
 	const session = useBackendSession(config, () => exit());
+	const previousTranscriptCountRef = useRef(0);
+	const transcriptCountRef = useRef(0);
+	const transcriptWindowSizeRef = useRef(8);
+	const transcriptScrollBlockedRef = useRef(false);
 	const deferredTranscript = useDeferredValue(session.transcript);
 	const deferredAssistantBuffer = useDeferredValue(session.assistantBuffer);
 	const deferredStatus = useDeferredValue(session.status);
@@ -78,6 +97,43 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const deferredTodoMarkdown = useDeferredValue(session.todoMarkdown);
 	const deferredSwarmTeammates = useDeferredValue(session.swarmTeammates);
 	const deferredSwarmNotifications = useDeferredValue(session.swarmNotifications);
+	const transcriptWindowSize = useMemo(() => {
+		const terminalRows = stdout.rows ?? 24;
+		let reservedRows = session.ready ? 8 : 4;
+		if (session.modal) {
+			reservedRows += 8;
+		}
+		if (selectModal) {
+			reservedRows += Math.min(10, selectModal.options.length + 4);
+		}
+		if (deferredTodoMarkdown) {
+			reservedRows += 6;
+		}
+		if (deferredSwarmTeammates.length > 0 || deferredSwarmNotifications.length > 0) {
+			reservedRows += 6;
+		}
+		if (deferredAssistantBuffer) {
+			reservedRows += 4;
+		}
+		return Math.max(8, terminalRows - reservedRows);
+	}, [
+		deferredAssistantBuffer,
+		deferredSwarmNotifications.length,
+		deferredSwarmTeammates.length,
+		deferredTodoMarkdown,
+		selectModal,
+		session.modal,
+		session.ready,
+		stdout.rows,
+	]);
+	const transcriptRange = useMemo(
+		() => getTranscriptWindowRange(deferredTranscript.length, transcriptViewport, transcriptWindowSize),
+		[deferredTranscript.length, transcriptViewport, transcriptWindowSize],
+	);
+	const visibleTranscript = useMemo(
+		() => selectTranscriptWindow(deferredTranscript, transcriptViewport, transcriptWindowSize),
+		[deferredTranscript, transcriptViewport, transcriptWindowSize],
+	);
 
 	useEffect(() => {
 		const nextTheme = session.status.theme;
@@ -85,6 +141,59 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			setThemeName(nextTheme);
 		}
 	}, [session.status.theme, setThemeName]);
+
+	useEffect(() => {
+		transcriptCountRef.current = session.transcript.length;
+	}, [session.transcript.length]);
+
+	useEffect(() => {
+		transcriptWindowSizeRef.current = transcriptWindowSize;
+	}, [transcriptWindowSize]);
+
+	useEffect(() => {
+		transcriptScrollBlockedRef.current = Boolean(session.modal || selectModal);
+	}, [selectModal, session.modal]);
+
+	useEffect(() => {
+		const currentCount = session.transcript.length;
+		const previousCount = previousTranscriptCountRef.current;
+		const appendedCount = Math.max(0, currentCount - previousCount);
+		previousTranscriptCountRef.current = currentCount;
+		if (appendedCount > 0) {
+			setTranscriptViewport((viewport) => advanceViewportForNewItems(viewport, appendedCount));
+			return;
+		}
+		setTranscriptViewport((viewport) => {
+			const clamped = getTranscriptWindowRange(currentCount, viewport, transcriptWindowSize).offsetFromBottom;
+			return {
+				offsetFromBottom: clamped,
+				followOutput: clamped === 0,
+			};
+		});
+	}, [session.transcript.length, transcriptWindowSize]);
+
+	useEffect(() => {
+		write('\u001b[?1000h\u001b[?1006h');
+		const handleMouseInput = (event: Parameters<TerminalInputStream['on']>[1] extends (arg: infer T) => void ? T : never): void => {
+			if (event.kind !== 'wheel' || transcriptScrollBlockedRef.current) {
+				return;
+			}
+			setTranscriptViewport((viewport) => (
+				scrollTranscriptViewport(
+					viewport,
+					event.direction,
+					1,
+					transcriptCountRef.current,
+					transcriptWindowSizeRef.current,
+				)
+			));
+		};
+		terminalInput.on('mouse', handleMouseInput);
+		return () => {
+			terminalInput.off('mouse', handleMouseInput);
+			write('\u001b[?1000l\u001b[?1006l');
+		};
+	}, [terminalInput, write]);
 
 	// Current tool name for spinner
 	const currentToolName = useMemo(() => {
@@ -270,6 +379,31 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			return; // Let TextInput in ModalHost handle input
 		}
 
+		if (key.pageUp) {
+			setTranscriptViewport((viewport) => (
+				scrollTranscriptViewport(
+					viewport,
+					'up',
+					Math.max(1, Math.floor(transcriptWindowSize * 0.6)),
+					session.transcript.length,
+					transcriptWindowSize,
+				)
+			));
+			return;
+		}
+		if (key.pageDown) {
+			setTranscriptViewport((viewport) => (
+				scrollTranscriptViewport(
+					viewport,
+					'down',
+					Math.max(1, Math.floor(transcriptWindowSize * 0.6)),
+					session.transcript.length,
+					transcriptWindowSize,
+				)
+			));
+			return;
+		}
+
 		// --- Ignore input while busy ---
 		if (session.busy) {
 			return;
@@ -355,6 +489,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		if (!value.trim() || session.busy || !session.ready) {
 			return;
 		}
+		setTranscriptViewport({offsetFromBottom: 0, followOutput: true});
 		// Check if it's an interactive command
 		if (handleCommand(value)) {
 			setHistory((items) => [...items, value]);
@@ -390,10 +525,12 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			{/* Conversation area */}
 			<Box flexDirection="column" flexGrow={1}>
 				<ConversationView
-					items={deferredTranscript}
+					items={visibleTranscript}
 					assistantBuffer={deferredAssistantBuffer}
 					showWelcome={session.ready && outputStyle !== 'codex'}
 					outputStyle={outputStyle}
+					olderItemCount={transcriptRange.start}
+					newerItemCount={deferredTranscript.length - transcriptRange.end}
 				/>
 			</Box>
 
@@ -454,17 +591,6 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				/>
 			)}
 
-			{/* Keyboard hints (only after backend is ready) */}
-			{session.ready && !session.modal && !selectModal ? (
-				<Box>
-					<Text dimColor>
-						<Text color={theme.colors.primary}>enter</Text> send{'  '}
-						<Text color={theme.colors.primary}>/</Text> commands{'  '}
-						<Text color={theme.colors.primary}>{'\u2191\u2193'}</Text> history{'  '}
-						<Text color={theme.colors.primary}>ctrl+c</Text> exit
-					</Text>
-				</Box>
-			) : null}
 		</Box>
 	);
 }
