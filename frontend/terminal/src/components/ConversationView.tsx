@@ -1,25 +1,18 @@
 import React from 'react';
-import {Box, Static, Text} from 'ink';
+import {Box, Text} from 'ink';
 
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TranscriptItem} from '../types.js';
 import {MarkdownText} from './MarkdownText.js';
 import {ToolCallDisplay, type TreePos} from './ToolCallDisplay.js';
 import {WelcomeBanner} from './WelcomeBanner.js';
-import {computeCommittedCutoff} from './transcriptCutoff.js';
 
 type ToolPair = {kind: 'pair'; call: TranscriptItem; result: TranscriptItem; index: number};
 type SoloTool = {kind: 'tool'; item: TranscriptItem; index: number};
 type SoloMessage = {kind: 'message'; item: TranscriptItem; index: number};
 type RenderGroup = ToolPair | SoloTool | SoloMessage;
 
-/**
- * Group consecutive tool/tool_result items into pairs, while preserving the
- * absolute index of the first transcript item in every group.  The absolute
- * index is used as a stable React key so that <Static> can correctly identify
- * append-only growth across renders.
- */
-function buildGroups(items: TranscriptItem[], offset: number): RenderGroup[] {
+function buildGroups(items: TranscriptItem[]): RenderGroup[] {
 	const groups: RenderGroup[] = [];
 	let i = 0;
 	while (i < items.length) {
@@ -33,26 +26,54 @@ function buildGroups(items: TranscriptItem[], offset: number): RenderGroup[] {
 			const resultCount = resultEnd - toolEnd;
 			const pairedCount = Math.min(toolCount, resultCount);
 			for (let j = 0; j < pairedCount; j++) {
-				groups.push({
-					kind: 'pair',
-					call: items[i + j],
-					result: items[toolEnd + j],
-					index: offset + i + j,
-				});
+				groups.push({kind: 'pair', call: items[i + j], result: items[toolEnd + j], index: i + j});
 			}
 			for (let j = pairedCount; j < toolCount; j++) {
-				groups.push({kind: 'tool', item: items[i + j], index: offset + i + j});
+				groups.push({kind: 'tool', item: items[i + j], index: i + j});
 			}
 			for (let j = pairedCount; j < resultCount; j++) {
-				groups.push({kind: 'message', item: items[toolEnd + j], index: offset + toolEnd + j});
+				groups.push({kind: 'message', item: items[toolEnd + j], index: toolEnd + j});
 			}
 			i = resultEnd;
 		} else {
-			groups.push({kind: 'message', item: cur, index: offset + i});
+			groups.push({kind: 'message', item: cur, index: i});
 			i++;
 		}
 	}
 	return groups;
+}
+
+function assignTreePositions(groups: RenderGroup[]): TreePos[] {
+	const out: TreePos[] = new Array(groups.length).fill('single');
+	let runStart = -1;
+	const flush = (endExclusive: number): void => {
+		if (runStart < 0) return;
+		const len = endExclusive - runStart;
+		if (len === 1) {
+			out[runStart] = 'single';
+		} else {
+			for (let k = runStart; k < endExclusive; k++) {
+				if (k === runStart) out[k] = 'first';
+				else if (k === endExclusive - 1) out[k] = 'last';
+				else out[k] = 'middle';
+			}
+		}
+		runStart = -1;
+	};
+	for (let i = 0; i < groups.length; i++) {
+		const g = groups[i];
+		const isToolGroup = g.kind === 'pair' || g.kind === 'tool';
+		const isEmptyAssistant = g.kind === 'message' && g.item.role === 'assistant' && !g.item.text.trim();
+		if (isToolGroup) {
+			if (runStart < 0) runStart = i;
+		} else if (isEmptyAssistant) {
+			continue;
+		} else {
+			flush(i);
+		}
+	}
+	flush(groups.length);
+	return out;
 }
 
 function renderGroup(
@@ -83,52 +104,25 @@ function renderGroup(
 			/>
 		);
 	}
-	return <MessageRow key={`g-${group.index}`} item={group.item} theme={theme} outputStyle={outputStyle} />;
+	return (
+		<MessageRow
+			key={`g-${group.index}`}
+			item={group.item}
+			theme={theme}
+			outputStyle={outputStyle}
+		/>
+	);
 }
 
 /**
- * Assign tree connector positions ("first", "middle", "last", "single") to
- * tool groups that appear in adjacent runs (Copilot-style branching tree).
+ * Scrollable transcript panel.  Renders the (possibly sliced) transcript in
+ * a single overflow:hidden, column-reverse box.  The slice's last item is
+ * pinned to the visual bottom, with earlier items stacking upward; anything
+ * beyond the box top is clipped.  Item-level scrolling is implemented at
+ * the caller by passing a shorter slice — that naturally moves the visible
+ * bottom anchor toward the start of the transcript, revealing earlier
+ * history above it.
  */
-function assignTreePositions(groups: RenderGroup[]): TreePos[] {
-	const out: TreePos[] = new Array(groups.length).fill('single');
-	let runStart = -1;
-	const flush = (endExclusive: number): void => {
-		if (runStart < 0) return;
-		const len = endExclusive - runStart;
-		if (len === 1) {
-			out[runStart] = 'single';
-		} else {
-			for (let k = runStart; k < endExclusive; k++) {
-				if (k === runStart) out[k] = 'first';
-				else if (k === endExclusive - 1) out[k] = 'last';
-				else out[k] = 'middle';
-			}
-		}
-		runStart = -1;
-	};
-	for (let i = 0; i < groups.length; i++) {
-		const g = groups[i];
-		const isToolGroup = g.kind === 'pair' || g.kind === 'tool';
-		const isEmptyAssistant =
-			g.kind === 'message' && g.item.role === 'assistant' && !g.item.text.trim();
-		if (isToolGroup) {
-			if (runStart < 0) runStart = i;
-		} else if (isEmptyAssistant) {
-			// Empty assistants act as transparent separators inside a run.
-			continue;
-		} else {
-			flush(i);
-		}
-	}
-	flush(groups.length);
-	return out;
-}
-
-type StaticEntry =
-	| {kind: 'banner'}
-	| {kind: 'group'; group: RenderGroup; treePos: TreePos};
-
 function ConversationViewInner({
 	transcript,
 	assistantBuffer,
@@ -143,53 +137,28 @@ function ConversationViewInner({
 	const {theme} = useTheme();
 	const isCodexStyle = outputStyle === 'codex';
 
-	const cutoff = computeCommittedCutoff(transcript);
-	const committedItems = transcript.slice(0, cutoff);
-	const liveItems = transcript.slice(cutoff);
+	const groups = buildGroups(transcript);
+	const treePositions = assignTreePositions(groups);
 
-	const committedGroups = buildGroups(committedItems, 0);
-	const liveGroups = buildGroups(liveItems, cutoff);
-
-	// Compute tree positions across the *entire* group sequence (committed +
-	// live) so that adjacent tools split across the boundary still get the
-	// correct connectors.
-	const allGroups = [...committedGroups, ...liveGroups];
-	const allTreePos = assignTreePositions(allGroups);
-	const committedTreePos = allTreePos.slice(0, committedGroups.length);
-	const liveTreePos = allTreePos.slice(committedGroups.length);
-
-	const staticEntries: StaticEntry[] = [];
-	if (showWelcome) {
-		staticEntries.push({kind: 'banner'});
-	}
-	for (let i = 0; i < committedGroups.length; i++) {
-		staticEntries.push({kind: 'group', group: committedGroups[i], treePos: committedTreePos[i]});
-	}
+	// We use column-reverse so the *first* DOM child renders at the visual
+	// bottom of the viewport, with subsequent children stacking upward.  When
+	// the children overflow the box, yoga clips the visual top — i.e. the
+	// older content scrolls off the top edge first, exactly like a normal
+	// terminal scrollback view.  Item-level scrolling is implemented at the
+	// caller (App.tsx) by simply slicing `transcript`: a shorter slice means
+	// the slice's last item becomes the new visual bottom, naturally
+	// revealing earlier history above it.
+	const reversedGroupEntries = groups.map((group, i) => ({group, treePos: treePositions[i]})).reverse();
 
 	return (
-		<Box flexDirection="column">
-			<Static items={staticEntries}>
-				{(entry, idx) => {
-					if (entry.kind === 'banner') {
-						return <WelcomeBanner key="banner" />;
-					}
-					return (
-						<Box key={`s-${entry.group.index}`} flexDirection="column">
-							{renderGroup(entry.group, theme, outputStyle, entry.treePos)}
-						</Box>
-					);
-				}}
-			</Static>
-
-			{liveGroups.map((group, i) => renderGroup(group, theme, outputStyle, liveTreePos[i]))}
-
+		<Box flexGrow={1} flexShrink={1} flexDirection="column-reverse" overflow="hidden">
 			{assistantBuffer ? (
 				isCodexStyle ? (
-					<Box flexDirection="row" marginTop={0}>
+					<Box flexShrink={0} flexDirection="row" marginTop={0}>
 						<Text>{assistantBuffer}</Text>
 					</Box>
 				) : (
-					<Box marginTop={1} marginBottom={0} flexDirection="column">
+					<Box flexShrink={0} marginTop={1} marginBottom={0} flexDirection="column">
 						<Text>
 							<Text color={theme.colors.success} bold>
 								{theme.icons.assistant}
@@ -201,6 +170,12 @@ function ConversationViewInner({
 					</Box>
 				)
 			) : null}
+			{reversedGroupEntries.map(({group, treePos}) => (
+				<Box key={`g-${group.index}`} flexShrink={0} flexDirection="column">
+					{renderGroup(group, theme, outputStyle, treePos)}
+				</Box>
+			))}
+			{showWelcome ? <WelcomeBanner /> : null}
 		</Box>
 	);
 }
