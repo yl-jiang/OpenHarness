@@ -306,6 +306,13 @@ class ReactBackendHost:
                     )
                 )
                 await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
+                # Update cumulative token counts in AppState so the TUI status
+                # bar can display them.
+                usage = self._bundle.engine.total_usage
+                self._bundle.app_state.set(
+                    input_tokens=usage.input_tokens,
+                    output_tokens=usage.output_tokens,
+                )
                 return
             if isinstance(event, ToolExecutionStarted):
                 logger.event(

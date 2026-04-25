@@ -3,7 +3,6 @@ import {Box, Text} from 'ink';
 import TextInput from 'ink-text-input';
 
 import {useTheme} from '../theme/ThemeContext.js';
-import {Spinner} from './Spinner.js';
 
 const noop = (): void => {};
 
@@ -27,6 +26,8 @@ export function PromptInput({
 	inputKey?: number;
 }): React.JSX.Element {
 	const {theme} = useTheme();
+	const idleTitle = '[idle]';
+	const busyTitle = statusLabel ?? (toolName ? `[run] ${toolName}` : '[run]');
 
 	return (
 		<Box
@@ -37,16 +38,12 @@ export function PromptInput({
 			paddingX={1}
 		>
 			<Box>
-				<Text color={theme.colors.primary} bold>Prompt</Text>
-				<Text dimColor> · </Text>
-				{busy ? (
-					<Spinner label={statusLabel ?? (toolName ? `Running ${toolName}...` : 'Running...')} />
-				) : (
-					<Text dimColor>Ready · enter sends immediately</Text>
-				)}
+				<Text color={theme.colors.primary} bold>{'>>'}</Text>
+				<Text dimColor>{' | '}</Text>
+				<Text dimColor>{busy ? busyTitle : idleTitle}</Text>
 			</Box>
 			<Box marginTop={1}>
-				<Text color={theme.colors.primary} bold>{busy ? '… ' : '› '}</Text>
+				<Text color={theme.colors.primary} bold>{busy ? '... ' : '> '}</Text>
 				<TextInput key={inputKey} value={input} onChange={setInput} onSubmit={suppressSubmit || busy ? noop : onSubmit} />
 			</Box>
 			<Text dimColor>/ commands · ↑↓ history · wheel/PgUp scroll · End resume · ctrl+c exit</Text>

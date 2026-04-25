@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import io
 import json
-from pathlib import Path
 
 import pytest
 
@@ -13,6 +12,7 @@ from openharness.api.client import ApiMessageCompleteEvent
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.stream_events import CompactProgressEvent
 from openharness.engine.messages import ConversationMessage, TextBlock
+from openharness.state import AppState
 from openharness.ui.backend_host import BackendHostConfig, ReactBackendHost, run_backend_host
 from openharness.ui.protocol import BackendEvent
 from openharness.ui.runtime import build_runtime, close_runtime, start_runtime
@@ -54,6 +54,23 @@ class FakeBinaryStdout:
 
     def flush(self) -> None:
         return None
+
+
+def test_state_snapshot_includes_git_branch():
+    event = BackendEvent.state_snapshot(
+        AppState(
+            model="test-model",
+            permission_mode="default",
+            theme="default",
+            cwd="/tmp/demo",
+            git_branch="main",
+            keybindings={},
+        )
+    )
+
+    assert event.state is not None
+    assert event.state["cwd"] == "/tmp/demo"
+    assert event.state["git_branch"] == "main"
 
 
 @pytest.mark.asyncio
