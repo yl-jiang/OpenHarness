@@ -1,6 +1,7 @@
-import React, {useDeferredValue, useEffect, useMemo, useState} from 'react';
+import React, {useCallback, useDeferredValue, useEffect, useMemo, useRef, useState} from 'react';
 import {Box, Text, useApp, useInput, useStdin} from 'ink';
 
+import {AlternateScreen} from './components/AlternateScreen.js';
 import {CommandPicker} from './components/CommandPicker.js';
 import {ConversationView} from './components/ConversationView.js';
 import {ModalHost} from './components/ModalHost.js';
@@ -11,6 +12,8 @@ import {SwarmPanel} from './components/SwarmPanel.js';
 import {TodoPanel} from './components/TodoPanel.js';
 import type {TerminalInputStream} from './input/terminalInput.js';
 import {useBackendSession} from './hooks/useBackendSession.js';
+import {useMouseWheel} from './hooks/useMouseWheel.js';
+import {useTerminalSize} from './hooks/useTerminalSize.js';
 import {ThemeProvider, useTheme} from './theme/ThemeContext.js';
 import type {FrontendConfig} from './types.js';
 
@@ -53,7 +56,9 @@ export function App({config}: {config: FrontendConfig}): React.JSX.Element {
 	const initialTheme = String((config as Record<string, unknown>).theme ?? 'default');
 	return (
 		<ThemeProvider initialTheme={initialTheme}>
-			<AppInner config={config} />
+			<AlternateScreen>
+				<AppInner config={config} />
+			</AlternateScreen>
 		</ThemeProvider>
 	);
 }
@@ -63,6 +68,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const {stdin: _stdin} = useStdin();
 	const _terminalInput = _stdin as unknown as TerminalInputStream;
 	const {theme, setThemeName} = useTheme();
+	const {rows} = useTerminalSize();
 	const [input, setInput] = useState('');
 	const [completionKey, setCompletionKey] = useState(0);
 	const [modalInput, setModalInput] = useState('');
@@ -73,6 +79,19 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [selectModal, setSelectModal] = useState<SelectModalState>(null);
 	const [selectIndex, setSelectIndex] = useState(0);
+
+	// Scroll state (item-level).
+	// `pausedAt`: when non-null, the user has scrolled away from the live
+	// tail; new agent output cannot move the visible viewport.  `null` =
+	// "follow the tail" (newest content always visible).
+	// `viewBottom`: the index of the transcript item that is currently
+	// pinned to the visual bottom of the viewport.  Only meaningful when
+	// `pausedAt !== null`.  Decreasing this index reveals earlier history
+	// (the slice gets shorter; column-reverse pins its last item at the
+	// bottom; older items stack upward into the visible area).
+	const [pausedAt, setPausedAt] = useState<number | null>(null);
+	const [viewBottom, setViewBottom] = useState(0);
+
 	const session = useBackendSession(config, () => exit());
 	const deferredTranscript = useDeferredValue(session.transcript);
 	const deferredAssistantBuffer = useDeferredValue(session.assistantBuffer);
@@ -88,6 +107,52 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			setThemeName(nextTheme);
 		}
 	}, [session.status.theme, setThemeName]);
+
+	const transcriptForView =
+		pausedAt === null ? deferredTranscript : deferredTranscript.slice(0, viewBottom + 1);
+	const assistantBufferForView = pausedAt === null ? deferredAssistantBuffer : '';
+
+	// Scroll helpers.
+	const transcriptLengthRef = useRef(deferredTranscript.length);
+	transcriptLengthRef.current = deferredTranscript.length;
+
+	const scrollUp = useCallback((step: number) => {
+		const len = transcriptLengthRef.current;
+		if (len === 0) return;
+		setPausedAt((prev) => (prev === null ? len : prev));
+		setViewBottom((b) => {
+			const base = pausedAt === null ? len - 1 : b;
+			return Math.max(0, base - step);
+		});
+	}, [pausedAt]);
+
+	const scrollDown = useCallback((step: number) => {
+		if (pausedAt === null) return;
+		setViewBottom((b) => {
+			const next = b + step;
+			if (next >= pausedAt - 1) {
+				setPausedAt(null);
+				return next;
+			}
+			return next;
+		});
+	}, [pausedAt]);
+
+	const scrollToBottom = useCallback(() => {
+		setPausedAt(null);
+	}, []);
+
+	const scrollToTop = useCallback(() => {
+		const len = transcriptLengthRef.current;
+		if (len === 0) return;
+		setPausedAt((prev) => (prev === null ? len : prev));
+		setViewBottom(0);
+	}, []);
+
+	useMouseWheel((delta) => {
+		if (delta < 0) scrollUp(3);
+		else scrollDown(3);
+	});
 
 	// Current tool name for spinner
 	const currentToolName = useMemo(() => {
@@ -267,8 +332,29 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 			return;
 		}
 
-		// PgUp/PgDn intentionally NOT intercepted: scrollback is handled
-		// natively by the terminal emulator (mouse wheel, trackpad, scrollbar).
+		// --- Transcript scrolling ---
+		// PgUp/PgDn/Home/End/Shift+G work whether or not the agent is busy so
+		// the user can browse history while a turn is running.  We use a
+		// generous one-screen step (rows / 2) for PgUp/PgDn so navigation feels
+		// snappy.
+		const pageStep = Math.max(1, Math.floor(rows / 2));
+		if (key.pageUp) {
+			scrollUp(pageStep);
+			return;
+		}
+		if (key.pageDown) {
+			scrollDown(pageStep);
+			return;
+		}
+		// Shift+G jumps to the live tail (vim-ish), Home jumps to top.
+		if (chunk === 'G' && !key.ctrl && !key.meta) {
+			scrollToBottom();
+			return;
+		}
+		if (chunk === 'g' && !key.ctrl && !key.meta && !input) {
+			scrollToTop();
+			return;
+		}
 
 		if (session.busy) {
 			return;
@@ -309,6 +395,11 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		}
 
 		if (key.escape) {
+			// ESC also resumes follow mode if we're scrolled away.
+			if (pausedAt !== null) {
+				scrollToBottom();
+				return;
+			}
 			const now = Date.now();
 			if (input && now - lastEscapeAt < 500) {
 				setInput('');
@@ -351,6 +442,9 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		if (!value.trim() || session.busy || !session.ready) {
 			return;
 		}
+		// Submitting always returns to the live tail so the user sees their
+		// own message and the agent's reply.
+		scrollToBottom();
 		if (handleCommand(value)) {
 			setHistory((items) => [...items, value]);
 			setHistoryIndex(-1);
@@ -380,65 +474,85 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		return () => clearTimeout(timer);
 	}, [scriptIndex, session.busy, session.modal, selectModal]);
 
+	const showWelcome = session.ready && outputStyle !== 'codex';
+	const isPaused = pausedAt !== null;
+
 	return (
-		<Box flexDirection="column" paddingX={1}>
+		<Box flexDirection="column" height={rows} paddingX={1}>
 			<ConversationView
-				transcript={deferredTranscript}
-				assistantBuffer={deferredAssistantBuffer}
-				showWelcome={session.ready && outputStyle !== 'codex'}
+				transcript={transcriptForView}
+				assistantBuffer={assistantBufferForView}
+				showWelcome={showWelcome}
 				outputStyle={outputStyle}
 			/>
 
+			{isPaused ? (
+				<Box flexShrink={0} flexDirection="column">
+					<Text color={theme.colors.warning} dimColor>
+						— history view (PgDn/End/G to resume) —
+					</Text>
+				</Box>
+			) : null}
+
 			{session.modal ? (
-				<ModalHost
-					modal={session.modal}
-					modalInput={modalInput}
-					setModalInput={setModalInput}
-					onSubmit={onSubmit}
-				/>
+				<Box flexShrink={0} flexDirection="column">
+					<ModalHost
+						modal={session.modal}
+						modalInput={modalInput}
+						setModalInput={setModalInput}
+						onSubmit={onSubmit}
+					/>
+				</Box>
 			) : null}
 
 			{selectModal ? (
-				<SelectModal
-					title={selectModal.title}
-					options={selectModal.options}
-					selectedIndex={selectIndex}
-				/>
+				<Box flexShrink={0} flexDirection="column">
+					<SelectModal title={selectModal.title} options={selectModal.options} selectedIndex={selectIndex} />
+				</Box>
 			) : null}
 
 			{showPicker ? (
-				<CommandPicker hints={commandHints} selectedIndex={pickerIndex} />
+				<Box flexShrink={0} flexDirection="column">
+					<CommandPicker hints={commandHints} selectedIndex={pickerIndex} />
+				</Box>
 			) : null}
 
 			{session.ready && deferredTodoMarkdown ? (
-				<TodoPanel markdown={deferredTodoMarkdown} />
+				<Box flexShrink={0} flexDirection="column">
+					<TodoPanel markdown={deferredTodoMarkdown} />
+				</Box>
 			) : null}
 
 			{session.ready && (deferredSwarmTeammates.length > 0 || deferredSwarmNotifications.length > 0) ? (
-				<SwarmPanel teammates={deferredSwarmTeammates} notifications={deferredSwarmNotifications} />
+				<Box flexShrink={0} flexDirection="column">
+					<SwarmPanel teammates={deferredSwarmTeammates} notifications={deferredSwarmNotifications} />
+				</Box>
 			) : null}
 
 			{session.ready ? (
-				<StatusBar status={deferredStatus} tasks={deferredTasks} activeToolName={session.busy ? currentToolName : undefined} />
+				<Box flexShrink={0} flexDirection="column">
+					<StatusBar status={deferredStatus} tasks={deferredTasks} activeToolName={session.busy ? currentToolName : undefined} />
+				</Box>
 			) : null}
 
 			{!session.ready ? (
-				<Box>
+				<Box flexShrink={0} flexDirection="column">
 					<Text color={theme.colors.warning}>Connecting to backend...</Text>
 				</Box>
 			) : session.modal || selectModal ? null : (
-				<PromptInput
-					busy={session.busy}
-					input={input}
-					setInput={setInput}
-					onSubmit={onSubmit}
-					toolName={session.busy ? currentToolName : undefined}
-					statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `Running ${currentToolName}...` : 'Running agent loop...')) : undefined}
-					suppressSubmit={showPicker}
-					inputKey={completionKey}
-				/>
+				<Box flexShrink={0} flexDirection="column">
+					<PromptInput
+						busy={session.busy}
+						input={input}
+						setInput={setInput}
+						onSubmit={onSubmit}
+						toolName={session.busy ? currentToolName : undefined}
+						statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `Running ${currentToolName}...` : 'Running agent loop...')) : undefined}
+						suppressSubmit={showPicker}
+						inputKey={completionKey}
+					/>
+				</Box>
 			)}
-
 		</Box>
 	);
 }

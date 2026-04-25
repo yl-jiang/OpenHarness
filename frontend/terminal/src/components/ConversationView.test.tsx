@@ -24,7 +24,7 @@ function createTestStdout(): InkTestStdout {
 	return Object.assign(new PassThrough(), {
 		isTTY: true,
 		columns: 120,
-		rows: 40,
+		rows: 1000,
 		cursorTo: () => true,
 		clearLine: () => true,
 		moveCursor: () => true,
