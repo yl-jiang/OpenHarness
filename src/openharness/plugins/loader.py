@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
-from openharness.utils.log import get_logger
 import os
+import sys
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -26,6 +27,7 @@ from openharness.plugins.schemas import PluginManifest
 from openharness.plugins.types import LoadedPlugin, PluginCommandDefinition
 from openharness.skills.loader import _parse_skill_markdown
 from openharness.skills.types import SkillDefinition
+from openharness.utils.log import get_logger
 
 logger = get_logger(__name__)
 
@@ -135,6 +137,7 @@ def load_plugin(path: Path, enabled_plugins: dict[str, bool]) -> LoadedPlugin | 
     skills = _load_plugin_skills(path / manifest.skills_dir)
     commands = _load_plugin_commands(path, manifest)
     agents = _load_plugin_agents(path, manifest)
+    tools = _load_plugin_tools(path, manifest) if enabled else []
     hooks = _load_plugin_hooks(path / manifest.hooks_file)
     hooks_dir_file = path / "hooks" / "hooks.json"
     if not hooks and hooks_dir_file.exists():
@@ -152,6 +155,7 @@ def load_plugin(path: Path, enabled_plugins: dict[str, bool]) -> LoadedPlugin | 
         skills=skills,
         commands=commands,
         agents=agents,
+        tools=tools,
         hooks=hooks,
         mcp_servers=mcp,
     )
@@ -661,3 +665,43 @@ def _load_plugin_mcp(path: Path) -> dict[str, object]:
     raw = json.loads(path.read_text(encoding="utf-8"))
     parsed = McpJsonConfig.model_validate(raw)
     return parsed.mcpServers
+
+
+def _load_plugin_tools(path: Path, manifest: PluginManifest) -> list:
+    """Discover and instantiate BaseTool subclasses from a plugin's tools/ directory."""
+    from openharness.tools.base import BaseTool
+
+    tools_dir = path / manifest.tools_dir
+    if not tools_dir.is_dir():
+        return []
+
+    tools: list[BaseTool] = []
+    for py_file in sorted(tools_dir.glob("*.py")):
+        if py_file.name.startswith("_"):
+            continue
+        module_name = f"_plugin_tools_{manifest.name}_{py_file.stem}"
+        try:
+            spec = importlib.util.spec_from_file_location(module_name, py_file)
+            if spec is None or spec.loader is None:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+        except Exception:
+            logger.debug("Failed to load plugin tool module %s", py_file, exc_info=True)
+            continue
+
+        for attr_name in dir(module):
+            attr = getattr(module, attr_name, None)
+            if (
+                isinstance(attr, type)
+                and issubclass(attr, BaseTool)
+                and attr is not BaseTool
+                and hasattr(attr, "name")
+                and hasattr(attr, "description")
+            ):
+                try:
+                    tools.append(attr())
+                except Exception:
+                    logger.debug("Failed to instantiate tool %s from %s", attr_name, py_file, exc_info=True)
+    return tools
