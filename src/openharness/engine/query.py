@@ -539,6 +539,9 @@ async def run_query(
             todo_msg = context.tool_metadata['todo_store'].format_for_injection()
             if todo_msg is not None:
                 messages.append(ConversationMessage.from_user_content(todo_msg))
+            # Clear the file-read cache so the agent re-reads files with fresh
+            # content after the context has been compacted.
+            context.tool_metadata.pop(ToolMetadataKey.FILE_READ_CACHE.value, None)
 
         messages = normalize_messages_for_api(messages)
 
