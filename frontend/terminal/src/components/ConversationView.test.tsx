@@ -98,3 +98,23 @@ test('keeps an unfinished trailing tool call rendered in the live region', async
 	assert.match(output, /do it/);
 	assert.match(output, /bash/);
 });
+
+test('renders assistant header before tool runs in a later turn', async () => {
+	const output = await renderConversation([
+		{role: 'user', text: 'hi'},
+		{role: 'assistant', text: 'hello'},
+		{role: 'user', text: 'inspect the project'},
+		{role: 'tool', text: 'ls -la', tool_name: 'bash', tool_input: {command: 'ls -la'}},
+		{role: 'tool_result', text: 'total 0'},
+		{role: 'assistant', text: 'Let me look at a few more areas:'},
+	]);
+
+	const turnStart = output.indexOf('you · inspect the project');
+	const toolStart = output.indexOf('bash ls -la');
+	const assistantAfterTurn = output.indexOf('assistant', turnStart + 1);
+
+	assert.notEqual(turnStart, -1);
+	assert.notEqual(toolStart, -1);
+	assert.notEqual(assistantAfterTurn, -1);
+	assert.ok(assistantAfterTurn < toolStart, `expected assistant header before tool run, got:\n${output}`);
+});
