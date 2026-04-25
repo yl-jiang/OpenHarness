@@ -7,6 +7,7 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry,
 from openharness.tools.brief_tool import BriefTool
 from openharness.tools.config_tool import ConfigTool
 from openharness.tools.cron_manager_tool import CronManagerTool
+from openharness.tools.diff_tool import DiffTool
 from openharness.tools.enter_plan_mode_tool import EnterPlanModeTool
 from openharness.tools.enter_worktree_tool import EnterWorktreeTool
 from openharness.tools.exit_plan_mode_tool import ExitPlanModeTool
@@ -14,6 +15,7 @@ from openharness.tools.exit_worktree_tool import ExitWorktreeTool
 from openharness.tools.file_edit_tool import FileEditTool
 from openharness.tools.file_read_tool import FileReadTool
 from openharness.tools.file_write_tool import FileWriteTool
+from openharness.tools.git_tool import GitTool
 from openharness.tools.glob_tool import GlobTool
 from openharness.tools.grep_tool import GrepTool
 from openharness.tools.list_mcp_resources_tool import ListMcpResourcesTool
@@ -55,6 +57,8 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         McpAuthTool(),
         GlobTool(),
         GrepTool(),
+        GitTool(),
+        DiffTool(),
         SkillManagerTool(),
         ToolSearchTool(),
         WebFetchTool(),
