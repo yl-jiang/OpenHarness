@@ -395,10 +395,12 @@ def _carryover_state(
             context.tool_metadata,
             f"Confirmed async-agent activity via {tool_name}: {description[:180]}",
         )
-    elif tool_name == "enter_plan_mode":
-        _update_plan_mode(context.tool_metadata, "plan")
-    elif tool_name == "exit_plan_mode":
-        _update_plan_mode(context.tool_metadata, "default")
+    elif tool_name == "plan_mode":
+        action = str(tool_input.get("action") or "").strip()
+        if action == "enter":
+            _update_plan_mode(context.tool_metadata, "plan")
+        elif action == "exit":
+            _update_plan_mode(context.tool_metadata, "default")
     elif tool_name == "web_fetch":
         url = str(tool_input.get("url") or "").strip()
         if url:
@@ -454,10 +456,12 @@ def _carryover_log(
             _remember_work_log(context.tool_metadata, entry=f"Wrote ({verb}) skill {skill_name}")
     elif tool_name in {"agent", "send_message"}:
         _remember_work_log(context.tool_metadata, entry=f"Async agent action via {tool_name}")
-    elif tool_name == "enter_plan_mode":
-        _remember_work_log(context.tool_metadata, entry="Entered plan mode")
-    elif tool_name == "exit_plan_mode":
-        _remember_work_log(context.tool_metadata, entry="Exited plan mode")
+    elif tool_name == "plan_mode":
+        action = str(tool_input.get("action") or "").strip()
+        if action == "enter":
+            _remember_work_log(context.tool_metadata, entry="Entered plan mode")
+        elif action == "exit":
+            _remember_work_log(context.tool_metadata, entry="Exited plan mode")
 
 
 async def run_query(
