@@ -56,14 +56,29 @@ export function App({config}: {config: FrontendConfig}): React.JSX.Element {
 	const initialTheme = String((config as Record<string, unknown>).theme ?? 'default');
 	return (
 		<ThemeProvider initialTheme={initialTheme}>
-			<AlternateScreen>
-				<AppInner config={config} />
-			</AlternateScreen>
+			<AppShell config={config} />
 		</ThemeProvider>
 	);
 }
 
-function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
+function AppShell({config}: {config: FrontendConfig}): React.JSX.Element {
+	const [mouseTracking, setMouseTracking] = useState(true);
+	return (
+		<AlternateScreen mouseTracking={mouseTracking}>
+			<AppInner config={config} mouseTracking={mouseTracking} setMouseTracking={setMouseTracking} />
+		</AlternateScreen>
+	);
+}
+
+function AppInner({
+	config,
+	mouseTracking,
+	setMouseTracking,
+}: {
+	config: FrontendConfig;
+	mouseTracking: boolean;
+	setMouseTracking: (value: boolean | ((prev: boolean) => boolean)) => void;
+}): React.JSX.Element {
 	const {exit} = useApp();
 	const {stdin: _stdin} = useStdin();
 	const _terminalInput = _stdin as unknown as TerminalInputStream;
@@ -220,6 +235,14 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		if (key.ctrl && chunk === 'c') {
 			session.sendRequest({type: 'shutdown'});
 			exit();
+			return;
+		}
+
+		// Ctrl+X toggles mouse capture so the user can drag-select text in
+		// their terminal to copy.  When disabled, in-app wheel scrolling is
+		// unavailable until re-enabled (PgUp/PgDn still work).
+		if (key.ctrl && chunk === 'x') {
+			setMouseTracking((prev) => !prev);
 			return;
 		}
 
@@ -465,6 +488,14 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 				<Box flexShrink={0} flexDirection="column">
 					<Text color={theme.colors.warning} dimColor>
 						— history view (PgDn/End/G to resume) —
+					</Text>
+				</Box>
+			) : null}
+
+			{!mouseTracking ? (
+				<Box flexShrink={0} flexDirection="column">
+					<Text color={theme.colors.warning} dimColor>
+						— select mode: drag to copy · ctrl+x to re-enable wheel scroll —
 					</Text>
 				</Box>
 			) : null}
