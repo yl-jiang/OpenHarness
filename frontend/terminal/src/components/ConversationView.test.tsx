@@ -59,7 +59,7 @@ async function renderConversation(items: TranscriptItem[]): Promise<string> {
 	const instance = renderInk(
 		<ThemeProvider initialTheme="default">
 			<ConversationView
-				items={items}
+				transcript={items}
 				assistantBuffer=""
 				showWelcome={false}
 				outputStyle="default"
@@ -89,42 +89,12 @@ test('renders transcript items from the beginning when the full history is provi
 	assert.match(output, /\bmessage-060\b/);
 });
 
-test('shows a reviewing-history viewport banner when the transcript is scrolled away from live output', async () => {
-	const output = await renderWithInk(
-		<ThemeProvider initialTheme="default">
-			<ConversationView
-				items={[
-					{role: 'assistant', text: 'older'},
-					{role: 'assistant', text: 'focused'},
-				]}
-				assistantBuffer=""
-				showWelcome={false}
-				outputStyle="default"
-				olderItemCount={12}
-				newerItemCount={3}
-			/>
-		</ThemeProvider>,
-	);
+test('keeps an unfinished trailing tool call rendered in the live region', async () => {
+	const output = await renderConversation([
+		{role: 'user', text: 'do it'},
+		{role: 'tool', text: 'bash', tool_name: 'bash'},
+	]);
 
-	assert.match(output, /reviewing history/i);
-	assert.match(output, /12 above/i);
-	assert.match(output, /3 below/i);
+	assert.match(output, /do it/);
+	assert.match(output, /bash/);
 });
-
-async function renderWithInk(node: React.JSX.Element): Promise<string> {
-	const stdout = createTestStdout();
-	let output = '';
-	stdout.on('data', (chunk) => {
-		output += chunk.toString();
-	});
-
-	const instance = renderInk(node, {stdout: stdout as unknown as NodeJS.WriteStream, debug: true, patchConsole: false});
-
-	const exitPromise = instance.waitUntilExit();
-	const stableOutput = await waitForOutputToStabilize(() => output);
-	instance.unmount();
-	await exitPromise;
-	instance.cleanup();
-
-	return stripAnsi(stableOutput);
-}

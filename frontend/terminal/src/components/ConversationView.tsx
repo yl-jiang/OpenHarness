@@ -1,173 +1,187 @@
 import React from 'react';
-import {Box, Text} from 'ink';
+import {Box, Static, Text} from 'ink';
 
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TranscriptItem} from '../types.js';
 import {MarkdownText} from './MarkdownText.js';
 import {ToolCallDisplay, type TreePos} from './ToolCallDisplay.js';
 import {WelcomeBanner} from './WelcomeBanner.js';
+import {computeCommittedCutoff} from './transcriptCutoff.js';
 
-type ToolPair = readonly [TranscriptItem, TranscriptItem];
-type GroupedItem = TranscriptItem | ToolPair;
+type ToolPair = {kind: 'pair'; call: TranscriptItem; result: TranscriptItem; index: number};
+type SoloTool = {kind: 'tool'; item: TranscriptItem; index: number};
+type SoloMessage = {kind: 'message'; item: TranscriptItem; index: number};
+type RenderGroup = ToolPair | SoloTool | SoloMessage;
 
-function groupToolPairs(items: TranscriptItem[]): GroupedItem[] {
-	const result: GroupedItem[] = [];
+/**
+ * Group consecutive tool/tool_result items into pairs, while preserving the
+ * absolute index of the first transcript item in every group.  The absolute
+ * index is used as a stable React key so that <Static> can correctly identify
+ * append-only growth across renders.
+ */
+function buildGroups(items: TranscriptItem[], offset: number): RenderGroup[] {
+	const groups: RenderGroup[] = [];
 	let i = 0;
 	while (i < items.length) {
 		const cur = items[i];
 		if (cur.role === 'tool') {
-			// Count consecutive tool calls starting at i (parallel batch)
 			let toolEnd = i + 1;
-			while (toolEnd < items.length && items[toolEnd].role === 'tool') {
-				toolEnd++;
-			}
+			while (toolEnd < items.length && items[toolEnd].role === 'tool') toolEnd++;
 			const toolCount = toolEnd - i;
-
-			// Count consecutive tool_results immediately following the batch
 			let resultEnd = toolEnd;
-			while (resultEnd < items.length && items[resultEnd].role === 'tool_result') {
-				resultEnd++;
-			}
+			while (resultEnd < items.length && items[resultEnd].role === 'tool_result') resultEnd++;
 			const resultCount = resultEnd - toolEnd;
-
-			// Pair each tool with its positionally-corresponding result
 			const pairedCount = Math.min(toolCount, resultCount);
 			for (let j = 0; j < pairedCount; j++) {
-				result.push([items[i + j], items[toolEnd + j]] as const);
+				groups.push({
+					kind: 'pair',
+					call: items[i + j],
+					result: items[toolEnd + j],
+					index: offset + i + j,
+				});
 			}
-			// Tools that don't yet have a result (still in progress)
 			for (let j = pairedCount; j < toolCount; j++) {
-				result.push(items[i + j]);
+				groups.push({kind: 'tool', item: items[i + j], index: offset + i + j});
 			}
-			// Orphaned results (should not normally occur)
 			for (let j = pairedCount; j < resultCount; j++) {
-				result.push(items[toolEnd + j]);
+				groups.push({kind: 'message', item: items[toolEnd + j], index: offset + toolEnd + j});
 			}
 			i = resultEnd;
 		} else {
-			result.push(cur);
+			groups.push({kind: 'message', item: cur, index: offset + i});
 			i++;
 		}
 	}
-	return result;
+	return groups;
 }
 
+function renderGroup(
+	group: RenderGroup,
+	theme: ReturnType<typeof useTheme>['theme'],
+	outputStyle: string | undefined,
+	treePos: TreePos,
+): React.JSX.Element {
+	if (group.kind === 'pair') {
+		return (
+			<ToolCallDisplay
+				key={`g-${group.index}`}
+				item={group.call}
+				resultItem={group.result}
+				outputStyle={outputStyle}
+				treePos={treePos}
+			/>
+		);
+	}
+	if (group.kind === 'tool') {
+		return (
+			<ToolCallDisplay
+				key={`g-${group.index}`}
+				item={group.item}
+				resultItem={undefined}
+				outputStyle={outputStyle}
+				treePos={treePos}
+			/>
+		);
+	}
+	return <MessageRow key={`g-${group.index}`} item={group.item} theme={theme} outputStyle={outputStyle} />;
+}
+
+/**
+ * Assign tree connector positions ("first", "middle", "last", "single") to
+ * tool groups that appear in adjacent runs (Copilot-style branching tree).
+ */
+function assignTreePositions(groups: RenderGroup[]): TreePos[] {
+	const out: TreePos[] = new Array(groups.length).fill('single');
+	let runStart = -1;
+	const flush = (endExclusive: number): void => {
+		if (runStart < 0) return;
+		const len = endExclusive - runStart;
+		if (len === 1) {
+			out[runStart] = 'single';
+		} else {
+			for (let k = runStart; k < endExclusive; k++) {
+				if (k === runStart) out[k] = 'first';
+				else if (k === endExclusive - 1) out[k] = 'last';
+				else out[k] = 'middle';
+			}
+		}
+		runStart = -1;
+	};
+	for (let i = 0; i < groups.length; i++) {
+		const g = groups[i];
+		const isToolGroup = g.kind === 'pair' || g.kind === 'tool';
+		const isEmptyAssistant =
+			g.kind === 'message' && g.item.role === 'assistant' && !g.item.text.trim();
+		if (isToolGroup) {
+			if (runStart < 0) runStart = i;
+		} else if (isEmptyAssistant) {
+			// Empty assistants act as transparent separators inside a run.
+			continue;
+		} else {
+			flush(i);
+		}
+	}
+	flush(groups.length);
+	return out;
+}
+
+type StaticEntry =
+	| {kind: 'banner'}
+	| {kind: 'group'; group: RenderGroup; treePos: TreePos};
+
 function ConversationViewInner({
-	items,
+	transcript,
 	assistantBuffer,
 	showWelcome,
 	outputStyle,
-	olderItemCount = 0,
-	newerItemCount = 0,
 }: {
-	items: TranscriptItem[];
+	transcript: TranscriptItem[];
 	assistantBuffer: string;
 	showWelcome: boolean;
 	outputStyle?: string;
-	olderItemCount?: number;
-	newerItemCount?: number;
 }): React.JSX.Element {
 	const {theme} = useTheme();
 	const isCodexStyle = outputStyle === 'codex';
-	const grouped = groupToolPairs(items);
 
-	// Build rendered elements, detecting consecutive ToolPairs for tree connectors
-	const elements: React.ReactNode[] = [];
-	let gi = 0;
-	while (gi < grouped.length) {
-		const group = grouped[gi];
-		if (Array.isArray(group)) {
-			// Collect all ToolPairs in this run.
-			// Empty-text assistant items are transparent separators: skip them
-			// so that sequential single-tool calls also get tree connectors.
-			const runPairs: ToolPair[] = [];
-			let scanIdx = gi;
-			while (scanIdx < grouped.length) {
-				const it = grouped[scanIdx];
-				if (Array.isArray(it)) {
-					runPairs.push(it as ToolPair);
-					scanIdx++;
-				} else {
-					const ti = it as TranscriptItem;
-					if (ti.role === 'assistant' && !ti.text.trim()) {
-						scanIdx++; // consume empty assistant (renders as <> anyway)
-					} else {
-						break;
-					}
-				}
-			}
-			gi = scanIdx;
+	const cutoff = computeCommittedCutoff(transcript);
+	const committedItems = transcript.slice(0, cutoff);
+	const liveItems = transcript.slice(cutoff);
 
-			const runLen = runPairs.length;
-			runPairs.forEach((pair, k) => {
-				let treePos: TreePos;
-				if (runLen === 1) {
-					treePos = 'single';
-				} else if (k === 0) {
-					treePos = 'first';
-				} else if (k === runLen - 1) {
-					treePos = 'last';
-				} else {
-					treePos = 'middle';
-				}
-				elements.push(
-					<ToolCallDisplay
-						key={`tp-${gi - runLen + k}`}
-						item={pair[0]}
-						resultItem={pair[1]}
-						outputStyle={outputStyle}
-						treePos={treePos}
-					/>
-				);
-			});
-		} else {
-			const single = group as TranscriptItem;
-			// For unpaired in-progress tools, determine whether they're in a run with paired tools
-			if (single.role === 'tool') {
-				// Peek ahead to see if this tool is isolated or adjacent to other tools
-				let runEnd = gi + 1;
-				while (runEnd < grouped.length && !Array.isArray(grouped[runEnd]) && (grouped[runEnd] as TranscriptItem).role === 'tool') {
-					runEnd++;
-				}
-				const runLen = runEnd - gi;
-				for (let k = 0; k < runLen; k++) {
-					const t = grouped[gi + k] as TranscriptItem;
-					let treePos: TreePos;
-					if (runLen === 1) {
-						treePos = 'single';
-					} else if (k === 0) {
-						treePos = 'first';
-					} else if (k === runLen - 1) {
-						treePos = 'last';
-					} else {
-						treePos = 'middle';
-					}
-					elements.push(
-						<ToolCallDisplay
-							key={`t-${gi + k}`}
-							item={t}
-							resultItem={undefined}
-							outputStyle={outputStyle}
-							treePos={treePos}
-						/>
-					);
-				}
-				gi = runEnd;
-			} else {
-				elements.push(
-					<MessageRow key={`m-${gi}`} item={single} theme={theme} outputStyle={outputStyle} />
-				);
-				gi++;
-			}
-		}
+	const committedGroups = buildGroups(committedItems, 0);
+	const liveGroups = buildGroups(liveItems, cutoff);
+
+	// Compute tree positions across the *entire* group sequence (committed +
+	// live) so that adjacent tools split across the boundary still get the
+	// correct connectors.
+	const allGroups = [...committedGroups, ...liveGroups];
+	const allTreePos = assignTreePositions(allGroups);
+	const committedTreePos = allTreePos.slice(0, committedGroups.length);
+	const liveTreePos = allTreePos.slice(committedGroups.length);
+
+	const staticEntries: StaticEntry[] = [];
+	if (showWelcome) {
+		staticEntries.push({kind: 'banner'});
+	}
+	for (let i = 0; i < committedGroups.length; i++) {
+		staticEntries.push({kind: 'group', group: committedGroups[i], treePos: committedTreePos[i]});
 	}
 
 	return (
-		<Box flexDirection="column" flexGrow={1}>
-			<ViewportBanner olderItemCount={olderItemCount} newerItemCount={newerItemCount} />
-			{showWelcome && items.length === 0 ? <WelcomeBanner /> : null}
+		<Box flexDirection="column">
+			<Static items={staticEntries}>
+				{(entry, idx) => {
+					if (entry.kind === 'banner') {
+						return <WelcomeBanner key="banner" />;
+					}
+					return (
+						<Box key={`s-${entry.group.index}`} flexDirection="column">
+							{renderGroup(entry.group, theme, outputStyle, entry.treePos)}
+						</Box>
+					);
+				}}
+			</Static>
 
-			{elements}
+			{liveGroups.map((group, i) => renderGroup(group, theme, outputStyle, liveTreePos[i]))}
 
 			{assistantBuffer ? (
 				isCodexStyle ? (
@@ -177,7 +191,9 @@ function ConversationViewInner({
 				) : (
 					<Box marginTop={1} marginBottom={0} flexDirection="column">
 						<Text>
-							<Text color={theme.colors.success} bold>{theme.icons.assistant}</Text>
+							<Text color={theme.colors.success} bold>
+								{theme.icons.assistant}
+							</Text>
 						</Text>
 						<Box marginLeft={2} flexDirection="column">
 							<MarkdownText content={assistantBuffer} />
@@ -191,32 +207,15 @@ function ConversationViewInner({
 
 export const ConversationView = React.memo(ConversationViewInner);
 
-function ViewportBanner({
-	olderItemCount,
-	newerItemCount,
+function MessageRow({
+	item,
+	theme,
+	outputStyle,
 }: {
-	olderItemCount: number;
-	newerItemCount: number;
+	item: TranscriptItem;
+	theme: ReturnType<typeof useTheme>['theme'];
+	outputStyle?: string;
 }): React.JSX.Element {
-	const {theme} = useTheme();
-	const isReviewingHistory = olderItemCount > 0 || newerItemCount > 0;
-	const statusColor = isReviewingHistory ? theme.colors.warning : theme.colors.success;
-	const statusText = isReviewingHistory ? 'Reviewing history' : 'Live output';
-	const detailText = isReviewingHistory
-		? `${olderItemCount} above · ${newerItemCount} below · PgDn resumes live`
-		: 'Newest responses stay pinned to the bottom';
-
-	return (
-		<Box marginBottom={0}>
-			<Text dimColor>
-				<Text color={statusColor} bold>{statusText}</Text>
-				<Text dimColor> · {detailText}</Text>
-			</Text>
-		</Box>
-	);
-}
-
-function MessageRow({item, theme, outputStyle}: {item: TranscriptItem; theme: ReturnType<typeof useTheme>['theme']; outputStyle?: string}): React.JSX.Element {
 	const isCodexStyle = outputStyle === 'codex';
 	switch (item.role) {
 		case 'user':

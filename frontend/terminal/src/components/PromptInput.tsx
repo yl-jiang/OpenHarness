@@ -49,7 +49,7 @@ export function PromptInput({
 				<Text color={theme.colors.primary} bold>{busy ? '… ' : '› '}</Text>
 				<TextInput key={inputKey} value={input} onChange={setInput} onSubmit={suppressSubmit || busy ? noop : onSubmit} />
 			</Box>
-			<Text dimColor>/ commands · ↑↓ history · PgUp/PgDn scroll · ctrl+c exit</Text>
+			<Text dimColor>/ commands · ↑↓ history · scroll terminal for history · ctrl+c exit</Text>
 		</Box>
 	);
 }
