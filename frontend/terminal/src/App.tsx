@@ -3,7 +3,7 @@ import {Box, Text, useApp, useInput, useStdin} from 'ink';
 
 import {AlternateScreen} from './components/AlternateScreen.js';
 import {CommandPicker} from './components/CommandPicker.js';
-import {ConversationView} from './components/ConversationView.js';
+import {ConversationView, type ConversationViewHandle} from './components/ConversationView.js';
 import {ModalHost} from './components/ModalHost.js';
 import {PromptInput} from './components/PromptInput.js';
 import {SelectModal, type SelectOption} from './components/SelectModal.js';
@@ -80,17 +80,14 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	const [selectModal, setSelectModal] = useState<SelectModalState>(null);
 	const [selectIndex, setSelectIndex] = useState(0);
 
-	// Scroll state (item-level).
-	// `pausedAt`: when non-null, the user has scrolled away from the live
-	// tail; new agent output cannot move the visible viewport.  `null` =
-	// "follow the tail" (newest content always visible).
-	// `viewBottom`: the index of the transcript item that is currently
-	// pinned to the visual bottom of the viewport.  Only meaningful when
-	// `pausedAt !== null`.  Decreasing this index reveals earlier history
-	// (the slice gets shorter; column-reverse pins its last item at the
-	// bottom; older items stack upward into the visible area).
-	const [pausedAt, setPausedAt] = useState<number | null>(null);
-	const [viewBottom, setViewBottom] = useState(0);
+	// Scroll state (line-level via ref to ConversationView).
+	// `paused` is mirrored from ConversationView via onPauseChange; we keep
+	// it here only so the App can render a "history view" indicator and
+	// ESC can resume the live tail.  The actual scroll math (line offset,
+	// content/viewport measurement, clamping) lives inside ConversationView
+	// where Ink's measureElement gives us pixel-accurate dimensions.
+	const conversationRef = useRef<ConversationViewHandle | null>(null);
+	const [paused, setPaused] = useState(false);
 
 	const session = useBackendSession(config, () => exit());
 	const deferredTranscript = useDeferredValue(session.transcript);
@@ -108,45 +105,21 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 		}
 	}, [session.status.theme, setThemeName]);
 
-	const transcriptForView =
-		pausedAt === null ? deferredTranscript : deferredTranscript.slice(0, viewBottom + 1);
-	const assistantBufferForView = pausedAt === null ? deferredAssistantBuffer : '';
-
-	// Scroll helpers.
-	const transcriptLengthRef = useRef(deferredTranscript.length);
-	transcriptLengthRef.current = deferredTranscript.length;
-
+	// Scroll helpers — thin wrappers around the ref API.
 	const scrollUp = useCallback((step: number) => {
-		const len = transcriptLengthRef.current;
-		if (len === 0) return;
-		setPausedAt((prev) => (prev === null ? len : prev));
-		setViewBottom((b) => {
-			const base = pausedAt === null ? len - 1 : b;
-			return Math.max(0, base - step);
-		});
-	}, [pausedAt]);
+		conversationRef.current?.scrollUp(step);
+	}, []);
 
 	const scrollDown = useCallback((step: number) => {
-		if (pausedAt === null) return;
-		setViewBottom((b) => {
-			const next = b + step;
-			if (next >= pausedAt - 1) {
-				setPausedAt(null);
-				return next;
-			}
-			return next;
-		});
-	}, [pausedAt]);
+		conversationRef.current?.scrollDown(step);
+	}, []);
 
 	const scrollToBottom = useCallback(() => {
-		setPausedAt(null);
+		conversationRef.current?.scrollToBottom();
 	}, []);
 
 	const scrollToTop = useCallback(() => {
-		const len = transcriptLengthRef.current;
-		if (len === 0) return;
-		setPausedAt((prev) => (prev === null ? len : prev));
-		setViewBottom(0);
+		conversationRef.current?.scrollToTop();
 	}, []);
 
 	useMouseWheel((delta) => {
@@ -396,7 +369,7 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 
 		if (key.escape) {
 			// ESC also resumes follow mode if we're scrolled away.
-			if (pausedAt !== null) {
+			if (paused) {
 				scrollToBottom();
 				return;
 			}
@@ -475,15 +448,17 @@ function AppInner({config}: {config: FrontendConfig}): React.JSX.Element {
 	}, [scriptIndex, session.busy, session.modal, selectModal]);
 
 	const showWelcome = session.ready && outputStyle !== 'codex';
-	const isPaused = pausedAt !== null;
+	const isPaused = paused;
 
 	return (
 		<Box flexDirection="column" height={rows} paddingX={1}>
 			<ConversationView
-				transcript={transcriptForView}
-				assistantBuffer={assistantBufferForView}
+				ref={conversationRef}
+				transcript={deferredTranscript}
+				assistantBuffer={deferredAssistantBuffer}
 				showWelcome={showWelcome}
 				outputStyle={outputStyle}
+				onPauseChange={setPaused}
 			/>
 
 			{isPaused ? (
