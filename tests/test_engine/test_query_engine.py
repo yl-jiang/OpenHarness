@@ -836,6 +836,43 @@ async def test_execute_tool_call_returns_actionable_reason_when_user_denies_conf
 
 
 @pytest.mark.asyncio
+async def test_execute_tool_call_remembers_always_permission_reply(tmp_path: Path):
+    async def _allow_always(_tool_name: str, _reason: str) -> str:
+        return "always"
+
+    checker = PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT))
+    context = QueryContext(
+        api_client=_NoopApiClient(),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=checker,
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        max_tokens=1,
+        max_turns=1,
+        permission_prompt=_allow_always,
+    )
+
+    first = await _execute_tool_call(
+        context,
+        "bash",
+        "toolu_bash_1",
+        {"command": "mkdir -p scratch-dir"},
+    )
+    second = await _execute_tool_call(
+        context,
+        "bash",
+        "toolu_bash_2",
+        {"command": "mkdir -p another-dir"},
+    )
+
+    assert first.is_error is False
+    assert second.is_error is False
+    assert (tmp_path / "scratch-dir").is_dir()
+    assert (tmp_path / "another-dir").is_dir()
+
+
+@pytest.mark.asyncio
 async def test_execute_tool_call_returns_error_when_tool_raises(tmp_path: Path):
     class ExplodingInput(BaseModel):
         pass
@@ -1327,4 +1364,3 @@ async def test_subagent_stop_hook_fires_when_spawned_agent_finishes(tmp_path: Pa
     task = manager.get_task(payload["task_id"])
     assert task is not None
     assert task.status == "completed"
-

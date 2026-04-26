@@ -69,7 +69,7 @@ class ReactBackendHost:
         self._bundle = None
         self._write_lock = asyncio.Lock()
         self._request_queue: asyncio.Queue[FrontendRequest] = asyncio.Queue()
-        self._permission_requests: dict[str, asyncio.Future[bool]] = {}
+        self._permission_requests: dict[str, asyncio.Future[str]] = {}
         self._question_requests: dict[str, asyncio.Future[str]] = {}
         self._permission_lock = asyncio.Lock()
         self._busy = False
@@ -211,7 +211,7 @@ class ReactBackendHost:
             if request.type == "permission_response" and request.request_id in self._permission_requests:
                 future = self._permission_requests[request.request_id]
                 if not future.done():
-                    future.set_result(bool(request.allowed))
+                    future.set_result(_permission_reply_from_request(request))
                 continue
             if request.type == "question_response" and request.request_id in self._question_requests:
                 future = self._question_requests[request.request_id]
@@ -807,10 +807,10 @@ class ReactBackendHost:
             )
         return options
 
-    async def _ask_permission(self, tool_name: str, reason: str) -> bool:
+    async def _ask_permission(self, tool_name: str, reason: str) -> str:
         async with self._permission_lock:
             request_id = uuid4().hex
-            future: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+            future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
             self._permission_requests[request_id] = future
             await self._emit(
                 BackendEvent(
@@ -827,7 +827,7 @@ class ReactBackendHost:
                 return await asyncio.wait_for(future, timeout=300)
             except asyncio.TimeoutError:
                 logger.warning("Permission request %s timed out after 300s, denying", request_id)
-                return False
+                return "reject"
             finally:
                 self._permission_requests.pop(request_id, None)
 
@@ -906,6 +906,13 @@ async def run_backend_host(
         )
     )
     return await host.run()
+
+
+def _permission_reply_from_request(request: FrontendRequest) -> str:
+    reply = (request.permission_reply or "").strip().lower()
+    if reply in {"once", "always", "reject"}:
+        return reply
+    return "once" if bool(request.allowed) else "reject"
 
 
 __all__ = ["run_backend_host", "ReactBackendHost", "BackendHostConfig"]

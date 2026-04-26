@@ -3,38 +3,20 @@
 from __future__ import annotations
 
 import fnmatch
-from openharness.utils.log import get_logger
+import shlex
 from dataclasses import dataclass
 
 from openharness.config.settings import PermissionSettings
+from openharness.permissions.constants import (
+    INSTALL_MARKERS,
+    SAFE_BASH_ALWAYS_PREFIXES,
+    SAFE_SINGLE_WORD_COMMANDS,
+    SENSITIVE_PATH_PATTERNS,
+)
 from openharness.permissions.modes import PermissionMode
+from openharness.utils.log import get_logger
 
 logger = get_logger(__name__)
-
-# Paths that are always denied regardless of permission mode or user config.
-# These protect high-value credential and key material from LLM-directed access
-# (including via prompt injection).  Patterns use fnmatch syntax and are matched
-# against the fully-resolved absolute path produced by the query engine.
-SENSITIVE_PATH_PATTERNS: tuple[str, ...] = (
-    # SSH keys and config
-    "*/.ssh/*",
-    # AWS credentials
-    "*/.aws/credentials",
-    "*/.aws/config",
-    # GCP credentials
-    "*/.config/gcloud/*",
-    # Azure credentials
-    "*/.azure/*",
-    # GPG keys
-    "*/.gnupg/*",
-    # Docker credentials
-    "*/.docker/config.json",
-    # Kubernetes credentials
-    "*/.kube/config",
-    # OpenHarness own credential stores
-    "*/.openharness/credentials.json",
-    "*/.openharness/copilot_auth.json",
-)
 
 
 @dataclass(frozen=True)
@@ -44,6 +26,9 @@ class PermissionDecision:
     allowed: bool
     requires_confirmation: bool = False
     reason: str = ""
+    permission: str = ""
+    patterns: tuple[str, ...] = ()
+    always_patterns: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -54,16 +39,31 @@ class PathRule:
     allow: bool  # True = allow, False = deny
 
 
+@dataclass(frozen=True)
+class RememberedAllowRule:
+    """An in-memory allow rule approved by the user for this session."""
+
+    permission: str
+    pattern: str
+
+
 class PermissionChecker:
     """Evaluate tool usage against the configured permission mode and rules."""
 
     def __init__(self, settings: PermissionSettings) -> None:
         self._settings = settings
+        self._remembered_allow_rules: list[RememberedAllowRule] = []
         # Parse path rules from settings
         self._path_rules: list[PathRule] = []
         for rule in getattr(settings, "path_rules", []):
-            pattern = getattr(rule, "pattern", None) or (rule.get("pattern") if isinstance(rule, dict) else None)
-            allow = getattr(rule, "allow", True) if not isinstance(rule, dict) else rule.get("allow", True)
+            pattern = getattr(rule, "pattern", None) or (
+                rule.get("pattern") if isinstance(rule, dict) else None
+            )
+            allow = (
+                getattr(rule, "allow", True)
+                if not isinstance(rule, dict)
+                else rule.get("allow", True)
+            )
             if isinstance(pattern, str) and pattern.strip():
                 self._path_rules.append(PathRule(pattern=pattern.strip(), allow=allow))
             else:
@@ -71,6 +71,22 @@ class PermissionChecker:
                     "Skipping path rule with missing, empty, or non-string 'pattern' field: %r",
                     rule,
                 )
+
+    def remember_allow(self, decision: PermissionDecision) -> None:
+        """Remember a user-approved allow pattern for the current process."""
+        permission = decision.permission.strip()
+        patterns = decision.always_patterns or decision.patterns
+        if not permission or not patterns:
+            return
+        existing = {(rule.permission, rule.pattern) for rule in self._remembered_allow_rules}
+        for pattern in patterns:
+            normalized = pattern.strip()
+            if not normalized or (permission, normalized) in existing:
+                continue
+            self._remembered_allow_rules.append(
+                RememberedAllowRule(permission=permission, pattern=normalized)
+            )
+            existing.add((permission, normalized))
 
     def evaluate(
         self,
@@ -81,6 +97,14 @@ class PermissionChecker:
         command: str | None = None,
     ) -> PermissionDecision:
         """Return whether the tool may run immediately."""
+        permission = _permission_name(
+            tool_name, is_read_only=is_read_only, file_path=file_path, command=command
+        )
+        patterns = _permission_patterns(
+            permission, tool_name=tool_name, file_path=file_path, command=command
+        )
+        always_patterns = _always_patterns(permission, patterns=patterns, command=command)
+
         # Built-in sensitive path protection — always active, cannot be
         # overridden by user settings or permission mode.  This is a
         # defence-in-depth measure against LLM-directed or prompt-injection
@@ -95,15 +119,30 @@ class PermissionChecker:
                                 f"Access denied: {file_path} is a sensitive credential path "
                                 f"(matched built-in pattern '{pattern}')"
                             ),
+                            permission=permission,
+                            patterns=patterns,
+                            always_patterns=always_patterns,
                         )
 
         # Explicit tool deny list
         if tool_name in self._settings.denied_tools:
-            return PermissionDecision(allowed=False, reason=f"{tool_name} is explicitly denied")
+            return PermissionDecision(
+                allowed=False,
+                reason=f"{tool_name} is explicitly denied",
+                permission=permission,
+                patterns=patterns,
+                always_patterns=always_patterns,
+            )
 
         # Explicit tool allow list
         if tool_name in self._settings.allowed_tools:
-            return PermissionDecision(allowed=True, reason=f"{tool_name} is explicitly allowed")
+            return PermissionDecision(
+                allowed=True,
+                reason=f"{tool_name} is explicitly allowed",
+                permission=permission,
+                patterns=patterns,
+                always_patterns=always_patterns,
+            )
 
         # Check path-level rules
         if file_path and self._path_rules:
@@ -114,6 +153,9 @@ class PermissionChecker:
                             return PermissionDecision(
                                 allowed=False,
                                 reason=f"Path {file_path} matches deny rule: {rule.pattern}",
+                                permission=permission,
+                                patterns=patterns,
+                                always_patterns=always_patterns,
                             )
 
         # Check command deny patterns (e.g. deny "rm -rf /")
@@ -123,21 +165,48 @@ class PermissionChecker:
                     return PermissionDecision(
                         allowed=False,
                         reason=f"Command matches deny pattern: {pattern}",
+                        permission=permission,
+                        patterns=patterns,
+                        always_patterns=always_patterns,
                     )
+
+        if self._is_remembered_allowed(permission, patterns):
+            return PermissionDecision(
+                allowed=True,
+                reason=f"{permission} matches a remembered allow rule for this session",
+                permission=permission,
+                patterns=patterns,
+                always_patterns=always_patterns,
+            )
 
         # Full auto: allow everything
         if self._settings.mode == PermissionMode.FULL_AUTO:
-            return PermissionDecision(allowed=True, reason="Auto mode allows all tools")
+            return PermissionDecision(
+                allowed=True,
+                reason="Auto mode allows all tools",
+                permission=permission,
+                patterns=patterns,
+                always_patterns=always_patterns,
+            )
 
         # Read-only tools always allowed
         if is_read_only:
-            return PermissionDecision(allowed=True, reason="read-only tools are allowed")
+            return PermissionDecision(
+                allowed=True,
+                reason="read-only tools are allowed",
+                permission=permission,
+                patterns=patterns,
+                always_patterns=always_patterns,
+            )
 
         # Plan mode: block mutating tools
         if self._settings.mode == PermissionMode.PLAN:
             return PermissionDecision(
                 allowed=False,
                 reason="Plan mode blocks mutating tools until the user exits plan mode",
+                permission=permission,
+                patterns=patterns,
+                always_patterns=always_patterns,
             )
 
         # Default mode: require confirmation for mutating tools
@@ -149,10 +218,30 @@ class PermissionChecker:
         )
         if bash_hint:
             reason = f"{reason} {bash_hint}"
+        scope_hint = _always_scope_hint(always_patterns)
+        if scope_hint:
+            reason = f"{reason} {scope_hint}"
         return PermissionDecision(
             allowed=False,
             requires_confirmation=True,
             reason=reason,
+            permission=permission,
+            patterns=patterns,
+            always_patterns=always_patterns,
+        )
+
+    def _is_remembered_allowed(self, permission: str, patterns: tuple[str, ...]) -> bool:
+        if not patterns:
+            return False
+        rules = [
+            rule
+            for rule in self._remembered_allow_rules
+            if fnmatch.fnmatch(permission, rule.permission)
+        ]
+        if not rules:
+            return False
+        return all(
+            any(fnmatch.fnmatch(pattern, rule.pattern) for rule in rules) for pattern in patterns
         )
 
 
@@ -169,30 +258,79 @@ def _policy_match_paths(file_path: str) -> tuple[str, ...]:
     return (normalized, normalized + "/")
 
 
+def _permission_name(
+    tool_name: str,
+    *,
+    is_read_only: bool,
+    file_path: str | None,
+    command: str | None,
+) -> str:
+    if command or tool_name == "bash":
+        return "bash"
+    if file_path and not is_read_only:
+        return "edit"
+    return tool_name
+
+
+def _permission_patterns(
+    permission: str,
+    *,
+    tool_name: str,
+    file_path: str | None,
+    command: str | None,
+) -> tuple[str, ...]:
+    if permission == "bash" and command:
+        return (command,)
+    if file_path:
+        return (file_path,)
+    return (tool_name,)
+
+
+def _always_patterns(
+    permission: str,
+    *,
+    patterns: tuple[str, ...],
+    command: str | None,
+) -> tuple[str, ...]:
+    if permission == "bash" and command:
+        return (_bash_command_allow_pattern(command),)
+    return patterns
+
+
+def _always_scope_hint(always_patterns: tuple[str, ...]) -> str:
+    if not always_patterns:
+        return ""
+    formatted = ", ".join(always_patterns[:3])
+    if len(always_patterns) > 3:
+        formatted = f"{formatted}, ..."
+    return f"Choosing Always will allow this session pattern: {formatted}."
+
+
+def _bash_command_allow_pattern(command: str) -> str:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = command.split()
+
+    if not tokens:
+        return command
+
+    if tokens[0] in SAFE_SINGLE_WORD_COMMANDS:
+        return f"{tokens[0]} *"
+
+    if len(tokens) >= 2:
+        prefix = f"{tokens[0]} {tokens[1]}"
+        if prefix in SAFE_BASH_ALWAYS_PREFIXES:
+            return f"{prefix} *"
+
+    return command
+
+
 def _bash_permission_hint(command: str | None) -> str:
     if not command:
         return ""
     lowered = command.lower()
-    install_markers = (
-        "npm install",
-        "pnpm install",
-        "yarn install",
-        "bun install",
-        "pip install",
-        "uv pip install",
-        "poetry install",
-        "cargo install",
-        "create-next-app",
-        "npm create ",
-        "pnpm create ",
-        "yarn create ",
-        "bun create ",
-        "npx create-",
-        "npm init ",
-        "pnpm init ",
-        "yarn init ",
-    )
-    if any(marker in lowered for marker in install_markers):
+    if any(marker in lowered for marker in INSTALL_MARKERS):
         return (
             "Package installation and scaffolding commands change the workspace, "
             "so they will not run automatically in default mode."
