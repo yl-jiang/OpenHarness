@@ -228,12 +228,12 @@ TODO_TOOL_DESCRIPTION = (
 class TodoTool(BaseTool):
     """Add or update an item in a TODO markdown file."""
 
-    name = "todo_tool"
+    name = "todo"
     description = TODO_TOOL_DESCRIPTION
     input_model = TodoToolInput
 
     def to_api_schema(self) -> dict[str, Any]:
-        """Return a hand-crafted, LLM-friendly schema for todo_tool.
+        """Return a hand-crafted, LLM-friendly schema for todo.
 
         Pydantic v2 encodes ``Optional[list[TodoItem]]`` as
         ``anyOf: [{type: "array", items: {$ref: ...}}, {type: "null"}]``.
