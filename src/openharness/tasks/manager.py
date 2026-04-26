@@ -20,6 +20,51 @@ logger = get_logger(__name__)
 
 CompletionListener = Callable[[TaskRecord], Awaitable[None] | None]
 
+# Known provider API key env var names to probe when ANTHROPIC_API_KEY is absent.
+_OTHER_API_KEY_ENVS: tuple[str, ...] = (
+    "OPENAI_API_KEY",
+    "DASHSCOPE_API_KEY",
+    "MOONSHOT_API_KEY",
+    "GEMINI_API_KEY",
+    "MINIMAX_API_KEY",
+    "DEEPSEEK_API_KEY",
+)
+
+
+def _resolve_api_key(explicit: str | None) -> str | None:
+    """Return the best available API key, or None.
+
+    Resolution order:
+    1. Explicitly supplied *explicit* value.
+    2. ``ANTHROPIC_API_KEY`` environment variable.
+    3. Other known provider API key environment variables.
+    4. Active profile credential from the config / credential store.
+    """
+    if explicit:
+        return explicit
+    if key := os.environ.get("ANTHROPIC_API_KEY"):
+        return key
+    for env_var in _OTHER_API_KEY_ENVS:
+        if key := os.environ.get(env_var):
+            return key
+    try:
+        from openharness.auth.storage import load_credential
+        from openharness.config import load_settings
+        from openharness.config.settings import credential_storage_provider_name
+
+        settings = load_settings()
+        if settings.api_key:
+            return settings.api_key
+        profile_name, profile = settings.resolve_profile()
+        if profile.api_key:
+            return profile.api_key
+        stored = load_credential(credential_storage_provider_name(profile_name, profile), "api_key")
+        if stored:
+            return stored
+    except Exception:
+        pass
+    return None
+
 
 class BackgroundTaskManager:
     """Manage shell and agent subprocess tasks."""
@@ -103,10 +148,12 @@ class BackgroundTaskManager:
         """Start a local agent task as a subprocess."""
         command_override_supplied = command is not None
         if command is None:
-            effective_api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+            effective_api_key = _resolve_api_key(api_key)
             if not effective_api_key:
                 raise ValueError(
-                    "Local agent tasks require ANTHROPIC_API_KEY or an explicit command override"
+                    "Local agent tasks require an API key. Set ANTHROPIC_API_KEY (or another "
+                    "provider key such as OPENAI_API_KEY) as an environment variable, configure "
+                    "credentials via 'oh auth', or provide an explicit command override."
                 )
             cmd = ["python", "-m", "openharness", "--api-key", effective_api_key]
             if model:
