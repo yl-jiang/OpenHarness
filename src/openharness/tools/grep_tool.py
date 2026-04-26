@@ -53,6 +53,7 @@ class GrepTool(BaseTool):
                     },
                     "case_sensitive": {
                         "type": "boolean",
+                        "description": "Match case exactly; set false for case-insensitive search",
                         "default": True,
                     },
                     "limit": {

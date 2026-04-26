@@ -25,7 +25,11 @@ class BashTool(BaseTool):
     """Execute a shell command with stdout/stderr capture."""
 
     name = "bash"
-    description = "Run a shell command in the local repository."
+    description = (
+        "Run a non-interactive shell command in the local repository. "
+        "stdout and stderr are merged and returned. "
+        "Prefer non-interactive flags (e.g. -y, --no-pager) when available."
+    )
     input_model = BashToolInput
 
     def to_api_schema(self) -> dict[str, Any]:
