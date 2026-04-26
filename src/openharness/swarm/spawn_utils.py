@@ -105,6 +105,8 @@ def build_inherited_cli_flags(
     settings_path: str | None = None,
     teammate_mode: str | None = None,
     plugin_dirs: list[str] | None = None,
+    disallowed_tools: list[str] | None = None,
+    allowed_tools: list[str] | None = None,
     extra_flags: list[str] | None = None,
 ) -> list[str]:
     """Build CLI flags to propagate from the current session to spawned teammates.
@@ -181,6 +183,15 @@ def build_inherited_cli_flags(
     # not re-detect the mode independently and possibly choose a different one.
     if teammate_mode:
         flags.extend(["--teammate-mode", shlex.quote(teammate_mode)])
+
+    # --- Disallowed tools --------------------------------------------------
+    for tool_name in disallowed_tools or []:
+        flags.extend(["--disallowed-tools", shlex.quote(tool_name)])
+
+    # --- Allowed tools (whitelist) -----------------------------------------
+    if allowed_tools is not None and allowed_tools != ["*"]:
+        for tool_name in allowed_tools:
+            flags.extend(["--allowed-tools", shlex.quote(tool_name)])
 
     if extra_flags:
         flags.extend(extra_flags)

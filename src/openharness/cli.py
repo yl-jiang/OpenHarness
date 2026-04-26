@@ -1436,6 +1436,8 @@ def main(
                 api_key=api_key,
                 api_format=api_format,
                 permission_mode=permission_mode,
+                disallowed_tools=disallowed_tools,
+                allowed_tools=allowed_tools,
             )
         )
         return

@@ -303,6 +303,12 @@ class TeammateSpawnConfig:
     permissions: list[str] = field(default_factory=list)
     """Tool permissions to grant this teammate."""
 
+    disallowed_tools: list[str] = field(default_factory=list)
+    """Tool names to remove from this teammate's registry."""
+
+    allowed_tools: list[str] | None = None
+    """Whitelist of tool names to keep; all others are removed. None means all tools allowed."""
+
     plan_mode_required: bool = False
     """Whether this teammate must enter plan mode before implementing."""
 
