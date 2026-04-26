@@ -229,6 +229,8 @@ async def build_runtime(
     permission_mode: str | None = None,
     extra_skill_dirs: Iterable[str | Path] | None = None,
     extra_plugin_roots: Iterable[str | Path] | None = None,
+    disallowed_tools: list[str] | None = None,
+    allowed_tools: list[str] | None = None,
 ) -> RuntimeBundle:
     """Build the shared runtime for an OpenHarness session."""
     settings_overrides: dict[str, Any] = {
@@ -257,6 +259,14 @@ async def build_runtime(
         if plugin.enabled and plugin.tools:
             for tool in plugin.tools:
                 tool_registry.register(tool)
+    # Apply whitelist first, then blacklist
+    if allowed_tools is not None and allowed_tools != ["*"]:
+        allowed_set = set(allowed_tools)
+        for name in list(tool_registry._tools):
+            if name not in allowed_set:
+                tool_registry.unregister(name)
+    for tool_name in disallowed_tools or []:
+        tool_registry.unregister(tool_name)
     provider = detect_provider(settings)
     _, git_branch = detect_git_info(cwd)
     bridge_manager = get_bridge_manager()
