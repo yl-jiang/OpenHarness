@@ -76,7 +76,15 @@ class AgentTool(BaseTool):
                     },
                     "subagent_type": {
                         "type": "string",
-                        "description": "Agent type for definition lookup (e.g. 'general-purpose', 'Explore', 'worker')",
+                        "description": (
+                            "Agent type controlling tools and system prompt. "
+                            "Key types: "
+                            "'research' — read-only investigation, cannot modify files, use for the Research phase; "
+                            "'worker' — full tool access (read + write + run), use for the Implementation phase; "
+                            "'verification' — read-only, runs tests/builds, produces PASS/FAIL verdict; "
+                            "'general-purpose' — broad tasks not fitting the above. "
+                            "Defaults to 'worker' if omitted."
+                        ),
                     },
                     "command": {
                         "type": "string",
@@ -153,6 +161,8 @@ class AgentTool(BaseTool):
             command=arguments.command,
             system_prompt=agent_def.system_prompt if agent_def else None,
             permissions=agent_def.permissions if agent_def else [],
+            disallowed_tools=agent_def.disallowed_tools if agent_def else [],
+            allowed_tools=agent_def.tools if agent_def else None,
             session_id=session_id,
             task_type=arguments.mode,
         )
