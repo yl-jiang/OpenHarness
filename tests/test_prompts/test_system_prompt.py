@@ -66,3 +66,10 @@ def test_build_system_prompt_default_includes_base():
     env = _make_env()
     prompt = build_system_prompt(env=env)
     assert "OpenHarness" in prompt
+
+
+def test_build_system_prompt_emphasizes_surgical_bug_fixing():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+    assert "Prefer small, surgical changes" in prompt
+    assert "reproduce it first with a test or a concrete failing case" in prompt
