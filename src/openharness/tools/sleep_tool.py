@@ -21,7 +21,10 @@ class SleepTool(BaseTool):
     """Pause execution briefly."""
 
     name = "sleep"
-    description = "Sleep for a short duration."
+    description = (
+        "Pause execution briefly. Use when polling for task completion "
+        "or waiting for an async operation to produce output."
+    )
     input_model = SleepToolInput
 
     def to_api_schema(self) -> dict[str, Any]:

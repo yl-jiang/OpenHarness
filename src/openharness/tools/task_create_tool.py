@@ -56,7 +56,7 @@ class TaskCreateTool(BaseTool):
                     },
                     "model": {
                         "type": "string",
-                        "description": "Model override for agent tasks",
+                        "description": "Model override for local_agent tasks (e.g. 'claude-3-5-sonnet')",
                     },
                 },
                 "required": ["description"],

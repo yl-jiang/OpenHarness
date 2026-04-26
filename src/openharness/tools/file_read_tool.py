@@ -25,7 +25,10 @@ class FileReadTool(BaseTool):
     """Read a UTF-8 text file with line numbers."""
 
     name = "read_file"
-    description = "Read a text file from the local repository."
+    description = (
+        "Read a UTF-8 text file from the local repository with line numbers. "
+        "Use offset and limit for paginated reading of large files."
+    )
     input_model = FileReadToolInput
 
     def to_api_schema(self) -> dict[str, Any]:

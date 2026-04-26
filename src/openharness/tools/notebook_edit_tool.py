@@ -51,15 +51,18 @@ class NotebookEditTool(BaseTool):
                     "cell_type": {
                         "type": "string",
                         "enum": ["code", "markdown"],
+                        "description": "Cell type: 'code' for executable cells, 'markdown' for text cells",
                         "default": "code",
                     },
                     "mode": {
                         "type": "string",
                         "enum": ["replace", "append"],
+                        "description": "'replace' overwrites cell source; 'append' adds to existing source",
                         "default": "replace",
                     },
                     "create_if_missing": {
                         "type": "boolean",
+                        "description": "Create the notebook file if it does not exist",
                         "default": True,
                     },
                 },

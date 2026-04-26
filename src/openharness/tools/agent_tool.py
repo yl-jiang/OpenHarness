@@ -56,7 +56,13 @@ class AgentTool(BaseTool):
     """Spawn a local agent subprocess."""
 
     name = "agent"
-    description = "Spawn a local background agent task."
+    description = (
+        "Spawn a local background agent task to delegate complex multi-step work. "
+        "Use subagent_type to control tool access: "
+        "'research' for read-only investigation, 'worker' for full read/write access, "
+        "'verification' for test/build verification. "
+        "Returns the agent_id and task_id immediately; poll with task_get/task_output."
+    )
     input_model = AgentToolInput
 
     def to_api_schema(self) -> dict[str, Any]:
@@ -96,7 +102,12 @@ class AgentTool(BaseTool):
                     },
                     "mode": {
                         "type": "string",
-                        "description": "Agent mode: local_agent, remote_agent, or in_process_teammate",
+                        "description": (
+                            "Execution mode: "
+                            "'local_agent' spawns a subprocess agent (default); "
+                            "'remote_agent' targets a remote worker; "
+                            "'in_process_teammate' runs in the same process."
+                        ),
                         "default": "local_agent",
                     },
                 },

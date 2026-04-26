@@ -45,6 +45,7 @@ class EnterWorktreeTool(BaseTool):
                     },
                     "create_branch": {
                         "type": "boolean",
+                        "description": "Create a new branch for the worktree; false checks out an existing branch",
                         "default": True,
                     },
                     "base_ref": {

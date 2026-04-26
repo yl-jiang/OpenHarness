@@ -36,11 +36,11 @@ class GlobTool(BaseTool):
                 "properties": {
                     "pattern": {
                         "type": "string",
-                        "description": "Glob pattern relative to the working directory",
+                        "description": "Glob pattern, e.g. '**/*.py', 'src/**/*.ts', 'tests/*.py'",
                     },
                     "root": {
                         "type": "string",
-                        "description": "Optional search root",
+                        "description": "Directory to search within (defaults to cwd)",
                     },
                     "limit": {
                         "type": "integer",

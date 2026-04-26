@@ -42,6 +42,7 @@ class FileWriteTool(BaseTool):
                     },
                     "create_directories": {
                         "type": "boolean",
+                        "description": "Create parent directories if they do not exist",
                         "default": True,
                     },
                 },

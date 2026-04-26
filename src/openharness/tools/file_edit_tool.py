@@ -26,7 +26,11 @@ class FileEditTool(BaseTool):
     """Replace text in an existing file."""
 
     name = "edit_file"
-    description = "Edit an existing file by replacing a string."
+    description = (
+        "Edit an existing file by replacing a string. "
+        "old_str must appear exactly once (use replace_all=true to replace every occurrence). "
+        "Read the file first with read_file to avoid stale-content conflicts."
+    )
     input_model = FileEditToolInput
 
     def to_api_schema(self) -> dict[str, Any]:
@@ -50,6 +54,7 @@ class FileEditTool(BaseTool):
                     },
                     "replace_all": {
                         "type": "boolean",
+                        "description": "Replace all occurrences of old_str; default false replaces only the first",
                         "default": False,
                     },
                 },
