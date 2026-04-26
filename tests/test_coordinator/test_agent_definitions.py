@@ -82,6 +82,60 @@ def test_builtin_general_purpose_has_all_tools():
     assert gp.tools == ["*"] or gp.tools is None  # all tools
 
 
+def test_builtin_general_purpose_prompt_has_result_first_output_contract():
+    builtins = get_builtin_agent_definitions()
+    gp = next(a for a in builtins if a.name == "general-purpose")
+    prompt = gp.system_prompt or ""
+    assert "lead with the outcome" in prompt
+    assert "strongest evidence" in prompt
+    assert "state that explicitly" in prompt
+
+
+def test_builtin_worker_prompt_requires_scoped_changes_and_no_unsolicited_commits():
+    builtins = get_builtin_agent_definitions()
+    worker = next(a for a in builtins if a.name == "worker")
+    prompt = worker.system_prompt or ""
+    assert "reproduce it first with a test or a concrete failing case" in prompt
+    assert "Only create commits, branches, or PRs when the caller explicitly asks for them." in prompt
+    assert "commit hash" not in prompt.lower()
+
+
+def test_builtin_explore_prompt_requires_absolute_paths_and_unknowns():
+    builtins = get_builtin_agent_definitions()
+    explore = next(a for a in builtins if a.name == "Explore")
+    prompt = explore.system_prompt or ""
+    assert "absolute paths" in prompt
+    assert "state what you did not verify" in prompt
+
+
+def test_builtin_plan_prompt_requires_assumptions_and_reference_files():
+    builtins = get_builtin_agent_definitions()
+    plan = next(a for a in builtins if a.name == "Plan")
+    prompt = plan.system_prompt or ""
+    assert "Assumptions and open questions" in prompt
+    assert "reference the existing files or patterns" in prompt
+
+
+def test_core_builtin_prompts_reference_openharness_not_claude_code():
+    builtins = {a.name: a for a in get_builtin_agent_definitions()}
+    for name in ("general-purpose", "Explore", "Plan", "worker", "verification"):
+        prompt = builtins[name].system_prompt or ""
+        assert "OpenHarness" in prompt, f"{name} prompt should identify the OpenHarness runtime"
+        assert "Claude Code" not in prompt, f"{name} prompt should not refer to a different host product"
+
+
+def test_builtin_explore_and_plan_prompts_use_current_tool_names():
+    builtins = {a.name: a for a in get_builtin_agent_definitions()}
+    for name in ("Explore", "Plan"):
+        prompt = builtins[name].system_prompt or ""
+        assert "glob" in prompt
+        assert "grep" in prompt
+        assert "read_file" in prompt
+        assert "Use Glob" not in prompt
+        assert "Use Grep" not in prompt
+        assert "Use Read" not in prompt
+
+
 # ---------------------------------------------------------------------------
 # _parse_agent_frontmatter
 # ---------------------------------------------------------------------------
