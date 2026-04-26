@@ -46,7 +46,7 @@ export function PromptInput({
 				<Text color={theme.colors.primary} bold>{busy ? '... ' : '> '}</Text>
 				<TextInput key={inputKey} value={input} onChange={setInput} onSubmit={suppressSubmit || busy ? noop : onSubmit} />
 			</Box>
-			<Text dimColor>/ commands · ↑↓ history · wheel/PgUp scroll · End resume · ctrl+x select-mode · ctrl+c exit</Text>
+			<Text dimColor>/ commands · ↑↓ history · wheel/PgUp scroll · End resume · ctrl+x select-mode · ctrl+c clear · ctrl+c ctrl+c exit</Text>
 		</Box>
 	);
 }

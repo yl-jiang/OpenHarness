@@ -87,8 +87,8 @@ test('counts only active background tasks in the status bar', async () => {
 		{id: 'task-5', type: 'local_agent', status: 'killed', description: 'killed', metadata: {}},
 	]);
 
-	assert.match(output, /⚙️ 2/u);
-	assert.doesNotMatch(output, /⚙️ 5/u);
+	assert.match(output, /⚙️  2/u);
+	assert.doesNotMatch(output, /⚙️  5/u);
 });
 
 test('shows cwd and git branch in the status bar', async () => {
@@ -142,7 +142,7 @@ test('uses symbolic labels instead of textual status prefixes', async () => {
 	assert.match(output, /⎇  default/u);
 	assert.match(output, /📁 \/tmp\/demo/u);
 	assert.match(output, / dev/u);
-	assert.match(output, /🪙 1\.2k↓ 3\.4k↑/u);
-	assert.match(output, /⚙️ 1/u);
+	assert.match(output, /🪙  1\.2k ↓ 3\.4k ↑/u);
+	assert.match(output, /⚙️  1/u);
 	assert.match(output, /🔌 2/u);
 });
