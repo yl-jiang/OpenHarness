@@ -315,26 +315,52 @@ function MessageRow({
 }): React.JSX.Element {
 	const isCodexStyle = outputStyle === 'codex';
 	switch (item.role) {
-		case 'user':
+		case 'user': {
+			const isMultiline = item.text.includes('\n');
 			if (isCodexStyle) {
+				if (!isMultiline) {
+					return (
+						<Box marginTop={0}>
+							<Text>
+								<Text dimColor>{'> '}</Text>
+								<Text>{item.text}</Text>
+							</Text>
+						</Box>
+					);
+				}
 				return (
-					<Box marginTop={0}>
+					<Box marginTop={0} flexDirection="column">
+						{item.text.split('\n').map((line, i) => (
+							<Text key={i}>
+								<Text dimColor>{i === 0 ? '> ' : '  '}</Text>
+								<Text>{line}</Text>
+							</Text>
+						))}
+					</Box>
+				);
+			}
+			if (!isMultiline) {
+				return (
+					<Box marginTop={0} marginBottom={0}>
 						<Text>
-							<Text dimColor>{'> '}</Text>
+							<Text color={theme.colors.secondary} bold>you</Text>
+							<Text dimColor> · </Text>
 							<Text>{item.text}</Text>
 						</Text>
 					</Box>
 				);
 			}
 			return (
-				<Box marginTop={0} marginBottom={0}>
-					<Text>
-						<Text color={theme.colors.secondary} bold>you</Text>
-						<Text dimColor> · </Text>
-						<Text>{item.text}</Text>
-					</Text>
+				<Box marginTop={0} marginBottom={0} flexDirection="column">
+					<Text color={theme.colors.secondary} bold>you</Text>
+					<Box marginLeft={2} flexDirection="column">
+						{item.text.split('\n').map((line, i) => (
+							<Text key={i}>{line.length > 0 ? line : ' '}</Text>
+						))}
+					</Box>
 				</Box>
 			);
+		}
 
 		case 'assistant':
 			if (isCodexStyle) {

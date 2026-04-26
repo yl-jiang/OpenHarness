@@ -42,10 +42,19 @@ const config = JSON.parse(process.env.OPENHARNESS_FRONTEND_CONFIG ?? '{}') as Fr
 
 // Restore terminal cursor visibility on exit (Ink hides it by default).
 // Also write a newline so the shell prompt starts on a fresh line and does
-// not run into the last line of the TUI output.
+// not run into the last line of the TUI output. Disable xterm
+// modifyOtherKeys mode so the host terminal returns to its default key
+// reporting behaviour.
 const restoreTerminal = (): void => {
-	process.stdout.write('\x1B[?25h\n');
+	process.stdout.write('\x1b[>4;0m\x1B[?25h\n');
 };
+// Enable xterm modifyOtherKeys mode 2 so terminals that support it report
+// Shift+Enter as a distinct escape sequence (\x1b[27;2;13~) instead of a
+// plain CR; the input decoder normalises that to LF for the multi-line
+// composer.
+if (process.stdout.isTTY) {
+	process.stdout.write('\x1b[>4;2m');
+}
 process.on('exit', restoreTerminal);
 process.on('SIGINT', () => {
 	restoreTerminal();

@@ -36,3 +36,34 @@ test('preserves normal text chunks while isolating backspace controls', () => {
 	assert.deepEqual(chunkTerminalTextForInk('ab\x7f\x7fcd\b'), ['ab', '\x7f', '\x7f', 'cd', '\b']);
 	assert.deepEqual(chunkTerminalTextForInk('hello'), ['hello']);
 });
+
+test('translates xterm modifyOtherKeys Shift+Enter (\\x1b[27;2;13~) into LF', () => {
+	const decoder = createTerminalInputDecoder();
+	const result = decoder.push('abc\u001b[27;2;13~def');
+	assert.equal(result.text, 'abc\ndef');
+	assert.deepEqual(result.mouseEvents, []);
+});
+
+test('translates kitty Shift+Enter (\\x1b[13;2u) into LF', () => {
+	const decoder = createTerminalInputDecoder();
+	const result = decoder.push('hi\u001b[13;2uok');
+	assert.equal(result.text, 'hi\nok');
+});
+
+test('translates Alt+Enter (\\x1b\\r) into LF', () => {
+	const decoder = createTerminalInputDecoder();
+	const result = decoder.push('foo\u001b\rbar');
+	assert.equal(result.text, 'foo\nbar');
+});
+
+test('leaves unmodified Enter modifyOtherKeys sequence as a CR', () => {
+	const decoder = createTerminalInputDecoder();
+	const result = decoder.push('a\u001b[27;1;13~b');
+	assert.equal(result.text, 'a\rb');
+});
+
+test('does not mangle unrelated escape sequences such as arrow keys', () => {
+	const decoder = createTerminalInputDecoder();
+	const result = decoder.push('\u001b[A\u001b[B');
+	assert.equal(result.text, '\u001b[A\u001b[B');
+});
