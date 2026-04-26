@@ -98,6 +98,38 @@ async def test_read_requests_resolves_permission_response_without_queueing(monke
     fut = asyncio.get_running_loop().create_future()
     host._permission_requests["req-1"] = fut
 
+    payload = b'{"type":"permission_response","request_id":"req-1","permission_reply":"always"}\n'
+
+    class _FakeBuffer:
+        def __init__(self):
+            self._reads = 0
+
+        def readline(self):
+            self._reads += 1
+            if self._reads == 1:
+                return payload
+            return b""
+
+    class _FakeStdin:
+        buffer = _FakeBuffer()
+
+    monkeypatch.setattr("openharness.ui.backend_host.sys.stdin", _FakeStdin())
+
+    await host._read_requests()
+
+    assert fut.done()
+    assert fut.result() == "always"
+    queued = await host._request_queue.get()
+    assert queued.type == "shutdown"
+    assert host._request_queue.empty()
+
+
+@pytest.mark.asyncio
+async def test_read_requests_maps_legacy_permission_allowed_to_once(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    fut = asyncio.get_running_loop().create_future()
+    host._permission_requests["req-1"] = fut
+
     payload = b'{"type":"permission_response","request_id":"req-1","allowed":true}\n'
 
     class _FakeBuffer:
@@ -118,10 +150,7 @@ async def test_read_requests_resolves_permission_response_without_queueing(monke
     await host._read_requests()
 
     assert fut.done()
-    assert fut.result() is True
-    queued = await host._request_queue.get()
-    assert queued.type == "shutdown"
-    assert host._request_queue.empty()
+    assert fut.result() == "once"
 
 
 @pytest.mark.asyncio
@@ -537,7 +566,7 @@ async def test_concurrent_ask_permission_are_serialised():
 
     host._emit = _fake_emit  # type: ignore[method-assign]
 
-    async def _ask_and_approve(tool: str) -> bool:
+    async def _ask_and_approve(tool: str) -> str:
         # Start the ask; a background task resolves the future once it appears.
         async def _resolver():
             # Busy-wait until this tool's future is registered.
@@ -545,7 +574,7 @@ async def test_concurrent_ask_permission_are_serialised():
                 await asyncio.sleep(0)
                 for rid, fut in list(host._permission_requests.items()):
                     if not fut.done():
-                        fut.set_result(True)
+                        fut.set_result("once")
                         return
 
         asyncio.create_task(_resolver())
@@ -557,8 +586,8 @@ async def test_concurrent_ask_permission_are_serialised():
         _ask_and_approve("bash"),
     )
 
-    assert result_a is True
-    assert result_b is True
+    assert result_a == "once"
+    assert result_b == "once"
     # With the lock in place the two modal_request events must be emitted
     # sequentially (one completes before the other starts), so exactly two
     # distinct request IDs must have been emitted.

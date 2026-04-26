@@ -42,7 +42,7 @@ REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memo
 logger = get_logger(__name__)
 
 
-PermissionPrompt = Callable[[str, str], Awaitable[bool]]
+PermissionPrompt = Callable[[str, str], Awaitable[object]]
 AskUserPrompt = Callable[[str], Awaitable[str]]
 
 MAX_TRACKED_READ_FILES = 6
@@ -799,13 +799,16 @@ async def _execute_tool_call(
                     },
                 )
             confirmed = await context.permission_prompt(tool_name, decision.reason)
-            if not confirmed:
+            reply = _normalize_permission_reply(confirmed)
+            if reply == "reject":
                 logger.debug("permission denied by user for %s", tool_name)
                 return ToolResultBlock(
                     tool_use_id=tool_use_id,
                     content=decision.reason or f"Permission denied for {tool_name}",
                     is_error=True,
                 )
+            if reply == "always":
+                context.permission_checker.remember_allow(decision)
         else:
             logger.debug("permission blocked for %s: %s", tool_name, decision.reason)
             return ToolResultBlock(
@@ -878,6 +881,21 @@ async def _execute_tool_call(
             },
         )
     return tool_result
+
+
+def _normalize_permission_reply(reply: object) -> str:
+    if reply is True:
+        return "once"
+    if reply is False or reply is None:
+        return "reject"
+    normalized = str(reply).strip().lower()
+    if normalized in {"once", "always", "reject"}:
+        return normalized
+    if normalized in {"allow", "allowed", "yes", "y"}:
+        return "once"
+    if normalized in {"deny", "denied", "no", "n"}:
+        return "reject"
+    return "reject"
 
 
 def _resolve_permission_file_path(

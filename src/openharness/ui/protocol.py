@@ -29,6 +29,7 @@ class FrontendRequest(BaseModel):
     value: str | None = None
     request_id: str | None = None
     allowed: bool | None = None
+    permission_reply: Literal["once", "always", "reject"] | None = None
     answer: str | None = None
 
 

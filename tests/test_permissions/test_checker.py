@@ -36,6 +36,70 @@ def test_default_mode_gives_package_install_hint_for_bash():
     assert "Package installation and scaffolding commands change the workspace" in decision.reason
 
 
+def test_remembered_bash_allow_pattern_skips_repeated_prompt():
+    checker = PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT))
+    first = checker.evaluate(
+        "bash",
+        is_read_only=False,
+        command="git status --short",
+    )
+    assert first.allowed is False
+    assert first.requires_confirmation is True
+    assert first.permission == "bash"
+    assert first.patterns == ("git status --short",)
+    assert first.always_patterns == ("git status *",)
+
+    checker.remember_allow(first)
+
+    second = checker.evaluate(
+        "bash",
+        is_read_only=False,
+        command="git status --porcelain",
+    )
+    assert second.allowed is True
+    assert second.requires_confirmation is False
+    assert "remembered" in second.reason
+
+
+def test_remembered_edit_allow_is_limited_to_same_file(tmp_path):
+    checker = PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT))
+    target = tmp_path / "demo.py"
+    other = tmp_path / "other.py"
+    first = checker.evaluate(
+        "edit_file",
+        is_read_only=False,
+        file_path=str(target),
+    )
+    assert first.requires_confirmation is True
+    assert first.permission == "edit"
+    assert first.always_patterns == (str(target),)
+
+    checker.remember_allow(first)
+
+    same_file = checker.evaluate("edit_file", is_read_only=False, file_path=str(target))
+    other_file = checker.evaluate("edit_file", is_read_only=False, file_path=str(other))
+    assert same_file.allowed is True
+    assert other_file.allowed is False
+    assert other_file.requires_confirmation is True
+
+
+def test_remembered_allow_does_not_bypass_denied_commands():
+    checker = PermissionChecker(
+        PermissionSettings(
+            mode=PermissionMode.DEFAULT,
+            denied_commands=["git push *"],
+        )
+    )
+    decision = checker.evaluate("bash", is_read_only=False, command="git status --short")
+    checker.remember_allow(decision)
+
+    blocked = checker.evaluate("bash", is_read_only=False, command="git push origin main")
+
+    assert blocked.allowed is False
+    assert blocked.requires_confirmation is False
+    assert "Command matches deny pattern" in blocked.reason
+
+
 def test_plan_mode_blocks_mutating_tools():
     checker = PermissionChecker(PermissionSettings(mode=PermissionMode.PLAN))
     decision = checker.evaluate("bash", is_read_only=False)
