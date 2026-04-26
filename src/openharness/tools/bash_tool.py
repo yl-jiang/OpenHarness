@@ -78,10 +78,25 @@ class BashTool(BaseTool):
                 await _terminate_process(process, force=False)
             raise
 
+        output_buffer = bytearray()
+
+        async def _read_all() -> None:
+            assert process.stdout is not None
+            try:
+                while True:
+                    chunk = await process.stdout.read(65536)
+                    if not chunk:
+                        break
+                    output_buffer.extend(chunk)
+            except OSError:
+                pass
+
         try:
-            await asyncio.wait_for(process.wait(), timeout=arguments.timeout_seconds)
+            await asyncio.wait_for(
+                asyncio.gather(process.wait(), _read_all()),
+                timeout=arguments.timeout_seconds,
+            )
         except asyncio.TimeoutError:
-            output_buffer = await _drain_available_output(process.stdout)
             await _terminate_process(process, force=True)
             output_buffer.extend(await _read_remaining_output(process))
             return ToolResult(
@@ -97,7 +112,6 @@ class BashTool(BaseTool):
             await _terminate_process(process, force=False)
             raise
 
-        output_buffer = await _read_remaining_output(process)
         text = _format_output(output_buffer)
         return ToolResult(
             output=text,
@@ -126,24 +140,6 @@ async def _read_remaining_output(process: asyncio.subprocess.Process) -> bytearr
     if process.stdout is not None:
         output_buffer.extend(await process.stdout.read())
     return output_buffer
-
-
-async def _drain_available_output(
-    stream: asyncio.StreamReader | None,
-    *,
-    read_timeout: float = 0.05,
-) -> bytearray:
-    output_buffer = bytearray()
-    if stream is None:
-        return output_buffer
-    while True:
-        try:
-            chunk = await asyncio.wait_for(stream.read(65536), timeout=read_timeout)
-        except asyncio.TimeoutError:
-            return output_buffer
-        if not chunk:
-            return output_buffer
-        output_buffer.extend(chunk)
 
 
 def _format_output(output_buffer: bytearray) -> str:
