@@ -94,6 +94,10 @@ function AppInner({
 	const [extraInputLines, setExtraInputLines] = useState<string[]>([]);
 	// Used to skip ink-text-input's onSubmit when Shift+Enter was just handled
 	const shiftEnterHandledRef = useRef(false);
+	// When App's useInput handles a Ctrl+<letter> shortcut that isn't filtered
+	// by ink-text-input (which only filters Ctrl+C), we record the letter so
+	// handleInputChange can strip the spurious insert from the composer.
+	const suppressNextCharRef = useRef<string | null>(null);
 	const [scriptIndex, setScriptIndex] = useState(0);
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [selectModal, setSelectModal] = useState<SelectModalState>(null);
@@ -256,7 +260,15 @@ function AppInner({
 		// their terminal to copy.  When disabled, in-app wheel scrolling is
 		// unavailable until re-enabled (PgUp/PgDn still work).
 		if (key.ctrl && chunk === 'x') {
+			suppressNextCharRef.current = 'x';
 			setMouseTracking((prev) => !prev);
+			return;
+		}
+
+		// Ctrl+T is consumed by TodoPanel (toggles compact/expand). Suppress
+		// ink-text-input's spurious 't' insertion into the composer.
+		if (key.ctrl && chunk === 't') {
+			suppressNextCharRef.current = 't';
 			return;
 		}
 
@@ -463,11 +475,22 @@ function AppInner({
 	// newline for Shift+Enter instead of a recognized key.return+key.shift combo).
 	const handleInputChange = useCallback(
 		(value: string) => {
-			if (!value.includes('\n')) {
-				setInput(value);
+			// Drop the character that ink-text-input inserted in the same tick
+			// as a Ctrl+<letter> shortcut handled by App / TodoPanel.
+			let next = value;
+			const suppress = suppressNextCharRef.current;
+			if (suppress) {
+				suppressNextCharRef.current = null;
+				const idx = next.lastIndexOf(suppress);
+				if (idx >= 0) {
+					next = next.slice(0, idx) + next.slice(idx + 1);
+				}
+			}
+			if (!next.includes('\n')) {
+				setInput(next);
 				return;
 			}
-			const parts = value.split('\n');
+			const parts = next.split('\n');
 			const lastPart = parts.pop() ?? '';
 			setExtraInputLines((prev) => [...prev, ...parts]);
 			setInput(lastPart);

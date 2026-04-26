@@ -131,9 +131,12 @@ test('uses ascii-only idle title cues above the prompt input', async () => {
 	assert.doesNotMatch(output, /[⌨️⏳●⏎›]/u);
 });
 
-test('uses ascii-only busy title cues above the prompt input', async () => {
+test('shows an animated busy indicator with the running tool name', async () => {
 	const output = await renderPromptInput({busy: true, toolName: 'bash'});
 
-	assert.match(output, />> \| \[run\] bash/);
-	assert.doesNotMatch(output, /[⌨️⏳●⏎›]/u);
+	// Busy state replaces the static ">>" cue with a braille spinner frame
+	// and renders the tool label with a trailing animated ellipsis.
+	assert.match(output, /\[run\] bash/);
+	assert.match(output, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u);
+	assert.doesNotMatch(output, />> \| \[run\]/);
 });
