@@ -40,6 +40,16 @@ const COMPLETE_MOUSE_SEQUENCE = /^\u001b\[<(\d+);\d+;\d+([Mm])/;
 const PARTIAL_MOUSE_SEQUENCE = /^\u001b\[<[\d;]*$/;
 const BACKSPACE_CONTROL_PATTERN = /[\b\u007f]+/g;
 
+// Sequences emitted by various terminals for Shift+Enter / Alt+Enter.
+// We normalise them to a literal LF so the higher-level input handler can
+// treat them uniformly as "insert newline" instead of "submit".
+//   - \x1b[27;<modifier>;13~  : xterm modifyOtherKeys mode 2 (Shift+Enter -> mod=2)
+//   - \x1b[13;<modifier>u     : kitty keyboard protocol
+//   - \x1b\r                  : Alt/Option+Enter on most macOS terminals
+const COMPLETE_NEWLINE_SEQUENCE = /^\u001b\[(?:27;(\d+);13~|13;(\d+)u)/;
+const PARTIAL_NEWLINE_SEQUENCE = /^\u001b\[(?:27(?:;\d*)?|13(?:;\d*)?)?$/;
+const ALT_ENTER_SEQUENCE = '\u001b\r';
+
 export function chunkTerminalTextForInk(text: string): string[] {
 	if (!text) {
 		return [];
@@ -75,34 +85,69 @@ export function createTerminalInputDecoder(): TerminalInputDecoder {
 			pending = '';
 
 			while (cursor < input.length) {
-				const escapeIndex = input.indexOf('\u001b[<', cursor);
-				if (escapeIndex === -1) {
+				const escapeIndex = input.indexOf('\u001b[', cursor);
+				const altEnterIndex = input.indexOf(ALT_ENTER_SEQUENCE, cursor);
+				const nextEscape = pickFirstIndex(escapeIndex, altEnterIndex);
+				if (nextEscape === -1) {
 					text += input.slice(cursor);
 					break;
 				}
 
-				text += input.slice(cursor, escapeIndex);
-				const remainder = input.slice(escapeIndex);
-				const match = COMPLETE_MOUSE_SEQUENCE.exec(remainder);
-				if (match) {
-					const buttonCode = Number(match[1]);
-					const terminator = match[2];
-					const mouseEvent = toMouseEvent(buttonCode, terminator);
-					if (mouseEvent) {
-						mouseEvents.push(mouseEvent);
-					}
-					cursor = escapeIndex + match[0].length;
+				text += input.slice(cursor, nextEscape);
+				const remainder = input.slice(nextEscape);
+
+				// Alt/Option+Enter -> normalise to LF.
+				if (remainder.startsWith(ALT_ENTER_SEQUENCE)) {
+					text += '\n';
+					cursor = nextEscape + ALT_ENTER_SEQUENCE.length;
 					continue;
 				}
 
-				if (PARTIAL_MOUSE_SEQUENCE.test(remainder)) {
+				// Mouse events.
+				if (remainder.startsWith('\u001b[<')) {
+					const match = COMPLETE_MOUSE_SEQUENCE.exec(remainder);
+					if (match) {
+						const buttonCode = Number(match[1]);
+						const terminator = match[2];
+						const mouseEvent = toMouseEvent(buttonCode, terminator);
+						if (mouseEvent) {
+							mouseEvents.push(mouseEvent);
+						}
+						cursor = nextEscape + match[0].length;
+						continue;
+					}
+					if (PARTIAL_MOUSE_SEQUENCE.test(remainder)) {
+						pending = remainder;
+						cursor = input.length;
+						continue;
+					}
+					text += input.slice(nextEscape, nextEscape + 1);
+					cursor = nextEscape + 1;
+					continue;
+				}
+
+				// modifyOtherKeys / kitty Shift+Enter sequences -> LF when shift bit set.
+				const newlineMatch = COMPLETE_NEWLINE_SEQUENCE.exec(remainder);
+				if (newlineMatch) {
+					const modifier = Number(newlineMatch[1] ?? newlineMatch[2] ?? '1');
+					// modifier is 1 + bitfield (shift=1, alt=2, ctrl=4); only consume
+					// when shift (or any modifier) is present so plain Enter still submits.
+					if (modifier > 1) {
+						text += '\n';
+					} else {
+						text += '\r';
+					}
+					cursor = nextEscape + newlineMatch[0].length;
+					continue;
+				}
+				if (PARTIAL_NEWLINE_SEQUENCE.test(remainder)) {
 					pending = remainder;
 					cursor = input.length;
 					continue;
 				}
 
-				text += input.slice(escapeIndex, escapeIndex + 1);
-				cursor = escapeIndex + 1;
+				text += input.slice(nextEscape, nextEscape + 1);
+				cursor = nextEscape + 1;
 			}
 
 			return {text, mouseEvents};
@@ -192,6 +237,12 @@ export function createTerminalInputStream(
 	}
 
 	return stream;
+}
+
+function pickFirstIndex(a: number, b: number): number {
+	if (a === -1) return b;
+	if (b === -1) return a;
+	return Math.min(a, b);
 }
 
 function toMouseEvent(buttonCode: number, terminator: string): TerminalMouseEvent | null {

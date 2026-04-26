@@ -91,6 +91,9 @@ function AppInner({
 	const [historyIndex, setHistoryIndex] = useState(-1);
 	const [lastEscapeAt, setLastEscapeAt] = useState(0);
 	const [lastCtrlCAt, setLastCtrlCAt] = useState(0);
+	const [extraInputLines, setExtraInputLines] = useState<string[]>([]);
+	// Used to skip ink-text-input's onSubmit when Shift+Enter was just handled
+	const shiftEnterHandledRef = useRef(false);
 	const [scriptIndex, setScriptIndex] = useState(0);
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [selectModal, setSelectModal] = useState<SelectModalState>(null);
@@ -243,6 +246,7 @@ function AppInner({
 			}
 			// First Ctrl+C → clear input and record timestamp
 			setInput('');
+			setExtraInputLines([]);
 			setHistoryIndex(-1);
 			setLastCtrlCAt(now);
 			return;
@@ -421,11 +425,20 @@ function AppInner({
 			const now = Date.now();
 			if (input && now - lastEscapeAt < 500) {
 				setInput('');
+				setExtraInputLines([]);
 				setHistoryIndex(-1);
 				setLastEscapeAt(0);
 				return;
 			}
 			setLastEscapeAt(now);
+			return;
+		}
+
+		// Shift+Enter appends current line to pending lines and starts a new one
+		if (key.shift && key.return) {
+			shiftEnterHandledRef.current = true;
+			setExtraInputLines((lines) => [...lines, input]);
+			setInput('');
 			return;
 		}
 
@@ -446,7 +459,29 @@ function AppInner({
 		}
 	});
 
+	// Intercept \n inserted directly via onChange (terminals that send a bare
+	// newline for Shift+Enter instead of a recognized key.return+key.shift combo).
+	const handleInputChange = useCallback(
+		(value: string) => {
+			if (!value.includes('\n')) {
+				setInput(value);
+				return;
+			}
+			const parts = value.split('\n');
+			const lastPart = parts.pop() ?? '';
+			setExtraInputLines((prev) => [...prev, ...parts]);
+			setInput(lastPart);
+		},
+		[],
+	);
+
 	const onSubmit = (value: string): void => {
+		// ink-text-input fires onSubmit for any key.return including shift+return;
+		// skip if Shift+Enter was already handled by our useInput handler above.
+		if (shiftEnterHandledRef.current) {
+			shiftEnterHandledRef.current = false;
+			return;
+		}
 		if (session.modal?.kind === 'question') {
 			session.sendRequest({
 				type: 'question_response',
@@ -460,19 +495,23 @@ function AppInner({
 		if (!value.trim() || session.busy || !session.ready) {
 			return;
 		}
+		const fullValue =
+			extraInputLines.length > 0 ? [...extraInputLines, value].join('\n') : value;
 		// Submitting always returns to the live tail so the user sees their
 		// own message and the agent's reply.
 		scrollToBottom();
-		if (handleCommand(value)) {
-			setHistory((items) => [...items, value]);
+		if (handleCommand(fullValue)) {
+			setHistory((items) => [...items, fullValue]);
 			setHistoryIndex(-1);
 			setInput('');
+			setExtraInputLines([]);
 			return;
 		}
-		session.sendRequest({type: 'submit_line', line: value});
-		setHistory((items) => [...items, value]);
+		session.sendRequest({type: 'submit_line', line: fullValue});
+		setHistory((items) => [...items, fullValue]);
 		setHistoryIndex(-1);
 		setInput('');
+		setExtraInputLines([]);
 		session.setBusy(true);
 	};
 
@@ -572,8 +611,9 @@ function AppInner({
 					<PromptInput
 						busy={session.busy}
 						input={input}
-						setInput={setInput}
+						setInput={handleInputChange}
 						onSubmit={onSubmit}
+						extraInputLines={extraInputLines}
 						toolName={session.busy ? currentToolName : undefined}
 						statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `Running ${currentToolName}...` : 'Running agent loop...')) : undefined}
 						suppressSubmit={showPicker}

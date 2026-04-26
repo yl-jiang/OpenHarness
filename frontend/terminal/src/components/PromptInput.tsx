@@ -11,6 +11,7 @@ export function PromptInput({
 	input,
 	setInput,
 	onSubmit,
+	extraInputLines,
 	toolName,
 	suppressSubmit,
 	statusLabel,
@@ -20,6 +21,7 @@ export function PromptInput({
 	input: string;
 	setInput: (value: string) => void;
 	onSubmit: (value: string) => void;
+	extraInputLines?: string[];
 	toolName?: string;
 	suppressSubmit?: boolean;
 	statusLabel?: string;
@@ -42,11 +44,21 @@ export function PromptInput({
 				<Text dimColor>{' | '}</Text>
 				<Text dimColor>{busy ? busyTitle : idleTitle}</Text>
 			</Box>
+			{extraInputLines && extraInputLines.length > 0 && (
+				<Box flexDirection="column" marginTop={1}>
+					{extraInputLines.map((line, i) => (
+						<Box key={i}>
+							<Text color={theme.colors.primary} bold>{'  '}</Text>
+							<Text dimColor>{line.length > 0 ? line : ' '}</Text>
+						</Box>
+					))}
+				</Box>
+			)}
 			<Box marginTop={1}>
 				<Text color={theme.colors.primary} bold>{busy ? '... ' : '> '}</Text>
 				<TextInput key={inputKey} value={input} onChange={setInput} onSubmit={suppressSubmit || busy ? noop : onSubmit} />
 			</Box>
-			<Text dimColor>/ commands · ↑↓ history · wheel/PgUp scroll · End resume · ctrl+x select-mode · ctrl+c clear · ctrl+c ctrl+c exit</Text>
+			<Text dimColor>/ commands · ↑↓ history · shift+enter newline · wheel/PgUp scroll · End resume · ctrl+x select-mode · ctrl+c clear · ctrl+c ctrl+c exit</Text>
 		</Box>
 	);
 }
