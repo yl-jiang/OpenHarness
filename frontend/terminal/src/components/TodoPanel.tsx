@@ -1,4 +1,4 @@
-import React, {useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {Box, Text, useInput} from 'ink';
 
 export type TodoItem = {
@@ -25,30 +25,51 @@ function TodoPanelInner({
 	markdown: string;
 	compact?: boolean;
 }): React.JSX.Element | null {
-	const [compact, setCompact] = useState(initialCompact);
 	const items = parseTodoItems(markdown);
+	const total = items.length;
+	const done = items.filter((i) => i.checked).length;
+	const allDone = total > 0 && done === total;
+
+	// User-controlled override: 'auto' follows the all-done heuristic, while
+	// explicit toggles (ctrl+t) lock the panel in expanded/collapsed state
+	// until the next time the todo list changes.
+	type Mode = 'auto' | 'expanded' | 'compact';
+	const [mode, setMode] = useState<Mode>(initialCompact ? 'compact' : 'auto');
+
+	// When the underlying todo list changes (item count shifts or progress
+	// flips), reset back to auto so the panel can react to the new state.
+	const lastSignatureRef = useRef('');
+	useEffect(() => {
+		const signature = `${total}:${done}`;
+		if (lastSignatureRef.current && lastSignatureRef.current !== signature) {
+			setMode('auto');
+		}
+		lastSignatureRef.current = signature;
+	}, [total, done]);
 
 	useInput((chunk, key) => {
 		if (key.ctrl && chunk === 't') {
-			setCompact((c) => !c);
+			setMode((m) => {
+				const isCollapsed = m === 'compact' || (m === 'auto' && allDone);
+				return isCollapsed ? 'expanded' : 'compact';
+			});
 		}
 	});
 
-	if (items.length === 0) {
+	if (total === 0) {
 		return null;
 	}
 
-	const done = items.filter((i) => i.checked).length;
-	const total = items.length;
+	const compact = mode === 'compact' || (mode === 'auto' && allDone);
 
 	if (compact) {
 		return (
 			<Box>
-				<Text color="yellow" bold>
-					{'☑ '}
+				<Text color={allDone ? 'green' : 'yellow'} bold>
+					{allDone ? '✓ ' : '☑ '}
 				</Text>
 				<Text dimColor>
-					Todos: {done}/{total} done
+					{allDone ? `Todos: all done (${total})` : `Todos: ${done}/${total} done`}
 				</Text>
 				<Text dimColor> [ctrl+t expand]</Text>
 			</Box>
@@ -56,18 +77,18 @@ function TodoPanelInner({
 	}
 
 	return (
-		<Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={1} marginTop={1}>
+		<Box flexDirection="column" borderStyle="round" borderColor={allDone ? 'green' : 'yellow'} paddingX={1} marginTop={1}>
 			<Box>
-				<Text color="yellow" bold>
-					{'☑ '}
+				<Text color={allDone ? 'green' : 'yellow'} bold>
+					{allDone ? '✓ ' : '☑ '}
 				</Text>
 				<Text bold>
 					Todo List{' '}
 				</Text>
 				<Text dimColor>
-					({done}/{total})
+					({done}/{total}{allDone ? ' · done' : ''})
 				</Text>
-				<Text dimColor> [ctrl+t compact]</Text>
+				<Text dimColor> [ctrl+t collapse]</Text>
 			</Box>
 			{items.map((item, i) => (
 				<Box key={i}>

@@ -1,10 +1,42 @@
-import React from 'react';
+import React, {useEffect, useState} from 'react';
 import {Box, Text} from 'ink';
 import TextInput from 'ink-text-input';
 
 import {useTheme} from '../theme/ThemeContext.js';
 
 const noop = (): void => {};
+
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+function useSpinnerFrame(active: boolean, intervalMs = 100): string {
+	const [frame, setFrame] = useState(0);
+	useEffect(() => {
+		if (!active) {
+			setFrame(0);
+			return;
+		}
+		const id = setInterval(() => {
+			setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
+		}, intervalMs);
+		return () => clearInterval(id);
+	}, [active, intervalMs]);
+	return SPINNER_FRAMES[frame] ?? SPINNER_FRAMES[0];
+}
+
+function useEllipsis(active: boolean, intervalMs = 400): string {
+	const [step, setStep] = useState(0);
+	useEffect(() => {
+		if (!active) {
+			setStep(0);
+			return;
+		}
+		const id = setInterval(() => {
+			setStep((s) => (s + 1) % 4);
+		}, intervalMs);
+		return () => clearInterval(id);
+	}, [active, intervalMs]);
+	return '.'.repeat(step);
+}
 
 export function PromptInput({
 	busy,
@@ -30,6 +62,8 @@ export function PromptInput({
 	const {theme} = useTheme();
 	const idleTitle = '[idle]';
 	const busyTitle = statusLabel ?? (toolName ? `[run] ${toolName}` : '[run]');
+	const spinnerFrame = useSpinnerFrame(busy);
+	const dots = useEllipsis(busy);
 
 	return (
 		<Box
@@ -40,9 +74,13 @@ export function PromptInput({
 			paddingX={1}
 		>
 			<Box>
-				<Text color={theme.colors.primary} bold>{'>>'}</Text>
+				<Text color={theme.colors.primary} bold>
+					{busy ? `${spinnerFrame} ` : '>>'}
+				</Text>
 				<Text dimColor>{' | '}</Text>
-				<Text dimColor>{busy ? busyTitle : idleTitle}</Text>
+				<Text color={busy ? theme.colors.primary : undefined} dimColor={!busy}>
+					{busy ? `${busyTitle}${dots}` : idleTitle}
+				</Text>
 			</Box>
 			{extraInputLines && extraInputLines.length > 0 && (
 				<Box flexDirection="column" marginTop={1}>
