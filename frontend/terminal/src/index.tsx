@@ -81,4 +81,5 @@ process.on('exit', () => {
 
 render(<App config={config} />, {
 	stdin: createTerminalInputStream(stdinStream) as unknown as NodeJS.ReadStream & {fd: 0},
+	exitOnCtrlC: false,
 });

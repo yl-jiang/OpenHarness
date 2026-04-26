@@ -85,7 +85,7 @@ function StatusBarInner({
 				{inputTokens > 0 || outputTokens > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>🪙 {formatNum(inputTokens)}{'\u2193'} {formatNum(outputTokens)}{'\u2191'}</Text>
+						<Text dimColor>🪙  {formatNum(inputTokens)} {'\u2193'} {formatNum(outputTokens)} {'\u2191'}</Text>
 					</>
 				) : null}
 				{!isPlanMode ? (
@@ -105,7 +105,7 @@ function StatusBarInner({
 				{taskCount > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>⚙️ {taskCount}</Text>
+						<Text dimColor>⚙️  {taskCount}</Text>
 					</>
 				) : null}
 				{mcpCount > 0 ? (

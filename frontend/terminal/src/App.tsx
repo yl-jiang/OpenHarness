@@ -90,6 +90,7 @@ function AppInner({
 	const [history, setHistory] = useState<string[]>([]);
 	const [historyIndex, setHistoryIndex] = useState(-1);
 	const [lastEscapeAt, setLastEscapeAt] = useState(0);
+	const [lastCtrlCAt, setLastCtrlCAt] = useState(0);
 	const [scriptIndex, setScriptIndex] = useState(0);
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [selectModal, setSelectModal] = useState<SelectModalState>(null);
@@ -233,8 +234,17 @@ function AppInner({
 		const isPaste = chunk.length > 1 && !key.ctrl && !key.meta;
 
 		if (key.ctrl && chunk === 'c') {
-			session.sendRequest({type: 'shutdown'});
-			exit();
+			const now = Date.now();
+			if (now - lastCtrlCAt < 1000) {
+				// Two Ctrl+C within 1 s → shut down and exit
+				session.sendRequest({type: 'shutdown'});
+				exit();
+				return;
+			}
+			// First Ctrl+C → clear input and record timestamp
+			setInput('');
+			setHistoryIndex(-1);
+			setLastCtrlCAt(now);
 			return;
 		}
 
@@ -306,6 +316,17 @@ function AppInner({
 				session.sendRequest({
 					type: 'permission_response',
 					request_id: session.modal.request_id,
+					permission_reply: 'once',
+					allowed: true,
+				});
+				session.setModal(null);
+				return;
+			}
+			if (chunk.toLowerCase() === 'a') {
+				session.sendRequest({
+					type: 'permission_response',
+					request_id: session.modal.request_id,
+					permission_reply: 'always',
 					allowed: true,
 				});
 				session.setModal(null);
@@ -315,6 +336,7 @@ function AppInner({
 				session.sendRequest({
 					type: 'permission_response',
 					request_id: session.modal.request_id,
+					permission_reply: 'reject',
 					allowed: false,
 				});
 				session.setModal(null);

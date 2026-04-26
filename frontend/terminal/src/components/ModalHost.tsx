@@ -104,7 +104,9 @@ function ModalHostInner({
 				) : null}
 				<Text>
 					<Text color="yellow">{'\u2514 '}</Text>
-					<Text color="green">[y] Allow</Text>
+					<Text color="green">[y] Once</Text>
+					<Text>{'  '}</Text>
+					<Text color="green">[a] Always</Text>
 					<Text>{'  '}</Text>
 					<Text color="red">[n] Deny</Text>
 				</Text>
