@@ -56,6 +56,8 @@ class SubprocessBackend:
             model=config.model,
             api_format=config.api_format,
             base_url=config.base_url,
+            system_prompt=config.system_prompt,
+            system_prompt_mode=config.system_prompt_mode,
             plan_mode_required=config.plan_mode_required,
         )
         extra_env = build_inherited_env_vars(
