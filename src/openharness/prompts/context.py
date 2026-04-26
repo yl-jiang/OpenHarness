@@ -19,12 +19,13 @@ from openharness.prompts.system_prompt import build_system_prompt
 from openharness.skills.loader import load_skill_registry
 
 SKILLS_GUIDANCE = (
+    "# Skill guidance\n"
     "After completing a complex task (5+ tool calls), fixing a tricky error, "
     "or discovering a non-trivial workflow, save the approach as a "
     "skill with skill_manage so you can reuse it next time.\n"
     "When using a skill and finding it outdated, incomplete, or wrong, "
     "patch it immediately with skill_manage(action='patch') — don't wait to be asked. "
-    "Skills that aren't maintained become liabilities."
+    "Skills that aren't maintained become liabilities.\n"
 )
 
 TOOL_USE_ENFORCEMENT_GUIDANCE = (
@@ -39,7 +40,7 @@ TOOL_USE_ENFORCEMENT_GUIDANCE = (
     "the task, use them instead of telling the user what you would do.\n"
     "Every response should either (a) contain tool calls that make progress, or "
     "(b) deliver a final result to the user. Responses that only describe intentions "
-    "without acting are not acceptable."
+    "without acting are not acceptable.\n"
 )
 
 

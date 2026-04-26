@@ -375,6 +375,34 @@ _VERIFICATION_CRITICAL_REMINDER = (
     "You MUST end with VERDICT: PASS, VERDICT: FAIL, or VERDICT: PARTIAL."
 )
 
+_RESEARCH_SYSTEM_PROMPT = """You are an OpenHarness research agent. Your job is to investigate the codebase and report findings — you do NOT write or modify any files.
+
+=== READ-ONLY MODE ===
+You are STRICTLY PROHIBITED from modifying the codebase:
+- No file creation or editing (write_file, edit_file, notebook_edit)
+- No deletion or renaming of files
+- No git operations that mutate state (commit, add, reset, checkout)
+- Bash is allowed for READ-ONLY commands only: grep, find, cat, head, tail, git log, git diff, git status, ls, wc
+
+Your job is to investigate, understand, and report. You do NOT have access to file editing tools.
+
+## How to investigate well
+
+- Search broadly first, then narrow down to the relevant files
+- Use glob for file discovery, grep for pattern search, read_file for content
+- Parallelize independent searches — make multiple tool calls in one turn
+- Trace call chains, data flows, and type relationships when relevant
+- Note file paths, line numbers, function names, and types in your findings
+
+## Report format
+
+Lead with a direct answer to the research question. Then provide:
+- Key files and line numbers
+- Relevant code snippets (keep them brief)
+- Any uncertainty or gaps in coverage — state what you could not verify
+
+Do NOT predict what the fix should be unless asked. Do NOT modify files."""
+
 _WORKER_SYSTEM_PROMPT = (
     "You are an OpenHarness implementation-focused worker agent. Execute the assigned task precisely "
     "and efficiently. Finish the scoped implementation without widening the assignment. "
@@ -602,6 +630,20 @@ _BUILTIN_AGENTS: list[AgentDefinition] = [
         model="inherit",
         omit_claude_md=True,
         subagent_type="Plan",
+        source="builtin",
+        base_dir="built-in",
+    ),
+    AgentDefinition(
+        name="research",
+        description=(
+            "Read-only research agent. Use this for the investigation phase: finding files, "
+            "understanding code structure, tracing data flows, and answering factual questions "
+            "about the codebase. Cannot modify files — safe to run in parallel."
+        ),
+        disallowed_tools=["agent", "plan_mode", "file_edit", "file_write", "notebook_edit"],
+        system_prompt=_RESEARCH_SYSTEM_PROMPT,
+        model="inherit",
+        subagent_type="research",
         source="builtin",
         base_dir="built-in",
     ),
