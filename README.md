@@ -20,15 +20,15 @@
 <p align="center">
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Quick_Start-5_min-blue?style=for-the-badge" alt="Quick Start"></a>
   <a href="#-harness-architecture"><img src="https://img.shields.io/badge/Harness-Architecture-ff69b4?style=for-the-badge" alt="Architecture"></a>
-  <a href="#-features"><img src="https://img.shields.io/badge/Tools-43+-green?style=for-the-badge" alt="Tools"></a>
-  <a href="#-test-results"><img src="https://img.shields.io/badge/Tests-114_Passing-brightgreen?style=for-the-badge" alt="Tests"></a>
+  <a href="#-features"><img src="https://img.shields.io/badge/Tools-40+-green?style=for-the-badge" alt="Tools"></a>
+  <a href="#-test-results"><img src="https://img.shields.io/badge/Tests-909_Passing-brightgreen?style=for-the-badge" alt="Tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License"></a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-≥3.10-blue?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/React+Ink-TUI-61DAFB?logo=react&logoColor=white" alt="React">
-  <img src="https://img.shields.io/badge/pytest-114_pass-brightgreen" alt="Pytest">
+  <img src="https://img.shields.io/badge/pytest-909_pass-brightgreen" alt="Pytest">
   <img src="https://img.shields.io/badge/E2E-6_suites-orange" alt="E2E">
   <img src="https://img.shields.io/badge/output-text_|_json_|_stream--json-blueviolet" alt="Output">
   <a href="https://github.com/HKUDS/OpenHarness/actions/workflows/ci.yml"><img src="https://github.com/HKUDS/OpenHarness/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -70,12 +70,12 @@ Supports CLI agent integration including OpenClaw, nanobot, Cursor, and more.
 <h3>🔧 Harness Toolkit</h3>
 
 <div align="center">
-  <img src="https://img.shields.io/badge/43+_Tools-10B981?style=for-the-badge&logo=toolbox&logoColor=white" alt="Toolkit" />
+  <img src="https://img.shields.io/badge/40+_Tools-10B981?style=for-the-badge&logo=toolbox&logoColor=white" alt="Toolkit" />
 </div>
 
 <img src="assets/scene-toolkit.png" width="140">
 
-<p align="center"><strong>• 43 Tools (File, Shell, Search, Web, MCP)</strong></p>
+<p align="center"><strong>• 40 Tools (File, Shell, Search, Web, Git, MCP)</strong></p>
 <p align="center"><strong>• On-Demand Skill Loading (.md)</strong></p>
 <p align="center"><strong>• Plugin Ecosystem (Skills + Hooks + Agents)</strong></p>
 <p align="center"><strong>• Compatible with anthropics/skills & plugins</strong></p>
@@ -157,6 +157,19 @@ OpenHarness is an open-source Python implementation designed for **researchers, 
   - `oh --dry-run` previews resolved runtime settings, auth state, skills, commands, tools, and configured MCP servers without executing the model, tools, or subagents.
   - Dry-run now reports a `ready` / `warning` / `blocked` readiness verdict with concrete next-step suggestions such as fixing auth, fixing MCP config, or running the prompt directly.
   - Prompt previews include likely matching skills and tools, while slash-command previews show whether the command is mostly read-only or stateful.
+- **Unreleased** 🌐 **Google Gemini & DeepSeek first-class providers**:
+  - Built-in `gemini` provider profile: `oh setup` offers Google Gemini as a first-class choice, with `GEMINI_API_KEY` auth and `gemini-2.5-flash` as the default model.
+  - Built-in `deepseek` provider profile: native DeepSeek API key auth with `deepseek-chat` / `deepseek-reasoner` and reasoning effort support.
+- **Unreleased** 🖥️ **TUI & terminal improvements**:
+  - Parallel tool calls now render with tree connectors and richer summaries in the React TUI.
+  - Line-level smooth scrolling via `measureElement` for a fluid transcript experience.
+  - Compact status bar and prompt indicators for cleaner session context.
+  - Alternate screen buffer with scrollback history for full-page transcript navigation.
+- **Unreleased** 🔧 **Tool consolidation & new tools**:
+  - `SkillManagerTool` consolidates all skill operations into a single tool with subcommands.
+  - `CronManagerTool` consolidates schedule operations (create/list/delete) into one tool.
+  - New `diff` and `git` tools for diff views and git operations; new `todo_tool` for task tracking.
+  - Plugin tools are now loaded at runtime from installed plugins.
 - **2026-04-10** 🧠 **v0.1.6** — Auto-Compaction & Markdown TUI:
   - Auto-Compaction preserves task state and channel logs across context compression — agents can run multi-day sessions without manual compact/clear
   - Subprocess teammates run in headless worker mode; agent team creation stabilized
@@ -223,7 +236,7 @@ oh setup    # interactive wizard — pick a provider, authenticate, done
 # On Windows PowerShell, use: openh setup
 ```
 
-Supports **Claude / OpenAI / Copilot / Codex / Moonshot(Kimi) / GLM / MiniMax** and any compatible endpoint.
+Supports **Claude / OpenAI / Copilot / Codex / Moonshot(Kimi) / GLM / MiniMax / Gemini / DeepSeek** and any compatible endpoint.
 
 ### 3. Run
 
@@ -314,7 +327,9 @@ oh provider use <profile>
 |----------|------------|------------------|
 | **Anthropic-Compatible API** | Anthropic-style request format | Claude official, Kimi, GLM, MiniMax, internal Anthropic-compatible gateways |
 | **Claude Subscription** | Claude CLI subscription bridge | Local `~/.claude/.credentials.json` |
-| **OpenAI-Compatible API** | OpenAI-style request format | OpenAI official, OpenRouter, DashScope, DeepSeek, SiliconFlow, Groq, Ollama, GitHub Models |
+| **OpenAI-Compatible API** | OpenAI-style request format | OpenAI official, OpenRouter, DashScope, SiliconFlow, Groq, Ollama, GitHub Models |
+| **DeepSeek API** | Native DeepSeek API key | `deepseek-chat`, `deepseek-reasoner` (reasoning effort supported) |
+| **Google Gemini** | Native Gemini API key | `gemini-2.5-flash`, `gemini-2.5-pro` |
 | **Codex Subscription** | Codex CLI subscription bridge | Local `~/.codex/auth.json` |
 | **GitHub Copilot** | Copilot OAuth workflow | GitHub Copilot device-flow login |
 
@@ -445,7 +460,7 @@ OpenHarness implements the core Agent Harness pattern with 10 subsystems:
 ```
 openharness/
   engine/          # 🧠 Agent Loop — query → stream → tool-call → loop
-  tools/           # 🔧 43 Tools — file I/O, shell, search, web, MCP
+  tools/           # 🔧 40 Tools — file I/O, shell, search, web, git, MCP
   skills/          # 📚 Knowledge — on-demand skill loading (.md files)
   plugins/         # 🔌 Extensions — commands, hooks, agents, MCP servers
   permissions/     # 🛡️ Safety — multi-level modes, path rules, command deny
@@ -499,19 +514,20 @@ flowchart LR
 
 ## ✨ Features
 
-### 🔧 Tools (43+)
+### 🔧 Tools (40+)
 
 | Category | Tools | Description |
 |----------|-------|-------------|
 | **File I/O** | Bash, Read, Write, Edit, Glob, Grep | Core file operations with permission checks |
 | **Search** | WebFetch, WebSearch, ToolSearch, LSP | Web and code search capabilities |
+| **Git** | Diff, Git | Diff views and git operations |
 | **Notebook** | NotebookEdit | Jupyter notebook cell editing |
 | **Agent** | Agent, SendMessage, TeamCreate/Delete | Subagent spawning and coordination |
-| **Task** | TaskCreate/Get/List/Update/Stop/Output | Background task management |
+| **Task** | TaskCreate/Get/List/Update/Stop/Output/Wait | Background task management |
 | **MCP** | MCPTool, ListMcpResources, ReadMcpResource | Model Context Protocol integration |
-| **Mode** | EnterPlanMode, ExitPlanMode, Worktree | Workflow mode switching |
-| **Schedule** | CronCreate/List/Delete, RemoteTrigger | Scheduled and remote execution |
-| **Meta** | Skill, Config, Brief, Sleep, AskUser | Knowledge loading, configuration, interaction |
+| **Mode** | PlanMode, EnterWorktree, ExitWorktree | Workflow mode switching |
+| **Schedule** | CronManager, RemoteTrigger | Scheduled and remote execution |
+| **Meta** | SkillManager, Config, Brief, Sleep, AskUser, Todo | Knowledge loading, configuration, interaction |
 
 Every tool has:
 - **Pydantic input validation** — structured, type-safe inputs
@@ -589,12 +605,15 @@ Multi-level safety with fine-grained control:
 }
 ```
 
+When a default-mode prompt appears, approve **once** for a single tool call or
+**always** to remember the suggested pattern for the current session.
+
 ### 🖥️ Terminal UI
 
 React/Ink TUI with full interactive experience:
 
 - **Command picker**: Type `/` → arrow keys to select → Enter
-- **Permission dialog**: Interactive y/n with tool details
+- **Permission dialog**: Interactive once/always/deny choices with tool details
 - **Mode switcher**: `/permissions` → select from list
 - **Session resume**: `/resume` → pick from history
 - **Animated spinner**: Real-time feedback during tool execution
@@ -677,7 +696,7 @@ Currently `ohmo init` / `ohmo config` can guide channel setup for:
 
 | Suite | Tests | Status |
 |-------|-------|--------|
-| Unit + Integration | 114 | ✅ All passing |
+| Unit + Integration | 909 | ✅ 909 passing |
 | CLI Flags E2E | 6 | ✅ Real model calls |
 | Harness Features E2E | 9 | ✅ Retry, skills, parallel, permissions |
 | React TUI E2E | 3 | ✅ Welcome, conversation, status |
@@ -686,7 +705,7 @@ Currently `ohmo init` / `ohmo config` can guide channel setup for:
 
 ```bash
 # Run all tests
-uv run pytest -q                           # 114 unit/integration
+uv run pytest -q                           # 900+ unit/integration
 python scripts/test_harness_features.py     # Harness E2E
 python scripts/test_real_skills_plugins.py  # Real plugins E2E
 ```
