@@ -77,3 +77,27 @@ def test_build_inherited_cli_flags_none_model_excluded():
 def test_build_inherited_cli_flags_empty_string_model_excluded():
     flags = build_inherited_cli_flags(model="")
     assert "--model" not in flags
+
+
+def test_build_inherited_cli_flags_forward_system_prompt_replace():
+    flags = build_inherited_cli_flags(
+        system_prompt="PLAN_PROMPT",
+        system_prompt_mode="replace",
+    )
+
+    assert flags == [
+        "--system-prompt",
+        "PLAN_PROMPT",
+    ]
+
+
+def test_build_inherited_cli_flags_forward_system_prompt_append():
+    flags = build_inherited_cli_flags(
+        system_prompt="VERIFY_PROMPT",
+        system_prompt_mode="append",
+    )
+
+    assert flags == [
+        "--append-system-prompt",
+        "VERIFY_PROMPT",
+    ]

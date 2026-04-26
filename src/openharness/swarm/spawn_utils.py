@@ -98,6 +98,8 @@ def build_inherited_cli_flags(
     model: str | None = None,
     api_format: str | None = None,
     base_url: str | None = None,
+    system_prompt: str | None = None,
+    system_prompt_mode: str | None = None,
     permission_mode: str | None = None,
     plan_mode_required: bool = False,
     settings_path: str | None = None,
@@ -116,6 +118,10 @@ def build_inherited_cli_flags(
 
     Args:
         model: Model override to forward (e.g. ``"claude-opus-4-6"``).
+        system_prompt: System prompt override to forward to the spawned worker.
+        system_prompt_mode: When ``"append"``, forward via
+            ``--append-system-prompt``. Any other value uses
+            ``--system-prompt``.
         permission_mode: One of ``"bypassPermissions"``, ``"acceptEdits"``, or None.
         plan_mode_required: When True, bypass-permissions flag is suppressed
             (plan mode takes precedence over bypass for safety).
@@ -153,6 +159,11 @@ def build_inherited_cli_flags(
         flags.extend(["--api-format", shlex.quote(api_format)])
     if base_url:
         flags.extend(["--base-url", shlex.quote(base_url)])
+
+    # --- System prompt propagation -----------------------------------------
+    if system_prompt:
+        prompt_flag = "--append-system-prompt" if system_prompt_mode == "append" else "--system-prompt"
+        flags.extend([prompt_flag, shlex.quote(system_prompt)])
 
     # --- Settings path propagation ----------------------------------------
     # Ensures teammates load the same settings JSON as the leader process.
