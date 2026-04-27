@@ -144,7 +144,6 @@ async def test_agent_tool_uses_subprocess_backend_and_task_is_pollable(
     # 3. The task_id must be registered in BackgroundTaskManager so task tools
     #    can query it without raising ValueError.
     #    Parse task_id from "Spawned agent X (task_id=Y, backend=Z)"
-    import re
     m = re.search(r"task_id=(\S+?)[,)]", result.output)
     assert m, f"Could not parse task_id from output: {result.output}"
     task_id = m.group(1)
@@ -239,7 +238,6 @@ async def test_agent_tool_supports_remote_and_teammate_modes(tmp_path: Path, mon
             context,
         )
         assert result.is_error is False
-        import re
 
         match = re.search(r"task_id=(\S+?)[,)]", result.output)
         assert match, result.output
