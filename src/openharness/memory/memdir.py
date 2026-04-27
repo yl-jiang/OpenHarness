@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from openharness.memory.paths import get_memory_entrypoint, get_project_memory_dir
+from openharness.memory.paths import (
+    get_curated_memory_dir,
+    get_memory_entrypoint,
+    get_project_memory_dir,
+)
+from openharness.memory.store import MemoryStore
 
 
 MEMORY_GUIDANCE = (
@@ -25,10 +30,12 @@ MEMORY_GUIDANCE = (
 def load_memory_prompt(cwd: str | Path, *, max_entrypoint_lines: int = 200) -> str | None:
     """Return the memory prompt section for the current project."""
     memory_dir = get_project_memory_dir(cwd)
+    curated_dir = get_curated_memory_dir(cwd)
     entrypoint = get_memory_entrypoint(cwd)
     lines = [
         "# Memory",
         f"- Persistent memory directory: {memory_dir}",
+        f"- Curated memory directory: {curated_dir}",
         "- Use this directory to store durable user or project context that should survive future sessions.",
         "- Prefer concise topic files plus an index entry in MEMORY.md.",
     ]
@@ -45,5 +52,18 @@ def load_memory_prompt(cwd: str | Path, *, max_entrypoint_lines: int = 200) -> s
                 "(not created yet)",
             ]
         )
+
+    store = MemoryStore(curated_dir)
+    store.load_from_disk()
+    curated_blocks = [
+        block
+        for block in (
+            store.format_for_system_prompt("user"),
+            store.format_for_system_prompt("memory"),
+        )
+        if block
+    ]
+    if curated_blocks:
+        lines.extend(["", "## Curated Memory", *curated_blocks])
 
     return "\n".join(lines)

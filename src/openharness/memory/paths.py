@@ -20,3 +20,10 @@ def get_project_memory_dir(cwd: str | Path) -> Path:
 def get_memory_entrypoint(cwd: str | Path) -> Path:
     """Return the project memory entrypoint file."""
     return get_project_memory_dir(cwd) / "MEMORY.md"
+
+
+def get_curated_memory_dir(cwd: str | Path) -> Path:
+    """Return the Hermes-style curated memory directory for a project."""
+    memory_dir = get_project_memory_dir(cwd) / "curated"
+    memory_dir.mkdir(parents=True, exist_ok=True)
+    return memory_dir
