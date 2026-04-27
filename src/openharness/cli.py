@@ -898,7 +898,7 @@ def auth_switch(
 # ---------------------------------------------------------------------------
 
 
-def _run_copilot_login() -> None:
+def _run_copilot_login(*, manual_token: str | None = None) -> None:
     """Run the GitHub Copilot device-code flow and persist the result."""
     from openharness.api.copilot_auth import save_copilot_auth
     from openharness.auth.flows import DeviceCodeFlow
@@ -921,12 +921,29 @@ def _run_copilot_login() -> None:
         github_domain = domain
 
     print(flush=True)
-    flow = DeviceCodeFlow(github_domain=github_domain, enterprise_url=enterprise_url)
-    try:
-        token = flow.run()
-    except RuntimeError as exc:
-        print(f"Error: {exc}", file=sys.stderr, flush=True)
-        raise typer.Exit(1)
+
+    if manual_token:
+        token = manual_token
+    else:
+        print("Select authentication method:", flush=True)
+        print("  1. Device flow (open browser to authorize)", flush=True)
+        print("  2. Manually paste a GitHub token", flush=True)
+        auth_method = typer.prompt("Enter choice", default="1")
+
+        if auth_method.strip() == "2":
+            import getpass
+
+            token = getpass.getpass("Enter your GitHub token: ").strip()
+            if not token:
+                print("Error: token cannot be empty.", file=sys.stderr, flush=True)
+                raise typer.Exit(1)
+        else:
+            flow = DeviceCodeFlow(github_domain=github_domain, enterprise_url=enterprise_url)
+            try:
+                token = flow.run()
+            except RuntimeError as exc:
+                print(f"Error: {exc}", file=sys.stderr, flush=True)
+                raise typer.Exit(1)
 
     save_copilot_auth(token, enterprise_url=enterprise_url)
     print("GitHub Copilot authenticated successfully.", flush=True)
@@ -938,9 +955,11 @@ def _run_copilot_login() -> None:
 
 
 @auth_app.command("copilot-login")
-def auth_copilot_login() -> None:
-    """Authenticate with GitHub Copilot via device flow (alias for 'oh auth login copilot')."""
-    _run_copilot_login()
+def auth_copilot_login(
+    token: Optional[str] = typer.Option(None, "--token", "-t", help="Manually provide a GitHub OAuth token (skips device flow)"),
+) -> None:
+    """Authenticate with GitHub Copilot via device flow or manual token."""
+    _run_copilot_login(manual_token=token)
 
 
 @auth_app.command("codex-login")
