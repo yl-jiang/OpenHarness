@@ -5,7 +5,7 @@ import React from 'react';
 import {render} from 'ink';
 
 import {ThemeProvider} from '../theme/ThemeContext.js';
-import {PromptInput} from './PromptInput.js';
+import {PromptInput, shouldAnimateBackgroundCue, shouldAnimateSpinner} from './PromptInput.js';
 
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -84,9 +84,13 @@ async function waitForOutputToStabilize(getOutput: () => string): Promise<string
 async function renderPromptInput({
 	busy = false,
 	toolName,
+	backgroundTaskCount = 0,
+	animateSpinner,
 }: {
 	busy?: boolean;
 	toolName?: string;
+	backgroundTaskCount?: number;
+	animateSpinner?: boolean;
 } = {}): Promise<string> {
 	const stdout = createTestStdout();
 	const stdin = createTestStdin();
@@ -103,6 +107,8 @@ async function renderPromptInput({
 				setInput={() => {}}
 				onSubmit={() => {}}
 				toolName={toolName}
+				backgroundTaskCount={backgroundTaskCount}
+				animateSpinner={animateSpinner}
 			/>
 		</ThemeProvider>,
 		{
@@ -139,4 +145,38 @@ test('shows an animated busy indicator with the running tool name', async () => 
 	assert.match(output, /\[run\] bash/);
 	assert.match(output, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u);
 	assert.doesNotMatch(output, />> \| \[run\]/);
+});
+
+test('shows a visual background activity cue while input remains idle', async () => {
+	const output = await renderPromptInput({backgroundTaskCount: 2});
+
+	assert.match(output, /\[bg\] 2 running/);
+	assert.match(output, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u);
+	assert.match(output, /> /);
+	assert.doesNotMatch(output, /\[idle\]/);
+});
+
+test('uses a static background cue when animation is disabled', async () => {
+	const output = await renderPromptInput({backgroundTaskCount: 1, animateSpinner: false});
+
+	assert.match(output, /● \| \[bg\] 1 running/);
+	assert.doesNotMatch(output, /\[idle\]/);
+});
+
+test('uses a static busy cue when animation is disabled', async () => {
+	const output = await renderPromptInput({busy: true, toolName: 'bash', animateSpinner: false});
+
+	assert.match(output, /⠋ {2}\| \[run\] bash\.\.\./);
+});
+
+test('disables spinner animation on flicker-prone terminals', () => {
+	assert.equal(shouldAnimateSpinner('win32', {}), false);
+	assert.equal(shouldAnimateSpinner('win32', {WT_SESSION: 'abc'}), true);
+	assert.equal(shouldAnimateSpinner('win32', {TERM_PROGRAM: 'vscode'}), true);
+	assert.equal(shouldAnimateSpinner('win32', {MSYSTEM: 'MINGW64'}), true);
+	assert.equal(shouldAnimateSpinner('linux', {SSH_TTY: '/dev/pts/0'}), false);
+	assert.equal(shouldAnimateSpinner('darwin', {}), true);
+	assert.equal(shouldAnimateSpinner('linux', {}), true);
+	// Backwards-compatible alias.
+	assert.equal(shouldAnimateBackgroundCue('darwin', {}), true);
 });

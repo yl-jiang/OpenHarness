@@ -26,6 +26,11 @@ from openharness.engine.messages import (
 from openharness.engine.query import MaxTurnsExceeded
 from openharness.engine.stream_events import StreamEvent
 from openharness.engine.types import ToolMetadataKey, default_task_focus_state
+from openharness.evolution import (
+    BackgroundSelfEvolutionRunner,
+    SelfEvolutionConfig,
+    SelfEvolutionController,
+)
 from openharness.hooks import HookEvent, HookExecutionContext, HookExecutor, load_hook_registry
 from openharness.hooks.hot_reload import HookReloader
 from openharness.mcp.client import McpClientManager
@@ -337,6 +342,7 @@ async def build_runtime(
         ToolMetadataKey.RECENT_VERIFIED_WORK.value: [],
         ToolMetadataKey.TASK_FOCUS_STATE.value: default_task_focus_state(),
         ToolMetadataKey.COMPACT_CHECKPOINTS.value: [],
+        ToolMetadataKey.SELF_EVOLUTION_STATE.value: {},
     }
     if isinstance(restore_tool_metadata, dict):
         for key, value in restore_tool_metadata.items():
@@ -347,10 +353,33 @@ async def build_runtime(
         provider_name=provider.name,
     )
 
+    permission_checker = PermissionChecker(settings.permission)
+    if settings.self_evolution.enabled:
+        evolution_config = SelfEvolutionConfig(
+            enabled=settings.self_evolution.enabled,
+            memory_review_interval=settings.self_evolution.memory_review_interval,
+            skill_review_interval=settings.self_evolution.skill_review_interval,
+            max_review_turns=settings.self_evolution.max_review_turns,
+        )
+        restored_metadata[ToolMetadataKey.SELF_EVOLUTION_CONTROLLER.value] = SelfEvolutionController(
+            evolution_config,
+            BackgroundSelfEvolutionRunner(
+                api_client=resolved_api_client,
+                tool_registry=tool_registry,
+                permission_checker=permission_checker,
+                cwd=cwd,
+                model=settings.model,
+                system_prompt=system_prompt_text,
+                max_tokens=settings.max_tokens,
+                config=evolution_config,
+                tool_metadata=restored_metadata,
+            ),
+        )
+
     engine = QueryEngine(
         api_client=resolved_api_client,
         tool_registry=tool_registry,
-        permission_checker=PermissionChecker(settings.permission),
+        permission_checker=permission_checker,
         cwd=cwd,
         model=settings.model,
         system_prompt=system_prompt_text,
