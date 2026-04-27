@@ -134,6 +134,12 @@ def _assert_tool_calls_have_immediate_results(messages: list[ConversationMessage
         assert result_ids == {tool_use.id for tool_use in message.tool_uses}
 
 
+class _FailIfCalledApiClient:
+    async def stream_message(self, request):
+        del request
+        raise AssertionError("full LLM compaction should not be needed")
+
+
 class _HookExecutorStub:
     def __init__(self) -> None:
         self.events: list[tuple[HookEvent, dict[str, object]]] = []
@@ -219,6 +225,49 @@ def test_try_context_collapse_trims_oversized_messages():
 
     assert result is not None
     assert "[collapsed" in result[0].text
+
+
+@pytest.mark.asyncio
+async def test_forced_auto_compact_uses_session_memory_for_short_oversized_history():
+    huge_result = "alpha " * 20000
+    messages = []
+    for index in range(7):
+        messages.append(
+            ConversationMessage(
+                role="assistant",
+                content=[
+                    ToolUseBlock(
+                        id=f"toolu_{index}",
+                        name="read_file",
+                        input={"path": f"file{index}.py"},
+                    )
+                ],
+            )
+        )
+        messages.append(
+            ConversationMessage(
+                role="user",
+                content=[
+                    ToolResultBlock(
+                        tool_use_id=f"toolu_{index}",
+                        content=huge_result,
+                    )
+                ],
+            )
+        )
+    original_tokens = estimate_conversation_tokens(messages)
+
+    compacted, was_compacted = await auto_compact_if_needed(
+        messages,
+        api_client=_FailIfCalledApiClient(),
+        model="qwen-test",
+        state=AutoCompactState(),
+        force=True,
+    )
+
+    assert was_compacted is True
+    assert estimate_conversation_tokens(compacted) < original_tokens // 2
+    assert any("Session memory summary" in message.text for message in compacted)
 
 
 @pytest.mark.asyncio
