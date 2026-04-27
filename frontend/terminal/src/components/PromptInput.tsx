@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React from 'react';
 import {Box, Text} from 'ink';
 import TextInput from 'ink-text-input';
 
@@ -6,37 +6,16 @@ import {useTheme} from '../theme/ThemeContext.js';
 
 const noop = (): void => {};
 
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
-function useSpinnerFrame(active: boolean, intervalMs = 100): string {
-	const [frame, setFrame] = useState(0);
-	useEffect(() => {
-		if (!active) {
-			setFrame(0);
-			return;
-		}
-		const id = setInterval(() => {
-			setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
-		}, intervalMs);
-		return () => clearInterval(id);
-	}, [active, intervalMs]);
-	return SPINNER_FRAMES[frame] ?? SPINNER_FRAMES[0];
-}
-
-function useEllipsis(active: boolean, intervalMs = 400): string {
-	const [step, setStep] = useState(0);
-	useEffect(() => {
-		if (!active) {
-			setStep(0);
-			return;
-		}
-		const id = setInterval(() => {
-			setStep((s) => (s + 1) % 4);
-		}, intervalMs);
-		return () => clearInterval(id);
-	}, [active, intervalMs]);
-	return '.'.repeat(step);
-}
+// Static busy indicator. Animating these on a timer (previously a 100ms
+// spinner + 400ms ellipsis pair) made Ink redraw the bottom region 10×/sec,
+// which on most macOS-native terminals is fine but on Windows-side SSH
+// terminal emulators (Windows Terminal, MobaXterm, PuTTY, …) the multi-line
+// cursor-relative redraws are not rendered atomically and produce visible
+// flicker concentrated around the input box.  Spinner.tsx documents the same
+// trade-off and is also static for the same reason.  Liveness is conveyed
+// instead via streaming transcript output and the running tool's label.
+const SPINNER_FRAME = '⠋';
+const STATIC_ELLIPSIS = '...';
 
 export function PromptInput({
 	busy,
@@ -62,8 +41,8 @@ export function PromptInput({
 	const {theme} = useTheme();
 	const idleTitle = '[idle]';
 	const busyTitle = statusLabel ?? (toolName ? `[run] ${toolName}` : '[run]');
-	const spinnerFrame = useSpinnerFrame(busy);
-	const dots = useEllipsis(busy);
+	const spinnerFrame = SPINNER_FRAME;
+	const dots = STATIC_ELLIPSIS;
 
 	return (
 		<Box
