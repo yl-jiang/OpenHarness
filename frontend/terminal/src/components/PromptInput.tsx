@@ -2,7 +2,10 @@ import React, {useEffect, useState} from 'react';
 import {Box, Text} from 'ink';
 import TextInput from 'ink-text-input';
 
-import {useTheme} from '../theme/ThemeContext.js';
+// Hermes-inspired palette — matches WelcomeBanner brand identity
+const H_WARM = '#ffe6cb'; // warm almond — prompt cursor, input prefix
+const H_GOLD = '#ffbd38'; // gold — active border, busy indicator
+const H_TEAL = '#3d8a7c'; // dim teal — idle border, leading cue
 
 const noop = (): void => {};
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
@@ -68,7 +71,6 @@ export function PromptInput({
 	backgroundTaskCount?: number;
 	animateSpinner?: boolean;
 }): React.JSX.Element {
-	const {theme} = useTheme();
 	const [frameIndex, setFrameIndex] = useState(0);
 	const idleTitle = '[idle]';
 	const busyTitle = statusLabel ?? (toolName ? `[run] ${toolName}` : '[run]');
@@ -104,15 +106,15 @@ export function PromptInput({
 			flexDirection="column"
 			marginTop={1}
 			borderStyle="round"
-			borderColor={busy || showBackgroundActivity ? theme.colors.primary : theme.colors.muted}
+			borderColor={busy || showBackgroundActivity ? H_GOLD : H_TEAL}
 			paddingX={1}
 		>
 			<Box>
-				<Text color={theme.colors.primary} bold>
+				<Text color={busy || showBackgroundActivity ? H_GOLD : H_TEAL} bold>
 					{leadingCue}
 				</Text>
 				<Text dimColor>{' | '}</Text>
-				<Text color={busy || showBackgroundActivity ? theme.colors.primary : undefined} dimColor={!busy && !showBackgroundActivity}>
+				<Text color={busy || showBackgroundActivity ? H_GOLD : undefined} dimColor={!busy && !showBackgroundActivity}>
 					{title}
 				</Text>
 			</Box>
@@ -120,14 +122,14 @@ export function PromptInput({
 				<Box flexDirection="column" marginTop={1}>
 					{extraInputLines.map((line, i) => (
 						<Box key={i}>
-							<Text color={theme.colors.primary} bold>{'  '}</Text>
+							<Text color={H_WARM} bold>{'  '}</Text>
 							<Text dimColor>{line.length > 0 ? line : ' '}</Text>
 						</Box>
 					))}
 				</Box>
 			)}
 			<Box marginTop={1}>
-				<Text color={theme.colors.primary} bold>{busy ? '... ' : '> '}</Text>
+				<Text color={H_WARM} bold>{busy ? '... ' : '> '}</Text>
 				<TextInput key={inputKey} value={input} onChange={setInput} onSubmit={suppressSubmit || busy ? noop : onSubmit} />
 			</Box>
 			<Text dimColor>/ commands · ↑↓ history · shift+enter newline · wheel/PgUp scroll · End resume · ctrl+x select-mode · ctrl+c clear · ctrl+c ctrl+c exit</Text>

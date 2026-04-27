@@ -148,12 +148,38 @@ export const solarizedTheme: ThemeConfig = {
 	},
 };
 
+export const hermesTheme: ThemeConfig = {
+	name: 'hermes',
+	colors: {
+		primary: '#ffe6cb',   // warm almond — canonical Hermes midground
+		secondary: '#d4b896', // muted almond
+		accent: '#ffbd38',    // gold — Hermes warmGlow base
+		foreground: '#ffe6cb',
+		background: '#041c1c', // deep dark teal — Hermes background
+		muted: '#3d8a7c',      // mid teal
+		success: '#5fba8a',
+		warning: '#ffbd38',
+		error: '#e0604a',
+		info: '#5fc8c8',
+	},
+	icons: {
+		spinner: ['◐', '◓', '◑', '◒'],
+		tool: '  ◈ ',
+		assistant: '◆ ',
+		user: '▸ ',
+		system: '◇ ',
+		success: '◉ ',
+		error: '✖ ',
+	},
+};
+
 export const BUILTIN_THEMES: Record<string, ThemeConfig> = {
 	default: defaultTheme,
 	dark: darkTheme,
 	minimal: minimalTheme,
 	cyberpunk: cyberpunkTheme,
 	solarized: solarizedTheme,
+	hermes: hermesTheme,
 };
 
 export function getTheme(name: string): ThemeConfig {
