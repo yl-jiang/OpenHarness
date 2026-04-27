@@ -5,6 +5,7 @@ import pytest
 
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.bash_tool import BashTool, BashToolInput
+import openharness.tools.bash_tool as bash_tool_module
 
 
 class _FakeStdout:
@@ -63,6 +64,12 @@ class _FakeProcess:
     def kill(self):
         self.killed = True
         self.returncode = -9
+
+
+class _NeverClosingStdout:
+    async def read(self, _size: int = -1):
+        await asyncio.sleep(60)
+        return b""
 
 
 @pytest.mark.asyncio
@@ -154,3 +161,30 @@ async def test_bash_tool_collects_combined_output(monkeypatch, tmp_path: Path):
     assert result.is_error is False
     assert result.output == "line one\nline two"
     assert result.metadata["returncode"] == 0
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_timeout_does_not_hang_when_stdout_stays_open(monkeypatch, tmp_path: Path):
+    process = _FakeProcess(stdout=_NeverClosingStdout())
+
+    async def fake_create_shell_subprocess(*args, **kwargs):
+        return process
+
+    monkeypatch.setattr("openharness.tools.bash_tool.create_shell_subprocess", fake_create_shell_subprocess)
+    monkeypatch.setattr(
+        bash_tool_module,
+        "_READ_REMAINING_OUTPUT_TIMEOUT_SECONDS",
+        0.05,
+        raising=False,
+    )
+
+    result = await asyncio.wait_for(
+        BashTool().execute(
+            BashToolInput(command="sleep 10", timeout_seconds=1),
+            ToolExecutionContext(cwd=tmp_path),
+        ),
+        timeout=2.0,
+    )
+
+    assert result.is_error is True
+    assert result.metadata["timed_out"] is True
