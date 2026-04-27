@@ -45,6 +45,7 @@ const SELECTABLE_COMMANDS = new Set([
 	'/vim',
 	'/voice',
 ]);
+const ACTIVE_BACKGROUND_TASK_STATUSES = new Set(['pending', 'running']);
 
 type SelectModalState = {
 	title: string;
@@ -163,6 +164,10 @@ function AppInner({
 		}
 		return undefined;
 	}, [deferredTranscript]);
+	const activeBackgroundTaskCount = useMemo(
+		() => deferredTasks.filter((task) => ACTIVE_BACKGROUND_TASK_STATUSES.has(task.status)).length,
+		[deferredTasks],
+	);
 
 	// Command hints
 	const commandHints = useMemo(() => {
@@ -639,6 +644,7 @@ function AppInner({
 						extraInputLines={extraInputLines}
 						toolName={session.busy ? currentToolName : undefined}
 						statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `Running ${currentToolName}...` : 'Running agent loop...')) : undefined}
+						backgroundTaskCount={activeBackgroundTaskCount}
 						suppressSubmit={showPicker}
 						inputKey={completionKey}
 					/>
