@@ -159,6 +159,14 @@ def _is_text_only(msg: ConversationMessage) -> bool:
     return bool(msg.content) and all(isinstance(b, TextBlock) for b in msg.content)
 
 
+def _copy_message_preserving_provider_metadata(msg: ConversationMessage) -> ConversationMessage:
+    copied = ConversationMessage(role=msg.role, content=list(msg.content))
+    reasoning = getattr(msg, "_reasoning", None)
+    if reasoning:
+        copied._reasoning = reasoning  # type: ignore[attr-defined]
+    return copied
+
+
 def normalize_messages_for_api(
     messages: list[ConversationMessage],
 ) -> list[ConversationMessage]:
@@ -191,7 +199,7 @@ def normalize_messages_for_api(
                 content=[TextBlock(text=combined_text)],
             )
         else:
-            merged.append(ConversationMessage(role=msg.role, content=list(msg.content)))
+            merged.append(_copy_message_preserving_provider_metadata(msg))
     return merged
 
 

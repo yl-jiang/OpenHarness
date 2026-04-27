@@ -23,6 +23,7 @@ from openharness.engine.messages import (
     TextBlock,
     ToolResultBlock,
     ToolUseBlock,
+    normalize_messages_for_api,
 )
 
 
@@ -146,6 +147,21 @@ class TestConvertMessagesToOpenai:
         assert tc["type"] == "function"
         assert tc["function"]["name"] == "read_file"
         assert json.loads(tc["function"]["arguments"]) == {"path": "/tmp/x"}
+
+    def test_preserves_reasoning_content_after_message_normalization(self):
+        msg = ConversationMessage(
+            role="assistant",
+            content=[TextBlock(text="The file contains: hello world")],
+        )
+        msg._reasoning = "hidden provider reasoning"  # type: ignore[attr-defined]
+
+        normalized = normalize_messages_for_api([
+            ConversationMessage.from_user_text("Read /tmp/test.txt"),
+            msg,
+        ])
+        result = _convert_messages_to_openai(normalized, None)
+
+        assert result[1]["reasoning_content"] == "hidden provider reasoning"
 
     def test_tool_result_messages(self):
         # User message containing tool results

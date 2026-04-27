@@ -11,6 +11,7 @@ from openharness.coordinator.coordinator_mode import get_coordinator_user_contex
 from openharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock
 from openharness.engine.query import AskUserPrompt, MaxTurnsExceeded, PermissionPrompt, QueryContext, remember_user_goal, run_query
 from openharness.engine.stream_events import AssistantTurnComplete, StatusEvent, StreamEvent, StreamFinished
+from openharness.engine.types import ToolMetadataKey
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolRegistry
@@ -218,6 +219,7 @@ class QueryEngine:
                             tool_use_count=len(event.message.tool_uses),
                             message_count=len(query_messages),
                         )
+                        self._notify_self_evolution_assistant_turn(event.message)
                         if pending_turn_complete is not None:
                             if _is_meaningful(pending_turn_complete):
                                 progress_in_this_run = True
@@ -332,6 +334,7 @@ class QueryEngine:
         )
         if user_message.text.strip():
             remember_user_goal(self._tool_metadata, user_message.text)
+        self._begin_self_evolution_user_turn()
         self._messages.append(user_message)
         if self._hook_executor is not None:
             await self._hook_executor.execute(
@@ -363,10 +366,55 @@ class QueryEngine:
             query_messages.append(coordinator_context)
         async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):
             yield event
+        self._maybe_spawn_self_evolution_review(
+            user_message.text,
+            messages_snapshot=self._public_messages(query_messages),
+        )
         logger.event(
             "submit_message_end",
             session_id=self._tool_metadata.get("session_id"),
             message_count_after=len(self._messages),
+        )
+
+    def _self_evolution_controller(self):
+        controller = self._tool_metadata.get(ToolMetadataKey.SELF_EVOLUTION_CONTROLLER.value)
+        if controller is None:
+            return None
+        required = ("begin_user_turn", "observe_assistant_turn", "maybe_spawn_review")
+        if not all(hasattr(controller, name) for name in required):
+            logger.debug("Ignoring invalid self-evolution controller: %r", controller)
+            return None
+        return controller
+
+    def _begin_self_evolution_user_turn(self) -> None:
+        controller = self._self_evolution_controller()
+        if controller is None:
+            return
+        controller.begin_user_turn(
+            self._tool_metadata,
+            memory_tool_available=self._tool_registry.get("memory") is not None,
+            skill_tool_available=self._tool_registry.get("skill_manager") is not None,
+        )
+
+    def _notify_self_evolution_assistant_turn(self, message: ConversationMessage) -> None:
+        controller = self._self_evolution_controller()
+        if controller is None:
+            return
+        controller.observe_assistant_turn(self._tool_metadata, message)
+
+    def _maybe_spawn_self_evolution_review(
+        self,
+        latest_user_prompt: str,
+        *,
+        messages_snapshot: list[ConversationMessage] | None = None,
+    ) -> None:
+        controller = self._self_evolution_controller()
+        if controller is None:
+            return
+        controller.maybe_spawn_review(
+            self._tool_metadata,
+            list(messages_snapshot if messages_snapshot is not None else self._messages),
+            latest_user_prompt=latest_user_prompt,
         )
 
     async def continue_pending(self, *, max_turns: int | None = None) -> AsyncIterator[StreamEvent]:
