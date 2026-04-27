@@ -1398,7 +1398,10 @@ async def auto_compact_if_needed(
     )
 
     # Try microcompact first — may be enough
-    messages, tokens_freed = microcompact_messages(messages)
+    messages, tokens_freed = microcompact_messages(
+        messages,
+        keep_recent=1 if force else DEFAULT_KEEP_RECENT,
+    )
     _record_compact_checkpoint(
         carryover_metadata,
         checkpoint="query_microcompact_end",
@@ -1407,7 +1410,7 @@ async def auto_compact_if_needed(
         token_count=estimate_message_tokens(messages),
         details={"tokens_freed": tokens_freed},
     )
-    if tokens_freed > 0 and not should_autocompact(
+    if not force and tokens_freed > 0 and not should_autocompact(
         messages,
         model,
         state,
@@ -1457,9 +1460,14 @@ async def auto_compact_if_needed(
         ):
             return messages, True
 
+    session_memory_preserve_recent = (
+        min(preserve_recent, 4)
+        if force
+        else max(preserve_recent, SESSION_MEMORY_KEEP_RECENT)
+    )
     session_memory = try_session_memory_compaction(
         messages,
-        preserve_recent=max(preserve_recent, SESSION_MEMORY_KEEP_RECENT),
+        preserve_recent=session_memory_preserve_recent,
         trigger=trigger,
         metadata=carryover_metadata,
     )
