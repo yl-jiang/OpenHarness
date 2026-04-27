@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shlex
 import time
@@ -182,7 +183,7 @@ class BackgroundTaskManager:
         if task_type != "local_agent":
             updated.metadata["agent_mode"] = task_type
         self._tasks[record.id] = updated
-        await self.write_to_task(record.id, prompt)
+        await self.write_to_task(record.id, json.dumps({"text": prompt}))
         return updated
 
     def get_task(self, task_id: str) -> TaskRecord | None:
