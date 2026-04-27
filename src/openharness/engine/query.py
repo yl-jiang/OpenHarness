@@ -481,6 +481,7 @@ async def run_query(
         auto_compact_if_needed,
     )
 
+    external_messages = messages
     compact_state = AutoCompactState()
     reactive_compact_attempted = False
     last_compaction_result: tuple[list[ConversationMessage], bool] = (messages, False)
@@ -537,6 +538,9 @@ async def run_query(
         async for event, usage in _stream_compaction(trigger="auto"):
             yield event, usage
         messages, was_compacted = last_compaction_result
+        if messages is not external_messages:
+            external_messages[:] = messages
+            messages = external_messages
         # ---------------------------------------------------------------
 
         if was_compacted:
@@ -547,7 +551,7 @@ async def run_query(
             # content after the context has been compacted.
             context.tool_metadata.pop(ToolMetadataKey.FILE_READ_CACHE.value, None)
 
-        messages = normalize_messages_for_api(messages)
+        messages[:] = normalize_messages_for_api(messages)
 
         final_message: ConversationMessage | None = None
         usage = UsageSnapshot()
@@ -597,7 +601,10 @@ async def run_query(
                 async for event, usage in _stream_compaction(trigger="reactive", force=True):
                     yield event, usage
                 messages, was_compacted = last_compaction_result
-                messages = normalize_messages_for_api(messages)
+                if messages is not external_messages:
+                    external_messages[:] = messages
+                    messages = external_messages
+                messages[:] = normalize_messages_for_api(messages)
                 if was_compacted:
                     continue
             if "connect" in error_msg.lower() or "timeout" in error_msg.lower() or "network" in error_msg.lower():

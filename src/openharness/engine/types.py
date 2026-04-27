@@ -42,6 +42,8 @@ class ToolMetadataKey(str, Enum):
     - TASK_FOCUS_STATE: Current task focus and related state
     - COMPACT_CHECKPOINTS: Conversation compaction checkpoints
     - COMPACT_LAST: Last compaction state
+    - SELF_EVOLUTION_STATE: Background memory/skill review counters
+    - SELF_EVOLUTION_CONTROLLER: Session-only self-evolution controller
     """
 
     PERMISSION_MODE = "permission_mode"
@@ -54,6 +56,8 @@ class ToolMetadataKey(str, Enum):
     TASK_FOCUS_STATE = "task_focus_state"
     COMPACT_CHECKPOINTS = "compact_checkpoints"
     COMPACT_LAST = "compact_last"
+    SELF_EVOLUTION_STATE = "self_evolution_state"
+    SELF_EVOLUTION_CONTROLLER = "self_evolution_controller"
     # Session-only cache: not persisted across sessions.
     FILE_READ_CACHE = "file_read_cache"
 
@@ -71,4 +75,5 @@ class ToolMetadataKey(str, Enum):
             cls.TASK_FOCUS_STATE,
             cls.COMPACT_CHECKPOINTS,
             cls.COMPACT_LAST,
+            cls.SELF_EVOLUTION_STATE,
         )

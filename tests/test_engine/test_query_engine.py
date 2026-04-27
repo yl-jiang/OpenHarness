@@ -34,6 +34,7 @@ from openharness.hooks import HookExecutionContext, HookExecutor, HookEvent
 from openharness.hooks.loader import HookRegistry
 from openharness.hooks.schemas import PromptHookDefinition
 from openharness.engine.query import QueryContext, _execute_tool_call
+from openharness.engine.types import ToolMetadataKey
 
 
 @dataclass
@@ -117,6 +118,41 @@ class EmptyAssistantApiClient:
             usage=UsageSnapshot(input_tokens=1, output_tokens=1),
             stop_reason=None,
         )
+
+
+class _RecordingEvolutionController:
+    def __init__(self) -> None:
+        self.started: list[tuple[bool, bool]] = []
+        self.observed: list[ConversationMessage] = []
+        self.spawned: list[tuple[list[ConversationMessage], str]] = []
+
+    def begin_user_turn(
+        self,
+        metadata: dict[str, object],
+        *,
+        memory_tool_available: bool,
+        skill_tool_available: bool,
+    ) -> None:
+        del metadata
+        self.started.append((memory_tool_available, skill_tool_available))
+
+    def observe_assistant_turn(
+        self,
+        metadata: dict[str, object],
+        message: ConversationMessage,
+    ) -> None:
+        del metadata
+        self.observed.append(message)
+
+    def maybe_spawn_review(
+        self,
+        metadata: dict[str, object],
+        messages_snapshot: list[ConversationMessage],
+        *,
+        latest_user_prompt: str = "",
+    ) -> None:
+        del metadata
+        self.spawned.append((messages_snapshot, latest_user_prompt))
 
 
 class CoordinatorLoopApiClient:
@@ -243,6 +279,59 @@ async def test_query_engine_executes_tool_calls(tmp_path: Path, monkeypatch):
     assert isinstance(events[-1], AssistantTurnComplete)
     assert "alpha and beta" in events[-1].message.text
     assert len(engine.messages) == 4
+
+
+@pytest.mark.asyncio
+async def test_query_engine_notifies_self_evolution_controller(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    sample = tmp_path / "hello.txt"
+    sample.write_text("alpha\n", encoding="utf-8")
+    evolution = _RecordingEvolutionController()
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_123",
+                                name="read_file",
+                                input={"path": str(sample)},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="Read it.")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={ToolMetadataKey.SELF_EVOLUTION_CONTROLLER.value: evolution},
+    )
+
+    events = [event async for event in engine.submit_message("read the file")]
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert evolution.started == [(True, True)]
+    assert [message.tool_uses[0].name for message in evolution.observed if message.tool_uses] == [
+        "read_file"
+    ]
+    assert len(evolution.spawned) == 1
+    snapshot, latest_user_prompt = evolution.spawned[0]
+    assert latest_user_prompt == "read the file"
+    assert snapshot[-1].text == "Read it."
 
 
 @pytest.mark.asyncio
