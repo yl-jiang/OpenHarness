@@ -246,6 +246,109 @@ async def test_query_engine_executes_tool_calls(tmp_path: Path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_query_engine_ignores_empty_invalid_parallel_tool_calls(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    sample = tmp_path / "hello.txt"
+    sample.write_text("alpha\nbeta\n", encoding="utf-8")
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            TextBlock(text="I will inspect the file."),
+                            ToolUseBlock(
+                                id="toolu_valid_read",
+                                name="read_file",
+                                input={"path": str(sample), "offset": 0, "limit": 2},
+                            ),
+                            ToolUseBlock(
+                                id="toolu_empty_read",
+                                name="read_file",
+                                input={},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=4, output_tokens=3),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="The file contains alpha and beta.")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=8, output_tokens=6),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("read the file")]
+
+    started = [event for event in events if isinstance(event, ToolExecutionStarted)]
+    completed = [event for event in events if isinstance(event, ToolExecutionCompleted)]
+    assert [event.tool_name for event in started] == ["read_file"]
+    assert len(completed) == 1
+    assert completed[0].is_error is False
+    assert "alpha" in completed[0].output
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert "alpha and beta" in events[-1].message.text
+
+
+@pytest.mark.asyncio
+async def test_query_engine_reports_single_empty_invalid_tool_call(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            TextBlock(text="I will inspect a file."),
+                            ToolUseBlock(
+                                id="toolu_empty_read",
+                                name="read_file",
+                                input={},
+                            ),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=4, output_tokens=3),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="I need a path before reading the file.")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=8, output_tokens=6),
+                ),
+            ]
+        ),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("read the file")]
+
+    completed = [event for event in events if isinstance(event, ToolExecutionCompleted)]
+    assert len(completed) == 1
+    assert completed[0].is_error is True
+    assert "Invalid input for read_file" in completed[0].output
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "I need a path before reading the file."
+
+
+@pytest.mark.asyncio
 async def test_query_engine_auto_continues_after_empty_stop_following_tool_results(
     tmp_path: Path,
     monkeypatch,

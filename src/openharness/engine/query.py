@@ -769,9 +769,10 @@ async def _execute_tool_call(
         parsed_input = tool.input_model.model_validate(tool_input)
     except Exception as exc:
         logger.warning("invalid input for %s: %s", tool_name, exc)
+        hint = _build_validation_error_hint(tool, tool_input, exc)
         return ToolResultBlock(
             tool_use_id=tool_use_id,
-            content=f"Invalid input for {tool_name}: {exc}",
+            content=hint,
             is_error=True,
         )
 
@@ -881,6 +882,58 @@ async def _execute_tool_call(
             },
         )
     return tool_result
+
+
+def _build_validation_error_hint(
+    tool,
+    tool_input: dict[str, object],
+    exc: Exception,
+) -> str:
+    """Construct a model-friendly error hint when tool input validation fails.
+
+    Local LLMs (especially via vLLM's qwen3_xml parser) can return empty or
+    malformed tool arguments when the model omits required parameters or the
+    XML parser strips them.  This hint tells the model exactly what went wrong
+    and what fields are expected so it can retry the call in the next turn.
+    """
+    schema = tool.input_model.model_json_schema()
+    required = schema.get("required", [])
+    properties = schema.get("properties", {})
+
+    # Detect truly empty / near-empty input (the common qwen3_xml failure mode)
+    is_empty = (
+        not tool_input
+        or all(v in (None, "", []) for v in tool_input.values())
+    )
+
+    lines: list[str] = [f"Invalid input for {tool.name}."]
+    if is_empty:
+        lines.append(
+            "The tool arguments you provided were empty or missing. "
+            "This usually happens when the model output did not include "
+            "the required parameters (e.g. due to an XML parsing issue). "
+            "Please retry this tool call and make sure to provide ALL "
+            "required arguments explicitly."
+        )
+    else:
+        lines.append(f"Validation error: {exc}")
+
+    if required:
+        lines.append(f"Required parameters: {', '.join(required)}")
+
+    # Show a short parameter cheat-sheet (up to 6 fields)
+    for prop_name, prop_info in list(properties.items())[:6]:
+        desc = prop_info.get("description", "")
+        if desc:
+            lines.append(f"  - {prop_name}: {desc}")
+        else:
+            lines.append(f"  - {prop_name}")
+
+    lines.append(
+        "Please correct the arguments and call the tool again. "
+        "Do not explain the error to the user; just retry with valid arguments."
+    )
+    return "\n".join(lines)
 
 
 def _normalize_permission_reply(reply: object) -> str:
