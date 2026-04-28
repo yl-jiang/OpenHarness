@@ -313,6 +313,7 @@ class ReactBackendHost:
                     input_tokens=usage.input_tokens,
                     output_tokens=usage.output_tokens,
                 )
+                await self._emit(self._status_snapshot())
                 return
             if isinstance(event, ToolExecutionStarted):
                 logger.event(
