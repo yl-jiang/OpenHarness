@@ -49,7 +49,16 @@ async function waitForOutputToStabilize(getOutput: () => string): Promise<string
 	throw new Error(`Ink output did not stabilize: ${JSON.stringify(previous)}`);
 }
 
-async function renderConversation(items: TranscriptItem[]): Promise<string> {
+async function renderConversation(
+	items: TranscriptItem[],
+	{
+		showWelcome = false,
+		welcomeVersion,
+	}: {
+		showWelcome?: boolean;
+		welcomeVersion?: string;
+	} = {},
+): Promise<string> {
 	const stdout = createTestStdout();
 	let output = '';
 	stdout.on('data', (chunk) => {
@@ -61,7 +70,8 @@ async function renderConversation(items: TranscriptItem[]): Promise<string> {
 			<ConversationView
 				transcript={items}
 				assistantBuffer=""
-				showWelcome={false}
+				showWelcome={showWelcome}
+				welcomeVersion={welcomeVersion}
 				outputStyle="default"
 			/>
 		</ThemeProvider>,
@@ -94,6 +104,13 @@ test('renders transcript items from the beginning when the full history is provi
 
 	assert.match(output, /\bmessage-001\b/);
 	assert.match(output, /\bmessage-060\b/);
+});
+
+test('renders the welcome banner with the runtime version', async () => {
+	const output = await renderConversation([], {showWelcome: true, welcomeVersion: '9.9.9'});
+
+	assert.match(output, /v9\.9\.9/);
+	assert.doesNotMatch(output, /v0\.1\.6/);
 });
 
 test('keeps an unfinished trailing tool call rendered in the live region', async () => {

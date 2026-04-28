@@ -9,6 +9,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from openharness.version import get_openharness_version
+
 
 def _resolve_theme() -> str:
     """Read the theme name from settings, defaulting to 'default'."""
@@ -110,6 +112,21 @@ def build_backend_command(
     return command
 
 
+def build_frontend_config(
+    *,
+    backend_command: list[str],
+    initial_prompt: str | None,
+    theme: str,
+) -> dict[str, object]:
+    """Return the frontend bootstrap config passed through the environment."""
+    return {
+        "backend_command": backend_command,
+        "initial_prompt": initial_prompt,
+        "theme": theme,
+        "version": get_openharness_version(),
+    }
+
+
 async def launch_react_tui(
     *,
     prompt: str | None = None,
@@ -143,8 +160,8 @@ async def launch_react_tui(
 
     env = os.environ.copy()
     env["OPENHARNESS_FRONTEND_CONFIG"] = json.dumps(
-        {
-            "backend_command": build_backend_command(
+        build_frontend_config(
+            backend_command=build_backend_command(
                 cwd=cwd or str(Path.cwd()),
                 model=model,
                 max_turns=max_turns,
@@ -154,9 +171,9 @@ async def launch_react_tui(
                 api_format=api_format,
                 permission_mode=permission_mode,
             ),
-            "initial_prompt": prompt,
-            "theme": _resolve_theme(),
-        }
+            initial_prompt=prompt,
+            theme=_resolve_theme(),
+        )
     )
     tsx_cmd = _resolve_tsx(frontend_dir)
     process = await asyncio.create_subprocess_exec(
@@ -171,4 +188,4 @@ async def launch_react_tui(
     return await process.wait()
 
 
-__all__ = ["build_backend_command", "get_frontend_dir", "launch_react_tui"]
+__all__ = ["build_backend_command", "build_frontend_config", "get_frontend_dir", "launch_react_tui"]

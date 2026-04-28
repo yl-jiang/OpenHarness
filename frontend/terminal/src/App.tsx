@@ -569,6 +569,7 @@ function AppInner({
 				transcript={deferredTranscript}
 				assistantBuffer={deferredAssistantBuffer}
 				showWelcome={showWelcome}
+				welcomeVersion={config.version}
 				outputStyle={outputStyle}
 				onPauseChange={setPaused}
 			/>

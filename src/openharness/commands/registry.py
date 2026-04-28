@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.metadata
 import json
 import re
 import shutil
@@ -53,6 +52,7 @@ from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, Sessio
 from openharness.skills import load_skill_registry
 from openharness.tasks import get_task_manager
 from openharness.plugins.types import PluginCommandDefinition
+from openharness.version import get_openharness_version
 
 if TYPE_CHECKING:
     from openharness.state import AppStateStore
@@ -271,10 +271,7 @@ def create_default_command_registry(
 
     async def _version_handler(_: str, context: CommandContext) -> CommandResult:
         del context
-        try:
-            version = importlib.metadata.version("openharness")
-        except importlib.metadata.PackageNotFoundError:
-            version = "0.1.7"
+        version = get_openharness_version()
         return CommandResult(message=f"OpenHarness {version}")
 
     async def _context_handler(_: str, context: CommandContext) -> CommandResult:
@@ -1433,10 +1430,7 @@ def create_default_command_registry(
 
     async def _upgrade_handler(_: str, context: CommandContext) -> CommandResult:
         del context
-        try:
-            version = importlib.metadata.version("openharness")
-        except importlib.metadata.PackageNotFoundError:
-            version = "0.1.7"
+        version = get_openharness_version()
         return CommandResult(
             message=(
                 f"Current version: {version}\n"

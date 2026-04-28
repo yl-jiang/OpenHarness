@@ -211,13 +211,14 @@ type ConversationViewInnerProps = {
 	transcript: TranscriptItem[];
 	assistantBuffer: string;
 	showWelcome: boolean;
+	welcomeVersion?: string | null;
 	outputStyle?: string;
 	onPauseChange?: (paused: boolean) => void;
 };
 
 const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationViewInnerProps>(
 	function ConversationViewInner(
-		{transcript, assistantBuffer, showWelcome, outputStyle, onPauseChange},
+		{transcript, assistantBuffer, showWelcome, welcomeVersion, outputStyle, onPauseChange},
 		forwardedRef,
 	): React.JSX.Element {
 		const {theme} = useTheme();
@@ -300,7 +301,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		return (
 			<Box ref={viewportRef} flexGrow={1} flexShrink={1} flexDirection="column" overflow="hidden">
 				<Box ref={contentRef} flexShrink={0} flexDirection="column" marginTop={marginTop}>
-					{showWelcome ? <WelcomeBanner /> : null}
+					{showWelcome ? <WelcomeBanner version={welcomeVersion} /> : null}
 					{groups.map((group, i) => {
 						const showAssistantHeader = shouldRenderAssistantHeaderBeforeGroup(groups, i, outputStyle);
 						const showTurnDivider = shouldRenderTurnDividerBeforeGroup(groups, i, outputStyle);
