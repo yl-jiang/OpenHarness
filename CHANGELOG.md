@@ -25,6 +25,8 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- Compaction now detects llama.cpp/OpenAI-compatible context overflow errors, accounts for image blocks in auto-compact token estimates, and strips image payloads from summarizer-only compaction requests.
+- Bridge command (`/bridge`) is now local-only by default (`remote_invocable=False`) to prevent remote sessions from spawning bridge sub-sessions.
 - `todo_write` tool now updates an existing unchecked item in-place when `checked=True` instead of appending a duplicate `[x]` line.
 - QueryEngine now auto-continues once when a tool-follow-up turn ends with an empty assistant message, preventing React TUI sessions from appearing to stop early until the user manually sends another message.
 - React TUI transcript now keeps the full session history navigable instead of permanently truncating to the most recent 40 items, and scrolling away from the bottom no longer gets pulled back by incoming output. The frontend now tracks an explicit transcript viewport, supports `PgUp` / `PgDn`, and listens for mouse-wheel scroll events in compatible terminals.
