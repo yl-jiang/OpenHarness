@@ -9,10 +9,13 @@ const H_TEAL = '#3d8a7c'; // dim teal — idle border, leading cue
 
 const noop = (): void => {};
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+const IDLE_FRAMES = ['◇', '◈', '◆', '◈'];
+const IDLE_STATIC_FRAME = '◆';
 const SPINNER_STATIC_FRAME = '⠋';
 const BACKGROUND_STATIC_FRAME = '●';
 const STATIC_ELLIPSIS = '...';
 const ELLIPSIS_FRAMES = ['   ', '.  ', '.. ', '...'];
+const IDLE_ANIMATION_MS = 600;
 const BUSY_ANIMATION_MS = 120;
 const BACKGROUND_ANIMATION_MS = 900;
 
@@ -72,34 +75,38 @@ export function PromptInput({
 	animateSpinner?: boolean;
 }): React.JSX.Element {
 	const [frameIndex, setFrameIndex] = useState(0);
-	const idleTitle = '[idle]';
+	const idleTitle = 'ready';
 	const busyTitle = statusLabel ?? (toolName ? `[run] ${toolName}` : '[run]');
 	const showBackgroundActivity = !busy && backgroundTaskCount > 0;
 	const backgroundTitle = `[bg] ${backgroundTaskCount} running`;
 	const canAnimate = animateSpinner ?? shouldAnimateSpinner();
 	const animateNow = canAnimate && (busy || showBackgroundActivity);
+	const animateIdle = canAnimate && !busy && !showBackgroundActivity;
 	const spinnerFrame = animateNow
 		? SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length]
 		: SPINNER_STATIC_FRAME;
 	const backgroundFrame = animateNow
 		? SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length]
 		: BACKGROUND_STATIC_FRAME;
+	const idleFrame = animateIdle
+		? IDLE_FRAMES[frameIndex % IDLE_FRAMES.length]
+		: IDLE_STATIC_FRAME;
 	const dots = busy && animateNow
 		? ELLIPSIS_FRAMES[frameIndex % ELLIPSIS_FRAMES.length]
 		: STATIC_ELLIPSIS;
 	const title = busy ? `${busyTitle}${dots}` : showBackgroundActivity ? backgroundTitle : idleTitle;
-	const leadingCue = busy ? `${spinnerFrame} ` : showBackgroundActivity ? backgroundFrame : '>>';
+	const leadingCue = busy ? `${spinnerFrame} ` : showBackgroundActivity ? backgroundFrame : `${idleFrame} `;
 
 	useEffect(() => {
-		if (!animateNow) {
+		if (!animateNow && !animateIdle) {
 			return;
 		}
-		const interval = busy ? BUSY_ANIMATION_MS : BACKGROUND_ANIMATION_MS;
+		const interval = busy ? BUSY_ANIMATION_MS : showBackgroundActivity ? BACKGROUND_ANIMATION_MS : IDLE_ANIMATION_MS;
 		const timer = setInterval(() => {
-			setFrameIndex((index) => (index + 1) % SPINNER_FRAMES.length);
+			setFrameIndex((index) => (index + 1) % (SPINNER_FRAMES.length * IDLE_FRAMES.length));
 		}, interval);
 		return () => clearInterval(timer);
-	}, [animateNow, busy]);
+	}, [animateNow, animateIdle, busy, showBackgroundActivity]);
 
 	return (
 		<Box
