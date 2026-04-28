@@ -2,4 +2,7 @@
 
 __all__ = ["__version__"]
 
-__version__ = "0.1.6"
+from openharness.version import get_openharness_version
+
+
+__version__ = get_openharness_version()

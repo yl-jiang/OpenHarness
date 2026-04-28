@@ -11,12 +11,12 @@ from typing import Optional
 import openharness.cli_dry_run as cli_dry_run
 import typer
 
-__version__ = "0.1.7"
+from openharness.version import get_openharness_version
 
 
 def _version_callback(value: bool) -> None:
     if value:
-        print(f"openharness {__version__}")
+        print(f"openharness {get_openharness_version()}")
         raise typer.Exit()
 
 

@@ -3,8 +3,6 @@ import {Box, Text} from 'ink';
 
 import {useTerminalSize} from '../hooks/useTerminalSize.js';
 
-const VERSION = '0.1.6';
-
 // Hermes-inspired palette — fixed brand identity for the welcome screen
 const H_WARM = '#ffe6cb'; // warm almond — ASCII art, foreground text
 const H_GOLD = '#ffbd38'; // gold — border, version badge, accents
@@ -30,7 +28,7 @@ const SHORTCUTS: ReadonlyArray<{key: string; hint: string}> = [
 {key: 'Esc Esc', hint: 'clear'},
 ];
 
-export function WelcomeBanner(): React.JSX.Element {
+export function WelcomeBanner({version}: {version?: string | null}): React.JSX.Element {
 const {cols} = useTerminalSize();
 
 const dividerLen = Math.min(Math.max(cols - 10, 36), 72);
@@ -53,7 +51,7 @@ flexDirection="column"
 <Box flexGrow={1}>
 <Text color={H_WARM} bold>{LOGO[3]}</Text>
 </Box>
-<Text color={H_GOLD} dimColor>v{VERSION}{'  '}</Text>
+{version ? <Text color={H_GOLD} dimColor>v{version}{'  '}</Text> : null}
 </Box>
 
 {/* ── Tagline ── */}

@@ -6,7 +6,7 @@ import pytest
 from types import SimpleNamespace
 
 from openharness.ui.app import run_print_mode, run_repl, run_task_worker
-from openharness.ui.react_launcher import build_backend_command
+from openharness.ui.react_launcher import build_backend_command, build_frontend_config
 
 
 class _AsyncIterator:
@@ -32,6 +32,21 @@ def test_build_backend_command_includes_flags():
     assert "--base-url" in command
     assert "--system-prompt" in command
     assert "--api-key" in command
+
+
+def test_build_frontend_config_includes_runtime_version(monkeypatch):
+    monkeypatch.setattr("openharness.ui.react_launcher.get_openharness_version", lambda: "9.9.9")
+
+    config = build_frontend_config(
+        backend_command=["python", "-m", "openharness", "--backend-only"],
+        initial_prompt="hi",
+        theme="default",
+    )
+
+    assert config["backend_command"] == ["python", "-m", "openharness", "--backend-only"]
+    assert config["initial_prompt"] == "hi"
+    assert config["theme"] == "default"
+    assert config["version"] == "9.9.9"
 
 
 async def test_run_repl_uses_react_launcher_by_default(monkeypatch):
@@ -191,4 +206,3 @@ async def test_run_task_worker_decodes_multiline_json_payload(monkeypatch):
     await run_task_worker(cwd="/tmp/demo")
 
     assert seen == ["line 1\nline 2\nline 3"]
-

@@ -11,6 +11,7 @@ from pathlib import Path
 from openharness.api.client import SupportsStreamingMessages
 from openharness.engine.stream_events import AssistantTextDelta, AssistantTurnComplete, CompactProgressEvent, ErrorEvent, StatusEvent
 from openharness.ui.backend_host import run_backend_host
+from openharness.ui.react_launcher import build_frontend_config
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 from openharness.ui.react_launcher import _resolve_npm, _resolve_tsx, get_frontend_dir
 
@@ -110,17 +111,17 @@ async def launch_ohmo_react_tui(
     workspace_root = initialize_workspace(workspace)
     env = os.environ.copy()
     env["OPENHARNESS_FRONTEND_CONFIG"] = json.dumps(
-        {
-            "backend_command": build_ohmo_backend_command(
+        build_frontend_config(
+            backend_command=build_ohmo_backend_command(
                 cwd=cwd_path,
                 workspace=workspace_root,
                 model=model,
                 max_turns=max_turns,
                 provider_profile=provider_profile,
             ),
-            "initial_prompt": None,
-            "theme": "default",
-        }
+            initial_prompt=None,
+            theme="default",
+        )
     )
     tsx_cmd = _resolve_tsx(frontend_dir)
     process = await asyncio.create_subprocess_exec(
