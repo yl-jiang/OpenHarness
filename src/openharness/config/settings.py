@@ -268,6 +268,14 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             base_url="https://api.deepseek.com/v1",
             reasoning_effort="high",
         ),
+        "qwen": ProviderProfile(
+            label="Qwen (DashScope)",
+            provider="dashscope",
+            api_format="openai",
+            auth_source="dashscope_api_key",
+            default_model="qwen-plus",
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
     }
 
 
