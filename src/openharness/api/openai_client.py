@@ -315,10 +315,11 @@ class OpenAICompatibleClient:
         if openai_tools:
             params["tools"] = openai_tools
             # Some providers (Kimi) error on empty reasoning_content in
-            # tool-call follow-ups.  Omit the entire stream_options key if
-            # tools are present – avoids triggering model-side thinking mode
-            # that requires reasoning_content on every assistant message.
-            params.pop("stream_options", None)
+            # tool-call follow-ups.  Only strip stream_options for affected
+            # providers instead of all, so usage tracking works everywhere.
+            base = str(self._client.base_url or "")
+            if "kimi" in base or "moonshot" in base:
+                params.pop("stream_options", None)
 
         # Collect full response while streaming text deltas
         collected_content = ""
