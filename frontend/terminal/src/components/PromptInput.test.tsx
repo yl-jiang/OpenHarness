@@ -133,7 +133,7 @@ test('uses ascii-only idle title cues above the prompt input', async () => {
 
 	assert.doesNotMatch(output, /\bPrompt\b/);
 	assert.doesNotMatch(output, /\bReady\b/);
-	assert.match(output, />> \| \[idle\]/);
+	assert.match(output, /[◇◈◆] {2}\| ready/);
 	assert.doesNotMatch(output, /[⌨️⏳●⏎›]/u);
 });
 
@@ -144,7 +144,7 @@ test('shows an animated busy indicator with the running tool name', async () => 
 	// and renders the tool label with a trailing animated ellipsis.
 	assert.match(output, /\[run\] bash/);
 	assert.match(output, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u);
-	assert.doesNotMatch(output, />> \| \[run\]/);
+	assert.doesNotMatch(output, /[◇◈◆] {2}\| \[run\]/);
 });
 
 test('shows a visual background activity cue while input remains idle', async () => {
