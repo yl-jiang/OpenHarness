@@ -26,6 +26,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 ### Fixed
 
 - Compaction now detects llama.cpp/OpenAI-compatible context overflow errors, accounts for image blocks in auto-compact token estimates, and strips image payloads from summarizer-only compaction requests.
+- Large tool results are now bounded in conversation history: oversized outputs are saved under `tool_artifacts`, old MCP results become microcompactable, and context collapse trims stale tool-result payloads.
 - Bridge command (`/bridge`) is now local-only by default (`remote_invocable=False`) to prevent remote sessions from spawning bridge sub-sessions.
 - `todo_write` tool now updates an existing unchecked item in-place when `checked=True` instead of appending a duplicate `[x]` line.
 - QueryEngine now auto-continues once when a tool-follow-up turn ends with an empty assistant message, preventing React TUI sessions from appearing to stop early until the user manually sends another message.
