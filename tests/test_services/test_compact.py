@@ -21,8 +21,10 @@ from openharness.services import (
 )
 from openharness.services.compact import (
     AutoCompactState,
+    _is_prompt_too_long_error,
     auto_compact_if_needed,
     get_autocompact_threshold,
+    estimate_message_tokens as estimate_compact_message_tokens,
     should_autocompact,
     try_context_collapse,
     try_session_memory_compaction,
@@ -93,9 +95,10 @@ def test_legacy_compact_messages_preserves_tool_exchange_boundary():
 class _CompactApiClient:
     def __init__(self, responses):
         self._responses = list(responses)
+        self.requests = []
 
     async def stream_message(self, request):
-        del request
+        self.requests.append(request)
         response = self._responses.pop(0)
         if isinstance(response, Exception):
             raise response
@@ -227,6 +230,41 @@ def test_try_context_collapse_trims_oversized_messages():
     assert "[collapsed" in result[0].text
 
 
+def test_compact_prompt_too_long_detection_handles_llama_cpp_errors():
+    assert _is_prompt_too_long_error(
+        RuntimeError("exceed_context_size_error: prompt exceeds the available context size")
+    )
+
+
+def test_compact_token_estimate_counts_images(monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_IMAGE_TOKEN_ESTIMATE", "6000")
+    messages = [
+        ConversationMessage(
+            role="user",
+            content=[ImageBlock(media_type="image/png", data="YWJj", source_path="/tmp/screen.png")],
+        )
+    ]
+
+    assert estimate_compact_message_tokens(messages) == 8000
+
+
+def test_should_autocompact_counts_image_tokens(monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_IMAGE_TOKEN_ESTIMATE", "6000")
+    messages = [
+        ConversationMessage(
+            role="user",
+            content=[ImageBlock(media_type="image/png", data="YWJj", source_path="/tmp/screen.png")],
+        )
+    ]
+
+    assert should_autocompact(
+        messages,
+        "local-vision",
+        AutoCompactState(),
+        auto_compact_threshold_tokens=7000,
+    ) is True
+
+
 @pytest.mark.asyncio
 async def test_forced_auto_compact_uses_session_memory_for_short_oversized_history():
     huge_result = "alpha " * 20000
@@ -330,6 +368,37 @@ async def test_compact_conversation_preserves_tool_exchange_boundary_in_summary_
     previous = rebuilt[tool_result_index - 1]
     assert previous.role == "assistant"
     assert [tool_use.id for tool_use in previous.tool_uses] == ["toolu_read"]
+
+
+@pytest.mark.asyncio
+async def test_compact_conversation_replaces_images_in_summary_request():
+    image = ImageBlock(media_type="image/png", data="YWJj", source_path="/tmp/screen.png")
+    messages = [
+        ConversationMessage(role="user", content=[image]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="I can see the screenshot")]),
+        ConversationMessage(role="user", content=[TextBlock(text="Please summarize before moving on")]),
+        ConversationMessage(role="assistant", content=[TextBlock(text="Working")]),
+    ]
+    client = _CompactApiClient(["<summary>image context preserved</summary>"])
+
+    await compact_conversation(
+        messages,
+        api_client=client,
+        model="local-vision",
+        preserve_recent=1,
+    )
+
+    request = client.requests[0]
+    request_blocks = [block for message in request.messages for block in message.content]
+    assert not any(isinstance(block, ImageBlock) for block in request_blocks)
+    assert any(
+        isinstance(block, TextBlock)
+        and "Image omitted from compaction summarization" in block.text
+        and "/tmp/screen.png" in block.text
+        for block in request_blocks
+    )
+    # Verify original messages are not mutated
+    assert isinstance(messages[0].content[0], ImageBlock)
 
 
 @pytest.mark.asyncio
