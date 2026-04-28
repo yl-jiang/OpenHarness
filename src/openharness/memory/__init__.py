@@ -1,5 +1,6 @@
 """Memory exports."""
 
+from openharness.memory.lifecycle import setup_memory_provider_manager, teardown_memory_provider_manager
 from openharness.memory.memdir import load_memory_prompt
 from openharness.memory.manager import add_memory_entry, list_memory_files, remove_memory_entry
 from openharness.memory.paths import (
@@ -35,4 +36,6 @@ __all__ = [
     "remove_memory_entry",
     "sanitize_memory_context",
     "scan_memory_files",
+    "setup_memory_provider_manager",
+    "teardown_memory_provider_manager",
 ]

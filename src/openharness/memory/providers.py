@@ -97,6 +97,7 @@ class BuiltinMemoryProvider(MemoryProvider):
 
     def __init__(self, memory_dir: str | Path, store: MemoryStore | None = None) -> None:
         self.store = store or MemoryStore(memory_dir)
+        self._session_id: str = ""
 
     @property
     def name(self) -> str:
@@ -106,7 +107,7 @@ class BuiltinMemoryProvider(MemoryProvider):
         return True
 
     def initialize(self, session_id: str, **kwargs: Any) -> None:
-        del session_id, kwargs
+        self._session_id = session_id
         self.store.load_from_disk()
 
     def system_prompt_block(self) -> str:
