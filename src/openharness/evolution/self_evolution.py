@@ -3,18 +3,24 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from openharness.api.client import SupportsStreamingMessages
-from openharness.engine.messages import ConversationMessage
+from openharness.engine.messages import ConversationMessage, ToolResultBlock, ToolUseBlock
 from openharness.engine.types import ToolMetadataKey
 from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolRegistry
 from openharness.utils.log import get_logger
 
 logger = get_logger(__name__)
+
+# Tool actions that are read-only and should not be surfaced as review results.
+_READ_ONLY_ACTIONS = frozenset({"read", "list", "view"})
+
+ReviewCallback = Callable[[str], None]
 
 _MEMORY_REVIEW_PROMPT = (
     "Review the conversation above and consider saving to memory if appropriate.\n\n"
@@ -50,6 +56,95 @@ _COMBINED_REVIEW_PROMPT = (
     "Only act if there's something genuinely worth saving. "
     "If nothing stands out, just say 'Nothing to save.' and stop."
 )
+
+
+@dataclass(frozen=True)
+class ReviewAction:
+    """A single write action performed by the background review agent."""
+
+    tool: str
+    action: str
+    target: str = ""
+    detail: str = ""
+    success: bool = True
+
+
+def extract_review_actions(messages: list[ConversationMessage]) -> list[ReviewAction]:
+    """Scan review engine messages for successful write tool calls.
+
+    Pairs each :class:`ToolUseBlock` with its corresponding
+    :class:`ToolResultBlock` to determine success/failure.  Only memory
+    and skill_manager write actions are considered.
+    """
+    # Build a tool_use_id → ToolUseBlock index.
+    tool_uses: dict[str, ToolUseBlock] = {}
+    results: dict[str, ToolResultBlock] = {}
+    for msg in messages:
+        for block in msg.content:
+            if isinstance(block, ToolUseBlock):
+                tool_uses[block.id] = block
+            elif isinstance(block, ToolResultBlock):
+                results[block.tool_use_id] = block
+
+    actions: list[ReviewAction] = []
+    for use_id, use_block in tool_uses.items():
+        if use_block.name not in ("memory", "skill_manager"):
+            continue
+        tool_input = use_block.input or {}
+        action_name = str(tool_input.get("action", ""))
+        if action_name in _READ_ONLY_ACTIONS:
+            continue
+
+        result_block = results.get(use_id)
+        if result_block is None:
+            continue
+        if result_block.is_error:
+            continue
+        # For memory tool, check JSON success flag.
+        if use_block.name == "memory":
+            try:
+                payload = json.loads(result_block.content)
+                if not payload.get("success", False):
+                    continue
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        target = str(tool_input.get("target", ""))
+        detail = str(tool_input.get("name", ""))
+        actions.append(
+            ReviewAction(
+                tool=use_block.name,
+                action=action_name,
+                target=target,
+                detail=detail,
+                success=True,
+            )
+        )
+    return actions
+
+
+def format_review_summary(actions: list[ReviewAction]) -> str:
+    """Build a compact human-readable summary of review actions."""
+    if not actions:
+        return ""
+    parts: list[str] = []
+    for act in actions:
+        if act.tool == "memory":
+            label = f"{'User profile' if act.target == 'user' else 'Memory'} updated"
+            parts.append(label)
+        elif act.tool == "skill_manager":
+            verb = {
+                "write": "created",
+                "create": "created",
+                "edit": "updated",
+                "patch": "patched",
+                "delete": "deleted",
+            }.get(act.action, act.action)
+            name = act.detail or "skill"
+            parts.append(f"Skill {verb}: {name}")
+    if not parts:
+        return ""
+    return "💾 " + " · ".join(parts)
 
 
 @dataclass(frozen=True)
@@ -188,6 +283,7 @@ class BackgroundSelfEvolutionRunner:
         max_tokens: int,
         config: SelfEvolutionConfig,
         tool_metadata: dict[str, object],
+        on_review_complete: ReviewCallback | None = None,
     ) -> None:
         self._api_client = api_client
         self._tool_registry = tool_registry
@@ -198,6 +294,19 @@ class BackgroundSelfEvolutionRunner:
         self._max_tokens = max_tokens
         self._config = config
         self._tool_metadata = tool_metadata
+        self._on_review_complete = on_review_complete
+
+    def _clean_review_metadata(self) -> dict[str, object]:
+        """Return a copy of tool metadata safe for background review.
+
+        Strips the self-evolution controller (prevents recursive reviews)
+        and the memory provider manager (prevents internal turns from
+        polluting provider state).
+        """
+        metadata = dict(self._tool_metadata)
+        metadata.pop(ToolMetadataKey.SELF_EVOLUTION_CONTROLLER.value, None)
+        metadata.pop("memory_provider_manager", None)
+        return metadata
 
     def spawn_review(self, request: SelfEvolutionReviewRequest) -> None:
         """Schedule the background review on the current event loop."""
@@ -212,8 +321,7 @@ class BackgroundSelfEvolutionRunner:
         try:
             from openharness.engine.query_engine import QueryEngine
 
-            metadata = dict(self._tool_metadata)
-            metadata.pop(ToolMetadataKey.SELF_EVOLUTION_CONTROLLER.value, None)
+            metadata = self._clean_review_metadata()
             engine = QueryEngine(
                 api_client=self._api_client,
                 tool_registry=self._tool_registry,
@@ -226,8 +334,21 @@ class BackgroundSelfEvolutionRunner:
                 tool_metadata=metadata,
             )
             engine.load_messages(request.messages_snapshot)
+            # Record baseline so we only inspect messages added by the review.
+            baseline = len(engine.messages)
             async for _event in engine.submit_message(request.prompt):
                 pass
+
+            # Surface review results — only scan messages produced by the review run.
+            review_messages = engine.messages[baseline:]
+            actions = extract_review_actions(review_messages)
+            if actions and self._on_review_complete:
+                summary = format_review_summary(actions)
+                if summary:
+                    try:
+                        self._on_review_complete(summary)
+                    except Exception as cb_exc:
+                        logger.debug("Review callback failed: %s", cb_exc)
         except Exception as exc:
             logger.debug("Self-evolution review failed: %s", exc)
 
