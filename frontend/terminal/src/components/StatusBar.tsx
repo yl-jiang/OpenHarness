@@ -85,7 +85,7 @@ function StatusBarInner({
 				<Text dimColor>{SEP}</Text>
 				<Text dimColor>🤖 {model}</Text>
 				<Text dimColor>{SEP}</Text>
-				<Text dimColor>🪙  {formatNum(inputTokens)} {'\u2193'} {formatNum(outputTokens)} {'\u2191'}</Text>
+				<Text dimColor>💰 {formatNum(inputTokens)} {'\u2193'} {formatNum(outputTokens)} {'\u2191'}</Text>
 				{!isPlanMode ? (
 					<>
 						<Text dimColor>{SEP}</Text>

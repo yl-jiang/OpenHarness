@@ -142,7 +142,7 @@ test('uses symbolic labels instead of textual status prefixes', async () => {
 	assert.match(output, /⎇  default/u);
 	assert.match(output, /📁 \/tmp\/demo/u);
 	assert.match(output, / dev/u);
-	assert.match(output, /🪙  1\.2k ↓ 3\.4k ↑/u);
+	assert.match(output, /💰 1\.2k ↓ 3\.4k ↑/u);
 	assert.match(output, /⚙️  1/u);
 	assert.match(output, /🔌 2/u);
 });
