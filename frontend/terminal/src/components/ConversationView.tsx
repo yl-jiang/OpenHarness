@@ -20,6 +20,8 @@ type SoloTool = {kind: 'tool'; item: TranscriptItem; index: number};
 type SoloMessage = {kind: 'message'; item: TranscriptItem; index: number};
 type RenderGroup = ToolPair | SoloTool | SoloMessage;
 
+const TURN_DIVIDER = '╌'.repeat(18);
+
 function buildGroups(items: TranscriptItem[]): RenderGroup[] {
 	const groups: RenderGroup[] = [];
 	let i = 0;
@@ -122,16 +124,30 @@ function renderGroup(
 	);
 }
 
-function isAssistantOwnedGroup(group: RenderGroup): boolean {
+function conversationOwner(group: RenderGroup): 'assistant' | 'user' | null {
 	if (group.kind === 'pair' || group.kind === 'tool') {
-		return true;
+		return 'assistant';
 	}
-
-	return group.item.role === 'tool_result';
+	if (group.item.role === 'user') {
+		return 'user';
+	}
+	if (group.item.role === 'tool_result') {
+		return 'assistant';
+	}
+	if (group.item.role === 'assistant' && group.item.text.trim().length > 0) {
+		return 'assistant';
+	}
+	return null;
 }
 
-function hasVisibleAssistantHeader(group: RenderGroup): boolean {
-	return group.kind === 'message' && group.item.role === 'assistant' && group.item.text.trim().length > 0;
+function previousConversationOwner(groups: RenderGroup[], index: number): 'assistant' | 'user' | null {
+	for (let i = index - 1; i >= 0; i--) {
+		const owner = conversationOwner(groups[i]);
+		if (owner) {
+			return owner;
+		}
+	}
+	return null;
 }
 
 function shouldRenderAssistantHeaderBeforeGroup(groups: RenderGroup[], index: number, outputStyle?: string): boolean {
@@ -140,20 +156,36 @@ function shouldRenderAssistantHeaderBeforeGroup(groups: RenderGroup[], index: nu
 	}
 
 	const current = groups[index];
-	if (!current || !isAssistantOwnedGroup(current)) {
+	if (!current || conversationOwner(current) !== 'assistant') {
 		return false;
 	}
 
-	const previous = groups[index - 1];
-	if (!previous) {
-		return true;
-	}
+	return previousConversationOwner(groups, index) !== 'assistant';
+}
 
-	if (isAssistantOwnedGroup(previous)) {
+function shouldRenderTurnDividerBeforeGroup(groups: RenderGroup[], index: number, outputStyle?: string): boolean {
+	if (outputStyle === 'codex') {
 		return false;
 	}
 
-	return !hasVisibleAssistantHeader(previous);
+	return conversationOwner(groups[index]) === 'user' && previousConversationOwner(groups, index) === 'assistant';
+}
+
+function AssistantRunHeader({
+	theme,
+}: {
+	theme: ReturnType<typeof useTheme>['theme'];
+}): React.JSX.Element {
+	return (
+		<Text>
+			<Text color={theme.colors.muted} dimColor>
+				╰─{' '}
+			</Text>
+			<Text color={theme.colors.success} bold>
+				assistant
+			</Text>
+		</Text>
+	);
 }
 
 /**
@@ -200,6 +232,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 
 		const groups = buildGroups(transcript);
 		const treePositions = assignTreePositions(groups);
+		const liveAssistantStartsNewRun = previousConversationOwner(groups, groups.length) !== 'assistant';
 
 		useEffect(() => {
 			if (viewportRef.current) {
@@ -268,28 +301,36 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 			<Box ref={viewportRef} flexGrow={1} flexShrink={1} flexDirection="column" overflow="hidden">
 				<Box ref={contentRef} flexShrink={0} flexDirection="column" marginTop={marginTop}>
 					{showWelcome ? <WelcomeBanner /> : null}
-					{groups.map((group, i) => (
-						<Box key={`g-${group.index}`} flexShrink={0} flexDirection="column">
-							{shouldRenderAssistantHeaderBeforeGroup(groups, i, outputStyle) ? (
-								<Text color={theme.colors.success} bold>
-									assistant
-								</Text>
-							) : null}
-							{renderGroup(group, theme, outputStyle, treePositions[i])}
-						</Box>
-					))}
+					{groups.map((group, i) => {
+						const showAssistantHeader = shouldRenderAssistantHeaderBeforeGroup(groups, i, outputStyle);
+						const showTurnDivider = shouldRenderTurnDividerBeforeGroup(groups, i, outputStyle);
+						const marginTop = showAssistantHeader || showTurnDivider ? 1 : 0;
+
+						return (
+							<Box key={`g-${group.index}`} flexShrink={0} flexDirection="column" marginTop={marginTop}>
+								{showTurnDivider ? (
+									<Text color={theme.colors.muted} dimColor>
+										{TURN_DIVIDER}
+									</Text>
+								) : null}
+								{showAssistantHeader ? <AssistantRunHeader theme={theme} /> : null}
+								{renderGroup(group, theme, outputStyle, treePositions[i])}
+							</Box>
+						);
+					})}
 					{assistantBuffer ? (
 						isCodexStyle ? (
 							<Box flexShrink={0} flexDirection="row" marginTop={0}>
 								<Text>{assistantBuffer}</Text>
 							</Box>
 						) : (
-							<Box flexShrink={0} marginTop={1} marginBottom={0} flexDirection="column">
-								<Text>
-									<Text color={theme.colors.success} bold>
-										{theme.icons.assistant}
-									</Text>
-								</Text>
+							<Box
+								flexShrink={0}
+								marginTop={liveAssistantStartsNewRun ? 1 : 0}
+								marginBottom={0}
+								flexDirection="column"
+							>
+								{liveAssistantStartsNewRun ? <AssistantRunHeader theme={theme} /> : null}
 								<Box marginLeft={2} flexDirection="column">
 									<MarkdownText content={assistantBuffer} />
 								</Box>
@@ -373,8 +414,7 @@ function MessageRow({
 			}
 			if (!item.text.trim()) return <></>;
 			return (
-				<Box marginTop={0} marginBottom={0} flexDirection="column">
-					<Text color={theme.colors.success} bold>assistant</Text>
+				<Box marginTop={0} marginBottom={0}>
 					<Box marginLeft={2} flexDirection="column">
 						<MarkdownText content={item.text} />
 					</Box>
