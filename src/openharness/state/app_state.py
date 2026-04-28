@@ -31,3 +31,4 @@ class AppState:
     keybindings: dict[str, str] = field(default_factory=dict)
     input_tokens: int = 0
     output_tokens: int = 0
+    reviews_completed: int = 0

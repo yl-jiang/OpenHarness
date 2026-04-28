@@ -73,6 +73,7 @@ function StatusBarInner({
 	const gitBranch = typeof status.git_branch === 'string' && status.git_branch ? status.git_branch : null;
 	const taskCount = tasks.filter((task) => ACTIVE_TASK_STATUSES.has(task.status)).length;
 	const mcpCount = Number(status.mcp_connected ?? 0);
+	const reviewsCompleted = Number(status.reviews_completed ?? 0);
 	const inputTokens = Number(status.input_tokens ?? 0);
 	const outputTokens = Number(status.output_tokens ?? 0);
 	const isPlanMode = mode === 'plan' || mode === 'Plan Mode';
@@ -107,6 +108,12 @@ function StatusBarInner({
 					<>
 						<Text dimColor>{SEP}</Text>
 						<Text dimColor>⚙️  {taskCount}</Text>
+					</>
+				) : null}
+				{reviewsCompleted > 0 ? (
+					<>
+						<Text dimColor>{SEP}</Text>
+						<Text dimColor>🧠 {reviewsCompleted} reviewed</Text>
 					</>
 				) : null}
 				{mcpCount > 0 ? (

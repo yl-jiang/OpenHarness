@@ -205,6 +205,7 @@ def _state_payload(state: AppState) -> dict[str, Any]:
         "keybindings": dict(state.keybindings),
         "input_tokens": state.input_tokens,
         "output_tokens": state.output_tokens,
+        "reviews_completed": state.reviews_completed,
     }
 
 

@@ -35,6 +35,8 @@ from openharness.hooks import HookEvent, HookExecutionContext, HookExecutor, loa
 from openharness.hooks.hot_reload import HookReloader
 from openharness.mcp.client import McpClientManager
 from openharness.mcp.config import load_mcp_server_configs
+from openharness.memory.lifecycle import setup_memory_provider_manager, teardown_memory_provider_manager
+from openharness.memory.paths import get_curated_memory_dir
 from openharness.permissions import PermissionChecker
 from openharness.plugins import load_plugins
 from openharness.prompts import build_runtime_system_prompt
@@ -275,7 +277,6 @@ async def build_runtime(
     provider = detect_provider(settings)
     _, git_branch = detect_git_info(cwd)
     bridge_manager = get_bridge_manager()
-    todo_store = TodoStore(Path(cwd))
     app_state = AppStateStore(
         AppState(
             # Show the effective runtime model (after CLI/env/profile merges),
@@ -354,6 +355,16 @@ async def build_runtime(
     )
 
     permission_checker = PermissionChecker(settings.permission)
+
+    # Create and register the memory provider manager.
+    memory_provider_manager = None
+    if settings.memory.enabled:
+        memory_provider_manager = setup_memory_provider_manager(
+            curated_dir=get_curated_memory_dir(cwd),
+            session_id=session_id,
+        )
+        restored_metadata["memory_provider_manager"] = memory_provider_manager
+
     if settings.self_evolution.enabled:
         evolution_config = SelfEvolutionConfig(
             enabled=settings.self_evolution.enabled,
@@ -361,6 +372,12 @@ async def build_runtime(
             skill_review_interval=settings.self_evolution.skill_review_interval,
             max_review_turns=settings.self_evolution.max_review_turns,
         )
+
+        def _on_review_complete(summary: str) -> None:
+            logger.event("self_evolution_review_complete", summary=summary)
+            current = app_state.get().reviews_completed
+            app_state.set(reviews_completed=current + 1)
+
         restored_metadata[ToolMetadataKey.SELF_EVOLUTION_CONTROLLER.value] = SelfEvolutionController(
             evolution_config,
             BackgroundSelfEvolutionRunner(
@@ -373,9 +390,11 @@ async def build_runtime(
                 max_tokens=settings.max_tokens,
                 config=evolution_config,
                 tool_metadata=restored_metadata,
+                on_review_complete=_on_review_complete,
             ),
         )
 
+    todo_store = TodoStore(Path(cwd))
     engine = QueryEngine(
         api_client=resolved_api_client,
         tool_registry=tool_registry,
@@ -478,6 +497,13 @@ async def close_runtime(bundle: RuntimeBundle) -> None:
         pass  # personalization is best-effort, never block session end
 
     await bundle.mcp_manager.close()
+
+    # Tear down memory provider manager (on_session_end + shutdown).
+    manager = bundle.engine.tool_metadata.get("memory_provider_manager")
+    if manager is not None:
+        messages_dicts = [msg.to_api_param() for msg in bundle.engine.messages]
+        teardown_memory_provider_manager(manager, messages=messages_dicts)
+
     await bundle.hook_executor.execute(
         HookEvent.SESSION_END,
         {"cwd": bundle.cwd, "event": HookEvent.SESSION_END.value},
