@@ -37,7 +37,7 @@ _VERSION = "0.1.0"  # OpenHarness version for User-Agent
 
 # Default model for Copilot requests when the configured model is not
 # available in the Copilot model catalog.
-COPILOT_DEFAULT_MODEL = "gpt-4o"
+COPILOT_DEFAULT_MODEL = "gpt-5.4"
 
 
 # ---------------------------------------------------------------------------
