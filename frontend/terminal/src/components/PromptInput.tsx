@@ -1,6 +1,8 @@
 import React, {useEffect, useState} from 'react';
 import {Box, Text} from 'ink';
-import TextInput from 'ink-text-input';
+import stringWidth from 'string-width';
+import ScrollableTextInput from './ScrollableTextInput.js';
+import {useTerminalSize} from '../hooks/useTerminalSize.js';
 
 // Hermes-inspired palette — matches WelcomeBanner brand identity
 const H_WARM = '#ffe6cb'; // warm almond — prompt cursor, input prefix
@@ -108,6 +110,12 @@ export function PromptInput({
 		return () => clearInterval(timer);
 	}, [animateNow, animateIdle, busy, showBackgroundActivity]);
 
+	const {cols} = useTerminalSize();
+	const prefix = busy ? '... ' : '> ';
+	// Available width for the text input viewport:
+	// cols - App paddingX(1)*2 - border*2 - boxPaddingX(1)*2 - prefixWidth
+	const inputAvailableWidth = cols - 6 - stringWidth(prefix);
+
 	return (
 		<Box
 			flexDirection="column"
@@ -139,10 +147,14 @@ export function PromptInput({
 				</Box>
 			)}
 			<Box marginTop={1}>
-				<Text color={H_WARM} bold>{busy ? '... ' : '> '}</Text>
-				<Box flexGrow={1} flexShrink={1}>
-					<TextInput key={inputKey} value={input} onChange={setInput} onSubmit={suppressSubmit || busy ? noop : onSubmit} />
-				</Box>
+				<Text color={H_WARM} bold>{prefix}</Text>
+				<ScrollableTextInput
+					key={inputKey}
+					value={input}
+					onChange={setInput}
+					onSubmit={suppressSubmit || busy ? noop : onSubmit}
+					availableWidth={inputAvailableWidth}
+				/>
 			</Box>
 			<Text dimColor>/ commands · ↑↓ history · shift+enter newline · wheel/PgUp scroll · End resume · ctrl+x select-mode · ctrl+c clear · ctrl+c ctrl+c exit</Text>
 		</Box>
