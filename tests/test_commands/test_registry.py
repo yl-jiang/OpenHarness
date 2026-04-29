@@ -13,6 +13,7 @@ from openharness.config.paths import get_feedback_log_path, get_project_issue_fi
 from openharness.config.settings import load_settings, save_settings, Settings
 from openharness.engine.messages import ConversationMessage, TextBlock
 from openharness.engine.query_engine import QueryEngine
+from openharness.engine.types import ToolMetadataKey
 from openharness.mcp.types import McpHttpServerConfig, McpStdioServerConfig
 from openharness.permissions import PermissionChecker
 from openharness.plugins.types import PluginCommandDefinition
@@ -265,6 +266,54 @@ async def test_plugin_command_registers_and_submits_prompt(tmp_path: Path, monke
     result = await command.handler(args, _make_context(tmp_path))
 
     assert result.submit_prompt == "Base workflow\n\napi"
+
+
+@pytest.mark.asyncio
+async def test_skills_command_manually_loads_skill_as_submit_prompt(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skill_dir = tmp_path / "config" / "skills" / "review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: review\ndescription: Review changes carefully\n---\n\n# Review\nCheck the diff.",
+        encoding="utf-8",
+    )
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/skills review api")
+    assert command is not None
+
+    context = _make_context(tmp_path)
+    result = await command.handler(args, context)
+
+    assert result.message == "Loaded skill: review"
+    assert result.submit_prompt is not None
+    assert '<skill-context name="review">' in result.submit_prompt
+    assert "Base directory for this skill:" in result.submit_prompt
+    assert "# Review\nCheck the diff." in result.submit_prompt
+    assert "Arguments: api" in result.submit_prompt
+    assert context.engine.tool_metadata[ToolMetadataKey.INVOKED_SKILLS.value] == ["review"]
+
+
+@pytest.mark.asyncio
+async def test_skills_command_list_and_show_do_not_invoke_model(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skill_dir = tmp_path / "config" / "skills" / "deploy"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: deploy\ndescription: Deploy safely\n---\n\n# Deploy\nShip it.",
+        encoding="utf-8",
+    )
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+
+    list_command, list_args = registry.lookup("/skills list")
+    list_result = await list_command.handler(list_args, context)
+    assert "deploy [user]: Deploy safely" in list_result.message
+    assert list_result.submit_prompt is None
+
+    show_command, show_args = registry.lookup("/skills show deploy")
+    show_result = await show_command.handler(show_args, context)
+    assert "# Deploy\nShip it." in show_result.message
+    assert show_result.submit_prompt is None
 
 
 @pytest.mark.asyncio

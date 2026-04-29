@@ -6,9 +6,11 @@ const MAX_VISIBLE = 10;
 function CommandPickerInner({
 	hints,
 	selectedIndex,
+	title = 'Commands',
 }: {
 	hints: string[];
 	selectedIndex: number;
+	title?: string;
 }): React.JSX.Element | null {
 	if (hints.length === 0) {
 		return null;
@@ -28,7 +30,7 @@ function CommandPickerInner({
 
 	return (
 		<Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginBottom={0}>
-			<Text dimColor bold> Commands{hasMore ? ` (${selectedIndex + 1}/${hints.length})` : ''}</Text>
+			<Text dimColor bold> {title}{hasMore ? ` (${selectedIndex + 1}/${hints.length})` : ''}</Text>
 			{windowStart > 0 ? <Text dimColor>  ↑ {windowStart} more</Text> : null}
 			{visibleHints.map((hint, i) => {
 				const realIndex = windowStart + i;

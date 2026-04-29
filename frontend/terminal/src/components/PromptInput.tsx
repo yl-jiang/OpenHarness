@@ -156,7 +156,7 @@ export function PromptInput({
 					availableWidth={inputAvailableWidth}
 				/>
 			</Box>
-			<Text dimColor>/ commands · ↑↓ history · shift+enter newline · wheel/PgUp scroll · End resume · ctrl+x select-mode · ctrl+c clear · ctrl+c ctrl+c exit</Text>
+			<Text dimColor>/ commands · @ files · ↑↓ history · shift+enter newline · wheel/PgUp scroll · End resume · ctrl+x select-mode · ctrl+c clear · ctrl+c ctrl+c exit</Text>
 		</Box>
 	);
 }
