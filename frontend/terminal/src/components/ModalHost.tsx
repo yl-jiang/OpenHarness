@@ -1,6 +1,8 @@
 import React, {useState} from 'react';
 import {Box, Text, useInput} from 'ink';
-import TextInput from 'ink-text-input';
+import stringWidth from 'string-width';
+import ScrollableTextInput from './ScrollableTextInput.js';
+import {useTerminalSize} from '../hooks/useTerminalSize.js';
 
 function WaitingAnimation(): React.JSX.Element {
 	// Kept as a static label to avoid forcing Ink redraws while waiting for
@@ -43,6 +45,11 @@ function QuestionModal({
 	const reason = modal.reason ? String(modal.reason) : null;
 	const question = String(modal.question ?? 'Question');
 
+	const {cols} = useTerminalSize();
+	const modalPrefix = '> ';
+	// cols - App paddingX(1)*2 - doubleBorder*2 - boxPaddingX(1)*2 - prefixWidth
+	const modalInputWidth = cols - 6 - stringWidth(modalPrefix);
+
 	return (
 		<Box flexDirection="column" marginTop={1} borderStyle="double" borderColor="magenta" paddingX={1} overflow="hidden">
 			<WaitingAnimation />
@@ -70,10 +77,13 @@ function QuestionModal({
 				</Box>
 			)}
 			<Box marginTop={1}>
-				<Text color="cyan">{'> '}</Text>
-				<Box flexGrow={1} flexShrink={1}>
-					<TextInput value={modalInput} onChange={setModalInput} onSubmit={handleSubmit} />
-				</Box>
+				<Text color="cyan">{modalPrefix}</Text>
+				<ScrollableTextInput
+					value={modalInput}
+					onChange={setModalInput}
+					onSubmit={handleSubmit}
+					availableWidth={modalInputWidth}
+				/>
 			</Box>
 			<Text dimColor>{'  '}shift+enter: newline | enter: submit</Text>
 		</Box>
@@ -91,6 +101,8 @@ function ModalHostInner({
 	setModalInput: (value: string) => void;
 	onSubmit: (value: string) => void;
 }): React.JSX.Element | null {
+	const {cols} = useTerminalSize();
+
 	if (modal?.kind === 'permission') {
 		return (
 			<Box flexDirection="column" marginTop={1}>
@@ -128,6 +140,9 @@ function ModalHostInner({
 		);
 	}
 	if (modal?.kind === 'mcp_auth') {
+		const authPrefix = '> ';
+		// No border box, just App paddingX(1)*2 + prefixWidth
+		const authInputWidth = cols - 2 - stringWidth(authPrefix);
 		return (
 			<Box flexDirection="column" marginTop={1}>
 				<Text>
@@ -136,8 +151,8 @@ function ModalHostInner({
 				</Text>
 				<Text dimColor>{String(modal.prompt ?? 'Provide auth details')}</Text>
 				<Box>
-					<Text color="cyan">{'> '}</Text>
-					<TextInput value={modalInput} onChange={setModalInput} onSubmit={onSubmit} />
+					<Text color="cyan">{authPrefix}</Text>
+					<ScrollableTextInput value={modalInput} onChange={setModalInput} onSubmit={onSubmit} availableWidth={authInputWidth} />
 				</Box>
 			</Box>
 		);
