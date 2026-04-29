@@ -265,7 +265,7 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             api_format="openai",
             auth_source="deepseek_api_key",
             default_model="deepseek-v4-flash",
-            allowed_models=["deepseek-v4-flashl", "deepseek-v4-pro"],
+            allowed_models=["deepseek-v4-flash", "deepseek-v4-pro"],
             base_url="https://api.deepseek.com/v1",
             reasoning_effort="high",
         ),
