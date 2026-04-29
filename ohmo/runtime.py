@@ -15,6 +15,7 @@ from openharness.ui.react_launcher import build_frontend_config
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 from openharness.ui.react_launcher import _resolve_npm, _resolve_tsx, get_frontend_dir
 
+from ohmo.memory import create_memory_command_backend
 from ohmo.prompts import build_ohmo_system_prompt
 from ohmo.session_storage import OhmoSessionBackend
 from ohmo.workspace import get_plugins_dir, get_skills_dir, initialize_workspace
@@ -55,6 +56,8 @@ async def run_ohmo_backend(
         session_backend=OhmoSessionBackend(workspace_root),
         extra_skill_dirs=extra_skill_dirs,
         extra_plugin_roots=extra_plugin_roots,
+        memory_backend=create_memory_command_backend(workspace_root),
+        include_project_memory=False,
     )
 
 
@@ -161,6 +164,8 @@ async def run_ohmo_print_mode(
             enforce_max_turns=max_turns is not None,
             extra_skill_dirs=extra_skill_dirs,
             extra_plugin_roots=extra_plugin_roots,
+            memory_backend=create_memory_command_backend(workspace_root),
+            include_project_memory=False,
         )
         await start_runtime(bundle)
 
