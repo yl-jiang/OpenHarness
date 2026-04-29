@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1068,6 +1069,52 @@ async def test_execute_tool_call_remembers_always_permission_reply(tmp_path: Pat
     assert second.is_error is False
     assert (tmp_path / "scratch-dir").is_dir()
     assert (tmp_path / "another-dir").is_dir()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_same_tool_calls_reuse_always_permission_reply(tmp_path: Path):
+    class MarkerInput(BaseModel):
+        value: str
+
+    class MarkerTool(BaseTool):
+        name = "marker"
+        description = "Return a marker"
+        input_model = MarkerInput
+
+        async def execute(self, arguments: MarkerInput, context: ToolExecutionContext) -> ToolResult:
+            del context
+            return ToolResult(output=arguments.value)
+
+    prompt_calls: list[str] = []
+
+    async def _allow_always(tool_name: str, _reason: str) -> str:
+        prompt_calls.append(tool_name)
+        if len(prompt_calls) == 1:
+            await asyncio.sleep(0.05)
+        return "always"
+
+    registry = ToolRegistry()
+    registry.register(MarkerTool())
+    context = QueryContext(
+        api_client=_NoopApiClient(),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        max_tokens=1,
+        max_turns=1,
+        permission_prompt=_allow_always,
+    )
+
+    first, second = await asyncio.gather(
+        _execute_tool_call(context, "marker", "toolu_marker_1", {"value": "first"}),
+        _execute_tool_call(context, "marker", "toolu_marker_2", {"value": "second"}),
+    )
+
+    assert first.is_error is False
+    assert second.is_error is False
+    assert prompt_calls == ["marker"]
 
 
 @pytest.mark.asyncio

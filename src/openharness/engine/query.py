@@ -106,6 +106,7 @@ class QueryContext:
     max_turns: int | None = 200
     hook_executor: HookExecutor | None = None
     tool_metadata: dict[str, object] | None = None
+    permission_prompt_lock: asyncio.Lock | None = None
 
 
 def _append_capped_unique(bucket: list[Any], value: Any, *, limit: int) -> None:
@@ -335,6 +336,12 @@ def _tool_artifact_dir() -> Path:
     artifact_dir = get_data_dir() / "tool_artifacts"
     artifact_dir.mkdir(parents=True, exist_ok=True)
     return artifact_dir
+
+
+def _permission_prompt_lock(context: QueryContext) -> asyncio.Lock:
+    if context.permission_prompt_lock is None:
+        context.permission_prompt_lock = asyncio.Lock()
+    return context.permission_prompt_lock
 
 
 def _safe_tool_artifact_name(tool_name: str) -> str:
@@ -847,28 +854,45 @@ async def _execute_tool_call(
     )
     if not decision.allowed:
         if decision.requires_confirmation and context.permission_prompt is not None:
-            logger.debug("permission prompt for %s: %s", tool_name, decision.reason)
-            if context.hook_executor is not None:
-                await context.hook_executor.execute(
-                    HookEvent.NOTIFICATION,
-                    {
-                        "event": HookEvent.NOTIFICATION.value,
-                        "notification_type": "permission_prompt",
-                        "tool_name": tool_name,
-                        "reason": decision.reason,
-                    },
+            async with _permission_prompt_lock(context):
+                decision = context.permission_checker.evaluate(
+                    tool_name,
+                    is_read_only=tool.is_read_only(parsed_input),
+                    file_path=_file_path,
+                    command=_command,
                 )
-            confirmed = await context.permission_prompt(tool_name, decision.reason)
-            reply = _normalize_permission_reply(confirmed)
-            if reply == "reject":
-                logger.debug("permission denied by user for %s", tool_name)
-                return ToolResultBlock(
-                    tool_use_id=tool_use_id,
-                    content=decision.reason or f"Permission denied for {tool_name}",
-                    is_error=True,
-                )
-            if reply == "always":
-                context.permission_checker.remember_allow(decision)
+                if decision.allowed:
+                    logger.debug("permission allowed after recheck for %s: %s", tool_name, decision.reason)
+                elif decision.requires_confirmation:
+                    logger.debug("permission prompt for %s: %s", tool_name, decision.reason)
+                    if context.hook_executor is not None:
+                        await context.hook_executor.execute(
+                            HookEvent.NOTIFICATION,
+                            {
+                                "event": HookEvent.NOTIFICATION.value,
+                                "notification_type": "permission_prompt",
+                                "tool_name": tool_name,
+                                "reason": decision.reason,
+                            },
+                        )
+                    confirmed = await context.permission_prompt(tool_name, decision.reason)
+                    reply = _normalize_permission_reply(confirmed)
+                    if reply == "reject":
+                        logger.debug("permission denied by user for %s", tool_name)
+                        return ToolResultBlock(
+                            tool_use_id=tool_use_id,
+                            content=decision.reason or f"Permission denied for {tool_name}",
+                            is_error=True,
+                        )
+                    if reply == "always":
+                        context.permission_checker.remember_allow(decision)
+                else:
+                    logger.debug("permission blocked after recheck for %s: %s", tool_name, decision.reason)
+                    return ToolResultBlock(
+                        tool_use_id=tool_use_id,
+                        content=decision.reason or f"Permission denied for {tool_name}",
+                        is_error=True,
+                    )
         else:
             logger.debug("permission blocked for %s: %s", tool_name, decision.reason)
             return ToolResultBlock(
