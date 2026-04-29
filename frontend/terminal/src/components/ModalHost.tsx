@@ -44,11 +44,13 @@ function QuestionModal({
 	const question = String(modal.question ?? 'Question');
 
 	return (
-		<Box flexDirection="column" marginTop={1} borderStyle="double" borderColor="magenta" paddingX={1}>
+		<Box flexDirection="column" marginTop={1} borderStyle="double" borderColor="magenta" paddingX={1} overflow="hidden">
 			<WaitingAnimation />
 			<Box marginTop={1}>
 				<Text color="magenta" bold>{'\u2753 '}</Text>
-				<Text bold>{question}</Text>
+				<Box flexGrow={1} flexShrink={1}>
+					<Text bold>{question}</Text>
+				</Box>
 			</Box>
 			{toolName ? (
 				<Text dimColor>
@@ -69,7 +71,9 @@ function QuestionModal({
 			)}
 			<Box marginTop={1}>
 				<Text color="cyan">{'> '}</Text>
-				<TextInput value={modalInput} onChange={setModalInput} onSubmit={handleSubmit} />
+				<Box flexGrow={1} flexShrink={1}>
+					<TextInput value={modalInput} onChange={setModalInput} onSubmit={handleSubmit} />
+				</Box>
 			</Box>
 			<Text dimColor>{'  '}shift+enter: newline | enter: submit</Text>
 		</Box>

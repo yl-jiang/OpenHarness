@@ -115,6 +115,7 @@ export function PromptInput({
 			borderStyle="round"
 			borderColor={busy || showBackgroundActivity ? H_GOLD : H_TEAL}
 			paddingX={1}
+			overflow="hidden"
 		>
 			<Box>
 				<Text color={busy || showBackgroundActivity ? H_GOLD : H_TEAL} bold>
@@ -130,14 +131,18 @@ export function PromptInput({
 					{extraInputLines.map((line, i) => (
 						<Box key={i}>
 							<Text color={H_WARM} bold>{'  '}</Text>
-							<Text dimColor>{line.length > 0 ? line : ' '}</Text>
+							<Box flexGrow={1} flexShrink={1}>
+								<Text dimColor>{line.length > 0 ? line : ' '}</Text>
+							</Box>
 						</Box>
 					))}
 				</Box>
 			)}
 			<Box marginTop={1}>
 				<Text color={H_WARM} bold>{busy ? '... ' : '> '}</Text>
-				<TextInput key={inputKey} value={input} onChange={setInput} onSubmit={suppressSubmit || busy ? noop : onSubmit} />
+				<Box flexGrow={1} flexShrink={1}>
+					<TextInput key={inputKey} value={input} onChange={setInput} onSubmit={suppressSubmit || busy ? noop : onSubmit} />
+				</Box>
 			</Box>
 			<Text dimColor>/ commands · ↑↓ history · shift+enter newline · wheel/PgUp scroll · End resume · ctrl+x select-mode · ctrl+c clear · ctrl+c ctrl+c exit</Text>
 		</Box>
