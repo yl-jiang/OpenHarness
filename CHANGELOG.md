@@ -26,6 +26,8 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- React TUI select menus now window long option lists, show skill descriptions below names with wrapping indentation, and highlight the selected option.
+- React TUI slash command picker now groups subcommands under their root command and previews them in a side submenu.
 - Compaction now detects llama.cpp/OpenAI-compatible context overflow errors, accounts for image blocks in auto-compact token estimates, and strips image payloads from summarizer-only compaction requests.
 - Large tool results are now bounded in conversation history: oversized outputs are saved under `tool_artifacts`, old MCP results become microcompactable, and context collapse trims stale tool-result payloads.
 - ohmo now keeps personal memory isolated from OpenHarness project memory: `/memory` in ohmo sessions targets the ohmo workspace memory store, and ohmo runtime prompt refreshes no longer inject project memory unless explicitly requested.

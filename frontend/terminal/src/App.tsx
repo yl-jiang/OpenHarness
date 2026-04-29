@@ -2,11 +2,11 @@ import React, {useCallback, useDeferredValue, useEffect, useMemo, useRef, useSta
 import {Box, Text, useApp, useInput, useStdin} from 'ink';
 
 import {AlternateScreen} from './components/AlternateScreen.js';
-import {CommandPicker} from './components/CommandPicker.js';
+import {CommandPicker, createCommandPickerModel} from './components/CommandPicker.js';
 import {ConversationView, type ConversationViewHandle} from './components/ConversationView.js';
 import {ModalHost} from './components/ModalHost.js';
 import {PromptInput} from './components/PromptInput.js';
-import {SelectModal, type SelectOption} from './components/SelectModal.js';
+import {nextSelectIndexForWheel, SelectModal, type SelectOption} from './components/SelectModal.js';
 import {StatusBar} from './components/StatusBar.js';
 import {SwarmPanel} from './components/SwarmPanel.js';
 import {TodoPanel} from './components/TodoPanel.js';
@@ -150,6 +150,10 @@ function AppInner({
 	}, []);
 
 	useMouseWheel((delta) => {
+		if (selectModal) {
+			setSelectIndex((i) => nextSelectIndexForWheel(i, delta, selectModal.options.length));
+			return;
+		}
 		if (delta < 0) scrollUp(3);
 		else scrollDown(3);
 	});
@@ -173,13 +177,8 @@ function AppInner({
 	);
 
 	// Command hints
-	const commandHints = useMemo(() => {
-		const value = input.trim();
-		if (!value.startsWith('/')) {
-			return [] as string[];
-		}
-		return session.commands.filter((cmd) => cmd.startsWith(value));
-	}, [session.commands, input]);
+	const commandPickerModel = useMemo(() => createCommandPickerModel(session.commands, input), [session.commands, input]);
+	const commandHints = commandPickerModel.hints;
 	const mentionQuery = useMemo(() => findMentionQuery(input), [input]);
 	const mentionHints = useMemo(() => {
 		if (!mentionQuery) {
@@ -644,7 +643,12 @@ function AppInner({
 
 			{showPicker ? (
 				<Box flexShrink={0} flexDirection="column">
-					<CommandPicker hints={pickerHints} selectedIndex={pickerIndex} title={pickerTitle} />
+					<CommandPicker
+						hints={pickerHints}
+						selectedIndex={pickerIndex}
+						title={pickerTitle}
+						subHintsByHint={mentionHints.length > 0 ? {} : commandPickerModel.subHintsByHint}
+					/>
 				</Box>
 			) : null}
 
