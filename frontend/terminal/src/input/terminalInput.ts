@@ -40,14 +40,16 @@ const COMPLETE_MOUSE_SEQUENCE = /^\u001b\[<(\d+);\d+;\d+([Mm])/;
 const PARTIAL_MOUSE_SEQUENCE = /^\u001b\[<[\d;]*$/;
 const BACKSPACE_CONTROL_PATTERN = /[\b\u007f]+/g;
 
-// Sequences emitted by various terminals for Shift+Enter / Alt+Enter.
-// We normalise them to a literal LF so the higher-level input handler can
-// treat them uniformly as "insert newline" instead of "submit".
+// Sequences emitted by various terminals for Shift+Enter / Alt+Enter and
+// Shift-modified printable keys.
+// Shift+Enter is normalised to a literal LF so the higher-level input handler
+// can treat it uniformly as "insert newline" instead of "submit".
 //   - \x1b[27;<modifier>;13~  : xterm modifyOtherKeys mode 2 (Shift+Enter -> mod=2)
 //   - \x1b[13;<modifier>u     : kitty keyboard protocol
 //   - \x1b\r                  : Alt/Option+Enter on most macOS terminals
 const COMPLETE_NEWLINE_SEQUENCE = /^\u001b\[(?:27;(\d+);13~|13;(\d+)u)/;
-const PARTIAL_NEWLINE_SEQUENCE = /^\u001b\[(?:27(?:;\d*)?|13(?:;\d*)?)?$/;
+const COMPLETE_PRINTABLE_KEY_SEQUENCE = /^\u001b\[(?:27;(\d+);(\d+)~|(\d+);(\d+)u)/;
+const PARTIAL_KEY_SEQUENCE = /^\u001b\[(?:27(?:;\d*)?(?:;\d*)?|(?:\d+)(?:;\d*)?)?$/;
 const ALT_ENTER_SEQUENCE = '\u001b\r';
 
 export function chunkTerminalTextForInk(text: string): string[] {
@@ -140,7 +142,18 @@ export function createTerminalInputDecoder(): TerminalInputDecoder {
 					cursor = nextEscape + newlineMatch[0].length;
 					continue;
 				}
-				if (PARTIAL_NEWLINE_SEQUENCE.test(remainder)) {
+				const printableKeyMatch = COMPLETE_PRINTABLE_KEY_SEQUENCE.exec(remainder);
+				if (printableKeyMatch) {
+					const modifier = Number(printableKeyMatch[1] ?? printableKeyMatch[4] ?? '1');
+					const codepoint = Number(printableKeyMatch[2] ?? printableKeyMatch[3] ?? '0');
+					const shiftedOnly = modifier === 2;
+					if (shiftedOnly && isPrintableCodepoint(codepoint)) {
+						text += String.fromCodePoint(codepoint);
+						cursor = nextEscape + printableKeyMatch[0].length;
+						continue;
+					}
+				}
+				if (PARTIAL_KEY_SEQUENCE.test(remainder)) {
 					pending = remainder;
 					cursor = input.length;
 					continue;
@@ -243,6 +256,10 @@ function pickFirstIndex(a: number, b: number): number {
 	if (a === -1) return b;
 	if (b === -1) return a;
 	return Math.min(a, b);
+}
+
+function isPrintableCodepoint(codepoint: number): boolean {
+	return Number.isInteger(codepoint) && codepoint >= 0x20 && codepoint <= 0x10FFFF;
 }
 
 function toMouseEvent(buttonCode: number, terminator: string): TerminalMouseEvent | null {

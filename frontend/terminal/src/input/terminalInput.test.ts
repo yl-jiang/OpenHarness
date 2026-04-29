@@ -50,6 +50,20 @@ test('translates kitty Shift+Enter (\\x1b[13;2u) into LF', () => {
 	assert.equal(result.text, 'hi\nok');
 });
 
+test('translates xterm modifyOtherKeys Shift+letter sequences into printable text', () => {
+	const decoder = createTerminalInputDecoder();
+	const result = decoder.push('say \u001b[27;2;65~bc');
+	assert.equal(result.text, 'say Abc');
+	assert.deepEqual(result.mouseEvents, []);
+});
+
+test('translates kitty Shift+letter sequences into printable text', () => {
+	const decoder = createTerminalInputDecoder();
+	const result = decoder.push('say \u001b[65;2ubc');
+	assert.equal(result.text, 'say Abc');
+	assert.deepEqual(result.mouseEvents, []);
+});
+
 test('translates Alt+Enter (\\x1b\\r) into LF', () => {
 	const decoder = createTerminalInputDecoder();
 	const result = decoder.push('foo\u001b\rbar');
