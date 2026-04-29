@@ -30,6 +30,7 @@ from openharness.engine.stream_events import (
 )
 from openharness.output_styles import load_output_styles
 from openharness.tasks import get_task_manager
+from openharness.skills import load_skill_registry
 from openharness.ui.protocol import BackendEvent, FrontendRequest, TranscriptItem
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 from openharness.services.session_backend import SessionBackend
@@ -471,6 +472,8 @@ class ReactBackendHost:
             return f"/voice {value}"
         if command == "model":
             return f"/model {value}"
+        if command == "skills":
+            return f"/skills {value}" if value else "/skills"
         return None
 
     def _status_snapshot(self) -> BackendEvent:
@@ -719,6 +722,30 @@ class ReactBackendHost:
                 BackendEvent(
                     type="select_request",
                     modal={"kind": "select", "title": "Model", "command": "model"},
+                    select_options=options,
+                )
+            )
+            return
+
+        if command == "skills":
+            registry = load_skill_registry(
+                self._bundle.cwd,
+                extra_skill_dirs=self._bundle.extra_skill_dirs,
+                extra_plugin_roots=self._bundle.extra_plugin_roots,
+                settings=settings,
+            )
+            options = [
+                {
+                    "value": skill.name,
+                    "label": skill.name,
+                    "description": f"{skill.description} [{skill.source}]",
+                }
+                for skill in registry.list_skills()
+            ]
+            await self._emit(
+                BackendEvent(
+                    type="select_request",
+                    modal={"kind": "select", "title": "Skills", "command": "skills"},
                     select_options=options,
                 )
             )

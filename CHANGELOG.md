@@ -22,6 +22,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - GitHub issue templates and a pull request template.
 - React TUI assistant messages now render structured Markdown blocks, including headings, lists, code fences, blockquotes, links, and tables.
 - Built-in `codex` output style for compact, low-noise transcript rendering in React TUI.
+- React TUI `@` file mentions and `/skills` picker for manually loading a selected skill into the current session.
 
 ### Fixed
 

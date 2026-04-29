@@ -14,6 +14,7 @@ import type {TerminalInputStream} from './input/terminalInput.js';
 import {useBackendSession} from './hooks/useBackendSession.js';
 import {useMouseWheel} from './hooks/useMouseWheel.js';
 import {useTerminalSize} from './hooks/useTerminalSize.js';
+import {discoverMentionFiles, filterMentionCandidates, findMentionQuery, replaceMentionQuery} from './input/mentions.js';
 import {ThemeProvider, useTheme} from './theme/ThemeContext.js';
 import type {FrontendConfig} from './types.js';
 
@@ -44,6 +45,7 @@ const SELECTABLE_COMMANDS = new Set([
 	'/fast',
 	'/vim',
 	'/voice',
+	'/skills',
 ]);
 const ACTIVE_BACKGROUND_TASK_STATUSES = new Set(['pending', 'running']);
 
@@ -103,6 +105,7 @@ function AppInner({
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [selectModal, setSelectModal] = useState<SelectModalState>(null);
 	const [selectIndex, setSelectIndex] = useState(0);
+	const [mentionFiles, setMentionFiles] = useState<string[]>([]);
 
 	// Scroll state (line-level via ref to ConversationView).
 	// `paused` is mirrored from ConversationView via onPauseChange; we keep
@@ -177,13 +180,35 @@ function AppInner({
 		}
 		return session.commands.filter((cmd) => cmd.startsWith(value));
 	}, [session.commands, input]);
+	const mentionQuery = useMemo(() => findMentionQuery(input), [input]);
+	const mentionHints = useMemo(() => {
+		if (!mentionQuery) {
+			return [] as string[];
+		}
+		return filterMentionCandidates(mentionFiles, mentionQuery.query);
+	}, [mentionFiles, mentionQuery]);
+	const pickerHints = mentionHints.length > 0 ? mentionHints : commandHints;
+	const pickerTitle = mentionHints.length > 0 ? 'Files' : 'Commands';
 
-	const showPicker = commandHints.length > 0 && !session.busy && !session.modal && !selectModal;
+	const showPicker = pickerHints.length > 0 && !session.busy && !session.modal && !selectModal;
 	const outputStyle = String(session.status.output_style ?? 'default');
 
 	useEffect(() => {
 		setPickerIndex(0);
-	}, [commandHints.length, input]);
+	}, [pickerHints.length, input]);
+
+	useEffect(() => {
+		let cancelled = false;
+		const cwd = String(session.status.cwd ?? process.cwd());
+		void discoverMentionFiles(cwd).then((files) => {
+			if (!cancelled) {
+				setMentionFiles(files);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [session.status.cwd]);
 
 	// Handle backend-initiated select requests (e.g. /resume session list)
 	useEffect(() => {
@@ -406,12 +431,17 @@ function AppInner({
 				return;
 			}
 			if (key.downArrow) {
-				setPickerIndex((i) => Math.min(commandHints.length - 1, i + 1));
+				setPickerIndex((i) => Math.min(pickerHints.length - 1, i + 1));
 				return;
 			}
 			if (key.return) {
-				const selected = commandHints[pickerIndex];
+				const selected = pickerHints[pickerIndex];
 				if (selected) {
+					if (mentionQuery && mentionHints.length > 0) {
+						setInput(replaceMentionQuery(input, mentionQuery, selected));
+						setCompletionKey((k) => k + 1);
+						return;
+					}
 					setInput('');
 					if (!handleCommand(selected)) {
 						onSubmit(selected);
@@ -420,8 +450,13 @@ function AppInner({
 				return;
 			}
 			if (key.tab) {
-				const selected = commandHints[pickerIndex];
+				const selected = pickerHints[pickerIndex];
 				if (selected) {
+					if (mentionQuery && mentionHints.length > 0) {
+						setInput(replaceMentionQuery(input, mentionQuery, selected));
+						setCompletionKey((k) => k + 1);
+						return;
+					}
 					setInput(selected);
 					setCompletionKey((k) => k + 1);
 				}
@@ -609,7 +644,7 @@ function AppInner({
 
 			{showPicker ? (
 				<Box flexShrink={0} flexDirection="column">
-					<CommandPicker hints={commandHints} selectedIndex={pickerIndex} />
+					<CommandPicker hints={pickerHints} selectedIndex={pickerIndex} title={pickerTitle} />
 				</Box>
 			) : null}
 

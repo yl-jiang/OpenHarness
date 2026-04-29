@@ -448,6 +448,43 @@ async def test_backend_host_emits_theme_select_request(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backend_host_emits_skill_select_request(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    skill_dir = tmp_path / "config" / "skills" / "review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: review\ndescription: Review changes carefully\n---\n\n# Review\nCheck the diff.",
+        encoding="utf-8",
+    )
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        await host._handle_select_command("skills")
+    finally:
+        await close_runtime(host._bundle)
+
+    event = next(item for item in events if item.type == "select_request")
+    assert event.modal["command"] == "skills"
+    assert event.modal["title"] == "Skills"
+    assert any(
+        option["value"] == "review"
+        and option["label"] == "review"
+        and "Review changes carefully" in option["description"]
+        for option in event.select_options
+    )
+
+
+@pytest.mark.asyncio
 async def test_backend_host_emits_turns_select_request_with_unlimited_option(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
@@ -520,6 +557,38 @@ async def test_backend_host_apply_select_command_shows_single_segment_transcript
     assert should_continue is True
     user_event = next(item for item in events if item.type == "transcript_item" and item.item and item.item.role == "user")
     assert user_event.item.text == "/theme"
+
+
+@pytest.mark.asyncio
+async def test_backend_host_maps_skill_selection_to_skills_command(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    skill_dir = tmp_path / "config" / "skills" / "review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: review\ndescription: Review changes carefully\n---\n\n# Review\nCheck the diff.",
+        encoding="utf-8",
+    )
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("loaded skill")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("loaded skill"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._apply_select_command("skills", "review")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    user_event = next(item for item in events if item.type == "transcript_item" and item.item and item.item.role == "user")
+    assert user_event.item.text == "/skills"
+    assert any(event.type == "assistant_complete" and event.message == "loaded skill" for event in events)
 
 
 @pytest.mark.asyncio

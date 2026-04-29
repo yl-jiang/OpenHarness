@@ -29,6 +29,7 @@ from openharness.api.provider import auth_status, detect_provider
 from openharness.config.settings import Settings, display_model_setting, load_settings, save_settings
 from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
 from openharness.engine.query_engine import QueryEngine
+from openharness.engine.types import ToolMetadataKey
 from openharness.memory import (
     add_memory_entry,
     get_memory_entrypoint,
@@ -249,6 +250,28 @@ def _render_plugin_command_prompt(command: PluginCommandDefinition, args: str, s
     if raw_args and "${ARGUMENTS}" not in command.content and "$ARGUMENTS" not in command.content:
         prompt = f"{prompt}\n\nArguments: {raw_args}"
     return prompt
+
+
+def _render_skill_load_prompt(skill, args: str) -> str:
+    lines = [f'<skill-context name="{skill.name}">']
+    if skill.path:
+        lines.extend([f"Base directory for this skill: {Path(skill.path).parent}", ""])
+    lines.append(skill.content)
+    raw_args = args.strip()
+    if raw_args:
+        lines.extend(["", f"Arguments: {raw_args}"])
+    lines.append("</skill-context>")
+    return "\n".join(lines)
+
+
+def _remember_loaded_skill(context: CommandContext, name: str) -> None:
+    bucket = context.engine.tool_metadata.setdefault(ToolMetadataKey.INVOKED_SKILLS.value, [])
+    if not isinstance(bucket, list):
+        bucket = []
+        context.engine.tool_metadata[ToolMetadataKey.INVOKED_SKILLS.value] = bucket
+    if name in bucket:
+        bucket.remove(name)
+    bucket.append(name)
 
 
 def create_default_command_registry(
@@ -748,19 +771,34 @@ def create_default_command_registry(
             extra_skill_dirs=context.extra_skill_dirs,
             extra_plugin_roots=context.extra_plugin_roots,
         )
-        if args:
-            skill = skill_registry.get(args)
+        tokens = args.split(maxsplit=2)
+        if not tokens or tokens[0] == "list":
+            skills = skill_registry.list_skills()
+            if not skills:
+                return CommandResult(message="No skills available.")
+            lines = ["Available skills:"]
+            for skill in skills:
+                source = f" [{skill.source}]"
+                lines.append(f"- {skill.name}{source}: {skill.description}")
+            return CommandResult(message="\n".join(lines))
+
+        if tokens[0] == "show":
+            if len(tokens) < 2:
+                return CommandResult(message="Usage: /skills show NAME")
+            skill = skill_registry.get(tokens[1])
             if skill is None:
-                return CommandResult(message=f"Skill not found: {args}")
+                return CommandResult(message=f"Skill not found: {tokens[1]}")
             return CommandResult(message=skill.content)
-        skills = skill_registry.list_skills()
-        if not skills:
-            return CommandResult(message="No skills available.")
-        lines = ["Available skills:"]
-        for skill in skills:
-            source = f" [{skill.source}]"
-            lines.append(f"- {skill.name}{source}: {skill.description}")
-        return CommandResult(message="\n".join(lines))
+
+        name, _, load_args = args.partition(" ")
+        skill = skill_registry.get(name)
+        if skill is None:
+            return CommandResult(message=f"Skill not found: {name}")
+        _remember_loaded_skill(context, skill.name)
+        return CommandResult(
+            message=f"Loaded skill: {skill.name}",
+            submit_prompt=_render_skill_load_prompt(skill, load_args),
+        )
 
     async def _config_handler(args: str, context: CommandContext) -> CommandResult:
         del context
