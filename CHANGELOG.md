@@ -26,6 +26,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- React TUI multiline composer now submits buffered text even when the current line is empty after `Shift+Enter`, so users can end a multi-line draft with a blank cursor line and still send the message.
 - React TUI `/skills` picker now supports in-modal keyboard filtering by skill name, so long skill lists can be narrowed down immediately without stepping through the full list with arrow keys.
 - React TUI `/skills` picker now pre-fills the selected skill as `/<skill-name> ` in the composer and waits for the user query, matching the intended skill-invocation flow instead of immediately loading the skill on selection.
 - React TUI slash autocomplete now includes direct `/<skill-name>` aliases alongside slash commands, so users can type a known skill prefix and complete or invoke it without opening the `/skills` picker first.

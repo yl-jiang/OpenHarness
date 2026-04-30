@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import * as AppModule from './App.js';
 
-import {resolveSelectModalChoice} from './App.js';
+import {buildSubmittedValue, resolveSelectModalChoice} from './App.js';
 
 test('prefills the composer after selecting a skill instead of applying the selection immediately', () => {
 	const result = resolveSelectModalChoice('skills', 'weekly-report');
@@ -46,4 +46,12 @@ test('filters /skills select options by skill name with case-insensitive matchin
 		).map((option) => option.value),
 		['weekly-report'],
 	);
+});
+
+test('builds a submittable multiline value when the current line is empty but prior lines exist', () => {
+	assert.equal(buildSubmittedValue('', ['first line', 'second line']), 'first line\nsecond line\n');
+});
+
+test('does not submit whitespace-only buffered lines', () => {
+	assert.equal(buildSubmittedValue('', ['', '   ']), null);
 });
