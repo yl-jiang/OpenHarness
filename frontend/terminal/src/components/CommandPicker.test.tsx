@@ -82,6 +82,8 @@ test('shows a side submenu for the selected command with child commands', async 
 	});
 
 	assert.match(output, /Commands/);
+	assert.match(output, /\/memory\s+›/);
+	assert.doesNotMatch(output, /\/clear\s+›/);
 	assert.match(output, /Subcommands/);
 	assert.match(output, /list/);
 	assert.match(output, /show/);
