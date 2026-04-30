@@ -96,6 +96,12 @@ export function resolveSelectModalChoice(
 	return {kind: 'apply', command, value};
 }
 
+export function buildSubmittedValue(value: string, extraInputLines: string[]): string | null {
+	const fullValue =
+		extraInputLines.length > 0 ? [...extraInputLines, value].join('\n') : value;
+	return fullValue.trim() ? fullValue : null;
+}
+
 export function App({config}: {config: FrontendConfig}): React.JSX.Element {
 	const initialTheme = String((config as Record<string, unknown>).theme ?? 'default');
 	return (
@@ -440,7 +446,7 @@ function AppInner({
 				setModalInput('');
 				return;
 			}
-			if (!session.modal && !session.busy && input.trim()) {
+			if (!session.modal && !session.busy && buildSubmittedValue(input, extraInputLines)) {
 				onSubmit(input);
 				return;
 			}
@@ -645,23 +651,22 @@ function AppInner({
 			setModalInput('');
 			return;
 		}
-		if (!value.trim() || session.busy || !session.ready) {
+		const submittedValue = buildSubmittedValue(value, extraInputLines);
+		if (!submittedValue || session.busy || !session.ready) {
 			return;
 		}
-		const fullValue =
-			extraInputLines.length > 0 ? [...extraInputLines, value].join('\n') : value;
 		// Submitting always returns to the live tail so the user sees their
 		// own message and the agent's reply.
 		scrollToBottom();
-		if (handleCommand(fullValue)) {
-			setHistory((items) => [...items, fullValue]);
+		if (handleCommand(submittedValue)) {
+			setHistory((items) => [...items, submittedValue]);
 			setHistoryIndex(-1);
 			setInput('');
 			setExtraInputLines([]);
 			return;
 		}
-		session.sendRequest({type: 'submit_line', line: fullValue});
-		setHistory((items) => [...items, fullValue]);
+		session.sendRequest({type: 'submit_line', line: submittedValue});
+		setHistory((items) => [...items, submittedValue]);
 		setHistoryIndex(-1);
 		setInput('');
 		setExtraInputLines([]);
