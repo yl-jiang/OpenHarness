@@ -146,7 +146,7 @@ def build_runtime_system_prompt(
 
     local_rules = load_local_rules()
     if local_rules:
-        sections.append(f"# Local Environment Rules\n\n{local_rules}")
+        sections.append(local_rules)
 
     for title, path in (
         ("Issue Context", get_project_issue_file(cwd)),
