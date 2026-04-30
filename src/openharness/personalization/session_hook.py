@@ -6,7 +6,7 @@ from openharness.utils.log import get_logger
 
 from openharness.engine.messages import ConversationMessage
 from openharness.personalization.extractor import (
-    extract_facts_from_text,
+    extract_local_rules,
     facts_to_rules_markdown,
 )
 from openharness.personalization.rules import (
@@ -30,19 +30,20 @@ def update_rules_from_session(messages: list[ConversationMessage]) -> int:
     Returns:
         Number of new facts found and persisted.
     """
-    # Collect all text from messages
-    all_text = []
+    extracted_messages: list[dict[str, object]] = []
     for msg in messages:
+        content: list[dict[str, str]] = []
         for block in msg.content:
-            text = getattr(block, "text", None) or getattr(block, "content", None) or ""
+            text = getattr(block, "text", None)
             if isinstance(text, str) and text:
-                all_text.append(text)
+                content.append({"type": "text", "text": text})
+        if content:
+            extracted_messages.append({"role": msg.role, "content": content})
 
-    if not all_text:
+    if not extracted_messages:
         return 0
 
-    combined = "\n".join(all_text)
-    new_facts = extract_facts_from_text(combined)
+    new_facts = extract_local_rules(extracted_messages)
     if not new_facts:
         return 0
 
