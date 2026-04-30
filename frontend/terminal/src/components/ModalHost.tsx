@@ -4,6 +4,97 @@ import stringWidth from 'string-width';
 import ScrollableTextInput from './ScrollableTextInput.js';
 import {useTerminalSize} from '../hooks/useTerminalSize.js';
 
+const MIN_REASON_WIDTH = 20;
+const MAX_PERMISSION_REASON_LINES = 4;
+
+type WrappedPreview = {
+	lines: string[];
+	hiddenLineCount: number;
+};
+
+function truncateWithEllipsis(value: string, maxWidth: number): string {
+	if (maxWidth <= 0) {
+		return '';
+	}
+	if (stringWidth(value) <= maxWidth) {
+		return value;
+	}
+	const ellipsis = '...';
+	const targetWidth = Math.max(0, maxWidth - stringWidth(ellipsis));
+	let output = '';
+	for (const char of value) {
+		if (stringWidth(output) + stringWidth(char) > targetWidth) {
+			break;
+		}
+		output += char;
+	}
+	return output.trimEnd() + ellipsis;
+}
+
+function wrapLine(line: string, maxWidth: number): string[] {
+	if (maxWidth <= 0) {
+		return [];
+	}
+	if (!line) {
+		return [''];
+	}
+
+	const wrapped: string[] = [];
+	let remaining = line;
+	while (remaining) {
+		if (stringWidth(remaining) <= maxWidth) {
+			wrapped.push(remaining);
+			break;
+		}
+
+		let sliceEnd = 0;
+		let usedWidth = 0;
+		let lastWhitespace = -1;
+		let offset = 0;
+		for (const char of remaining) {
+			const charWidth = stringWidth(char);
+			if (usedWidth + charWidth > maxWidth) {
+				break;
+			}
+			usedWidth += charWidth;
+			offset += char.length;
+			sliceEnd = offset;
+			if (/\s/.test(char)) {
+				lastWhitespace = offset;
+			}
+		}
+
+		if (sliceEnd === 0) {
+			break;
+		}
+
+		const breakAt = lastWhitespace > 0 ? lastWhitespace : sliceEnd;
+		const nextLine = remaining.slice(0, breakAt).trimEnd();
+		wrapped.push(nextLine);
+		remaining = remaining.slice(breakAt).trimStart();
+	}
+
+	return wrapped.length > 0 ? wrapped : [truncateWithEllipsis(line, maxWidth)];
+}
+
+function buildWrappedPreview(text: string, maxWidth: number, maxLines: number): WrappedPreview {
+	const wrapped = text
+		.replace(/\r/g, '')
+		.split('\n')
+		.flatMap((line) => wrapLine(line, maxWidth));
+
+	if (wrapped.length <= maxLines) {
+		return {lines: wrapped, hiddenLineCount: 0};
+	}
+
+	const visibleLines = wrapped.slice(0, maxLines);
+	visibleLines[maxLines - 1] = truncateWithEllipsis(visibleLines[maxLines - 1] ?? '', maxWidth);
+	return {
+		lines: visibleLines,
+		hiddenLineCount: wrapped.length - maxLines,
+	};
+}
+
 function WaitingAnimation(): React.JSX.Element {
 	// Kept as a static label to avoid forcing Ink redraws while waiting for
 	// user input — repeated stdout writes make most terminals snap the
@@ -104,6 +195,11 @@ function ModalHostInner({
 	const {cols} = useTerminalSize();
 
 	if (modal?.kind === 'permission') {
+		const reason = modal.reason ? String(modal.reason) : '';
+		const reasonWidth = Math.max(MIN_REASON_WIDTH, cols - 6);
+		const reasonPreview = reason
+			? buildWrappedPreview(reason, reasonWidth, MAX_PERMISSION_REASON_LINES)
+			: null;
 		return (
 			<Box flexDirection="column" marginTop={1}>
 				<Text>
@@ -112,10 +208,16 @@ function ModalHostInner({
 					<Text color="cyan" bold>{String(modal.tool_name ?? 'tool')}</Text>
 					<Text bold>?</Text>
 				</Text>
-				{modal.reason ? (
+				{reasonPreview?.lines.map((line, index) => (
+					<Text key={index}>
+						<Text color="yellow">{'\u2502 '}</Text>
+						<Text dimColor>{line}</Text>
+					</Text>
+				))}
+				{reasonPreview && reasonPreview.hiddenLineCount > 0 ? (
 					<Text>
 						<Text color="yellow">{'\u2502 '}</Text>
-						<Text dimColor>{String(modal.reason)}</Text>
+						<Text dimColor>... {reasonPreview.hiddenLineCount} more lines hidden</Text>
 					</Text>
 				) : null}
 				<Text>
