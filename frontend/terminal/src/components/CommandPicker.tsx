@@ -2,6 +2,7 @@ import React, {useMemo} from 'react';
 import {Box, Text} from 'ink';
 
 const MAX_VISIBLE = 10;
+const SUBMENU_MARKER = '›';
 
 export type CommandPickerModel = {
 	hints: string[];
@@ -81,11 +82,13 @@ function CommandPickerInner({
 				{visibleHints.map((hint, i) => {
 					const realIndex = windowStart + i;
 					const isSelected = realIndex === selectedIndex;
+					const hasSubHints = (subHintsByHint[hint] ?? []).length > 0;
 					return (
 						<Box key={hint}>
 							<Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
 								{isSelected ? '\u276F ' : '  '}
 								{hint}
+								{hasSubHints ? ` ${SUBMENU_MARKER}` : ''}
 							</Text>
 							{isSelected ? <Text dimColor> [enter]</Text> : null}
 						</Box>
