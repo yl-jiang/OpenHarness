@@ -132,3 +132,36 @@ test('wraps long descriptions under the skill name', async () => {
 	assert.ok(nameIndex >= 0, output);
 	assert.match(lines[nameIndex + 1] ?? '', /This description is intentionally/);
 });
+
+test('shows the active skill-name filter and empty-state message when no skills match', async () => {
+	const stdout = createTestStdout(120);
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+
+	const instance = render(
+		React.createElement(SelectModal as unknown as React.ComponentType<Record<string, unknown>>, {
+			title: 'Skills',
+			options: [],
+			selectedIndex: 0,
+			query: 'abc',
+			filterLabel: 'Skill name filter',
+			emptyStateLabel: 'No matching skills.',
+		}),
+		{
+			stdout: stdout as unknown as NodeJS.WriteStream,
+			debug: true,
+			patchConsole: false,
+		},
+	);
+
+	const exitPromise = instance.waitUntilExit();
+	const stableOutput = stripAnsi(await waitForOutputToStabilize(() => output));
+	instance.unmount();
+	await exitPromise;
+	instance.cleanup();
+
+	assert.match(stableOutput, /Skill name filter: abc/);
+	assert.match(stableOutput, /No matching skills\./);
+});

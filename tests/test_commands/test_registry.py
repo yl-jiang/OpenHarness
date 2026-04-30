@@ -17,6 +17,7 @@ from openharness.engine.types import ToolMetadataKey
 from openharness.mcp.types import McpHttpServerConfig, McpStdioServerConfig
 from openharness.permissions import PermissionChecker
 from openharness.plugins.types import PluginCommandDefinition
+from openharness.skills.types import SkillDefinition
 from openharness.state import AppState, AppStateStore
 from openharness.tasks import get_task_manager
 from openharness.tools import create_default_tool_registry
@@ -286,11 +287,89 @@ async def test_skills_command_manually_loads_skill_as_submit_prompt(tmp_path: Pa
 
     assert result.message == "Loaded skill: review"
     assert result.submit_prompt is not None
-    assert '<skill-context name="review">' in result.submit_prompt
-    assert "Base directory for this skill:" in result.submit_prompt
+    assert "Base directory for this skill:" not in result.submit_prompt
     assert "# Review\nCheck the diff." in result.submit_prompt
-    assert "Arguments: api" in result.submit_prompt
+    assert result.submit_prompt.endswith("\n\napi")
     assert context.engine.tool_metadata[ToolMetadataKey.INVOKED_SKILLS.value] == ["review"]
+
+
+@pytest.mark.asyncio
+async def test_skill_alias_command_loads_skill_as_submit_prompt(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skill_dir = tmp_path / "config" / "skills" / "weekly-report"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: weekly-report\ndescription: Summarize weekly work\n---\n\n# Weekly Report\nSummarize the week.",
+        encoding="utf-8",
+    )
+
+    context = _make_context(tmp_path)
+
+    result = registry_module.resolve_skill_alias_command("/weekly-report what shipped this week?", context)
+
+    assert result is not None
+    assert result.message == "Loaded skill: weekly-report"
+    assert result.submit_prompt is not None
+    assert "Base directory for this skill:" not in result.submit_prompt
+    assert "# Weekly Report\nSummarize the week." in result.submit_prompt
+    assert result.submit_prompt.endswith("\n\nwhat shipped this week?")
+    assert context.engine.tool_metadata[ToolMetadataKey.INVOKED_SKILLS.value] == ["weekly-report"]
+
+
+def test_render_skill_load_prompt_replaces_numbered_placeholders_with_greedy_last_argument() -> None:
+    skill = SkillDefinition(
+        name="translate",
+        description="Translate text",
+        content="请将以下内容翻译成 $1：\n\n$2",
+        source="user",
+        path="/tmp/skills/translate/SKILL.md",
+    )
+
+    result = registry_module._render_skill_load_prompt(skill, "中文 Hello world this is a test")
+
+    assert result == "请将以下内容翻译成 中文：\n\nHello world this is a test"
+
+
+def test_render_skill_load_prompt_uses_raw_arguments_placeholder_without_tokenizing() -> None:
+    skill = SkillDefinition(
+        name="ask",
+        description="Answer questions",
+        content="请根据以下问题给出详细解答：\n\n$ARGUMENTS",
+        source="user",
+    )
+
+    result = registry_module._render_skill_load_prompt(skill, '"什么是量子计算" 和 "量子纠缠" 的区别')
+
+    assert result == '请根据以下问题给出详细解答：\n\n"什么是量子计算" 和 "量子纠缠" 的区别'
+
+
+def test_render_skill_load_prompt_appends_raw_arguments_when_template_has_no_placeholders() -> None:
+    skill = SkillDefinition(
+        name="review",
+        description="Review code",
+        content="你是一位专业的代码审查专家。请审查用户提供的代码，找出潜在的问题。",
+        source="user",
+    )
+
+    result = registry_module._render_skill_load_prompt(skill, "function foo() { return null; }")
+
+    assert result == (
+        "你是一位专业的代码审查专家。请审查用户提供的代码，找出潜在的问题。\n\n"
+        "function foo() { return null; }"
+    )
+
+
+def test_render_skill_load_prompt_respects_quoted_arguments_for_fixed_placeholders() -> None:
+    skill = SkillDefinition(
+        name="translate",
+        description="Translate text",
+        content="目标语言：$1\n语气：$2\n内容：$3",
+        source="user",
+    )
+
+    result = registry_module._render_skill_load_prompt(skill, '中文 正式 "Hello world"')
+
+    assert result == "目标语言：中文\n语气：正式\n内容：Hello world"
 
 
 @pytest.mark.asyncio

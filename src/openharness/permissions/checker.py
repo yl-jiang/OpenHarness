@@ -145,6 +145,7 @@ class PermissionChecker:
             )
 
         # Check path-level rules
+        matched_allow_rule: str | None = None
         if file_path and self._path_rules:
             for candidate_path in _policy_match_paths(file_path):
                 for rule in self._path_rules:
@@ -157,6 +158,7 @@ class PermissionChecker:
                                 patterns=patterns,
                                 always_patterns=always_patterns,
                             )
+                        matched_allow_rule = rule.pattern
 
         # Check command deny patterns (e.g. deny "rm -rf /")
         if command:
@@ -169,6 +171,15 @@ class PermissionChecker:
                         patterns=patterns,
                         always_patterns=always_patterns,
                     )
+
+        if matched_allow_rule and is_read_only:
+            return PermissionDecision(
+                allowed=True,
+                reason=f"Path {file_path} matches allow rule: {matched_allow_rule}",
+                permission=permission,
+                patterns=patterns,
+                always_patterns=always_patterns,
+            )
 
         if self._is_remembered_allowed(permission, patterns):
             return PermissionDecision(

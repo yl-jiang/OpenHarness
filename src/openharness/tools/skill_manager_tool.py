@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import re
 import shutil
+import subprocess
 from dataclasses import dataclass, field as dataclass_field
+from pathlib import Path
 from typing import Any, Literal, Optional
 
 import yaml
@@ -15,6 +17,7 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 _MAX_CONTENT_CHARS = 100_000
+_SKILL_FILE_SAMPLE_LIMIT = 10
 
 
 @dataclass
@@ -144,6 +147,69 @@ def _validate_frontmatter(content: str) -> str | None:
         )
 
     return None
+
+
+def _sample_skill_files(skill_dir: Path, *, limit: int = _SKILL_FILE_SAMPLE_LIMIT) -> list[str]:
+    if limit <= 0:
+        return []
+
+    files: list[str] = []
+    process = subprocess.Popen(
+        ["rg", "--files", "--hidden"],
+        cwd=skill_dir,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+    )
+    stdout = process.stdout
+    if stdout is None:
+        process.wait(timeout=1)
+        return files
+
+    try:
+        while len(files) < limit:
+            line = stdout.readline()
+            if not line:
+                break
+            relative = line.strip()
+            if not relative or Path(relative).name.lower() == "skill.md":
+                continue
+            files.append(str((skill_dir / relative).resolve()))
+    finally:
+        close = getattr(stdout, "close", None)
+        if callable(close):
+            close()
+        if len(files) >= limit:
+            process.terminate()
+        process.wait(timeout=1)
+    return files
+
+
+def _format_loaded_skill_output(name: str, content: str, path: str | None) -> tuple[str, dict[str, Any]]:
+    if not path:
+        return content, {}
+
+    skill_path = Path(path)
+    if skill_path.name.lower() != "skill.md":
+        return content, {}
+
+    skill_dir = skill_path.parent.resolve()
+    files = _sample_skill_files(skill_dir)
+    parts = [
+        f'<skill_content name="{name}">',
+        f"# Skill: {name}",
+        "",
+        content.rstrip(),
+        "",
+        f"Base directory for this skill: {skill_dir.as_uri()}",
+        "Relative paths in this skill (e.g., scripts/, references/) are relative to this base directory.",
+        "Note: file list is sampled.",
+        "",
+        "<skill_files>",
+    ]
+    parts.extend(f"<file>{file_path}</file>" for file_path in files)
+    parts.extend(["</skill_files>", "</skill_content>"])
+    return "\n".join(parts), {"skill_name": name, "skill_dir": str(skill_dir)}
 
 
 class SkillManagerToolInput(BaseModel):
@@ -352,7 +418,8 @@ class SkillManagerTool(BaseTool):
                 output=f"Skill not found: '{arguments.name}'. {hint}",
                 is_error=True,
             )
-        return ToolResult(output=skill.content)
+        output, metadata = _format_loaded_skill_output(skill.name, skill.content, skill.path)
+        return ToolResult(output=output, metadata=metadata)
 
     # ── write ────────────────────────────────────────────────────────────────
 

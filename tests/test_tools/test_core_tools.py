@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import openharness.tools.skill_manager_tool as skill_manager_module
 from openharness.tools.bash_tool import BashTool, BashToolInput
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.brief_tool import BriefTool, BriefToolInput
@@ -448,6 +449,91 @@ async def test_write_skill_immediately_loadable(tmp_path: Path, monkeypatch):
     )
     assert load_result.is_error is False
     assert "Test content here." in load_result.output
+
+
+@pytest.mark.asyncio
+async def test_load_skill_includes_base_directory_and_sampled_files(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    ctx = ToolExecutionContext(cwd=tmp_path)
+    skill_dir = tmp_path / "config" / "skills" / "research"
+    (skill_dir / "references").mkdir(parents=True)
+    (skill_dir / "scripts").mkdir()
+    (skill_dir / "templates").mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: research\ndescription: Research workflow\n---\n\n# Research\nUse references on demand.\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "references" / "guide.md").write_text(
+        "This text must stay lazy-loaded.",
+        encoding="utf-8",
+    )
+    (skill_dir / "scripts" / "demo.sh").write_text("#!/usr/bin/env bash\necho demo\n", encoding="utf-8")
+    (skill_dir / "templates" / "prompt.txt").write_text("Template body", encoding="utf-8")
+
+    load_result = await SkillManagerTool().execute(
+        SkillManagerToolInput(action="load", name="research"),
+        ctx,
+    )
+    expected_base = skill_dir.resolve().as_uri()
+
+    assert load_result.is_error is False
+    assert '<skill_content name="research">' in load_result.output
+    assert f"Base directory for this skill: {expected_base}" in load_result.output
+    assert "Relative paths in this skill" in load_result.output
+    assert "<skill_files>" in load_result.output
+    assert f"<file>{skill_dir / 'references' / 'guide.md'}</file>" in load_result.output
+    assert f"<file>{skill_dir / 'scripts' / 'demo.sh'}</file>" in load_result.output
+    assert f"<file>{skill_dir / 'SKILL.md'}</file>" not in load_result.output
+    assert "This text must stay lazy-loaded." not in load_result.output
+    assert load_result.metadata == {
+        "skill_name": "research",
+        "skill_dir": str(skill_dir.resolve()),
+    }
+
+
+def test_sample_skill_files_uses_rg_and_stops_at_limit(tmp_path: Path, monkeypatch):
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.stdout = self
+            self._lines = iter(
+                [
+                    "SKILL.md\n",
+                    "references/guide.md\n",
+                    ".hidden/config.json\n",
+                    "scripts/demo.sh\n",
+                    "",
+                ]
+            )
+            self.terminated = False
+            self.wait_called = False
+
+        def readline(self) -> str:
+            return next(self._lines)
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            self.wait_called = True
+            return 0
+
+    fake_process = _FakeProcess()
+
+    def _fake_popen(*args, **kwargs):
+        del args, kwargs
+        return fake_process
+
+    monkeypatch.setattr(skill_manager_module.subprocess, "Popen", _fake_popen)
+
+    files = skill_manager_module._sample_skill_files(tmp_path, limit=2)
+
+    assert files == [
+        str((tmp_path / "references" / "guide.md").resolve()),
+        str((tmp_path / ".hidden" / "config.json").resolve()),
+    ]
+    assert fake_process.terminated is True
+    assert fake_process.wait_called is True
 
 
 @pytest.mark.asyncio
