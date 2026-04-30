@@ -51,9 +51,50 @@ const ACTIVE_BACKGROUND_TASK_STATUSES = new Set(['pending', 'running']);
 
 type SelectModalState = {
 	title: string;
+	command: string;
 	options: SelectOption[];
 	onSelect: (value: string) => void;
 } | null;
+
+function normalizeSelectModalCommand(command: string): string {
+	return command.trim().replace(/^\/+/, '').toLowerCase();
+}
+
+function supportsSelectModalFilter(command: string): boolean {
+	return normalizeSelectModalCommand(command) === 'skills';
+}
+
+export function filterSelectModalOptions(
+	command: string,
+	options: SelectOption[],
+	query: string,
+): SelectOption[] {
+	if (!supportsSelectModalFilter(command)) {
+		return options;
+	}
+
+	const normalizedQuery = query.trim().toLowerCase();
+	if (!normalizedQuery) {
+		return options;
+	}
+
+	return options.filter((option) => {
+		const skillName = (option.label || option.value).trim().toLowerCase();
+		return skillName.includes(normalizedQuery);
+	});
+}
+
+export function resolveSelectModalChoice(
+	command: string,
+	value: string,
+): {kind: 'prefill'; input: string} | {kind: 'apply'; command: string; value: string} {
+	const normalizedCommand = normalizeSelectModalCommand(command);
+	const normalizedValue = value.trim();
+	if (normalizedCommand === 'skills') {
+		return {kind: 'prefill', input: normalizedValue ? `/${normalizedValue} ` : '/'};
+	}
+	return {kind: 'apply', command, value};
+}
 
 export function App({config}: {config: FrontendConfig}): React.JSX.Element {
 	const initialTheme = String((config as Record<string, unknown>).theme ?? 'default');
@@ -105,7 +146,14 @@ function AppInner({
 	const [pickerIndex, setPickerIndex] = useState(0);
 	const [selectModal, setSelectModal] = useState<SelectModalState>(null);
 	const [selectIndex, setSelectIndex] = useState(0);
+	const [selectQuery, setSelectQuery] = useState('');
 	const [mentionFiles, setMentionFiles] = useState<string[]>([]);
+
+	const visibleSelectOptions = useMemo(
+		() => (selectModal ? filterSelectModalOptions(selectModal.command, selectModal.options, selectQuery) : []),
+		[selectModal, selectQuery],
+	);
+	const selectModalSupportsFilter = selectModal ? supportsSelectModalFilter(selectModal.command) : false;
 
 	// Scroll state (line-level via ref to ConversationView).
 	// `paused` is mirrored from ConversationView via onPauseChange; we keep
@@ -151,7 +199,7 @@ function AppInner({
 
 	useMouseWheel((delta) => {
 		if (selectModal) {
-			setSelectIndex((i) => nextSelectIndexForWheel(i, delta, selectModal.options.length));
+			setSelectIndex((i) => nextSelectIndexForWheel(i, delta, visibleSelectOptions.length));
 			return;
 		}
 		if (delta < 0) scrollUp(3);
@@ -221,17 +269,43 @@ function AppInner({
 		}
 		const initialIndex = req.options.findIndex((option) => option.active);
 		setSelectIndex(initialIndex >= 0 ? initialIndex : 0);
+		setSelectQuery('');
 		setSelectModal({
 			title: req.title,
+			command: req.command,
 			options: req.options.map((o) => ({value: o.value, label: o.label, description: o.description, active: o.active})),
 			onSelect: (value) => {
-				session.sendRequest({type: 'apply_select_command', command: req.command, value});
+				const selection = resolveSelectModalChoice(req.command, value);
+				if (selection.kind === 'prefill') {
+					setInput(selection.input);
+					setExtraInputLines([]);
+					setHistoryIndex(-1);
+					setCompletionKey((key) => key + 1);
+					setSelectModal(null);
+					return;
+				}
+				session.sendRequest({type: 'apply_select_command', command: selection.command, value: selection.value});
 				session.setBusy(true);
 				setSelectModal(null);
 			},
 		});
 		session.setSelectRequest(null);
 	}, [session.selectRequest]);
+
+	useEffect(() => {
+		if (!selectModal) {
+			return;
+		}
+		if (visibleSelectOptions.length === 0) {
+			if (selectIndex !== 0) {
+				setSelectIndex(0);
+			}
+			return;
+		}
+		if (selectIndex >= visibleSelectOptions.length) {
+			setSelectIndex(visibleSelectOptions.length - 1);
+		}
+	}, [selectIndex, selectModal, visibleSelectOptions.length]);
 
 	// Intercept special commands that need interactive UI
 	const handleCommand = (cmd: string): boolean => {
@@ -301,10 +375,6 @@ function AppInner({
 			return;
 		}
 
-		if (isPaste) {
-			return;
-		}
-
 		// --- Select modal (permissions picker etc.) ---
 		if (selectModal) {
 			if (key.upArrow) {
@@ -312,28 +382,46 @@ function AppInner({
 				return;
 			}
 			if (key.downArrow) {
-				setSelectIndex((i) => Math.min(selectModal.options.length - 1, i + 1));
+				setSelectIndex((i) => Math.min(Math.max(visibleSelectOptions.length - 1, 0), i + 1));
 				return;
 			}
 			if (key.return) {
-				const selected = selectModal.options[selectIndex];
+				const selected = visibleSelectOptions[selectIndex];
 				if (selected) {
 					selectModal.onSelect(selected.value);
 				}
 				return;
 			}
 			if (key.escape) {
+				setSelectQuery('');
 				setSelectModal(null);
 				return;
 			}
-			const num = parseInt(chunk, 10);
-			if (num >= 1 && num <= selectModal.options.length) {
-				const selected = selectModal.options[num - 1];
-				if (selected) {
-					selectModal.onSelect(selected.value);
+			if (selectModalSupportsFilter) {
+				if (key.backspace || key.delete) {
+					setSelectQuery((current) => current.slice(0, -1));
+					setSelectIndex(0);
+					return;
 				}
-				return;
+				if (!key.ctrl && !key.meta && !key.tab && chunk) {
+					setSelectQuery((current) => current + chunk);
+					setSelectIndex(0);
+					return;
+				}
+			} else {
+				const num = parseInt(chunk, 10);
+				if (num >= 1 && num <= selectModal.options.length) {
+					const selected = selectModal.options[num - 1];
+					if (selected) {
+						selectModal.onSelect(selected.value);
+					}
+					return;
+				}
 			}
+			return;
+		}
+
+		if (isPaste) {
 			return;
 		}
 
@@ -637,7 +725,14 @@ function AppInner({
 
 			{selectModal ? (
 				<Box flexShrink={0} flexDirection="column">
-					<SelectModal title={selectModal.title} options={selectModal.options} selectedIndex={selectIndex} />
+					<SelectModal
+						title={selectModal.title}
+						options={visibleSelectOptions}
+						selectedIndex={selectIndex}
+						query={selectModalSupportsFilter ? selectQuery : undefined}
+						filterLabel={selectModalSupportsFilter ? 'Skill name filter' : undefined}
+						emptyStateLabel={selectModalSupportsFilter ? 'No matching skills.' : undefined}
+					/>
 				</Box>
 			) : null}
 

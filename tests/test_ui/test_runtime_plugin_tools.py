@@ -65,3 +65,22 @@ async def test_build_runtime_registers_enabled_plugin_tools(tmp_path: Path, monk
         assert tool.description == "Echo from plugin tool"
     finally:
         await close_runtime(bundle)
+
+
+@pytest.mark.asyncio
+async def test_build_runtime_whitelists_skill_directories_in_permission_checker(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skill_dir = tmp_path / "config" / "skills" / "review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: review\ndescription: Review changes\n---\n\n# Review\nRead sibling resources lazily.\n",
+        encoding="utf-8",
+    )
+
+    bundle = await build_runtime(cwd=str(tmp_path), api_client=_StaticApiClient())
+    try:
+        checker = bundle.engine._permission_checker
+        patterns = {rule.pattern for rule in checker._path_rules if rule.allow}
+        assert str((skill_dir / "*").resolve()) in patterns
+    finally:
+        await close_runtime(bundle)

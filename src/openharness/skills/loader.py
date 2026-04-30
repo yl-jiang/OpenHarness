@@ -9,7 +9,7 @@ from typing import Iterable
 import yaml
 
 from openharness.config.paths import get_config_dir
-from openharness.config.settings import load_settings
+from openharness.config.settings import PathRuleConfig, load_settings
 from openharness.skills.bundled import get_bundled_skills
 from openharness.skills.registry import SkillRegistry
 from openharness.skills.types import SkillDefinition
@@ -49,6 +49,32 @@ def load_skill_registry(
             for skill in plugin.skills:
                 registry.register(skill)
     return registry
+
+
+def apply_skill_path_rules(
+    permission_settings,
+    *,
+    cwd: str | Path | None = None,
+    extra_skill_dirs: Iterable[str | Path] | None = None,
+    extra_plugin_roots: Iterable[str | Path] | None = None,
+    settings=None,
+) -> None:
+    """Augment permission settings with allow rules for discovered skill directories."""
+    registry = load_skill_registry(
+        cwd,
+        extra_skill_dirs=extra_skill_dirs,
+        extra_plugin_roots=extra_plugin_roots,
+        settings=settings,
+    )
+    existing_patterns = {rule.pattern for rule in permission_settings.path_rules}
+    for skill in registry.list_skills():
+        if not skill.path:
+            continue
+        pattern = str((Path(skill.path).resolve().parent / "*").resolve())
+        if pattern in existing_patterns:
+            continue
+        permission_settings.path_rules.append(PathRuleConfig(pattern=pattern, allow=True))
+        existing_patterns.add(pattern)
 
 
 def load_user_skills() -> list[SkillDefinition]:

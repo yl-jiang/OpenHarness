@@ -15,6 +15,7 @@ from openharness.api.openai_client import OpenAICompatibleClient
 from openharness.api.provider import auth_status, detect_provider
 from openharness.bridge import get_bridge_manager
 from openharness.commands import CommandContext, CommandResult, MemoryCommandBackend, create_default_command_registry
+from openharness.commands.registry import resolve_skill_alias_command
 from openharness.config import get_config_file_path, load_settings
 from openharness.engine import QueryEngine
 from openharness.engine.messages import (
@@ -41,6 +42,7 @@ from openharness.permissions import PermissionChecker
 from openharness.plugins import load_plugins
 from openharness.prompts import build_runtime_system_prompt
 from openharness.prompts.environment import detect_git_info
+from openharness.skills.loader import apply_skill_path_rules
 from openharness.state import AppState, AppStateStore
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
 from openharness.tools import ToolRegistry, create_default_tool_registry
@@ -359,6 +361,13 @@ async def build_runtime(
         provider_name=provider.name,
     )
 
+    apply_skill_path_rules(
+        settings.permission,
+        cwd=cwd,
+        extra_skill_dirs=normalized_skill_dirs,
+        extra_plugin_roots=normalized_plugin_roots,
+        settings=settings,
+    )
     permission_checker = PermissionChecker(settings.permission)
 
     # Create and register the memory provider manager.
@@ -643,27 +652,30 @@ async def handle_line(
             load_hook_registry(bundle.current_settings(), bundle.current_plugins())
         )
 
+    context = CommandContext(
+        engine=bundle.engine,
+        hooks_summary=bundle.hook_summary(),
+        mcp_summary=bundle.mcp_summary(),
+        plugin_summary=bundle.plugin_summary(),
+        cwd=bundle.cwd,
+        tool_registry=bundle.tool_registry,
+        app_state=bundle.app_state,
+        session_backend=bundle.session_backend,
+        session_id=bundle.session_id,
+        extra_skill_dirs=bundle.extra_skill_dirs,
+        extra_plugin_roots=bundle.extra_plugin_roots,
+        memory_backend=bundle.memory_backend,
+        include_project_memory=bundle.include_project_memory,
+    )
     parsed = bundle.commands.lookup(line)
+    result: CommandResult | None = None
     if parsed is not None:
         command, args = parsed
-        result = await command.handler(
-            args,
-            CommandContext(
-                engine=bundle.engine,
-                hooks_summary=bundle.hook_summary(),
-                mcp_summary=bundle.mcp_summary(),
-                plugin_summary=bundle.plugin_summary(),
-                cwd=bundle.cwd,
-                tool_registry=bundle.tool_registry,
-                app_state=bundle.app_state,
-                session_backend=bundle.session_backend,
-                session_id=bundle.session_id,
-                extra_skill_dirs=bundle.extra_skill_dirs,
-                extra_plugin_roots=bundle.extra_plugin_roots,
-                memory_backend=bundle.memory_backend,
-                include_project_memory=bundle.include_project_memory,
-            ),
-        )
+        result = await command.handler(args, context)
+    elif line.startswith("/"):
+        result = resolve_skill_alias_command(line, context)
+
+    if result is not None:
         if result.refresh_runtime:
             refresh_runtime_client(bundle)
         await _render_command_result(result, print_system, clear_output, render_event)

@@ -180,6 +180,21 @@ def test_valid_allow_rule_is_added():
     assert checker._path_rules[0].allow is True
 
 
+def test_valid_allow_rule_short_circuits_read_only_with_specific_reason():
+    rule = PathRuleConfig(pattern="/data/*", allow=True)
+    settings = PermissionSettings(
+        mode=PermissionMode.DEFAULT,
+        path_rules=[rule],
+    )
+    checker = PermissionChecker(settings)
+
+    decision = checker.evaluate("read_file", is_read_only=True, file_path="/data/guide.md")
+
+    assert decision.allowed is True
+    assert decision.requires_confirmation is False
+    assert "matches allow rule" in decision.reason
+
+
 def test_pattern_with_surrounding_whitespace_is_stripped():
     """A pattern with leading/trailing whitespace is accepted with whitespace stripped."""
     rule = PathRuleConfig.model_construct(pattern="  /etc/*  ", allow=False)

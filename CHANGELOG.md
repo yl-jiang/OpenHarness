@@ -26,6 +26,8 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- React TUI `/skills` picker now supports in-modal keyboard filtering by skill name, so long skill lists can be narrowed down immediately without stepping through the full list with arrow keys.
+- React TUI `/skills` picker now pre-fills the selected skill as `/<skill-name> ` in the composer and waits for the user query, matching the intended skill-invocation flow instead of immediately loading the skill on selection.
 - React TUI select menus now window long option lists, show skill descriptions below names with wrapping indentation, and highlight the selected option.
 - React TUI slash command picker now groups subcommands under their root command and previews them in a side submenu.
 - React TUI question modal input now preserves Shift-modified printable keys from terminals that emit modifyOtherKeys/CSI-u sequences.

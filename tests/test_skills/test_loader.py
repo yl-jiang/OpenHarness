@@ -33,6 +33,34 @@ def test_load_skill_registry_includes_user_skills(tmp_path: Path, monkeypatch):
     assert "Deployment workflow guidance" in deploy.content
 
 
+def test_load_skill_registry_ignores_sibling_resource_files(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    skills_dir = get_user_skills_dir()
+    review_dir = skills_dir / "review"
+    (review_dir / "references").mkdir(parents=True)
+    (review_dir / "templates").mkdir()
+    (review_dir / "SKILL.md").write_text(
+        "# Review\nRead sibling resources on demand.\n",
+        encoding="utf-8",
+    )
+    (review_dir / "references" / "guide.md").write_text(
+        "This file should not be loaded during discovery.\n",
+        encoding="utf-8",
+    )
+    (review_dir / "templates" / "prompt.txt").write_text(
+        "This is an auxiliary template.\n",
+        encoding="utf-8",
+    )
+
+    registry = load_skill_registry()
+    review = registry.get("Review")
+
+    assert review is not None
+    assert review.path == str(review_dir / "SKILL.md")
+    assert "Read sibling resources on demand." in review.content
+    assert "This file should not be loaded during discovery." not in review.content
+
+
 # --- parse_skill_markdown unit tests ---
 
 

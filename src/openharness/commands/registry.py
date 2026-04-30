@@ -51,6 +51,7 @@ from openharness.services import (
 )
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
 from openharness.skills import load_skill_registry
+from openharness.skills.loader import apply_skill_path_rules
 from openharness.tasks import get_task_manager
 from openharness.plugins.types import PluginCommandDefinition
 from openharness.version import get_openharness_version
@@ -252,16 +253,40 @@ def _render_plugin_command_prompt(command: PluginCommandDefinition, args: str, s
     return prompt
 
 
-def _render_skill_load_prompt(skill, args: str) -> str:
-    lines = [f'<skill-context name="{skill.name}">']
-    if skill.path:
-        lines.extend([f"Base directory for this skill: {Path(skill.path).parent}", ""])
-    lines.append(skill.content)
+_SKILL_ARG_REGEX = re.compile(r"""(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)""")
+_SKILL_PLACEHOLDER_REGEX = re.compile(r"\$(\d+)")
+
+
+def _tokenize_skill_arguments(raw_args: str) -> list[str]:
+    tokens = _SKILL_ARG_REGEX.findall(raw_args)
+    return [re.sub(r'^["\']|["\']$', "", token) for token in tokens]
+
+
+def _render_skill_template(template: str, args: str) -> str:
     raw_args = args.strip()
-    if raw_args:
-        lines.extend(["", f"Arguments: {raw_args}"])
-    lines.append("</skill-context>")
-    return "\n".join(lines)
+    tokens = _tokenize_skill_arguments(raw_args)
+    placeholders = [int(match) for match in _SKILL_PLACEHOLDER_REGEX.findall(template)]
+    last_placeholder = max(placeholders, default=0)
+
+    def replace_placeholder(match: re.Match[str]) -> str:
+        position = int(match.group(1))
+        index = position - 1
+        if index >= len(tokens):
+            return ""
+        if position == last_placeholder:
+            return " ".join(tokens[index:])
+        return tokens[index]
+
+    rendered = _SKILL_PLACEHOLDER_REGEX.sub(replace_placeholder, template)
+    uses_arguments_placeholder = "${ARGUMENTS}" in template or "$ARGUMENTS" in template
+    rendered = rendered.replace("${ARGUMENTS}", raw_args).replace("$ARGUMENTS", raw_args)
+    if not placeholders and not uses_arguments_placeholder and raw_args:
+        rendered = f"{rendered}\n\n{raw_args}"
+    return rendered
+
+
+def _render_skill_load_prompt(skill, args: str) -> str:
+    return _render_skill_template(skill.content, args)
 
 
 def _remember_loaded_skill(context: CommandContext, name: str) -> None:
@@ -272,6 +297,41 @@ def _remember_loaded_skill(context: CommandContext, name: str) -> None:
     if name in bucket:
         bucket.remove(name)
     bucket.append(name)
+
+
+def _build_permission_checker(settings, context: CommandContext) -> PermissionChecker:
+    apply_skill_path_rules(
+        settings.permission,
+        cwd=context.cwd,
+        extra_skill_dirs=context.extra_skill_dirs,
+        extra_plugin_roots=context.extra_plugin_roots,
+        settings=settings,
+    )
+    return PermissionChecker(settings.permission)
+
+
+def resolve_skill_alias_command(raw_input: str, context: CommandContext) -> CommandResult | None:
+    """Resolve ``/<skill-name> ...`` as a direct skill invocation."""
+
+    if not raw_input.startswith("/"):
+        return None
+    name, _, args = raw_input[1:].partition(" ")
+    skill_name = name.strip()
+    if not skill_name or skill_name == "skills":
+        return None
+    registry = load_skill_registry(
+        context.cwd,
+        extra_skill_dirs=context.extra_skill_dirs,
+        extra_plugin_roots=context.extra_plugin_roots,
+    )
+    skill = registry.get(skill_name)
+    if skill is None:
+        return None
+    _remember_loaded_skill(context, skill.name)
+    return CommandResult(
+        message=f"Loaded skill: {skill.name}",
+        submit_prompt=_render_skill_load_prompt(skill, args),
+    )
 
 
 def create_default_command_registry(
@@ -1152,7 +1212,7 @@ def create_default_command_registry(
         if target_mode is not None:
             settings.permission.mode = PermissionMode(target_mode)
             save_settings(settings)
-            context.engine.set_permission_checker(PermissionChecker(settings.permission))
+            context.engine.set_permission_checker(_build_permission_checker(settings, context))
             if context.app_state is not None:
                 context.app_state.set(permission_mode=settings.permission.mode.value)
             label = _MODE_LABELS.get(target_mode, target_mode)
@@ -1165,14 +1225,14 @@ def create_default_command_registry(
         if mode in {"on", "enter"}:
             settings.permission.mode = PermissionMode.PLAN
             save_settings(settings)
-            context.engine.set_permission_checker(PermissionChecker(settings.permission))
+            context.engine.set_permission_checker(_build_permission_checker(settings, context))
             if context.app_state is not None:
                 context.app_state.set(permission_mode=settings.permission.mode.value)
             return CommandResult(message="Plan mode enabled.", refresh_runtime=True)
         if mode in {"off", "exit"}:
             settings.permission.mode = PermissionMode.DEFAULT
             save_settings(settings)
-            context.engine.set_permission_checker(PermissionChecker(settings.permission))
+            context.engine.set_permission_checker(_build_permission_checker(settings, context))
             if context.app_state is not None:
                 context.app_state.set(permission_mode=settings.permission.mode.value)
             return CommandResult(message="Plan mode disabled.", refresh_runtime=True)
