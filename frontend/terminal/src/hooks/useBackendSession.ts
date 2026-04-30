@@ -27,6 +27,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	const [status, setStatus] = useState<Record<string, unknown>>({});
 	const [tasks, setTasks] = useState<TaskSnapshot[]>([]);
 	const [commands, setCommands] = useState<string[]>([]);
+	const [skills, setSkills] = useState<string[]>([]);
 	const [mcpServers, setMcpServers] = useState<McpServerSnapshot[]>([]);
 	const [bridgeSessions, setBridgeSessions] = useState<BridgeSessionSnapshot[]>([]);
 	const [modal, setModal] = useState<Record<string, unknown> | null>(null);
@@ -192,6 +193,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 				setTasks(event.tasks ?? []);
 			});
 			setCommands(event.commands ?? []);
+			setSkills(event.skills ?? []);
 			const mcpSnapshot = stableStringify(event.mcp_servers ?? []);
 			lastMcpSnapshotRef.current = mcpSnapshot;
 			startTransition(() => {
@@ -232,6 +234,9 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 				startTransition(() => {
 					setBridgeSessions(event.bridge_sessions ?? []);
 				});
+			}
+			if (event.skills != null) {
+				setSkills(event.skills);
 			}
 			return;
 		}
@@ -451,6 +456,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			status,
 			tasks,
 			commands,
+			skills,
 			mcpServers,
 			bridgeSessions,
 			modal,
@@ -466,6 +472,6 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			setBusy,
 			sendRequest,
 		}),
-		[assistantBuffer, bridgeSessions, busy, busyLabel, commands, mcpServers, modal, ready, selectRequest, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
+		[assistantBuffer, bridgeSessions, busy, busyLabel, commands, mcpServers, modal, ready, selectRequest, skills, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
 	);
 }

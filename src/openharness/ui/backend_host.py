@@ -134,6 +134,7 @@ class ReactBackendHost:
                         + [f"/{command.name} {sub}" for sub in command.subcommands]
                     )
                 ],
+                self._list_skill_names(),
             )
         )
         await self._emit(self._status_snapshot())
@@ -482,7 +483,18 @@ class ReactBackendHost:
             state=self._bundle.app_state.get(),
             mcp_servers=self._bundle.mcp_manager.list_statuses(),
             bridge_sessions=get_bridge_manager().list_sessions(),
+            skills=self._list_skill_names(),
         )
+
+    def _list_skill_names(self) -> list[str]:
+        assert self._bundle is not None
+        registry = load_skill_registry(
+            self._bundle.cwd,
+            extra_skill_dirs=self._bundle.extra_skill_dirs,
+            extra_plugin_roots=self._bundle.extra_plugin_roots,
+            settings=self._bundle.current_settings(),
+        )
+        return [skill.name for skill in registry.list_skills()]
 
     async def _emit_todo_update_from_output(self, output: str) -> None:
         """Emit a todo_update event by extracting markdown checklist from tool output."""
