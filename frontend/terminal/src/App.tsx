@@ -225,7 +225,10 @@ function AppInner({
 	);
 
 	// Command hints
-	const commandPickerModel = useMemo(() => createCommandPickerModel(session.commands, input), [session.commands, input]);
+	const commandPickerModel = useMemo(
+		() => createCommandPickerModel(session.commands, input, session.skills),
+		[session.commands, session.skills, input],
+	);
 	const commandHints = commandPickerModel.hints;
 	const mentionQuery = useMemo(() => findMentionQuery(input), [input]);
 	const mentionHints = useMemo(() => {
@@ -235,7 +238,7 @@ function AppInner({
 		return filterMentionCandidates(mentionFiles, mentionQuery.query);
 	}, [mentionFiles, mentionQuery]);
 	const pickerHints = mentionHints.length > 0 ? mentionHints : commandHints;
-	const pickerTitle = mentionHints.length > 0 ? 'Files' : 'Commands';
+	const pickerTitle = mentionHints.length > 0 ? 'Files' : 'Commands & Skills';
 
 	const showPicker = pickerHints.length > 0 && !session.busy && !session.modal && !selectModal;
 	const outputStyle = String(session.status.output_style ?? 'default');

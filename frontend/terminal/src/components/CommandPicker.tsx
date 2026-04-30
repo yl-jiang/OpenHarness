@@ -9,7 +9,7 @@ export type CommandPickerModel = {
 	subHintsByHint: Record<string, string[]>;
 };
 
-export function createCommandPickerModel(commands: string[], input: string): CommandPickerModel {
+export function createCommandPickerModel(commands: string[], input: string, skills: string[] = []): CommandPickerModel {
 	const value = input.trimStart();
 	if (!value.startsWith('/')) {
 		return {hints: [], subHintsByHint: {}};
@@ -39,6 +39,15 @@ export function createCommandPickerModel(commands: string[], input: string): Com
 			const subHint = rest.join(' ');
 			subHintsByHint[root] = [...(subHintsByHint[root] ?? []), subHint];
 		}
+	}
+
+	for (const skill of skills) {
+		const alias = `/${skill}`;
+		if (!alias.startsWith(value) || seen.has(alias)) {
+			continue;
+		}
+		seen.add(alias);
+		hints.push(alias);
 	}
 
 	return {hints, subHintsByHint};
