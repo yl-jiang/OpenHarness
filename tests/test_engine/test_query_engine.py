@@ -19,6 +19,7 @@ from openharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
+    CompactProgressPhase,
     StatusEvent,
     StreamFinished,
     ToolExecutionCompleted,
@@ -731,12 +732,16 @@ async def test_query_engine_emits_compact_progress_before_reply(tmp_path: Path, 
 
     events = [event async for event in engine.submit_message("hello")]
 
-    hooks_start_index = next(i for i, event in enumerate(events) if isinstance(event, CompactProgressEvent) and event.phase == "hooks_start")
-    compact_start_index = next(i for i, event in enumerate(events) if isinstance(event, CompactProgressEvent) and event.phase == "compact_start")
+    hooks_start_index = next(
+        i for i, event in enumerate(events) if isinstance(event, CompactProgressEvent) and event.phase == CompactProgressPhase.HOOKS_START
+    )
+    compact_start_index = next(
+        i for i, event in enumerate(events) if isinstance(event, CompactProgressEvent) and event.phase == CompactProgressPhase.COMPACT_START
+    )
     final_index = next(i for i, event in enumerate(events) if isinstance(event, AssistantTurnComplete))
     assert hooks_start_index < compact_start_index
     assert compact_start_index < final_index
-    assert any(isinstance(event, CompactProgressEvent) and event.phase == "compact_end" for event in events)
+    assert any(isinstance(event, CompactProgressEvent) and event.phase == CompactProgressPhase.COMPACT_END for event in events)
 
 
 @pytest.mark.asyncio
@@ -769,7 +774,7 @@ async def test_query_engine_reactive_compacts_after_prompt_too_long(tmp_path: Pa
     assert any(
         isinstance(event, CompactProgressEvent)
         and event.trigger == "reactive"
-        and event.phase == "compact_start"
+        and event.phase == CompactProgressPhase.COMPACT_START
         for event in events
     )
     assert isinstance(events[-1], AssistantTurnComplete)
@@ -1143,6 +1148,144 @@ async def test_execute_tool_call_returns_error_when_tool_raises(tmp_path: Path):
 
     assert result.is_error is True
     assert result.content == "Tool explode failed: RuntimeError: boom"
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_repairs_tool_name_before_execution(tmp_path: Path):
+    class MarkerInput(BaseModel):
+        value: str
+
+    class MarkerTool(BaseTool):
+        name = "marker_tool"
+        description = "Return a marker"
+        input_model = MarkerInput
+
+        async def execute(self, arguments: MarkerInput, context: ToolExecutionContext) -> ToolResult:
+            del context
+            return ToolResult(output=f"marker:{arguments.value}")
+
+    registry = ToolRegistry()
+    registry.register(MarkerTool())
+
+    result = await _execute_tool_call(
+        _tool_context(tmp_path, registry, PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        "MARKER_TOOL",
+        "toolu_marker",
+        {"value": "ok"},
+    )
+
+    assert result.is_error is False
+    assert result.content == "marker:ok"
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_runs_hooks_with_repaired_tool_name(tmp_path: Path):
+    class MarkerInput(BaseModel):
+        value: str
+
+    class MarkerTool(BaseTool):
+        name = "marker_tool"
+        description = "Return a marker"
+        input_model = MarkerInput
+
+        async def execute(self, arguments: MarkerInput, context: ToolExecutionContext) -> ToolResult:
+            del context
+            return ToolResult(output=f"marker:{arguments.value}")
+
+    @dataclass
+    class _HookResult:
+        blocked: bool = False
+        reason: str | None = None
+
+    class _FakeHookExecutor:
+        def __init__(self) -> None:
+            self.pre_tool_names: list[str] = []
+
+        async def execute(self, event: HookEvent, payload: dict[str, object]) -> _HookResult:
+            if event == HookEvent.PRE_TOOL_USE:
+                self.pre_tool_names.append(str(payload["tool_name"]))
+            return _HookResult()
+
+    registry = ToolRegistry()
+    registry.register(MarkerTool())
+    hook_executor = _FakeHookExecutor()
+    context = _tool_context(tmp_path, registry, PermissionSettings(mode=PermissionMode.FULL_AUTO))
+    context.hook_executor = hook_executor  # type: ignore[assignment]
+
+    result = await _execute_tool_call(
+        context,
+        "MARKER_TOOL",
+        "toolu_marker",
+        {"value": "ok"},
+    )
+
+    assert result.is_error is False
+    assert hook_executor.pre_tool_names == ["marker_tool"]
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_returns_structured_invalid_tool_result(tmp_path: Path):
+    registry = ToolRegistry()
+    registry.register(GrepTool())
+    registry.register(GlobTool())
+
+    result = await _execute_tool_call(
+        _tool_context(tmp_path, registry, PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        "grebble",
+        "toolu_bad",
+        {"pattern": "x"},
+    )
+
+    assert result.is_error is True
+    assert '"error_type": "invalid_tool"' in result.content
+    assert '"requested_tool": "grebble"' in result.content
+    assert '"available_tools": [' in result.content
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_blocks_repeated_identical_failures(tmp_path: Path):
+    class FailingInput(BaseModel):
+        value: str
+
+    class FailingTool(BaseTool):
+        name = "always_fail"
+        description = "Always fail"
+        input_model = FailingInput
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def execute(self, arguments: FailingInput, context: ToolExecutionContext) -> ToolResult:
+            del arguments, context
+            self.calls += 1
+            return ToolResult(output="same failure", is_error=True)
+
+    tool = FailingTool()
+    registry = ToolRegistry()
+    registry.register(tool)
+    context = _tool_context(tmp_path, registry, PermissionSettings(mode=PermissionMode.FULL_AUTO))
+    context.tool_metadata = {}
+
+    for index in range(3):
+        result = await _execute_tool_call(
+            context,
+            "always_fail",
+            f"toolu_fail_{index}",
+            {"value": "x"},
+        )
+        assert result.content == "same failure"
+
+    blocked = await _execute_tool_call(
+        context,
+        "always_fail",
+        "toolu_fail_blocked",
+        {"value": "x"},
+    )
+
+    assert blocked.is_error is True
+    assert "3 consecutive identical failing calls" in blocked.content
+    assert "Try a different approach" in blocked.content
+    assert tool.calls == 3
 
 
 @pytest.mark.asyncio

@@ -856,7 +856,8 @@ def _apply_env_overrides(settings: Settings) -> Settings:
         updates["api_key"] = settings.api_key.strip()
     else:
         api_key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
-        updates["api_key"] = api_key
+        if api_key:
+            updates["api_key"] = api_key
 
     api_format = os.environ.get("OPENHARNESS_API_FORMAT")
     if api_format:

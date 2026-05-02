@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from typing import get_type_hints
 
 import pytest
 
+import openharness.engine.stream_events as stream_events
+import openharness.services.compact as compact_service
 from openharness.api.client import ApiMessageCompleteEvent
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
@@ -30,6 +33,35 @@ from openharness.services.compact import (
     try_context_collapse,
     try_session_memory_compaction,
 )
+
+
+def test_compact_progress_phase_type_is_shared():
+    phase_type = getattr(stream_events, "CompactProgressPhase", None)
+
+    assert phase_type is not None
+    assert [phase.value for phase in phase_type] == [
+        "hooks_start",
+        "context_collapse_start",
+        "context_collapse_end",
+        "session_memory_start",
+        "session_memory_end",
+        "compact_start",
+        "compact_retry",
+        "compact_end",
+        "compact_failed",
+    ]
+    assert get_type_hints(stream_events.CompactProgressEvent)["phase"] is phase_type
+    assert get_type_hints(compact_service._emit_progress)["phase"] is phase_type
+
+
+def test_compact_progress_phase_exposes_start_phases():
+    assert stream_events.CompactProgressPhase.start_phases() == frozenset(
+        {
+            stream_events.CompactProgressPhase.CONTEXT_COLLAPSE_START,
+            stream_events.CompactProgressPhase.SESSION_MEMORY_START,
+            stream_events.CompactProgressPhase.COMPACT_START,
+        }
+    )
 
 
 def test_token_estimation_helpers():

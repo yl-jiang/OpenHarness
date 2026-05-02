@@ -10,7 +10,13 @@ from openharness.engine.cost_tracker import CostTracker
 from openharness.coordinator.coordinator_mode import get_coordinator_user_context
 from openharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock
 from openharness.engine.query import AskUserPrompt, MaxTurnsExceeded, PermissionPrompt, QueryContext, remember_user_goal, run_query
-from openharness.engine.stream_events import AssistantTurnComplete, StatusEvent, StreamEvent, StreamFinished
+from openharness.engine.stream_events import (
+    AssistantTurnComplete,
+    CompactProgressPhase,
+    StatusEvent,
+    StreamEvent,
+    StreamFinished,
+)
 from openharness.engine.types import ToolMetadataKey
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
@@ -74,12 +80,18 @@ class QueryEngine:
         self._hook_executor = hook_executor
         self._tool_metadata = tool_metadata or {}
         self._messages: list[ConversationMessage] = []
+        self._export_messages: list[ConversationMessage] = []
         self._cost_tracker = CostTracker()
 
     @property
     def messages(self) -> list[ConversationMessage]:
         """Return the current conversation history."""
         return list(self._messages)
+
+    @property
+    def export_messages(self) -> list[ConversationMessage]:
+        """Return the full exportable session history, preserved across compaction."""
+        return list(self._export_messages or self._messages)
 
     @property
     def max_turns(self) -> int | None:
@@ -114,6 +126,7 @@ class QueryEngine:
     def clear(self) -> None:
         """Clear the in-memory conversation history."""
         self._messages.clear()
+        self._export_messages.clear()
         self._cost_tracker = CostTracker()
 
     def set_system_prompt(self, prompt: str) -> None:
@@ -158,6 +171,30 @@ class QueryEngine:
     def _public_messages(cls, messages: list[ConversationMessage]) -> list[ConversationMessage]:
         """Filter out internal-only messages that should not be exposed to render_event handlers."""
         return [message for message in messages if not cls._is_internal_message(message)]
+
+    def capture_export_checkpoint(self, messages: list[ConversationMessage] | None = None) -> None:
+        """Merge the current public history into the persistent export history."""
+        current = self._public_messages(messages if messages is not None else self._messages)
+        if not current:
+            return
+        if not self._export_messages:
+            self._export_messages = list(current)
+            return
+        if current == self._export_messages:
+            return
+        if len(current) >= len(self._export_messages) and current[: len(self._export_messages)] == self._export_messages:
+            self._export_messages = list(current)
+            return
+
+        max_overlap = min(len(self._export_messages), len(current))
+        for overlap in range(max_overlap, 0, -1):
+            suffix = self._export_messages[-overlap:]
+            for start in range(0, len(current) - overlap + 1):
+                if current[start : start + overlap] == suffix:
+                    self._export_messages.extend(current[start + overlap :])
+                    return
+
+        self._export_messages = list(current)
 
     @staticmethod
     def _should_auto_continue_after_silent_stop(messages: list[ConversationMessage]) -> bool:
@@ -205,10 +242,13 @@ class QueryEngine:
                 async for event, usage in run_query(context, query_messages):  # this loop only pass throughs events from run_query
                     if usage is not None:
                         self._cost_tracker.add(usage)
+                    if getattr(event, "phase", None) in CompactProgressPhase.start_phases():
+                        self.capture_export_checkpoint(query_messages)
                     if pending_turn_complete is not None and not isinstance(event, AssistantTurnComplete):
                         if _is_meaningful(pending_turn_complete):
                             progress_in_this_run = True
                         self._messages = self._public_messages(query_messages)
+                        self.capture_export_checkpoint(self._messages)
                         yield pending_turn_complete   # yield the pending AssistantTurnComplete before yielding the next event, which is not an AssistantTurnComplete
                         pending_turn_complete = None
                     if isinstance(event, AssistantTurnComplete):
@@ -236,6 +276,7 @@ class QueryEngine:
                     message_count=len(query_messages),
                 )
                 self._messages = self._public_messages(query_messages)
+                self.capture_export_checkpoint(self._messages)
                 # Surface the max-turns message as a status event so any render_event
                 # handler (TUI and headless alike) can display it.
                 yield StatusEvent(message=f"Stopped after {exc.max_turns} turns (max_turns limit reached).")
@@ -275,6 +316,7 @@ class QueryEngine:
                         query_messages.pop()
                         query_messages.append(ConversationMessage.from_user_text(_INTERNAL_AUTO_CONTINUE_PROMPT))
                         self._messages = self._public_messages(query_messages)
+                        self.capture_export_checkpoint(self._messages)
                         logger.event(
                             "auto_continue_triggered",
                             session_id=self._tool_metadata.get("session_id"),
@@ -286,6 +328,7 @@ class QueryEngine:
                         continue
 
                 self._messages = self._public_messages(query_messages)
+                self.capture_export_checkpoint(self._messages)
                 yield pending_turn_complete
                 if matched_silent_stop and not can_continue:
                     logger.event(
@@ -298,11 +341,22 @@ class QueryEngine:
                     yield StreamFinished(reason="auto_continue_exhausted")
             else:
                 self._messages = self._public_messages(query_messages)
+                self.capture_export_checkpoint(self._messages)
             return
 
-    def load_messages(self, messages: list[ConversationMessage]) -> None:
+    def load_messages(
+        self,
+        messages: list[ConversationMessage],
+        *,
+        preserve_export_history: bool = False,
+    ) -> None:
         """Replace the in-memory conversation history."""
         self._messages = list(messages)
+        if preserve_export_history:
+            if not self._export_messages:
+                self._export_messages = list(self._public_messages(messages))
+            return
+        self._export_messages = list(messages)
 
     def has_pending_continuation(self) -> bool:
         """Return True when the conversation ends with tool results awaiting a follow-up model turn."""
@@ -336,6 +390,7 @@ class QueryEngine:
             remember_user_goal(self._tool_metadata, user_message.text)
         self._begin_self_evolution_user_turn()
         self._messages.append(user_message)
+        self.capture_export_checkpoint(self._messages)
         if self._hook_executor is not None:
             await self._hook_executor.execute(
                 HookEvent.USER_PROMPT_SUBMIT,

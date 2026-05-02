@@ -4,6 +4,7 @@ import logging
 
 import pytest
 
+import openharness.permissions.checker as checker_module
 from openharness.config.settings import PathRuleConfig, PermissionSettings
 from openharness.permissions import PermissionChecker, PermissionMode
 from openharness.permissions.checker import SENSITIVE_PATH_PATTERNS
@@ -22,6 +23,39 @@ def test_default_mode_requires_confirmation_for_mutation():
     assert decision.allowed is False
     assert decision.requires_confirmation is True
     assert "/permissions full_auto" in decision.reason
+
+
+def test_permission_checker_caches_repeated_decisions(monkeypatch):
+    calls = 0
+    original_permission_name = checker_module._permission_name
+
+    def _counting_permission_name(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original_permission_name(*args, **kwargs)
+
+    monkeypatch.setattr(checker_module, "_permission_name", _counting_permission_name)
+    checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
+
+    first = checker.evaluate("read_file", is_read_only=True, file_path="/tmp/demo.txt")
+    second = checker.evaluate("read_file", is_read_only=True, file_path="/tmp/demo.txt")
+
+    assert first == second
+    assert calls == 1
+
+
+def test_permission_checker_invalidates_cache_after_remember_allow():
+    checker = PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT))
+    first = checker.evaluate("edit_file", is_read_only=False, file_path="/tmp/demo.py")
+    cached = checker.evaluate("edit_file", is_read_only=False, file_path="/tmp/demo.py")
+    assert cached.requires_confirmation is True
+
+    checker.remember_allow(first)
+    second = checker.evaluate("edit_file", is_read_only=False, file_path="/tmp/demo.py")
+
+    assert second.allowed is True
+    assert second.requires_confirmation is False
+    assert "remembered" in second.reason
 
 
 def test_default_mode_gives_package_install_hint_for_bash():

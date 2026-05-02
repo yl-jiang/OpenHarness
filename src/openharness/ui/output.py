@@ -11,6 +11,7 @@ from openharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
+    CompactProgressPhase,
     StreamEvent,
     ToolExecutionCompleted,
     ToolExecutionStarted,
@@ -75,31 +76,31 @@ class OutputRenderer:
             self._stop_spinner()
             if event.message:
                 label = event.message
-            elif event.phase == "hooks_start":
+            elif event.phase == CompactProgressPhase.HOOKS_START:
                 label = (
                     "Preparing retry compaction..."
                     if event.trigger == "reactive"
                     else "Preparing conversation compaction..."
                 )
-            elif event.phase == "session_memory_start":
+            elif event.phase == CompactProgressPhase.SESSION_MEMORY_START:
                 label = "Condensing earlier conversation..."
-            elif event.phase == "session_memory_end":
+            elif event.phase == CompactProgressPhase.SESSION_MEMORY_END:
                 label = "Conversation condensed."
-            elif event.phase == "context_collapse_start":
+            elif event.phase == CompactProgressPhase.CONTEXT_COLLAPSE_START:
                 label = "Collapsing oversized context..."
-            elif event.phase == "context_collapse_end":
+            elif event.phase == CompactProgressPhase.CONTEXT_COLLAPSE_END:
                 label = "Context collapse complete."
-            elif event.phase == "compact_start":
+            elif event.phase == CompactProgressPhase.COMPACT_START:
                 label = (
                     "Context is too large. Compacting and retrying..."
                     if event.trigger == "reactive"
                     else "Compacting conversation memory..."
                 )
-            elif event.phase == "compact_retry":
+            elif event.phase == CompactProgressPhase.COMPACT_RETRY:
                 label = "Retrying compaction..."
-            elif event.phase == "compact_end":
+            elif event.phase == CompactProgressPhase.COMPACT_END:
                 label = "Compaction complete."
-            elif event.phase == "compact_failed":
+            elif event.phase == CompactProgressPhase.COMPACT_FAILED:
                 label = "Compaction failed."
             else:
                 label = "Compacting..."

@@ -64,6 +64,64 @@ def _make_context(tmp_path: Path) -> CommandContext:
     )
 
 
+def test_registry_reexports_split_command_modules() -> None:
+    from openharness.commands import core, memory, skills
+
+    assert registry_module.CommandRegistry is core.CommandRegistry
+    assert registry_module.SlashCommand is core.SlashCommand
+    assert registry_module.CommandResult is core.CommandResult
+    assert registry_module.CommandContext is core.CommandContext
+    assert registry_module.MemoryCommandBackend is memory.MemoryCommandBackend
+    assert registry_module._render_skill_load_prompt is skills.render_skill_load_prompt
+    assert registry_module.resolve_skill_alias_command is skills.resolve_skill_alias_command
+
+    registry = create_default_command_registry()
+    memory_command, _ = registry.lookup("/memory")
+    skills_command, _ = registry.lookup("/skills")
+    assert memory_command.handler is memory.handle_memory_command
+    assert skills_command.handler is skills.handle_skills_command
+
+
+@pytest.mark.asyncio
+async def test_compact_preserves_export_history_for_snapshot_saves(tmp_path: Path, monkeypatch):
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+    context.engine.load_messages(
+        [
+            ConversationMessage(role="user", content=[TextBlock(text="first user prompt")]),
+            ConversationMessage(role="assistant", content=[TextBlock(text="first assistant reply")]),
+            ConversationMessage(role="user", content=[TextBlock(text="second user prompt")]),
+            ConversationMessage(role="assistant", content=[TextBlock(text="second assistant reply")]),
+        ]
+    )
+
+    async def _fail_compact(*_args, **_kwargs):
+        raise RuntimeError("force fallback")
+
+    monkeypatch.setattr(registry_module, "compact_conversation", _fail_compact)
+    monkeypatch.setattr(
+        registry_module,
+        "compact_messages",
+        lambda _messages, preserve_recent: [
+            ConversationMessage(role="user", content=[TextBlock(text=f"compacted to {preserve_recent}")])
+        ],
+    )
+
+    command, args = registry.lookup("/compact 1")
+    assert command is not None
+
+    result = await command.handler(args, context)
+
+    assert result.message == "Compacted conversation from 4 messages to 1."
+    assert context.engine.messages[0].text == "compacted to 1"
+    assert [message.text for message in context.engine.export_messages[:4]] == [
+        "first user prompt",
+        "first assistant reply",
+        "second user prompt",
+        "second assistant reply",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_permissions_command_persists(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
@@ -567,9 +625,21 @@ async def test_version_context_and_share_commands(tmp_path: Path, monkeypatch):
     version_result = await version_command.handler(version_args, context)
     assert "OpenHarness" in version_result.message
 
-    context_command, context_args = registry.lookup("/context")
+    context_command, context_args = registry.lookup("/context show")
+    assert context_command.subcommands == ["show", "blocks"]
     context_result = await context_command.handler(context_args, context)
     assert "OpenHarness" in context_result.message or "interactive agent" in context_result.message
+
+    context_blocks_command, context_blocks_args = registry.lookup("/context blocks")
+    context_blocks_result = await context_blocks_command.handler(context_blocks_args, context)
+    assert "Runtime prompt blocks:" in context_blocks_result.message
+    assert "ID                    CHARS  TOKENS  PRIORITY  SOURCE" in context_blocks_result.message
+    assert "base-system" in context_blocks_result.message
+    assert "tool-use-enforcement" in context_blocks_result.message
+
+    context_usage_command, context_usage_args = registry.lookup("/context")
+    context_usage_result = await context_usage_command.handler(context_usage_args, context)
+    assert context_usage_result.message == "Usage: /context [show|blocks]"
 
     share_command, share_args = registry.lookup("/share")
     share_result = await share_command.handler(share_args, context)

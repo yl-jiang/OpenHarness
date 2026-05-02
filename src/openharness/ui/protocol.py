@@ -17,6 +17,7 @@ class FrontendRequest(BaseModel):
 
     type: Literal[
         "submit_line",
+        "cancel_line",
         "permission_response",
         "question_response",
         "list_sessions",

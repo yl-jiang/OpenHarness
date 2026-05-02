@@ -10,7 +10,7 @@ import pytest
 
 import openharness.tools.skill_manager_tool as skill_manager_module
 from openharness.tools.bash_tool import BashTool, BashToolInput
-from openharness.tools.base import ToolExecutionContext
+from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from openharness.tools.brief_tool import BriefTool, BriefToolInput
 from openharness.tools.cron_manager_tool import CronManagerTool
 from openharness.tools.config_tool import ConfigTool, ConfigToolInput
@@ -28,6 +28,7 @@ from openharness.tools.skill_manager_tool import SkillManagerTool, SkillManagerT
 from openharness.tools.todo_tool import TodoTool, TodoToolInput
 from openharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
 from openharness.tools import create_default_tool_registry
+from pydantic import BaseModel
 
 
 @pytest.mark.asyncio
@@ -139,11 +140,88 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
     ]
     assert "wire commands" in (tmp_path / "TODO.md").read_text(encoding="utf-8")
 
+
     config_result = await ConfigTool().execute(
         ConfigToolInput(action="set", key="theme", value="solarized"),
         ToolExecutionContext(cwd=tmp_path),
     )
     assert config_result.output == "Updated theme"
+
+
+def test_tool_registry_caches_api_schema_and_returns_defensive_copy() -> None:
+    class CountingInput(BaseModel):
+        value: str
+
+    class CountingTool(BaseTool):
+        name = "counting"
+        description = "Count schema calls"
+        input_model = CountingInput
+
+        def __init__(self) -> None:
+            self.schema_calls = 0
+
+        async def execute(self, arguments: CountingInput, context: ToolExecutionContext) -> ToolResult:
+            del arguments, context
+            return ToolResult(output="ok")
+
+        def to_api_schema(self) -> dict[str, object]:
+            self.schema_calls += 1
+            return {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {"type": "object", "properties": {"value": {"type": "string"}}},
+            }
+
+    tool = CountingTool()
+    registry = ToolRegistry()
+    registry.register(tool)
+
+    first = registry.to_api_schema()
+    first[0]["name"] = "mutated"
+    second = registry.to_api_schema()
+
+    assert tool.schema_calls == 1
+    assert second[0]["name"] == "counting"
+
+
+def test_tool_registry_invalidates_schema_cache_on_register_and_unregister() -> None:
+    class CountingInput(BaseModel):
+        value: str = ""
+
+    class CountingTool(BaseTool):
+        description = "Count schema calls"
+        input_model = CountingInput
+
+        def __init__(self, name: str) -> None:
+            self.name = name
+            self.schema_calls = 0
+
+        async def execute(self, arguments: CountingInput, context: ToolExecutionContext) -> ToolResult:
+            del arguments, context
+            return ToolResult(output="ok")
+
+        def to_api_schema(self) -> dict[str, object]:
+            self.schema_calls += 1
+            return {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {"type": "object", "properties": {"value": {"type": "string"}}},
+            }
+
+    first_tool = CountingTool("first")
+    second_tool = CountingTool("second")
+    registry = ToolRegistry()
+    registry.register(first_tool)
+    assert [schema["name"] for schema in registry.to_api_schema()] == ["first"]
+
+    registry.register(second_tool)
+    assert [schema["name"] for schema in registry.to_api_schema()] == ["first", "second"]
+    assert first_tool.schema_calls == 2
+    assert second_tool.schema_calls == 1
+
+    registry.unregister("first")
+    assert [schema["name"] for schema in registry.to_api_schema()] == ["second"]
+    assert second_tool.schema_calls == 2
 
 
 @pytest.mark.asyncio

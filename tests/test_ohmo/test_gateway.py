@@ -16,7 +16,7 @@ from openharness.commands import CommandResult
 from openharness.commands.registry import SlashCommand, create_default_command_registry
 from openharness.config.settings import Settings
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock
-from openharness.engine.stream_events import AssistantTextDelta, CompactProgressEvent, ToolExecutionStarted
+from openharness.engine.stream_events import AssistantTextDelta, CompactProgressEvent, CompactProgressPhase, ToolExecutionStarted
 from openharness.memory import add_memory_entry as add_project_memory_entry
 from openharness.memory import list_memory_files as list_project_memory_files
 
@@ -86,7 +86,7 @@ def test_compact_progress_formats_reactive_channel_hint_in_chinese():
         text="",
         session_key="feishu:c1",
         content="帮我继续处理",
-        compact_phase="compact_start",
+        compact_phase=CompactProgressPhase.COMPACT_START,
         compact_trigger="reactive",
         attempt=None,
     )
@@ -234,7 +234,7 @@ async def test_runtime_pool_stream_message_formats_auto_compact_status_for_feish
                 return None
 
             async def submit_message(self, content):
-                yield CompactProgressEvent(phase="compact_start", trigger="auto")
+                yield CompactProgressEvent(phase=CompactProgressPhase.COMPACT_START, trigger="auto")
                 yield AssistantTextDelta(text="done")
 
         return SimpleNamespace(
@@ -274,7 +274,12 @@ async def test_runtime_pool_stream_message_formats_compact_retry_for_feishu(tmp_
                 return None
 
             async def submit_message(self, content):
-                yield CompactProgressEvent(phase="compact_retry", trigger="auto", attempt=2, message="retrying")
+                yield CompactProgressEvent(
+                    phase=CompactProgressPhase.COMPACT_RETRY,
+                    trigger="auto",
+                    attempt=2,
+                    message="retrying",
+                )
                 yield AssistantTextDelta(text="done")
 
         return SimpleNamespace(
@@ -312,7 +317,7 @@ async def test_runtime_pool_stream_message_formats_compact_hooks_start_for_feish
                 return None
 
             async def submit_message(self, content):
-                yield CompactProgressEvent(phase="hooks_start", trigger="auto")
+                yield CompactProgressEvent(phase=CompactProgressPhase.HOOKS_START, trigger="auto")
                 yield AssistantTextDelta(text="done")
 
         return SimpleNamespace(

@@ -26,7 +26,7 @@ from openharness.engine.messages import (
     ToolResultBlock,
     ToolUseBlock,
 )
-from openharness.engine.stream_events import CompactProgressEvent
+from openharness.engine.stream_events import CompactProgressEvent, CompactProgressPhase
 from openharness.engine.types import TaskFocusStateKey, ToolMetadataKey
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.services.token_estimation import estimate_tokens
@@ -215,17 +215,7 @@ def _record_compact_checkpoint(
 async def _emit_progress(
     callback: CompactProgressCallback | None,
     *,
-    phase: Literal[
-        "hooks_start",
-        "context_collapse_start",
-        "context_collapse_end",
-        "session_memory_start",
-        "session_memory_end",
-        "compact_start",
-        "compact_retry",
-        "compact_end",
-        "compact_failed",
-    ],
+    phase: CompactProgressPhase,
     trigger: CompactTrigger,
     message: str | None = None,
     attempt: int | None = None,
@@ -1148,7 +1138,7 @@ async def compact_conversation(
     if emit_hooks_start:
         await _emit_progress(
             progress_callback,
-            phase="hooks_start",
+            phase=CompactProgressPhase.HOOKS_START,
             trigger=trigger,
             message="Preparing conversation compaction.",
             checkpoint="compact_hooks_start",
@@ -1168,7 +1158,7 @@ async def compact_conversation(
             )
             await _emit_progress(
                 progress_callback,
-                phase="compact_failed",
+                phase=CompactProgressPhase.COMPACT_FAILED,
                 trigger=trigger,
                 message=reason,
                 checkpoint="compact_failed",
@@ -1190,7 +1180,7 @@ async def compact_conversation(
     )
     await _emit_progress(
         progress_callback,
-        phase="compact_start",
+        phase=CompactProgressPhase.COMPACT_START,
         trigger=trigger,
         message="Compacting conversation memory.",
         checkpoint="compact_start",
@@ -1242,7 +1232,7 @@ async def compact_conversation(
                     retry_messages = [*truncated, retry_messages[-1]]
                     await _emit_progress(
                         progress_callback,
-                        phase="compact_retry",
+                        phase=CompactProgressPhase.COMPACT_RETRY,
                         trigger=trigger,
                         message="Compaction prompt was too large; retrying with older context trimmed.",
                         attempt=ptl_retries,
@@ -1261,7 +1251,7 @@ async def compact_conversation(
             if attempt > MAX_COMPACT_STREAMING_RETRIES:
                 await _emit_progress(
                     progress_callback,
-                    phase="compact_failed",
+                    phase=CompactProgressPhase.COMPACT_FAILED,
                     trigger=trigger,
                     message=str(exc),
                     attempt=attempt,
@@ -1279,7 +1269,7 @@ async def compact_conversation(
                 raise
             await _emit_progress(
                 progress_callback,
-                phase="compact_retry",
+                phase=CompactProgressPhase.COMPACT_RETRY,
                 trigger=trigger,
                 message=str(exc),
                 attempt=attempt,
@@ -1298,7 +1288,7 @@ async def compact_conversation(
     if not summary_text:
         await _emit_progress(
             progress_callback,
-            phase="compact_failed",
+            phase=CompactProgressPhase.COMPACT_FAILED,
             trigger=trigger,
             message=ERROR_MESSAGE_INCOMPLETE_RESPONSE,
             checkpoint="compact_failed",
@@ -1398,7 +1388,7 @@ async def compact_conversation(
     )
     await _emit_progress(
         progress_callback,
-        phase="compact_end",
+        phase=CompactProgressPhase.COMPACT_END,
         trigger=trigger,
         message="Conversation compaction complete.",
         checkpoint="compact_end",
@@ -1495,7 +1485,7 @@ async def auto_compact_if_needed(
     if context_collapsed is not None:
         await _emit_progress(
             progress_callback,
-            phase="context_collapse_start",
+            phase=CompactProgressPhase.CONTEXT_COLLAPSE_START,
             trigger=trigger,
             message="Collapsing oversized context before full compaction.",
             checkpoint="query_context_collapse_start",
@@ -1510,7 +1500,7 @@ async def auto_compact_if_needed(
         messages = context_collapsed
         await _emit_progress(
             progress_callback,
-            phase="context_collapse_end",
+            phase=CompactProgressPhase.CONTEXT_COLLAPSE_END,
             trigger=trigger,
             message="Context collapse complete.",
             checkpoint="query_context_collapse_end",
@@ -1545,7 +1535,7 @@ async def auto_compact_if_needed(
     if session_memory is not None:
         await _emit_progress(
             progress_callback,
-            phase="session_memory_start",
+            phase=CompactProgressPhase.SESSION_MEMORY_START,
             trigger=trigger,
             message="Condensing earlier conversation into session memory.",
             checkpoint="query_session_memory_start",
@@ -1559,7 +1549,7 @@ async def auto_compact_if_needed(
         )
         await _emit_progress(
             progress_callback,
-            phase="session_memory_end",
+            phase=CompactProgressPhase.SESSION_MEMORY_END,
             trigger=trigger,
             message="Session memory condensation complete.",
             checkpoint="query_session_memory_end",
