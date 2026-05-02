@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {PassThrough} from 'node:stream';
-import React from 'react';
+import React, {useCallback, useState} from 'react';
 import {render} from 'ink';
 
 import {ThemeProvider} from '../theme/ThemeContext.js';
@@ -9,6 +9,10 @@ import {PromptInput, shouldAnimateBackgroundCue, shouldAnimateSpinner} from './P
 
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+const extractLastFrame = (output: string): string => {
+	const boundary = output.lastIndexOf('\n╭');
+	return boundary >= 0 ? output.slice(boundary + 1) : output;
+};
 
 type InkTestStdout = PassThrough & {
 	isTTY: boolean;
@@ -29,10 +33,10 @@ type InkTestStdin = PassThrough & {
 	unref: () => InkTestStdin;
 };
 
-function createTestStdout(): InkTestStdout {
+function createTestStdout(columns = 120): InkTestStdout {
 	return Object.assign(new PassThrough(), {
 		isTTY: true,
-		columns: 120,
+		columns,
 		rows: 40,
 		cursorTo: () => true,
 		clearLine: () => true,
@@ -86,13 +90,15 @@ async function renderPromptInput({
 	toolName,
 	backgroundTaskCount = 0,
 	animateSpinner,
+	stdoutColumns,
 }: {
 	busy?: boolean;
 	toolName?: string;
 	backgroundTaskCount?: number;
 	animateSpinner?: boolean;
+	stdoutColumns?: number;
 } = {}): Promise<string> {
-	const stdout = createTestStdout();
+	const stdout = createTestStdout(stdoutColumns);
 	const stdin = createTestStdin();
 	let output = '';
 	stdout.on('data', (chunk) => {
@@ -128,12 +134,83 @@ async function renderPromptInput({
 	return stripAnsi(stableOutput);
 }
 
+async function renderInteractivePromptInput({
+	initialInput = '',
+	initialExtraInputLines = [],
+	stdoutColumns = 120,
+}: {
+	initialInput?: string;
+	initialExtraInputLines?: string[];
+	stdoutColumns?: number;
+} = {}): Promise<{
+	stdin: InkTestStdin;
+	getOutput: () => Promise<string>;
+	cleanup: () => Promise<void>;
+}> {
+	const stdout = createTestStdout(stdoutColumns);
+	const stdin = createTestStdin();
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+
+	function Host(): React.JSX.Element {
+		const [input, setInput] = useState(initialInput);
+		const [extraInputLines, setExtraInputLines] = useState(initialExtraInputLines);
+		const handleInputChange = useCallback((value: string) => {
+			if (!value.includes('\n')) {
+				setInput(value);
+				return;
+			}
+			const parts = value.split('\n');
+			const lastPart = parts.pop() ?? '';
+			setExtraInputLines((prev) => [...prev, ...parts]);
+			setInput(lastPart);
+		}, []);
+
+		return (
+			<ThemeProvider initialTheme="default">
+				<PromptInput
+					busy={false}
+					input={input}
+					setInput={handleInputChange}
+					onSubmit={() => {}}
+					extraInputLines={extraInputLines}
+				/>
+			</ThemeProvider>
+		);
+	}
+
+	const instance = render(<Host />, {
+		stdout: stdout as unknown as NodeJS.WriteStream,
+		stdin: stdin as unknown as NodeJS.ReadStream,
+		debug: true,
+		patchConsole: false,
+	});
+
+	await waitForOutputToStabilize(() => output);
+
+	return {
+		stdin,
+		getOutput: async () => stripAnsi(await waitForOutputToStabilize(() => output)),
+		cleanup: async () => {
+			const exitPromise = instance.waitUntilExit();
+			instance.unmount();
+			await exitPromise;
+			instance.cleanup();
+		},
+	};
+}
+
 test('uses ascii-only idle title cues above the prompt input', async () => {
 	const output = await renderPromptInput();
 
 	assert.doesNotMatch(output, /\bPrompt\b/);
 	assert.doesNotMatch(output, /\bReady\b/);
 	assert.match(output, /[◇◈◆] {2}\| ready/);
+	assert.match(output, /⇖⇘/u);
+	assert.doesNotMatch(output, /↖↘/u);
+	assert.doesNotMatch(output, /◢/u);
 	assert.doesNotMatch(output, /[⌨️⏳●⏎›]/u);
 });
 
@@ -179,4 +256,80 @@ test('disables spinner animation on flicker-prone terminals', () => {
 	assert.equal(shouldAnimateSpinner('linux', {}), true);
 	// Backwards-compatible alias.
 	assert.equal(shouldAnimateBackgroundCue('darwin', {}), true);
+});
+
+test('keeps previously typed text when a paste arrives in the same prompt session', async () => {
+	const prompt = await renderInteractivePromptInput();
+	try {
+		prompt.stdin.write('abc');
+		await nextLoopTurn();
+		prompt.stdin.write('XYZ');
+		const output = extractLastFrame(await prompt.getOutput());
+
+		assert.match(output, /> abcXYZ/);
+	} finally {
+		await prompt.cleanup();
+	}
+});
+
+test('preserves earlier typed text when a multiline paste arrives mid-session', async () => {
+	const prompt = await renderInteractivePromptInput();
+	try {
+		prompt.stdin.write('lsjfld');
+		await nextLoopTurn();
+		prompt.stdin.write('first-line\nsecond-line\nthird-line');
+		const output = extractLastFrame(await prompt.getOutput());
+
+		// extraInputLines preview should contain the previously-typed prefix joined
+		// with the first pasted line ("lsjfldfirst-line"), then the second line.
+		assert.match(output, /lsjfldfirst-line/);
+		assert.match(output, /second-line/);
+		// The current input row should show the last pasted line.
+		assert.match(output, /> third-line/);
+	} finally {
+		await prompt.cleanup();
+	}
+});
+
+test('does not duplicate buffered lines when a paste arrives one char at a time', async () => {
+	const prompt = await renderInteractivePromptInput();
+	try {
+		// Simulate a slow paste where each character is delivered separately
+		// and may interleave with React renders.  This catches regressions where
+		// the local input draft retains already-consumed segments and replays
+		// them on the next event, duplicating buffered preview lines.
+		const sequence = 'pre\npasted\nlive';
+		for (const char of sequence) {
+			prompt.stdin.write(char);
+			for (let i = 0; i < 4; i++) {
+				await nextLoopTurn();
+			}
+		}
+		const output = extractLastFrame(await prompt.getOutput());
+
+		// Each segment should appear exactly once.
+		const occurrences = (haystack: string, needle: string): number =>
+			haystack.split(needle).length - 1;
+		assert.equal(occurrences(output, 'pre'), 1, `'pre' duplicated:\n${output}`);
+		assert.equal(occurrences(output, 'pasted'), 1, `'pasted' duplicated:\n${output}`);
+		assert.match(output, /> live/);
+	} finally {
+		await prompt.cleanup();
+	}
+});
+
+test('renders buffered multiline preview lines without wrapping wide text', async () => {
+	const prompt = await renderInteractivePromptInput({
+		stdoutColumns: 40,
+		initialInput: 'tail',
+		initialExtraInputLines: ['这是很长很长很长很长很长很长的一行文本'],
+	});
+	try {
+		const output = extractLastFrame(await prompt.getOutput());
+
+		assert.match(output, /│   \.\.\.长很长很长很长很长的一行文本/);
+		assert.doesNotMatch(output, /\n│   文本/);
+	} finally {
+		await prompt.cleanup();
+	}
 });

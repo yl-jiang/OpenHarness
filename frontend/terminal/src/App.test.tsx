@@ -55,3 +55,51 @@ test('builds a submittable multiline value when the current line is empty but pr
 test('does not submit whitespace-only buffered lines', () => {
 	assert.equal(buildSubmittedValue('', ['', '   ']), null);
 });
+
+test('treats double escape while busy as a cancellation request', () => {
+	const resolveEscapeAction = (AppModule as {
+		resolveEscapeAction?: (state: {
+			busy: boolean;
+			paused: boolean;
+			hasInput: boolean;
+			now: number;
+			lastEscapeAt: number;
+		}) => {action: string; nextLastEscapeAt: number};
+	}).resolveEscapeAction;
+
+	assert.equal(typeof resolveEscapeAction, 'function');
+	assert.deepEqual(
+		resolveEscapeAction?.({
+			busy: true,
+			paused: false,
+			hasInput: false,
+			now: 1_000,
+			lastEscapeAt: 700,
+		}),
+		{action: 'cancel_busy_turn', nextLastEscapeAt: 0},
+	);
+});
+
+test('keeps the first escape during a busy turn as an arming press', () => {
+	const resolveEscapeAction = (AppModule as {
+		resolveEscapeAction?: (state: {
+			busy: boolean;
+			paused: boolean;
+			hasInput: boolean;
+			now: number;
+			lastEscapeAt: number;
+		}) => {action: string; nextLastEscapeAt: number};
+	}).resolveEscapeAction;
+
+	assert.equal(typeof resolveEscapeAction, 'function');
+	assert.deepEqual(
+		resolveEscapeAction?.({
+			busy: true,
+			paused: false,
+			hasInput: false,
+			now: 1_000,
+			lastEscapeAt: 0,
+		}),
+		{action: 'arm_escape', nextLastEscapeAt: 1_000},
+	);
+});

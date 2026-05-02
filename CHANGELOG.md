@@ -23,9 +23,12 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - React TUI assistant messages now render structured Markdown blocks, including headings, lists, code fences, blockquotes, links, and tables.
 - Built-in `codex` output style for compact, low-noise transcript rendering in React TUI.
 - React TUI `@` file mentions and `/skills` picker for manually loading a selected skill into the current session.
+- React TUI prompt composer now has a clickable expand affordance that opens a fullscreen editor for long drafts, keeps Enter/Shift+Enter as newline-only inside that view, and preserves leading slash command/skill completion via tab.
 
 ### Fixed
 
+- React TUI now enables xterm bracketed paste mode and buffers pasted content into a single input event, so multi-line pastes preserve their original line layout, no longer drop earlier-typed characters, and never trip the submit shortcut on pasted carriage returns. Pasted CR/CRLF line endings are normalised to LF.
+- React TUI multiline composer no longer drops earlier-typed characters when a multiline paste arrives mid-session, and avoids replaying already-buffered preview lines when paste data streams in one character at a time.
 - React TUI multiline composer now submits buffered text even when the current line is empty after `Shift+Enter`, so users can end a multi-line draft with a blank cursor line and still send the message.
 - React TUI `/skills` picker now supports in-modal keyboard filtering by skill name, so long skill lists can be narrowed down immediately without stepping through the full list with arrow keys.
 - React TUI `/skills` picker now pre-fills the selected skill as `/<skill-name> ` in the composer and waits for the user query, matching the intended skill-invocation flow instead of immediately loading the skill on selection.
@@ -54,6 +57,8 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - Fixed React TUI Markdown tables to size columns from rendered cell text so inline formatting like code spans and bold text no longer breaks alignment.
 - Fixed grep tool crashing with `ValueError` / `LimitOverrunError` when ripgrep outputs a line longer than 64 KB (e.g. minified assets or lock files). The asyncio subprocess stream limit is now 8 MB and oversized lines are skipped rather than terminating the session.
 - Fixed React TUI exit leaving the shell prompt concatenated with the last TUI line. The terminal cleanup handler now writes a trailing newline (`\n`) alongside the cursor-show escape sequence so the shell prompt always starts on a fresh line.
+- Fixed React TUI prompt paste handling so multi-character paste no longer overwrites already typed text, and buffered multiline preview lines now stay clipped to a single terminal row instead of wrapping and breaking prompt box alignment.
+- Fixed React TUI multiline user transcript rendering after pasted code so the `you` label stays attached to the turn header and long pasted lines are clipped instead of wrapping into broken divider/role layouts.
 - Reduced React TUI redraw pressure when `output_style=codex` by avoiding token-level assistant buffer flushes during streaming.
 
 ### Changed

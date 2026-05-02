@@ -8,7 +8,7 @@
  *
  * API is intentionally close to `ink-text-input` for drop-in replacement.
  */
-import React, {useState, useEffect} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {Text, useInput} from 'ink';
 import chalk from 'chalk';
 import stringWidth from 'string-width';
@@ -102,10 +102,31 @@ export default function ScrollableTextInput({
 	availableWidth,
 }: ScrollableTextInputProps): React.JSX.Element {
 	const [cursorOffset, setCursorOffset] = useState(value.length);
+	const [draftValue, setDraftValue] = useState(value);
+	const cursorOffsetRef = useRef(value.length);
+	const draftValueRef = useRef(value);
+	const lastPropValueRef = useRef(value);
 
-	// Keep cursor within bounds when value changes externally
+	const updateCursorOffset = (nextOffset: number): void => {
+		cursorOffsetRef.current = nextOffset;
+		setCursorOffset(nextOffset);
+	};
+
+	const updateDraftValue = (nextValue: string): void => {
+		draftValueRef.current = nextValue;
+		setDraftValue(nextValue);
+	};
+
+	// Keep the local buffer aligned with external changes while still allowing
+	// multi-character input bursts to build on the latest local state before the
+	// controlled parent value catches up.
 	useEffect(() => {
-		setCursorOffset((prev) => Math.min(prev, value.length));
+		if (value === lastPropValueRef.current) {
+			return;
+		}
+		lastPropValueRef.current = value;
+		updateDraftValue(value);
+		updateCursorOffset(Math.min(cursorOffsetRef.current, value.length));
 	}, [value]);
 
 	useInput(
@@ -121,35 +142,55 @@ export default function ScrollableTextInput({
 			}
 
 			if (key.return) {
-				onSubmit?.(value);
+				onSubmit?.(draftValueRef.current);
 				return;
 			}
 
-			let nextOffset = cursorOffset;
-			let nextValue = value;
+			const currentOffset = cursorOffsetRef.current;
+			const currentValue = draftValueRef.current;
+			let nextOffset = currentOffset;
+			let nextValue = currentValue;
 
 			if (key.leftArrow) {
-				nextOffset = Math.max(0, cursorOffset - 1);
+				nextOffset = Math.max(0, currentOffset - 1);
 			} else if (key.rightArrow) {
-				nextOffset = Math.min(value.length, cursorOffset + 1);
+				nextOffset = Math.min(currentValue.length, currentOffset + 1);
 			} else if (key.backspace || key.delete) {
-				if (cursorOffset > 0) {
+				if (currentOffset > 0) {
 					nextValue =
-						value.slice(0, cursorOffset - 1) + value.slice(cursorOffset);
-					nextOffset = cursorOffset - 1;
+						currentValue.slice(0, currentOffset - 1) + currentValue.slice(currentOffset);
+					nextOffset = currentOffset - 1;
 				}
 			} else {
 				// Regular character or paste
 				nextValue =
-					value.slice(0, cursorOffset) + input + value.slice(cursorOffset);
-				nextOffset = cursorOffset + input.length;
+					currentValue.slice(0, currentOffset) + input + currentValue.slice(currentOffset);
+				nextOffset = currentOffset + input.length;
 			}
 
 			nextOffset = Math.max(0, Math.min(nextValue.length, nextOffset));
-			setCursorOffset(nextOffset);
 
-			if (nextValue !== value) {
+			if (nextValue !== currentValue) {
+				// When the new value contains a newline, the parent (App) is expected
+				// to consume the segments before the final '\n' as buffered preview
+				// lines and keep only the trailing segment as the live input.  We
+				// mirror that behaviour locally so that subsequent input events
+				// — which often arrive faster than React can flush the parent state
+				// back through the controlled `value` prop — build on the post-\n
+				// segment instead of replaying the already-consumed prefix and
+				// duplicating buffered lines.
+				const newlineIndex = nextValue.lastIndexOf('\n');
+				if (newlineIndex >= 0) {
+					const trailing = nextValue.slice(newlineIndex + 1);
+					updateDraftValue(trailing);
+					updateCursorOffset(trailing.length);
+				} else {
+					updateDraftValue(nextValue);
+					updateCursorOffset(nextOffset);
+				}
 				onChange(nextValue);
+			} else {
+				updateCursorOffset(nextOffset);
 			}
 		},
 		{isActive: focus},
@@ -160,7 +201,7 @@ export default function ScrollableTextInput({
 	const safeWidth = Math.max(1, availableWidth);
 
 	// Empty value → show placeholder
-	if (!value) {
+	if (!draftValue) {
 		if (focus) {
 			const ph =
 				placeholder.length > 0
@@ -171,7 +212,7 @@ export default function ScrollableTextInput({
 		return placeholder ? <Text>{chalk.grey(placeholder)}</Text> : <Text>{' '}</Text>;
 	}
 
-	const chars = toChars(value);
+	const chars = toChars(draftValue);
 	const widths = chars.map((c) => stringWidth(c));
 	const {startIdx, endIdx} = computeViewport(
 		chars,

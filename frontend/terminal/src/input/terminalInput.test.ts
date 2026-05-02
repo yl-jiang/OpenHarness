@@ -9,8 +9,8 @@ test('strips mouse wheel and click escape sequences before they reach the text c
 
 	assert.equal(result.text, 'hello world');
 	assert.deepEqual(result.mouseEvents, [
-		{kind: 'wheel', direction: 'up', buttonCode: 64},
-		{kind: 'button', action: 'press', buttonCode: 0},
+		{kind: 'wheel', direction: 'up', buttonCode: 64, column: 42, row: 9},
+		{kind: 'button', action: 'press', buttonCode: 0, column: 42, row: 9},
 	]);
 });
 
@@ -23,17 +23,17 @@ test('buffers partial mouse escape sequences across chunks', () => {
 	assert.deepEqual(first.mouseEvents, []);
 	assert.equal(second.text, 'def');
 	assert.deepEqual(second.mouseEvents, [
-		{kind: 'wheel', direction: 'down', buttonCode: 65},
+		{kind: 'wheel', direction: 'down', buttonCode: 65, column: 10, row: 4},
 	]);
 });
 
 test('splits repeated backspace controls into separate chunks for Ink consumers', () => {
 	assert.deepEqual(chunkTerminalTextForInk('\b\b\b'), ['\b', '\b', '\b']);
-	assert.deepEqual(chunkTerminalTextForInk('\x7f\x7f'), ['\x7f', '\x7f']);
+	assert.deepEqual(chunkTerminalTextForInk('\x7f\x7f'), ['\b', '\b']);
 });
 
 test('preserves normal text chunks while isolating backspace controls', () => {
-	assert.deepEqual(chunkTerminalTextForInk('ab\x7f\x7fcd\b'), ['ab', '\x7f', '\x7f', 'cd', '\b']);
+	assert.deepEqual(chunkTerminalTextForInk('ab\x7f\x7fcd\b'), ['ab', '\b', '\b', 'cd', '\b']);
 	assert.deepEqual(chunkTerminalTextForInk('hello'), ['hello']);
 });
 
@@ -74,6 +74,46 @@ test('leaves unmodified Enter modifyOtherKeys sequence as a CR', () => {
 	const decoder = createTerminalInputDecoder();
 	const result = decoder.push('a\u001b[27;1;13~b');
 	assert.equal(result.text, 'a\rb');
+});
+
+test('strips bracketed paste delimiters while preserving surrounding typed text', () => {
+	const decoder = createTerminalInputDecoder();
+	const result = decoder.push('abc\u001b[200~pasted text\u001b[201~');
+	assert.equal(result.text, 'abcpasted text');
+});
+
+test('buffers split bracketed paste content across chunks until the end marker arrives', () => {
+	// Real terminals can split a single paste across many stdin data events.
+	// The decoder must buffer the entire paste and emit it once, otherwise the
+	// React composer receives multiple input bursts and races on `\n` boundaries.
+	const decoder = createTerminalInputDecoder();
+	const first = decoder.push('abc\u001b[20');
+	const second = decoder.push('0~pasted ');
+	const third = decoder.push('text\u001b[201');
+	const fourth = decoder.push('~def');
+
+	assert.equal(first.text, 'abc');
+	assert.equal(second.text, '');
+	assert.equal(third.text, '');
+	assert.equal(fourth.text, 'pasted textdef');
+});
+
+test('normalises CR and CRLF line endings inside a bracketed paste to LF', () => {
+	const decoder = createTerminalInputDecoder();
+	const result = decoder.push(
+		'\u001b[200~line1\r\nline2\rline3\nline4\u001b[201~',
+	);
+	assert.equal(result.text, 'line1\nline2\nline3\nline4');
+});
+
+test('emits a multi-line paste as a single chunked write to ink', () => {
+	const decoder = createTerminalInputDecoder();
+	const result = decoder.push(
+		'\u001b[200~  line1\n  line2\n  line3\u001b[201~',
+	);
+	// Buffered paste is returned in one piece; chunkTerminalTextForInk then
+	// keeps it as a single chunk because it contains no backspace control bytes.
+	assert.equal(result.text, '  line1\n  line2\n  line3');
 });
 
 test('does not mangle unrelated escape sequences such as arrow keys', () => {

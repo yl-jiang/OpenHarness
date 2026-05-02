@@ -58,11 +58,15 @@ function CommandPickerInner({
 	selectedIndex,
 	title = 'Commands',
 	subHintsByHint = {},
+	footerLabel = '↑↓ navigate  ⏎ select  tab complete  esc dismiss',
+	showEnterLabel = true,
 }: {
 	hints: string[];
 	selectedIndex: number;
 	title?: string;
 	subHintsByHint?: Record<string, string[]>;
+	footerLabel?: string;
+	showEnterLabel?: boolean;
 }): React.JSX.Element | null {
 	if (hints.length === 0) {
 		return null;
@@ -99,12 +103,12 @@ function CommandPickerInner({
 								{hint}
 								{hasSubHints ? ` ${SUBMENU_MARKER}` : ''}
 							</Text>
-							{isSelected ? <Text dimColor> [enter]</Text> : null}
+							{isSelected && showEnterLabel ? <Text dimColor> [enter]</Text> : null}
 						</Box>
 					);
 				})}
 				{windowEnd < hints.length ? <Text dimColor>  ↓ {hints.length - windowEnd} more</Text> : null}
-				<Text dimColor> {'\u2191\u2193'} navigate{'  '}{'\u23CE'} select{'  '}tab complete{'  '}esc dismiss</Text>
+				<Text dimColor> {footerLabel}</Text>
 			</Box>
 			{subHints.length > 0 ? (
 				<Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginLeft={1}>
