@@ -8,7 +8,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
-from uuid import uuid4
 
 from openharness.api.client import (
     ApiMessageCompleteEvent,
@@ -18,7 +17,6 @@ from openharness.api.client import (
     SupportsStreamingMessages,
 )
 from openharness.api.usage import UsageSnapshot
-from openharness.config.paths import get_data_dir
 from openharness.engine.messages import ConversationMessage, ToolResultBlock
 from openharness.engine.messages import normalize_messages_for_api
 from openharness.engine.stream_events import (
@@ -31,13 +29,17 @@ from openharness.engine.stream_events import (
     ToolExecutionCompleted,
     ToolExecutionStarted,
 )
+from openharness.engine.tool_loop_guard import (
+    build_doom_loop_result,
+    record_tool_call_result,
+    should_block_tool_call,
+)
+from openharness.engine.tool_pipeline import ToolExecutionPipeline, ToolPipelineStage, ToolPipelineState
+from openharness.engine.tool_repair import build_invalid_tool_result, repair_tool_name
+from openharness.engine.tool_result_normalizer import TextToolResultNormalizer
 from openharness.engine.types import TaskFocusStateKey, ToolMetadataKey, default_task_focus_state
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
-from openharness.services.tool_outputs import (
-    tool_output_inline_chars,
-    tool_output_preview_chars,
-)
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.base import ToolRegistry
 from openharness.utils.log import get_logger
@@ -332,53 +334,10 @@ def _update_plan_mode(tool_metadata: dict[str, object] | None, mode: str) -> Non
     tool_metadata[ToolMetadataKey.PERMISSION_MODE.value] = mode
 
 
-def _tool_artifact_dir() -> Path:
-    artifact_dir = get_data_dir() / "tool_artifacts"
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    return artifact_dir
-
-
 def _permission_prompt_lock(context: QueryContext) -> asyncio.Lock:
     if context.permission_prompt_lock is None:
         context.permission_prompt_lock = asyncio.Lock()
     return context.permission_prompt_lock
-
-
-def _safe_tool_artifact_name(tool_name: str) -> str:
-    normalized = re.sub(r"[^A-Za-z0-9_.-]+", "_", tool_name.strip())
-    return (normalized or "tool")[:80]
-
-
-def _offload_tool_output_if_needed(
-    *,
-    tool_name: str,
-    tool_use_id: str,
-    output: str,
-) -> tuple[str, Path | None]:
-    inline_limit = tool_output_inline_chars()
-    if len(output) <= inline_limit:
-        return output, None
-
-    artifact_path = (
-        _tool_artifact_dir()
-        / f"{time.strftime('%Y%m%d-%H%M%S')}-{_safe_tool_artifact_name(tool_name)}-{uuid4().hex[:12]}.txt"
-    )
-    artifact_path.write_text(output, encoding="utf-8", errors="replace")
-    preview = output[:tool_output_preview_chars()]
-    omitted = max(0, len(output) - len(preview))
-    inline = (
-        "[Tool output truncated]\n"
-        f"Tool: {tool_name}\n"
-        f"Tool use id: {tool_use_id}\n"
-        f"Original size: {len(output)} chars\n"
-        f"Full output saved to: {artifact_path}\n"
-        f"Inline preview: first {len(preview)} chars"
-    )
-    if omitted:
-        inline += f" ({omitted} chars omitted)"
-    if preview:
-        inline += f"\n\nPreview:\n{preview}"
-    return inline, artifact_path
 
 
 def _record_tool_carryover(
@@ -719,24 +678,6 @@ async def run_query(
 
         tool_calls = final_message.tool_uses
 
-        # TODO: valid mismatched tool names before execution and try to repair
-        # Implemention: a function to check if all tool_name in tool_calls are in the tool registry, if not, try to repair the tool name (e.g., via fuzzy matching or embedding similarity) 
-        
-        # TODO: if tool_name not in the pre-defined tool registry, collect the helpful error info to model and retry with a clarified prompt, but if hit the max retry limit, return an message contain the statution to user.
-        # ```python
-        # for tc in assistant_message.tool_calls:
-        #     if tc.function.name not in self.valid_tool_names:
-        #         content = f"Tool '{tc.function.name}' does not exist. Available tools: {available}"
-        #     else:
-        #         content = "Skipped: another tool call in this turn used an invalid name. Please retry this tool call."
-        #     messages.append({
-        #         "role": "tool",
-        #         "tool_call_id": tc.id,
-        #         "content": content,
-        #     })
-        # continue
-        # ```
-
         if len(tool_calls) == 1:
             # Single tool: sequential (stream events immediately)
             tc = tool_calls[0]
@@ -808,112 +749,187 @@ async def _execute_tool_call(
     tool_use_id: str,
     tool_input: dict[str, object],
 ) -> ToolResultBlock:
+    doom_loop = should_block_tool_call(context.tool_metadata, tool_name, tool_input)
+    if doom_loop.blocked:
+        logger.warning("blocked repeated failing tool call: %s id=%s", tool_name, tool_use_id)
+        return build_doom_loop_result(
+            tool_use_id=tool_use_id,
+            tool_name=tool_name,
+            reason=doom_loop.reason,
+        )
+
+    result = await ToolExecutionPipeline(_default_tool_pipeline_stages()).run(
+        context=context,
+        tool_name=tool_name,
+        tool_use_id=tool_use_id,
+        tool_input=tool_input,
+    )
+    record_tool_call_result(context.tool_metadata, tool_name, tool_input, result)
+    return result
+
+
+def _default_tool_pipeline_stages() -> tuple[ToolPipelineStage, ...]:
+    return (
+        ToolPipelineStage("resolve_tool", _resolve_tool_stage),
+        ToolPipelineStage("pre_hook", _pre_tool_hook_stage),
+        ToolPipelineStage("validate_input", _validate_tool_input_stage),
+        ToolPipelineStage("check_permission", _check_tool_permission_stage),
+        ToolPipelineStage("execute_tool", _execute_tool_stage),
+        ToolPipelineStage("normalize_result", _normalize_tool_result_stage),
+        ToolPipelineStage("update_metadata", _update_tool_metadata_stage),
+        ToolPipelineStage("post_hook", _post_tool_hook_stage),
+    )
+
+
+async def _resolve_tool_stage(state: ToolPipelineState) -> ToolPipelineState:
+    context: QueryContext = state.context
+    logger.debug("tool_call start: %s id=%s", state.tool_name, state.tool_use_id)
+
+    repair = repair_tool_name(state.tool_name, context.tool_registry)
+    state.repair = repair
+    if repair.resolved_name is None:
+        logger.warning("unknown tool: %s", state.tool_name)
+        state.result = build_invalid_tool_result(
+            tool_use_id=state.tool_use_id,
+            requested_name=state.tool_name,
+            available_names=repair.available_names,
+            suggestions=repair.suggestions,
+        )
+        state.stop = True
+        return state
+    if repair.repaired:
+        logger.info("repaired tool name: %s -> %s (%s)", state.tool_name, repair.resolved_name, repair.reason)
+        state.tool_name = repair.resolved_name
+
+    state.tool = context.tool_registry.get(state.tool_name)
+    if state.tool is None:
+        logger.warning("unknown tool: %s", state.tool_name)
+        state.result = build_invalid_tool_result(
+            tool_use_id=state.tool_use_id,
+            requested_name=state.tool_name,
+            available_names=repair.available_names,
+            suggestions=repair.suggestions,
+        )
+        state.stop = True
+    return state
+
+
+async def _pre_tool_hook_stage(state: ToolPipelineState) -> ToolPipelineState:
+    context: QueryContext = state.context
     if context.hook_executor is not None:
         pre_hooks = await context.hook_executor.execute(
             HookEvent.PRE_TOOL_USE,
-            {"tool_name": tool_name, "tool_input": tool_input, "event": HookEvent.PRE_TOOL_USE.value},
+            {"tool_name": state.tool_name, "tool_input": state.tool_input, "event": HookEvent.PRE_TOOL_USE.value},
         )
         if pre_hooks.blocked:
-            return ToolResultBlock(
-                tool_use_id=tool_use_id,
-                content=pre_hooks.reason or f"pre_tool_use hook blocked {tool_name}",
+            state.result = ToolResultBlock(
+                tool_use_id=state.tool_use_id,
+                content=pre_hooks.reason or f"pre_tool_use hook blocked {state.tool_name}",
                 is_error=True,
             )
+            state.stop = True
+    return state
 
-    logger.debug("tool_call start: %s id=%s", tool_name, tool_use_id)
 
-    tool = context.tool_registry.get(tool_name)
-    if tool is None:
-        logger.warning("unknown tool: %s", tool_name)
-        return ToolResultBlock(
-            tool_use_id=tool_use_id,
-            content=f"Unknown tool: {tool_name}",
-            is_error=True,
-        )
-
+async def _validate_tool_input_stage(state: ToolPipelineState) -> ToolPipelineState:
     try:
-        parsed_input = tool.input_model.model_validate(tool_input)
+        state.parsed_input = state.tool.input_model.model_validate(state.tool_input)
     except Exception as exc:
-        logger.warning("invalid input for %s: %s", tool_name, exc)
-        hint = _build_validation_error_hint(tool, tool_input, exc)
-        return ToolResultBlock(
-            tool_use_id=tool_use_id,
+        logger.warning("invalid input for %s: %s", state.tool_name, exc)
+        hint = _build_validation_error_hint(state.tool, state.tool_input, exc)
+        state.result = ToolResultBlock(
+            tool_use_id=state.tool_use_id,
             content=hint,
             is_error=True,
         )
+        state.stop = True
+    return state
 
-    _file_path = _resolve_permission_file_path(context.cwd, tool_input, parsed_input)
-    _command = _extract_permission_command(tool_input, parsed_input)
+
+async def _check_tool_permission_stage(state: ToolPipelineState) -> ToolPipelineState:
+    context: QueryContext = state.context
+    state.permission_file_path = _resolve_permission_file_path(context.cwd, state.tool_input, state.parsed_input)
+    state.permission_command = _extract_permission_command(state.tool_input, state.parsed_input)
     logger.debug("permission check: %s read_only=%s path=%s cmd=%s", 
-                 tool_name, tool.is_read_only(parsed_input), _file_path, _command and _command[:80])
+                 state.tool_name, state.tool.is_read_only(state.parsed_input), state.permission_file_path,
+                 state.permission_command and state.permission_command[:80])
     decision = context.permission_checker.evaluate(
-        tool_name,
-        is_read_only=tool.is_read_only(parsed_input),
-        file_path=_file_path,
-        command=_command,
+        state.tool_name,
+        is_read_only=state.tool.is_read_only(state.parsed_input),
+        file_path=state.permission_file_path,
+        command=state.permission_command,
     )
     if not decision.allowed:
         if decision.requires_confirmation and context.permission_prompt is not None:
             async with _permission_prompt_lock(context):
                 decision = context.permission_checker.evaluate(
-                    tool_name,
-                    is_read_only=tool.is_read_only(parsed_input),
-                    file_path=_file_path,
-                    command=_command,
+                    state.tool_name,
+                    is_read_only=state.tool.is_read_only(state.parsed_input),
+                    file_path=state.permission_file_path,
+                    command=state.permission_command,
                 )
                 if decision.allowed:
-                    logger.debug("permission allowed after recheck for %s: %s", tool_name, decision.reason)
+                    logger.debug("permission allowed after recheck for %s: %s", state.tool_name, decision.reason)
                 elif decision.requires_confirmation:
-                    logger.debug("permission prompt for %s: %s", tool_name, decision.reason)
+                    logger.debug("permission prompt for %s: %s", state.tool_name, decision.reason)
                     if context.hook_executor is not None:
                         await context.hook_executor.execute(
                             HookEvent.NOTIFICATION,
                             {
                                 "event": HookEvent.NOTIFICATION.value,
                                 "notification_type": "permission_prompt",
-                                "tool_name": tool_name,
+                                "tool_name": state.tool_name,
                                 "reason": decision.reason,
                             },
                         )
-                    confirmed = await context.permission_prompt(tool_name, decision.reason)
+                    confirmed = await context.permission_prompt(state.tool_name, decision.reason)
                     reply = _normalize_permission_reply(confirmed)
                     if reply == "reject":
-                        logger.debug("permission denied by user for %s", tool_name)
-                        return ToolResultBlock(
-                            tool_use_id=tool_use_id,
-                            content=decision.reason or f"Permission denied for {tool_name}",
+                        logger.debug("permission denied by user for %s", state.tool_name)
+                        state.result = ToolResultBlock(
+                            tool_use_id=state.tool_use_id,
+                            content=decision.reason or f"Permission denied for {state.tool_name}",
                             is_error=True,
                         )
+                        state.stop = True
+                        return state
                     if reply == "always":
                         context.permission_checker.remember_allow(decision)
                 else:
-                    logger.debug("permission blocked after recheck for %s: %s", tool_name, decision.reason)
-                    return ToolResultBlock(
-                        tool_use_id=tool_use_id,
-                        content=decision.reason or f"Permission denied for {tool_name}",
+                    logger.debug("permission blocked after recheck for %s: %s", state.tool_name, decision.reason)
+                    state.result = ToolResultBlock(
+                        tool_use_id=state.tool_use_id,
+                        content=decision.reason or f"Permission denied for {state.tool_name}",
                         is_error=True,
                     )
+                    state.stop = True
+                    return state
         else:
-            logger.debug("permission blocked for %s: %s", tool_name, decision.reason)
-            return ToolResultBlock(
-                tool_use_id=tool_use_id,
-                content=decision.reason or f"Permission denied for {tool_name}",
+            logger.debug("permission blocked for %s: %s", state.tool_name, decision.reason)
+            state.result = ToolResultBlock(
+                tool_use_id=state.tool_use_id,
+                content=decision.reason or f"Permission denied for {state.tool_name}",
                 is_error=True,
             )
+            state.stop = True
+    return state
 
+
+async def _execute_tool_stage(state: ToolPipelineState) -> ToolPipelineState:
+    context: QueryContext = state.context
     logger.event(
         "tool_execution_request",
-        tool_name=tool_name,
-        tool_use_id=tool_use_id,
-        tool_input=tool_input,
-        is_read_only=tool.is_read_only(parsed_input),
-        file_path=_file_path,
-        command=_command,
+        tool_name=state.tool_name,
+        tool_use_id=state.tool_use_id,
+        tool_input=state.tool_input,
+        is_read_only=state.tool.is_read_only(state.parsed_input),
+        file_path=state.permission_file_path,
+        command=state.permission_command,
     )
     t0 = time.monotonic()
     try:
-        result = await tool.execute(
-            parsed_input,
+        state.raw_result = await state.tool.execute(
+            state.parsed_input,
             ToolExecutionContext(
                 cwd=context.cwd,
                 metadata={
@@ -927,51 +943,73 @@ async def _execute_tool_call(
     except Exception as exc:
         logger.exception(
             "tool execution raised: name=%s id=%s",
-            tool_name,
-            tool_use_id,
+            state.tool_name,
+            state.tool_use_id,
             exc_info=exc,
         )
-        return ToolResultBlock(
-            tool_use_id=tool_use_id,
-            content=f"Tool {tool_name} failed: {type(exc).__name__}: {exc}",
+        state.result = ToolResultBlock(
+            tool_use_id=state.tool_use_id,
+            content=f"Tool {state.tool_name} failed: {type(exc).__name__}: {exc}",
             is_error=True,
         )
+        state.stop = True
+        return state
     elapsed = time.monotonic() - t0
     logger.debug("executed %s in %.2fs err=%s output_len=%d", 
-                 tool_name, elapsed, result.is_error, len(result.output or ""))
-    inline_output, artifact_path = _offload_tool_output_if_needed(
-        tool_name=tool_name,
-        tool_use_id=tool_use_id,
-        output=result.output or "",
+                 state.tool_name, elapsed, state.raw_result.is_error, len(state.raw_result.output or ""))
+    return state
+
+
+async def _normalize_tool_result_stage(state: ToolPipelineState) -> ToolPipelineState:
+    context: QueryContext = state.context
+    normalized = TextToolResultNormalizer().normalize(
+        tool_name=state.tool_name,
+        tool_use_id=state.tool_use_id,
+        output=state.raw_result.output or "",
     )
-    if artifact_path is not None:
-        _remember_active_artifact(context.tool_metadata, str(artifact_path))
-    tool_result = ToolResultBlock(
-        tool_use_id=tool_use_id,
-        content=inline_output,
-        is_error=result.is_error,
+    state.artifact_path = normalized.artifact_path
+    if normalized.artifact_path is not None:
+        _remember_active_artifact(context.tool_metadata, str(normalized.artifact_path))
+    state.result = ToolResultBlock(
+        tool_use_id=state.tool_use_id,
+        content=normalized.inline_content,
+        is_error=state.raw_result.is_error,
     )
+    return state
+
+
+async def _update_tool_metadata_stage(state: ToolPipelineState) -> ToolPipelineState:
+    context: QueryContext = state.context
+    if state.result is None:
+        raise RuntimeError("tool metadata stage requires a normalized tool result")
     _record_tool_carryover(
         context,
-        tool_name=tool_name,
-        tool_input=tool_input,
-        tool_output=tool_result.content,
-        tool_result_metadata=result.metadata,
-        is_error=tool_result.is_error,
-        resolved_file_path=_file_path,
+        tool_name=state.tool_name,
+        tool_input=state.tool_input,
+        tool_output=state.result.content,
+        tool_result_metadata=state.raw_result.metadata,
+        is_error=state.result.is_error,
+        resolved_file_path=state.permission_file_path,
     )
+    return state
+
+
+async def _post_tool_hook_stage(state: ToolPipelineState) -> ToolPipelineState:
+    context: QueryContext = state.context
+    if state.result is None:
+        raise RuntimeError("post hook stage requires a normalized tool result")
     if context.hook_executor is not None:
         await context.hook_executor.execute(
             HookEvent.POST_TOOL_USE,
             {
-                "tool_name": tool_name,
-                "tool_input": tool_input,
-                "tool_output": tool_result.content,
-                "tool_is_error": tool_result.is_error,
+                "tool_name": state.tool_name,
+                "tool_input": state.tool_input,
+                "tool_output": state.result.content,
+                "tool_is_error": state.result.is_error,
                 "event": HookEvent.POST_TOOL_USE.value,
             },
         )
-    return tool_result
+    return state
 
 
 def _build_validation_error_hint(

@@ -60,6 +60,7 @@ class ToolMetadataKey(str, Enum):
     SELF_EVOLUTION_CONTROLLER = "self_evolution_controller"
     # Session-only cache: not persisted across sessions.
     FILE_READ_CACHE = "file_read_cache"
+    TOOL_CALL_HISTORY = "tool_call_history"
 
     @classmethod
     def all_persisted_keys(cls) -> tuple["ToolMetadataKey", ...]:

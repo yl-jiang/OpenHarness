@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -77,14 +78,20 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, BaseTool] = {}
+        self._version = 0
+        self._schema_cache_version = -1
+        self._schema_cache: list[dict[str, Any]] | None = None
 
     def register(self, tool: BaseTool) -> None:
         """Register a tool instance."""
         self._tools[tool.name] = tool
+        self._version += 1
 
     def unregister(self, name: str) -> None:
         """Remove a tool by name (no-op if not registered)."""
-        self._tools.pop(name, None)
+        if name in self._tools:
+            self._tools.pop(name)
+            self._version += 1
 
     def get(self, name: str) -> BaseTool | None:
         """Return a registered tool by name."""
@@ -96,4 +103,7 @@ class ToolRegistry:
 
     def to_api_schema(self) -> list[dict[str, Any]]:
         """Return all tool schemas in API format."""
-        return [tool.to_api_schema() for tool in self._tools.values()]
+        if self._schema_cache is None or self._schema_cache_version != self._version:
+            self._schema_cache = [tool.to_api_schema() for tool in self._tools.values()]
+            self._schema_cache_version = self._version
+        return copy.deepcopy(self._schema_cache)

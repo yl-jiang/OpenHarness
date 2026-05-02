@@ -25,6 +25,7 @@ from openharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
     CompactProgressEvent,
+    CompactProgressPhase,
     ErrorEvent,
     StatusEvent,
     ToolExecutionCompleted,
@@ -575,7 +576,7 @@ def _format_channel_progress(
     text: str,
     session_key: str,
     content: str,
-    compact_phase: str | None = None,
+    compact_phase: CompactProgressPhase | None = None,
     compact_trigger: str | None = None,
     attempt: int | None = None,
 ) -> str:
@@ -603,7 +604,7 @@ def _format_channel_progress(
             return text
         return f"🫧 {text}"
     if kind == "compact_progress":
-        if compact_phase == "hooks_start":
+        if compact_phase == CompactProgressPhase.HOOKS_START:
             if prefers_chinese:
                 if compact_trigger == "reactive":
                     return "🫧 上下文有点超长，我先准备压缩一下记忆，然后立刻继续重试～"
@@ -611,32 +612,32 @@ def _format_channel_progress(
             if compact_trigger == "reactive":
                 return "🫧 The context got too large. I’m preparing a quick memory compaction before retrying."
             return "🫧 Let me get the context ready before I compact the conversation."
-        if compact_phase == "context_collapse_start":
+        if compact_phase == CompactProgressPhase.CONTEXT_COLLAPSE_START:
             if prefers_chinese:
                 return "🫧 我先把太长的上下文折叠一下，让后面的压缩更快一点～"
             return "🫧 I’m collapsing the oversized context first so compaction can move faster."
-        if compact_phase == "context_collapse_end":
+        if compact_phase == CompactProgressPhase.CONTEXT_COLLAPSE_END:
             if prefers_chinese:
                 return "🫧 上下文已经先收紧了一层，继续压缩重点～"
             return "🫧 The context is trimmed down now. Continuing with the main compaction."
-        if compact_phase in {"session_memory_start", "compact_start"}:
+        if compact_phase in {CompactProgressPhase.SESSION_MEMORY_START, CompactProgressPhase.COMPACT_START}:
             if prefers_chinese:
-                if compact_phase == "session_memory_start":
+                if compact_phase == CompactProgressPhase.SESSION_MEMORY_START:
                     return "🧠 我先把前面的聊天重点悄悄捋顺一下，马上继续～"
                 if compact_trigger == "reactive":
                     return "🧠 这轮上下文太长了，我先压缩一下记忆，然后马上继续重试～"
                 return "🧠 聊天有点长啦，我先帮你悄悄压缩一下记忆，马上继续～"
-            if compact_phase == "session_memory_start":
+            if compact_phase == CompactProgressPhase.SESSION_MEMORY_START:
                 return "🧠 Let me quickly condense the earlier parts of this chat, then I’ll keep going."
             if compact_trigger == "reactive":
                 return "🧠 The context is too large for this turn. I’ll compact the memory and retry."
             return "🧠 This chat is getting long. I’ll compact the memory and keep going."
-        if compact_phase == "compact_retry":
+        if compact_phase == CompactProgressPhase.COMPACT_RETRY:
             suffix = f" (attempt {attempt})" if attempt is not None else ""
             if prefers_chinese:
                 return f"🔁 压缩记忆这一步有点卡，我换个方式再试一次{suffix}。"
             return f"🔁 Compaction got stuck, trying a lighter retry{suffix}."
-        if compact_phase == "compact_failed":
+        if compact_phase == CompactProgressPhase.COMPACT_FAILED:
             if prefers_chinese:
                 return "⚠️ 这次记忆压缩没成功，我先跳过它继续处理你的消息。"
             return "⚠️ Memory compaction did not complete. I’m skipping it and continuing."

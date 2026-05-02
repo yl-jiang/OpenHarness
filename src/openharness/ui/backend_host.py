@@ -78,8 +78,26 @@ class ReactBackendHost:
         self._permission_lock = asyncio.Lock()
         self._busy = False
         self._running = True
+        self._active_request_task: asyncio.Task[bool] | None = None
         # Track last tool input per name for rich event emission
         self._last_tool_inputs: dict[str, dict] = {}
+
+    def _save_snapshot(self) -> None:
+        if self._bundle is None:
+            return
+        messages = self._bundle.engine.export_messages
+        if not messages:
+            return
+        settings = self._bundle.current_settings()
+        self._bundle.session_backend.save_snapshot(
+            cwd=self._bundle.cwd,
+            model=settings.model,
+            system_prompt=self._bundle.engine.system_prompt,
+            messages=messages,
+            usage=self._bundle.engine.total_usage,
+            session_id=self._bundle.session_id,
+            tool_metadata=self._bundle.engine.tool_metadata,
+        )
 
     async def run(self) -> int:
         self._bundle = await build_runtime(
@@ -166,9 +184,11 @@ class ReactBackendHost:
                         continue
                     self._busy = True
                     try:
-                        should_continue = await self._apply_select_command(
-                            request.command or "",
-                            request.value or "",
+                        should_continue = await self._run_active_request(
+                            self._apply_select_command(
+                                request.command or "",
+                                request.value or "",
+                            )
                         )
                     finally:
                         self._busy = False
@@ -187,7 +207,7 @@ class ReactBackendHost:
                     continue
                 self._busy = True
                 try:
-                    should_continue = await self._process_line(line)
+                    should_continue = await self._run_active_request(self._process_line(line))
                 finally:
                     self._busy = False
                 if not should_continue:
@@ -198,6 +218,7 @@ class ReactBackendHost:
             with contextlib.suppress(asyncio.CancelledError):
                 await reader
             if self._bundle is not None:
+                self._save_snapshot()
                 await close_runtime(self._bundle)
         return 0
 
@@ -220,12 +241,27 @@ class ReactBackendHost:
                 if not future.done():
                     future.set_result(_permission_reply_from_request(request))
                 continue
+            if request.type == "cancel_line":
+                task = self._active_request_task
+                if task is not None and not task.done():
+                    task.cancel()
+                continue
             if request.type == "question_response" and request.request_id in self._question_requests:
                 future = self._question_requests[request.request_id]
                 if not future.done():
                     future.set_result(request.answer or "")
                 continue
             await self._request_queue.put(request)
+
+    async def _run_active_request(self, coro) -> bool:
+        task = asyncio.create_task(coro)
+        self._active_request_task = task
+        try:
+            return await task
+        except asyncio.CancelledError:
+            return True
+        finally:
+            self._active_request_task = None
 
     async def _process_line(self, line: str, *, transcript_line: str | None = None) -> bool:
         assert self._bundle is not None
@@ -418,13 +454,33 @@ class ReactBackendHost:
         async def _clear_output() -> None:
             await self._emit(BackendEvent(type="clear_transcript"))
 
-        should_continue = await handle_line(
-            self._bundle,
-            line,
-            print_system=_print_system,
-            render_event=_render_event,
-            clear_output=_clear_output,
-        )
+        try:
+            should_continue = await handle_line(
+                self._bundle,
+                line,
+                print_system=_print_system,
+                render_event=_render_event,
+                clear_output=_clear_output,
+            )
+        except asyncio.CancelledError:
+            self._save_snapshot()
+            await self._emit(
+                BackendEvent(
+                    type="transcript_item",
+                    item=TranscriptItem(role="system", text="Cancelled current turn."),
+                )
+            )
+            await self._emit(self._status_snapshot())
+            await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
+            await self._emit(BackendEvent.line_complete(reason="cancelled"))
+            logger.event(
+                "backend_process_line_complete",
+                session_id=self._bundle.session_id,
+                line=line,
+                should_continue=True,
+                finish_reason="cancelled",
+            )
+            raise
         await self._emit(self._status_snapshot())
         await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
         # Use the finish reason captured by _render_event (defaults to "completed")
@@ -875,6 +931,7 @@ class ReactBackendHost:
                 return "reject"
             finally:
                 self._permission_requests.pop(request_id, None)
+                await self._emit(BackendEvent(type="modal_request", modal=None))
 
     async def _ask_question(self, question: str) -> str:
         request_id = uuid4().hex

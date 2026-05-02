@@ -10,8 +10,9 @@ import pytest
 
 from openharness.api.client import ApiMessageCompleteEvent
 from openharness.api.usage import UsageSnapshot
-from openharness.engine.stream_events import CompactProgressEvent
+from openharness.engine.stream_events import CompactProgressEvent, CompactProgressPhase
 from openharness.engine.messages import ConversationMessage, TextBlock
+from openharness.services.session_storage import load_session_snapshot
 from openharness.state import AppState
 from openharness.ui.backend_host import BackendHostConfig, ReactBackendHost, run_backend_host
 from openharness.ui.protocol import BackendEvent
@@ -54,6 +55,19 @@ class FakeBinaryStdout:
 
     def flush(self) -> None:
         return None
+
+
+class _FakeBuffer:
+    def __init__(self, payloads: list[bytes]) -> None:
+        self._payloads = iter(payloads)
+
+    def readline(self) -> bytes:
+        return next(self._payloads, b"")
+
+
+class _FakeStdin:
+    def __init__(self, payloads: list[bytes]) -> None:
+        self.buffer = _FakeBuffer(payloads)
 
 
 def test_state_snapshot_includes_git_branch():
@@ -154,6 +168,41 @@ async def test_read_requests_maps_legacy_permission_allowed_to_once(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_read_requests_cancels_active_line_without_queueing(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+
+    async def _pending() -> None:
+        await asyncio.Future()
+
+    task = asyncio.create_task(_pending())
+    host._active_request_task = task
+
+    payload = b'{"type":"cancel_line"}\n'
+
+    class _FakeBuffer:
+        def __init__(self):
+            self._reads = 0
+
+        def readline(self):
+            self._reads += 1
+            if self._reads == 1:
+                return payload
+            return b""
+
+    class _FakeStdin:
+        buffer = _FakeBuffer()
+
+    monkeypatch.setattr("openharness.ui.backend_host.sys.stdin", _FakeStdin())
+
+    await host._read_requests()
+
+    assert task.cancelled()
+    queued = await host._request_queue.get()
+    assert queued.type == "shutdown"
+    assert host._request_queue.empty()
+
+
+@pytest.mark.asyncio
 async def test_backend_host_processes_command(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
@@ -237,7 +286,7 @@ async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
         del bundle, line, print_system, clear_output
         await render_event(
             CompactProgressEvent(
-                phase="compact_start",
+                phase=CompactProgressPhase.COMPACT_START,
                 trigger="auto",
                 message="Compacting conversation memory.",
                 checkpoint="compact_start",
@@ -257,11 +306,72 @@ async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
     assert should_continue is True
     assert any(
         event.type == "compact_progress"
-        and event.compact_phase == "compact_start"
+        and event.compact_phase == CompactProgressPhase.COMPACT_START
         and event.compact_checkpoint == "compact_start"
         and event.compact_metadata == {"token_count": 12345}
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_backend_host_run_saves_snapshot_when_exit_command_stops_session(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr(
+        "openharness.ui.backend_host.sys.stdin",
+        _FakeStdin([b'{"type":"submit_line","line":"/exit"}\n', b""]),
+    )
+    monkeypatch.setattr("openharness.ui.backend_host.sys.stdout", FakeBinaryStdout())
+
+    host = ReactBackendHost(
+        BackendHostConfig(
+            api_client=StaticApiClient("unused"),
+            cwd=str(tmp_path),
+            restore_messages=[
+                ConversationMessage(role="user", content=[TextBlock(text="hello")]).model_dump(mode="json"),
+                ConversationMessage(role="assistant", content=[TextBlock(text="world")]).model_dump(mode="json"),
+            ],
+            restore_tool_metadata={"first_user_query_at": 1735704000.0},
+        )
+    )
+
+    result = await host.run()
+
+    snapshot = load_session_snapshot(tmp_path)
+    assert result == 0
+    assert snapshot is not None
+    assert [message["role"] for message in snapshot["messages"]] == ["user", "assistant"]
+    assert snapshot["messages"][0]["content"][0]["text"] == "hello"
+
+
+@pytest.mark.asyncio
+async def test_backend_host_run_saves_snapshot_when_input_stream_closes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr("openharness.ui.backend_host.sys.stdin", _FakeStdin([b""]))
+    monkeypatch.setattr("openharness.ui.backend_host.sys.stdout", FakeBinaryStdout())
+
+    host = ReactBackendHost(
+        BackendHostConfig(
+            api_client=StaticApiClient("unused"),
+            cwd=str(tmp_path),
+            restore_messages=[
+                ConversationMessage(role="user", content=[TextBlock(text="hello")]).model_dump(mode="json"),
+                ConversationMessage(role="assistant", content=[TextBlock(text="world")]).model_dump(mode="json"),
+            ],
+            restore_tool_metadata={"first_user_query_at": 1735704000.0},
+        )
+    )
+
+    result = await host.run()
+
+    snapshot = load_session_snapshot(tmp_path)
+    assert result == 0
+    assert snapshot is not None
+    assert [message["role"] for message in snapshot["messages"]] == ["user", "assistant"]
+    assert snapshot["messages"][1]["content"][0]["text"] == "world"
 
 
 @pytest.mark.asyncio
@@ -665,6 +775,37 @@ async def test_concurrent_ask_permission_are_serialised():
 
 
 @pytest.mark.asyncio
+async def test_ask_permission_timeout_emits_modal_clear(monkeypatch):
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    events: list[BackendEvent] = []
+
+    async def _fake_emit(event: BackendEvent) -> None:
+        events.append(event)
+
+    async def _fake_wait_for(awaitable, timeout):
+        del awaitable
+        assert timeout == 300
+        raise asyncio.TimeoutError
+
+    host._emit = _fake_emit  # type: ignore[method-assign]
+    monkeypatch.setattr("openharness.ui.backend_host.asyncio.wait_for", _fake_wait_for)
+
+    result = await host._ask_permission("write_file", "reason")
+
+    assert result == "reject"
+    assert host._permission_requests == {}
+    modal_events = [event for event in events if event.type == "modal_request"]
+    assert len(modal_events) == 2
+    assert modal_events[0].modal == {
+        "kind": "permission",
+        "request_id": modal_events[0].modal["request_id"],
+        "tool_name": "write_file",
+        "reason": "reason",
+    }
+    assert modal_events[1].modal is None
+
+
+@pytest.mark.asyncio
 async def test_backend_host_line_complete_includes_reason_field(tmp_path, monkeypatch):
     """line_complete event must carry a 'reason' field set to 'completed'
     when the model finishes normally."""
@@ -692,3 +833,46 @@ async def test_backend_host_line_complete_includes_reason_field(tmp_path, monkey
     # The event must carry a reason field
     assert hasattr(lc, "reason") or (isinstance(lc, dict) and "reason" in lc)
     assert lc.reason == "completed"
+
+
+@pytest.mark.asyncio
+async def test_backend_host_process_line_emits_cancelled_reason_when_cancelled(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+    started = asyncio.Event()
+
+    async def _emit(event):
+        events.append(event)
+
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
+        del bundle, line, print_system, render_event, clear_output
+        started.set()
+        await asyncio.Future()
+
+    monkeypatch.setattr("openharness.ui.backend_host.handle_line", _fake_handle_line)
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        task = asyncio.create_task(host._process_line("hi"))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        await close_runtime(host._bundle)
+
+    line_complete_events = [event for event in events if event.type == "line_complete"]
+    assert len(line_complete_events) == 1
+    assert line_complete_events[0].reason == "cancelled"
+    assert any(
+        event.type == "transcript_item"
+        and event.item
+        and event.item.role == "system"
+        and "cancelled" in event.item.text.lower()
+        for event in events
+    )

@@ -18,6 +18,8 @@ from openharness.utils.log import get_logger
 
 logger = get_logger(__name__)
 
+MAX_PERMISSION_DECISION_CACHE = 512
+
 
 @dataclass(frozen=True)
 class PermissionDecision:
@@ -53,6 +55,7 @@ class PermissionChecker:
     def __init__(self, settings: PermissionSettings) -> None:
         self._settings = settings
         self._remembered_allow_rules: list[RememberedAllowRule] = []
+        self._decision_cache: dict[tuple[str, bool, str, str], PermissionDecision] = {}
         # Parse path rules from settings
         self._path_rules: list[PathRule] = []
         for rule in getattr(settings, "path_rules", []):
@@ -79,6 +82,7 @@ class PermissionChecker:
         if not permission or not patterns:
             return
         existing = {(rule.permission, rule.pattern) for rule in self._remembered_allow_rules}
+        added = False
         for pattern in patterns:
             normalized = pattern.strip()
             if not normalized or (permission, normalized) in existing:
@@ -87,6 +91,9 @@ class PermissionChecker:
                 RememberedAllowRule(permission=permission, pattern=normalized)
             )
             existing.add((permission, normalized))
+            added = True
+        if added:
+            self._decision_cache.clear()
 
     def evaluate(
         self,
@@ -97,6 +104,29 @@ class PermissionChecker:
         command: str | None = None,
     ) -> PermissionDecision:
         """Return whether the tool may run immediately."""
+        cache_key = (tool_name, bool(is_read_only), file_path or "", command or "")
+        cached = self._decision_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        decision = self._evaluate_uncached(
+            tool_name,
+            is_read_only=is_read_only,
+            file_path=file_path,
+            command=command,
+        )
+        if len(self._decision_cache) >= MAX_PERMISSION_DECISION_CACHE:
+            self._decision_cache.pop(next(iter(self._decision_cache)))
+        self._decision_cache[cache_key] = decision
+        return decision
+
+    def _evaluate_uncached(
+        self,
+        tool_name: str,
+        *,
+        is_read_only: bool,
+        file_path: str | None = None,
+        command: str | None = None,
+    ) -> PermissionDecision:
         permission = _permission_name(
             tool_name, is_read_only=is_read_only, file_path=file_path, command=command
         )

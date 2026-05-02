@@ -3,10 +3,35 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Literal
 
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import ConversationMessage
+
+
+class CompactProgressPhase(str, Enum):
+    """Shared phase names for conversation compaction progress."""
+
+    HOOKS_START = "hooks_start"
+    CONTEXT_COLLAPSE_START = "context_collapse_start"
+    CONTEXT_COLLAPSE_END = "context_collapse_end"
+    SESSION_MEMORY_START = "session_memory_start"
+    SESSION_MEMORY_END = "session_memory_end"
+    COMPACT_START = "compact_start"
+    COMPACT_RETRY = "compact_retry"
+    COMPACT_END = "compact_end"
+    COMPACT_FAILED = "compact_failed"
+
+    @classmethod
+    def start_phases(cls) -> frozenset["CompactProgressPhase"]:
+        return frozenset(
+            {
+                cls.CONTEXT_COLLAPSE_START,
+                cls.SESSION_MEMORY_START,
+                cls.COMPACT_START,
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -76,17 +101,7 @@ class StreamFinished:
 class CompactProgressEvent:
     """Structured progress event for conversation compaction."""
 
-    phase: Literal[
-        "hooks_start",
-        "context_collapse_start",
-        "context_collapse_end",
-        "session_memory_start",
-        "session_memory_end",
-        "compact_start",
-        "compact_retry",
-        "compact_end",
-        "compact_failed",
-    ]
+    phase: CompactProgressPhase
     trigger: Literal["auto", "manual", "reactive"]
     message: str | None = None
     attempt: int | None = None
