@@ -20,11 +20,11 @@ type InkTestStdout = PassThrough & {
 	moveCursor: () => boolean;
 };
 
-function createTestStdout(): InkTestStdout {
+function createTestStdout(columns = 120, rows = 1000): InkTestStdout {
 	return Object.assign(new PassThrough(), {
 		isTTY: true,
-		columns: 120,
-		rows: 1000,
+		columns,
+		rows,
 		cursorTo: () => true,
 		clearLine: () => true,
 		moveCursor: () => true,
@@ -54,12 +54,16 @@ async function renderConversation(
 	{
 		showWelcome = false,
 		welcomeVersion,
+		columns,
+		rows,
 	}: {
 		showWelcome?: boolean;
 		welcomeVersion?: string;
+		columns?: number;
+		rows?: number;
 	} = {},
 ): Promise<string> {
-	const stdout = createTestStdout();
+	const stdout = createTestStdout(columns, rows);
 	let output = '';
 	stdout.on('data', (chunk) => {
 		output += chunk.toString();
@@ -171,4 +175,24 @@ test('does not duplicate assistant header across tools and reply body in the sam
 	const frame = finalFrameFrom(output, 'you · inspect the project');
 
 	assert.equal(countOccurrences(frame, '╰─ assistant'), 1, `expected a single assistant header, got:\n${frame}`);
+});
+
+test('keeps multiline pasted user turns readable without wrapping away the role label', async () => {
+	const output = await renderConversation(
+		[
+			{role: 'user', text: 'hi'},
+			{role: 'assistant', text: 'hello'},
+			{
+				role: 'user',
+				text: 'lsjfld\nfuture = self._question_requests[request.request_id]request.request_id in self._question_requests:\n    future.set_result(request.answer or "")',
+			},
+			{role: 'assistant', text: 'I can help with that.'},
+		],
+		{columns: 90, rows: 18},
+	);
+	const frame = finalFrameFrom(output, 'you · hi');
+
+	assert.match(frame, /you · lsjfld/);
+	assert.match(frame, /future = self\._question_requests\[request\.request_id\].+\.\.\./);
+	assert.doesNotMatch(frame, /\n  self\._question_requests:/);
 });

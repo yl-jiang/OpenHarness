@@ -1,9 +1,12 @@
 import React, {forwardRef, useEffect, useImperativeHandle, useRef, useState} from 'react';
 import {Box, Text, measureElement} from 'ink';
 import type {DOMElement} from 'ink';
+import stringWidth from 'string-width';
 
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TranscriptItem} from '../types.js';
+import {useTerminalSize} from '../hooks/useTerminalSize.js';
+import {truncateWithEllipsis} from '../textLayout.js';
 import {MarkdownText} from './MarkdownText.js';
 import {ToolCallDisplay, type TreePos} from './ToolCallDisplay.js';
 import {WelcomeBanner} from './WelcomeBanner.js';
@@ -91,6 +94,7 @@ function renderGroup(
 	theme: ReturnType<typeof useTheme>['theme'],
 	outputStyle: string | undefined,
 	treePos: TreePos,
+	cols: number,
 ): React.JSX.Element {
 	if (group.kind === 'pair') {
 		return (
@@ -120,6 +124,7 @@ function renderGroup(
 			item={group.item}
 			theme={theme}
 			outputStyle={outputStyle}
+			cols={cols}
 		/>
 	);
 }
@@ -222,6 +227,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		forwardedRef,
 	): React.JSX.Element {
 		const {theme} = useTheme();
+		const {cols} = useTerminalSize();
 		const isCodexStyle = outputStyle === 'codex';
 
 		const viewportRef = useRef<DOMElement | null>(null);
@@ -315,7 +321,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 									</Text>
 								) : null}
 								{showAssistantHeader ? <AssistantRunHeader theme={theme} /> : null}
-								{renderGroup(group, theme, outputStyle, treePositions[i])}
+								{renderGroup(group, theme, outputStyle, treePositions[i], cols)}
 							</Box>
 						);
 					})}
@@ -350,10 +356,12 @@ function MessageRow({
 	item,
 	theme,
 	outputStyle,
+	cols,
 }: {
 	item: TranscriptItem;
 	theme: ReturnType<typeof useTheme>['theme'];
 	outputStyle?: string;
+	cols: number;
 }): React.JSX.Element {
 	const isCodexStyle = outputStyle === 'codex';
 	switch (item.role) {
@@ -382,24 +390,42 @@ function MessageRow({
 				);
 			}
 			if (!isMultiline) {
+				const prefix = 'you · ';
+				const availableWidth = Math.max(1, cols - stringWidth(prefix));
 				return (
 					<Box marginTop={0} marginBottom={0}>
 						<Text>
 							<Text color={theme.colors.secondary} bold>you</Text>
 							<Text dimColor> · </Text>
-							<Text>{item.text}</Text>
+							<Text>{truncateWithEllipsis(item.text, availableWidth)}</Text>
 						</Text>
 					</Box>
 				);
 			}
+			const lines = item.text.split('\n');
+			const firstLine = lines[0] ?? '';
+			const restLines = lines.slice(1);
+			const headerPrefix = 'you · ';
+			const headerWidth = Math.max(1, cols - stringWidth(headerPrefix));
+			const bodyWidth = Math.max(1, cols - 2);
 			return (
 				<Box marginTop={0} marginBottom={0} flexDirection="column">
-					<Text color={theme.colors.secondary} bold>you</Text>
-					<Box marginLeft={2} flexDirection="column">
-						{item.text.split('\n').map((line, i) => (
-							<Text key={i}>{line.length > 0 ? line : ' '}</Text>
-						))}
-					</Box>
+					<Text>
+						<Text color={theme.colors.secondary} bold>you</Text>
+						{firstLine.length > 0 ? (
+							<>
+								<Text dimColor> · </Text>
+								<Text>{truncateWithEllipsis(firstLine, headerWidth)}</Text>
+							</>
+						) : null}
+					</Text>
+					{restLines.length > 0 ? (
+						<Box marginLeft={2} flexDirection="column">
+							{restLines.map((line, i) => (
+								<Text key={i}>{truncateWithEllipsis(line, bodyWidth) || ' '}</Text>
+							))}
+						</Box>
+					) : null}
 				</Box>
 			);
 		}

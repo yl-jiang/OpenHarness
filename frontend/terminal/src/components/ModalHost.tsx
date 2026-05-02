@@ -3,6 +3,7 @@ import {Box, Text, useInput} from 'ink';
 import stringWidth from 'string-width';
 import ScrollableTextInput from './ScrollableTextInput.js';
 import {useTerminalSize} from '../hooks/useTerminalSize.js';
+import {truncateWithEllipsis} from '../textLayout.js';
 
 const MIN_REASON_WIDTH = 20;
 const MAX_PERMISSION_REASON_LINES = 4;
@@ -11,25 +12,6 @@ type WrappedPreview = {
 	lines: string[];
 	hiddenLineCount: number;
 };
-
-function truncateWithEllipsis(value: string, maxWidth: number): string {
-	if (maxWidth <= 0) {
-		return '';
-	}
-	if (stringWidth(value) <= maxWidth) {
-		return value;
-	}
-	const ellipsis = '...';
-	const targetWidth = Math.max(0, maxWidth - stringWidth(ellipsis));
-	let output = '';
-	for (const char of value) {
-		if (stringWidth(output) + stringWidth(char) > targetWidth) {
-			break;
-		}
-		output += char;
-	}
-	return output.trimEnd() + ellipsis;
-}
 
 function wrapLine(line: string, maxWidth: number): string[] {
 	if (maxWidth <= 0) {

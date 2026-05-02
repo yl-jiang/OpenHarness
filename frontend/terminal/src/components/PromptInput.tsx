@@ -2,6 +2,7 @@ import React, {useEffect, useState} from 'react';
 import {Box, Text} from 'ink';
 import stringWidth from 'string-width';
 import ScrollableTextInput from './ScrollableTextInput.js';
+import {EXPAND_TRIGGER_SYMBOL} from './ExpandedComposer.js';
 import {useTerminalSize} from '../hooks/useTerminalSize.js';
 
 // Hermes-inspired palette — matches WelcomeBanner brand identity
@@ -20,6 +21,30 @@ const ELLIPSIS_FRAMES = ['   ', '.  ', '.. ', '...'];
 const IDLE_ANIMATION_MS = 600;
 const BUSY_ANIMATION_MS = 120;
 const BACKGROUND_ANIMATION_MS = 900;
+
+export function clipPromptPreviewLine(line: string, availableWidth: number): string {
+	const safeWidth = Math.max(1, availableWidth);
+	if (stringWidth(line) <= safeWidth) {
+		return line;
+	}
+
+	const ellipsis = safeWidth >= 4 ? '...' : '.'.repeat(safeWidth);
+	const chars = [...line];
+	const clippedChars: string[] = [];
+	let usedWidth = stringWidth(ellipsis);
+
+	for (let i = chars.length - 1; i >= 0; i -= 1) {
+		const char = chars[i]!;
+		const charWidth = stringWidth(char);
+		if (usedWidth + charWidth > safeWidth) {
+			break;
+		}
+		clippedChars.unshift(char);
+		usedWidth += charWidth;
+	}
+
+	return `${ellipsis}${clippedChars.join('')}`;
+}
 
 /**
  * Decide whether timer-driven spinner redraws are safe in the current terminal.
@@ -115,6 +140,7 @@ export function PromptInput({
 	// Available width for the text input viewport:
 	// cols - App paddingX(1)*2 - border*2 - boxPaddingX(1)*2 - prefixWidth
 	const inputAvailableWidth = cols - 6 - stringWidth(prefix);
+	const footerColor = busy || showBackgroundActivity ? H_GOLD : H_TEAL;
 
 	return (
 		<Box
@@ -140,7 +166,7 @@ export function PromptInput({
 						<Box key={i}>
 							<Text color={H_WARM} bold>{'  '}</Text>
 							<Box flexGrow={1} flexShrink={1}>
-								<Text dimColor>{line.length > 0 ? line : ' '}</Text>
+								<Text dimColor>{clipPromptPreviewLine(line, inputAvailableWidth) || ' '}</Text>
 							</Box>
 						</Box>
 					))}
@@ -156,7 +182,15 @@ export function PromptInput({
 					availableWidth={inputAvailableWidth}
 				/>
 			</Box>
-			<Text dimColor>/ commands · @ files · ↑↓ history · shift+enter newline · wheel/PgUp scroll · End resume · ctrl+x select-mode · ctrl+c clear · ctrl+c ctrl+c exit</Text>
+			<Box marginTop={1} justifyContent="space-between">
+				<Box flexDirection="column" flexGrow={1} flexShrink={1}>
+					<Text dimColor>/ commands · @ files · ↑↓ history · alt+enter newline</Text>
+					<Text dimColor>wheel/PgUp scroll · End resume · esc esc cancel run · ctrl+c clear · ctrl+c ctrl+c exit</Text>
+				</Box>
+				<Box marginLeft={1} flexShrink={0} alignSelf="flex-end">
+					<Text color={footerColor} bold>{EXPAND_TRIGGER_SYMBOL}</Text>
+				</Box>
+			</Box>
 		</Box>
 	);
 }

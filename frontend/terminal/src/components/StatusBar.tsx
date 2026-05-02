@@ -83,9 +83,9 @@ function StatusBarInner({
 			<Text dimColor>
 				<Text color={H_GOLD} bold>OpenHarness</Text>
 				<Text dimColor>{SEP}</Text>
-				<Text dimColor>🤖 {model}</Text>
+				<Text dimColor>@ {model}</Text>
 				<Text dimColor>{SEP}</Text>
-				<Text dimColor>💰 {formatNum(inputTokens)} {'\u2193'} {formatNum(outputTokens)} {'\u2191'}</Text>
+				<Text dimColor>$ {formatNum(inputTokens)} {'\u2193'} {formatNum(outputTokens)} {'\u2191'}</Text>
 				{!isPlanMode ? (
 					<>
 						<Text dimColor>{SEP}</Text>
@@ -93,7 +93,7 @@ function StatusBarInner({
 					</>
 				) : null}
 				<Text dimColor>{SEP}</Text>
-				<Text dimColor>📁 {cwd}</Text>
+				<Text dimColor>~ {cwd}</Text>
 				{gitBranch ? (
 					<>
 						<Text dimColor>{SEP}</Text>

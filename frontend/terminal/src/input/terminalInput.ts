@@ -5,11 +5,15 @@ export type TerminalMouseEvent =
 		kind: 'wheel';
 		direction: 'up' | 'down';
 		buttonCode: number;
+		column: number;
+		row: number;
 	}
 	| {
 		kind: 'button';
 		action: 'press' | 'release';
 		buttonCode: number;
+		column: number;
+		row: number;
 	};
 
 type DecodedTerminalInput = {
@@ -36,7 +40,7 @@ export type TerminalInputStream = PassThrough & MouseStreamEvents & {
 	unref?: () => void;
 };
 
-const COMPLETE_MOUSE_SEQUENCE = /^\u001b\[<(\d+);\d+;\d+([Mm])/;
+const COMPLETE_MOUSE_SEQUENCE = /^\u001b\[<(\d+);(\d+);(\d+)([Mm])/;
 const PARTIAL_MOUSE_SEQUENCE = /^\u001b\[<[\d;]*$/;
 const BACKSPACE_CONTROL_PATTERN = /[\b\u007f]+/g;
 
@@ -51,6 +55,8 @@ const COMPLETE_NEWLINE_SEQUENCE = /^\u001b\[(?:27;(\d+);13~|13;(\d+)u)/;
 const COMPLETE_PRINTABLE_KEY_SEQUENCE = /^\u001b\[(?:27;(\d+);(\d+)~|(\d+);(\d+)u)/;
 const PARTIAL_KEY_SEQUENCE = /^\u001b\[(?:27(?:;\d*)?(?:;\d*)?|(?:\d+)(?:;\d*)?)?$/;
 const ALT_ENTER_SEQUENCE = '\u001b\r';
+const BRACKETED_PASTE_START = '\u001b[200~';
+const BRACKETED_PASTE_END = '\u001b[201~';
 
 export function chunkTerminalTextForInk(text: string): string[] {
 	if (!text) {
@@ -65,7 +71,7 @@ export function chunkTerminalTextForInk(text: string): string[] {
 			chunks.push(text.slice(cursor, start));
 		}
 		for (const char of match[0]) {
-			chunks.push(char);
+			chunks.push(char === '\u007f' ? '\b' : char);
 		}
 		cursor = start + match[0].length;
 	}
@@ -77,6 +83,16 @@ export function chunkTerminalTextForInk(text: string): string[] {
 
 export function createTerminalInputDecoder(): TerminalInputDecoder {
 	let pending = '';
+	let inBracketedPaste = false;
+	// Buffers the body of an in-progress bracketed paste.  Real terminals can
+	// split one paste across many stdin data events; emitting partial paste
+	// content would race the React composer's newline handling and cause
+	// duplicated/dropped lines.  Keep the entire paste hidden until the end
+	// marker arrives, then deliver it as one logical input event.
+	let pasteBuffer = '';
+
+	const normalisePasteLineEndings = (value: string): string =>
+		value.replace(/\r\n?/g, '\n');
 
 	return {
 		push(chunk: string): DecodedTerminalInput {
@@ -87,6 +103,26 @@ export function createTerminalInputDecoder(): TerminalInputDecoder {
 			pending = '';
 
 			while (cursor < input.length) {
+				if (inBracketedPaste) {
+					const endIndex = input.indexOf(BRACKETED_PASTE_END, cursor);
+					if (endIndex === -1) {
+						const {text: completeText, pendingText} = splitIncompleteSuffix(
+							input.slice(cursor),
+							BRACKETED_PASTE_END,
+						);
+						pasteBuffer += completeText;
+						pending = pendingText;
+						cursor = input.length;
+						continue;
+					}
+					pasteBuffer += input.slice(cursor, endIndex);
+					text += normalisePasteLineEndings(pasteBuffer);
+					pasteBuffer = '';
+					cursor = endIndex + BRACKETED_PASTE_END.length;
+					inBracketedPaste = false;
+					continue;
+				}
+
 				const escapeIndex = input.indexOf('\u001b[', cursor);
 				const altEnterIndex = input.indexOf(ALT_ENTER_SEQUENCE, cursor);
 				const nextEscape = pickFirstIndex(escapeIndex, altEnterIndex);
@@ -105,13 +141,33 @@ export function createTerminalInputDecoder(): TerminalInputDecoder {
 					continue;
 				}
 
+				if (remainder.startsWith(BRACKETED_PASTE_START)) {
+					inBracketedPaste = true;
+					cursor = nextEscape + BRACKETED_PASTE_START.length;
+					continue;
+				}
+				if (remainder.startsWith(BRACKETED_PASTE_END)) {
+					cursor = nextEscape + BRACKETED_PASTE_END.length;
+					continue;
+				}
+				if (
+					isIncompletePrefix(remainder, BRACKETED_PASTE_START) ||
+					isIncompletePrefix(remainder, BRACKETED_PASTE_END)
+				) {
+					pending = remainder;
+					cursor = input.length;
+					continue;
+				}
+
 				// Mouse events.
 				if (remainder.startsWith('\u001b[<')) {
 					const match = COMPLETE_MOUSE_SEQUENCE.exec(remainder);
 					if (match) {
 						const buttonCode = Number(match[1]);
-						const terminator = match[2];
-						const mouseEvent = toMouseEvent(buttonCode, terminator);
+						const column = Number(match[2]);
+						const row = Number(match[3]);
+						const terminator = match[4];
+						const mouseEvent = toMouseEvent(buttonCode, terminator, column, row);
 						if (mouseEvent) {
 							mouseEvents.push(mouseEvent);
 						}
@@ -166,8 +222,13 @@ export function createTerminalInputDecoder(): TerminalInputDecoder {
 			return {text, mouseEvents};
 		},
 		flush(): DecodedTerminalInput {
-			const text = pending;
+			let text = pending;
 			pending = '';
+			if (pasteBuffer) {
+				text += normalisePasteLineEndings(pasteBuffer);
+				pasteBuffer = '';
+				inBracketedPaste = false;
+			}
 			return {text, mouseEvents: []};
 		},
 	};
@@ -258,20 +319,42 @@ function pickFirstIndex(a: number, b: number): number {
 	return Math.min(a, b);
 }
 
+function isIncompletePrefix(value: string, target: string): boolean {
+	return value.length < target.length && target.startsWith(value);
+}
+
+function splitIncompleteSuffix(
+	value: string,
+	target: string,
+): {text: string; pendingText: string} {
+	for (let length = Math.min(value.length, target.length - 1); length > 0; length--) {
+		const suffix = value.slice(-length);
+		if (target.startsWith(suffix)) {
+			return {
+				text: value.slice(0, -length),
+				pendingText: suffix,
+			};
+		}
+	}
+	return {text: value, pendingText: ''};
+}
+
 function isPrintableCodepoint(codepoint: number): boolean {
 	return Number.isInteger(codepoint) && codepoint >= 0x20 && codepoint <= 0x10FFFF;
 }
 
-function toMouseEvent(buttonCode: number, terminator: string): TerminalMouseEvent | null {
+function toMouseEvent(buttonCode: number, terminator: string, column: number, row: number): TerminalMouseEvent | null {
 	if (buttonCode === 64) {
-		return {kind: 'wheel', direction: 'up', buttonCode};
+		return {kind: 'wheel', direction: 'up', buttonCode, column, row};
 	}
 	if (buttonCode === 65) {
-		return {kind: 'wheel', direction: 'down', buttonCode};
+		return {kind: 'wheel', direction: 'down', buttonCode, column, row};
 	}
 	return {
 		kind: 'button',
 		action: terminator === 'm' ? 'release' : 'press',
 		buttonCode,
+		column,
+		row,
 	};
 }

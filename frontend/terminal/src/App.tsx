@@ -4,6 +4,22 @@ import {Box, Text, useApp, useInput, useStdin} from 'ink';
 import {AlternateScreen} from './components/AlternateScreen.js';
 import {CommandPicker, createCommandPickerModel} from './components/CommandPicker.js';
 import {ConversationView, type ConversationViewHandle} from './components/ConversationView.js';
+import {
+	ExpandedComposer,
+	applyExpandedComposerInput,
+	completeLeadingCommand,
+	composePromptDraft,
+	createExpandedComposerState,
+	deleteComposerBackward,
+	deleteComposerForward,
+	getExpandedComposerSendHitbox,
+	getPromptExpandTriggerHitbox,
+	hitboxContainsPoint,
+	insertComposerText,
+	moveComposerCursor,
+	splitExpandedDraft,
+	type ExpandedComposerState,
+} from './components/ExpandedComposer.js';
 import {ModalHost} from './components/ModalHost.js';
 import {PromptInput} from './components/PromptInput.js';
 import {nextSelectIndexForWheel, SelectModal, type SelectOption} from './components/SelectModal.js';
@@ -13,6 +29,7 @@ import {TodoPanel} from './components/TodoPanel.js';
 import type {TerminalInputStream} from './input/terminalInput.js';
 import {useBackendSession} from './hooks/useBackendSession.js';
 import {useMouseWheel} from './hooks/useMouseWheel.js';
+import {useTerminalMouse} from './hooks/useTerminalMouse.js';
 import {useTerminalSize} from './hooks/useTerminalSize.js';
 import {discoverMentionFiles, filterMentionCandidates, findMentionQuery, replaceMentionQuery} from './input/mentions.js';
 import {ThemeProvider, useTheme} from './theme/ThemeContext.js';
@@ -48,6 +65,7 @@ const SELECTABLE_COMMANDS = new Set([
 	'/skills',
 ]);
 const ACTIVE_BACKGROUND_TASK_STATUSES = new Set(['pending', 'running']);
+const DOUBLE_ESCAPE_WINDOW_MS = 500;
 
 type SelectModalState = {
 	title: string;
@@ -102,6 +120,36 @@ export function buildSubmittedValue(value: string, extraInputLines: string[]): s
 	return fullValue.trim() ? fullValue : null;
 }
 
+export function resolveEscapeAction({
+	busy,
+	paused,
+	hasInput,
+	now,
+	lastEscapeAt,
+}: {
+	busy: boolean;
+	paused: boolean;
+	hasInput: boolean;
+	now: number;
+	lastEscapeAt: number;
+}): {action: 'resume_follow' | 'cancel_busy_turn' | 'clear_input' | 'arm_escape'; nextLastEscapeAt: number} {
+	if (paused) {
+		return {
+			action: 'resume_follow',
+			nextLastEscapeAt: busy ? now : lastEscapeAt,
+		};
+	}
+
+	const doublePressed = lastEscapeAt > 0 && now - lastEscapeAt < DOUBLE_ESCAPE_WINDOW_MS;
+	if (busy && doublePressed) {
+		return {action: 'cancel_busy_turn', nextLastEscapeAt: 0};
+	}
+	if (hasInput && doublePressed) {
+		return {action: 'clear_input', nextLastEscapeAt: 0};
+	}
+	return {action: 'arm_escape', nextLastEscapeAt: now};
+}
+
 export function App({config}: {config: FrontendConfig}): React.JSX.Element {
 	const initialTheme = String((config as Record<string, unknown>).theme ?? 'default');
 	return (
@@ -133,7 +181,7 @@ function AppInner({
 	const {stdin: _stdin} = useStdin();
 	const _terminalInput = _stdin as unknown as TerminalInputStream;
 	const {theme, setThemeName} = useTheme();
-	const {rows} = useTerminalSize();
+	const {rows, cols} = useTerminalSize();
 	const [input, setInput] = useState('');
 	const [completionKey, setCompletionKey] = useState(0);
 	const [modalInput, setModalInput] = useState('');
@@ -154,6 +202,7 @@ function AppInner({
 	const [selectIndex, setSelectIndex] = useState(0);
 	const [selectQuery, setSelectQuery] = useState('');
 	const [mentionFiles, setMentionFiles] = useState<string[]>([]);
+	const [expandedComposer, setExpandedComposer] = useState<ExpandedComposerState | null>(null);
 
 	const visibleSelectOptions = useMemo(
 		() => (selectModal ? filterSelectModalOptions(selectModal.command, selectModal.options, selectQuery) : []),
@@ -235,6 +284,12 @@ function AppInner({
 		() => createCommandPickerModel(session.commands, input, session.skills),
 		[session.commands, session.skills, input],
 	);
+	const expandedCommandPickerModel = useMemo(
+		() => expandedComposer
+			? createCommandPickerModel(session.commands, expandedComposer.draft, session.skills)
+			: {hints: [] as string[], subHintsByHint: {} as Record<string, string[]>},
+		[session.commands, session.skills, expandedComposer],
+	);
 	const commandHints = commandPickerModel.hints;
 	const mentionQuery = useMemo(() => findMentionQuery(input), [input]);
 	const mentionHints = useMemo(() => {
@@ -246,7 +301,7 @@ function AppInner({
 	const pickerHints = mentionHints.length > 0 ? mentionHints : commandHints;
 	const pickerTitle = mentionHints.length > 0 ? 'Files' : 'Commands & Skills';
 
-	const showPicker = pickerHints.length > 0 && !session.busy && !session.modal && !selectModal;
+	const showPicker = !expandedComposer && pickerHints.length > 0 && !session.busy && !session.modal && !selectModal;
 	const outputStyle = String(session.status.output_style ?? 'default');
 
 	useEffect(() => {
@@ -316,6 +371,28 @@ function AppInner({
 		}
 	}, [selectIndex, selectModal, visibleSelectOptions.length]);
 
+	const restoreExpandedDraftToPrompt = useCallback((draft: string) => {
+		const split = splitExpandedDraft(draft);
+		setInput(split.input);
+		setExtraInputLines(split.extraInputLines);
+		setHistoryIndex(-1);
+		setCompletionKey((key) => key + 1);
+	}, []);
+
+	const closeExpandedComposer = useCallback((draft?: string) => {
+		if (draft != null) {
+			restoreExpandedDraftToPrompt(draft);
+		}
+		setExpandedComposer(null);
+	}, [restoreExpandedDraftToPrompt]);
+
+	const openExpandedComposer = useCallback(() => {
+		if (expandedComposer || !session.ready || session.busy || session.modal || selectModal) {
+			return;
+		}
+		setExpandedComposer(createExpandedComposerState(composePromptDraft(input, extraInputLines)));
+	}, [expandedComposer, extraInputLines, input, selectModal, session.busy, session.modal, session.ready]);
+
 	// Intercept special commands that need interactive UI
 	const handleCommand = (cmd: string): boolean => {
 		const trimmed = cmd.trim();
@@ -349,8 +426,125 @@ function AppInner({
 		return false;
 	};
 
+	const submitSubmittedValue = useCallback((submittedValue: string): boolean => {
+		if (!submittedValue || session.busy || !session.ready) {
+			return false;
+		}
+		scrollToBottom();
+		if (handleCommand(submittedValue)) {
+			setHistory((items) => [...items, submittedValue]);
+			setHistoryIndex(-1);
+			return true;
+		}
+		session.sendRequest({type: 'submit_line', line: submittedValue});
+		setHistory((items) => [...items, submittedValue]);
+		setHistoryIndex(-1);
+		session.setBusy(true);
+		return true;
+	}, [handleCommand, scrollToBottom, session]);
+
+	const submitExpandedComposer = useCallback(() => {
+		if (!expandedComposer) {
+			return;
+		}
+		const submittedValue = expandedComposer.draft.trim() ? expandedComposer.draft : null;
+		if (!submittedValue || !submitSubmittedValue(submittedValue)) {
+			return;
+		}
+		setExpandedComposer(null);
+		setInput('');
+		setExtraInputLines([]);
+		setCompletionKey((key) => key + 1);
+	}, [expandedComposer, submitSubmittedValue]);
+	useTerminalMouse(useCallback((event) => {
+		if (event.kind !== 'button' || event.action !== 'release' || event.buttonCode !== 0) {
+			return;
+		}
+		if (expandedComposer) {
+			if (hitboxContainsPoint(getExpandedComposerSendHitbox(cols, rows), event.column, event.row)) {
+				submitExpandedComposer();
+			}
+			return;
+		}
+		if (!session.ready || session.busy || session.modal || selectModal) {
+			return;
+		}
+		if (hitboxContainsPoint(getPromptExpandTriggerHitbox(cols, rows), event.column, event.row)) {
+			openExpandedComposer();
+		}
+	}, [cols, expandedComposer, openExpandedComposer, rows, selectModal, session.busy, session.modal, session.ready, submitExpandedComposer]));
+
 	useInput((chunk, key) => {
 		const isPaste = chunk.length > 1 && !key.ctrl && !key.meta;
+
+		if (expandedComposer) {
+			if (key.escape) {
+				closeExpandedComposer(expandedComposer.draft);
+				return;
+			}
+			if (key.leftArrow) {
+				setExpandedComposer((current) => (current ? moveComposerCursor(current, 'left') : current));
+				return;
+			}
+			if (key.rightArrow) {
+				setExpandedComposer((current) => (current ? moveComposerCursor(current, 'right') : current));
+				return;
+			}
+			if (key.upArrow) {
+				setExpandedComposer((current) => (current ? moveComposerCursor(current, 'up') : current));
+				return;
+			}
+			if (key.downArrow) {
+				setExpandedComposer((current) => (current ? moveComposerCursor(current, 'down') : current));
+				return;
+			}
+			if (key.backspace) {
+				setExpandedComposer((current) => (current ? deleteComposerBackward(current) : current));
+				return;
+			}
+			if (key.delete) {
+				setExpandedComposer((current) => (current ? deleteComposerForward(current) : current));
+				return;
+			}
+			if (key.tab) {
+				const selected = expandedCommandPickerModel.hints[0];
+				if (selected) {
+					setExpandedComposer((current) => {
+						if (!current) {
+							return current;
+						}
+						const completed = completeLeadingCommand(current.draft, selected);
+						return {
+							draft: completed.draft,
+							cursorOffset: completed.cursorOffset,
+							preferredColumn: null,
+						};
+					});
+					return;
+				}
+				setExpandedComposer((current) => (current ? insertComposerText(current, '\t') : current));
+				return;
+			}
+			if (key.return) {
+				setExpandedComposer((current) => (current ? insertComposerText(current, '\n') : current));
+				return;
+			}
+			if (key.ctrl && chunk === 'a') {
+				setExpandedComposer((current) => (current ? moveComposerCursor(current, 'home') : current));
+				return;
+			}
+			if (key.ctrl && chunk === 'e') {
+				setExpandedComposer((current) => (current ? moveComposerCursor(current, 'end') : current));
+				return;
+			}
+			if (key.ctrl || key.meta) {
+				return;
+			}
+			if (chunk) {
+				setExpandedComposer((current) => (current ? applyExpandedComposerInput(current, chunk) : current));
+			}
+			return;
+		}
 
 		if (key.ctrl && chunk === 'c') {
 			const now = Date.now();
@@ -516,6 +710,37 @@ function AppInner({
 			return;
 		}
 
+		if (key.escape) {
+			if (showPicker && !session.busy) {
+				setInput('');
+				return;
+			}
+			const now = Date.now();
+			const escapeAction = resolveEscapeAction({
+				busy: session.busy,
+				paused,
+				hasInput: Boolean(input || extraInputLines.length > 0),
+				now,
+				lastEscapeAt,
+			});
+			setLastEscapeAt(escapeAction.nextLastEscapeAt);
+			if (escapeAction.action === 'resume_follow') {
+				scrollToBottom();
+				return;
+			}
+			if (escapeAction.action === 'cancel_busy_turn') {
+				session.sendRequest({type: 'cancel_line'});
+				return;
+			}
+			if (escapeAction.action === 'clear_input') {
+				setInput('');
+				setExtraInputLines([]);
+				setHistoryIndex(-1);
+				return;
+			}
+			return;
+		}
+
 		if (session.busy) {
 			return;
 		}
@@ -562,24 +787,6 @@ function AppInner({
 				setInput('');
 				return;
 			}
-		}
-
-		if (key.escape) {
-			// ESC also resumes follow mode if we're scrolled away.
-			if (paused) {
-				scrollToBottom();
-				return;
-			}
-			const now = Date.now();
-			if (input && now - lastEscapeAt < 500) {
-				setInput('');
-				setExtraInputLines([]);
-				setHistoryIndex(-1);
-				setLastEscapeAt(0);
-				return;
-			}
-			setLastEscapeAt(now);
-			return;
 		}
 
 		// Shift+Enter appends current line to pending lines and starts a new one
@@ -652,25 +859,15 @@ function AppInner({
 			return;
 		}
 		const submittedValue = buildSubmittedValue(value, extraInputLines);
-		if (!submittedValue || session.busy || !session.ready) {
+		if (!submittedValue) {
 			return;
 		}
-		// Submitting always returns to the live tail so the user sees their
-		// own message and the agent's reply.
-		scrollToBottom();
-		if (handleCommand(submittedValue)) {
-			setHistory((items) => [...items, submittedValue]);
-			setHistoryIndex(-1);
-			setInput('');
-			setExtraInputLines([]);
+		if (!submitSubmittedValue(submittedValue)) {
 			return;
 		}
-		session.sendRequest({type: 'submit_line', line: submittedValue});
-		setHistory((items) => [...items, submittedValue]);
-		setHistoryIndex(-1);
 		setInput('');
 		setExtraInputLines([]);
-		session.setBusy(true);
+		setCompletionKey((key) => key + 1);
 	};
 
 	// Scripted automation
@@ -678,7 +875,7 @@ function AppInner({
 		if (scriptIndex >= scriptedSteps.length) {
 			return;
 		}
-		if (session.busy || session.modal || selectModal) {
+		if (expandedComposer || session.busy || session.modal || selectModal) {
 			return;
 		}
 		const step = scriptedSteps[scriptIndex];
@@ -687,10 +884,22 @@ function AppInner({
 			setScriptIndex((index) => index + 1);
 		}, 200);
 		return () => clearTimeout(timer);
-	}, [scriptIndex, session.busy, session.modal, selectModal]);
+	}, [expandedComposer, scriptIndex, session.busy, session.modal, selectModal]);
 
 	const showWelcome = session.ready && outputStyle !== 'codex';
 	const isPaused = paused;
+
+	if (expandedComposer) {
+		return (
+			<Box flexDirection="column" height={rows} paddingX={1}>
+				<ExpandedComposer
+					state={expandedComposer}
+					commandHints={expandedCommandPickerModel.hints}
+					subHintsByHint={expandedCommandPickerModel.subHintsByHint}
+				/>
+			</Box>
+		);
+	}
 
 	return (
 		<Box flexDirection="column" height={rows} paddingX={1}>
