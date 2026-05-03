@@ -83,7 +83,7 @@ class TodoStore:
                     seen.add(current["id"])
             self._items = rebuilt
         
-        self._persist_to_file()
+        # self._persist_to_file()
         return self.read()
 
     def read(self) -> List[Dict[str, str]]:
