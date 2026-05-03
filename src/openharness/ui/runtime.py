@@ -66,11 +66,11 @@ def _sync_runtime_tool_metadata(
     provider_name: str,
 ) -> None:
     active_profile_name, _ = settings.resolve_profile()
-    tool_metadata["current_model"] = settings.model
-    tool_metadata["current_provider"] = provider_name
-    tool_metadata["current_api_format"] = settings.api_format
-    tool_metadata["current_base_url"] = settings.base_url or ""
-    tool_metadata["current_active_profile"] = active_profile_name
+    tool_metadata[ToolMetadataKey.CURRENT_MODEL.value] = settings.model
+    tool_metadata[ToolMetadataKey.CURRENT_PROVIDER.value] = provider_name
+    tool_metadata[ToolMetadataKey.CURRENT_API_FORMAT.value] = settings.api_format
+    tool_metadata[ToolMetadataKey.CURRENT_BASE_URL.value] = settings.base_url or ""
+    tool_metadata[ToolMetadataKey.CURRENT_ACTIVE_PROFILE.value] = active_profile_name
 
 
 @dataclass

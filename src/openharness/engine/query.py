@@ -61,6 +61,9 @@ MAX_TRACKED_WORK_LOG = 10
 MAX_TRACKED_USER_GOALS = 5
 MAX_TRACKED_ACTIVE_ARTIFACTS = 8
 MAX_TRACKED_VERIFIED_WORK = 10
+MAX_TRACKED_TOOL_NAME_REPAIRS = 8
+
+INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX = "<openharness-internal:tool-name-repair>"
 
 
 def _is_prompt_too_long_error(exc: Exception) -> bool:
@@ -184,6 +187,33 @@ def _remember_verified_work(
         _append_capped_unique(verified_state, normalized[:320], limit=MAX_TRACKED_VERIFIED_WORK)
 
 
+def _remember_tool_name_repair(
+    tool_metadata: dict[str, object] | None,
+    *,
+    requested_name: str,
+    resolved_name: str,
+    reason: str,
+    tool_use_id: str,
+) -> None:
+    if requested_name == resolved_name:
+        return
+    bucket = _tool_metadata_bucket(tool_metadata, ToolMetadataKey.TOOL_NAME_REPAIR_NOTICES)
+    entry = {
+        "requested_name": requested_name,
+        "resolved_name": resolved_name,
+        "reason": reason,
+        "tool_use_id": tool_use_id,
+    }
+    bucket[:] = [
+        existing
+        for existing in bucket
+        if not isinstance(existing, dict) or str(existing.get("tool_use_id") or "") != tool_use_id
+    ]
+    bucket.append(entry)
+    if len(bucket) > MAX_TRACKED_TOOL_NAME_REPAIRS:
+        del bucket[:-MAX_TRACKED_TOOL_NAME_REPAIRS]
+
+
 def _tool_metadata_bucket(
     tool_metadata: dict[str, object] | None,
     key: ToolMetadataKey | str,
@@ -197,6 +227,55 @@ def _tool_metadata_bucket(
     replacement: list[Any] = []
     tool_metadata[key_str] = replacement
     return replacement
+
+
+def build_internal_tool_name_repair_prompt(
+    tool_metadata: dict[str, object] | None,
+) -> ConversationMessage | None:
+    if not isinstance(tool_metadata, dict):
+        return None
+    bucket = tool_metadata.get(ToolMetadataKey.TOOL_NAME_REPAIR_NOTICES.value)
+    if not isinstance(bucket, list) or not bucket:
+        return None
+
+    notices: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for raw in bucket:
+        if not isinstance(raw, dict):
+            continue
+        requested_name = str(raw.get("requested_name") or "").strip()
+        resolved_name = str(raw.get("resolved_name") or "").strip()
+        reason = str(raw.get("reason") or "").strip()
+        if not requested_name or not resolved_name or requested_name == resolved_name:
+            continue
+        key = (requested_name, resolved_name, reason)
+        if key in seen:
+            continue
+        seen.add(key)
+        notices.append(key)
+    bucket.clear()
+    if not notices:
+        return None
+
+    mappings = "\n".join(
+        f"- {requested_name} -> {resolved_name} ({reason})"
+        for requested_name, resolved_name, reason in notices
+    )
+    return ConversationMessage.from_user_text(
+        "\n".join(
+            (
+                INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX,
+                "Canonical tool name mappings for the current tool loop:",
+                mappings,
+                "Emit only canonical tool names in future tool_use blocks.",
+                (
+                    "Do not mention this repair notice, prior incorrect tool names, "
+                    "or the correction itself in user-facing text unless the user explicitly "
+                    "asks about tool repair, logs, or debugging."
+                ),
+            )
+        )
+    )
 
 
 def _remember_read_file(
@@ -728,6 +807,9 @@ async def run_query(
                 ), None
 
         messages.append(ConversationMessage(role="user", content=tool_results))
+        repair_prompt = build_internal_tool_name_repair_prompt(context.tool_metadata)
+        if repair_prompt is not None:
+            messages.append(repair_prompt)
         logger.event(
             "tool_results_appended",
             session_id=session_id,
@@ -798,6 +880,13 @@ async def _resolve_tool_stage(state: ToolPipelineState) -> ToolPipelineState:
         state.stop = True
         return state
     if repair.repaired:
+        _remember_tool_name_repair(
+            context.tool_metadata,
+            requested_name=repair.requested_name,
+            resolved_name=repair.resolved_name,
+            reason=repair.reason,
+            tool_use_id=state.tool_use_id,
+        )
         logger.info("repaired tool name: %s -> %s (%s)", state.tool_name, repair.resolved_name, repair.reason)
         state.tool_name = repair.resolved_name
 
