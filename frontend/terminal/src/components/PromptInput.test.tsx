@@ -214,6 +214,14 @@ test('uses ascii-only idle title cues above the prompt input', async () => {
 	assert.doesNotMatch(output, /[⌨️⏳●⏎›]/u);
 });
 
+test('shows a concise idle shortcut footer', async () => {
+	const output = await renderPromptInput();
+
+	assert.match(output, /\/ commands · @ files · ↑↓ history · shift\/alt\+enter newline/);
+	assert.doesNotMatch(output, /wheel\/PgUp scroll/);
+	assert.doesNotMatch(output, /ctrl\+c ctrl\+c exit/);
+});
+
 test('shows an animated busy indicator with the running tool name', async () => {
 	const output = await renderPromptInput({busy: true, toolName: 'bash'});
 
@@ -222,6 +230,14 @@ test('shows an animated busy indicator with the running tool name', async () => 
 	assert.match(output, /\[run\] bash/);
 	assert.match(output, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u);
 	assert.doesNotMatch(output, /[◇◈◆] {2}\| \[run\]/);
+});
+
+test('shows a focused busy shortcut footer', async () => {
+	const output = await renderPromptInput({busy: true, toolName: 'bash'});
+
+	assert.match(output, /PgUp\/Dn scroll · End resume · Esc Esc cancel/);
+	assert.doesNotMatch(output, /@ files/);
+	assert.doesNotMatch(output, /ctrl\+c ctrl\+c exit/);
 });
 
 test('shows a visual background activity cue while input remains idle', async () => {

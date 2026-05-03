@@ -102,7 +102,7 @@ test('shows cwd and git branch in the status bar', async () => {
 		},
 	);
 
-	assert.match(output, /📁 \/tmp\/demo/u);
+	assert.match(output, />ˍ \/tmp\/demo/u);
 	assert.match(output, / main/u);
 });
 
@@ -119,8 +119,8 @@ test('shortens home directory cwd in the status bar', async () => {
 		},
 	);
 
-	assert.match(output, /📁 ~\/project\/demo/u);
-	assert.doesNotMatch(output, new RegExp(`📁 ${homeDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+	assert.match(output, />ˍ ~\/project\/demo/u);
+	assert.doesNotMatch(output, new RegExp(`>ˍ ${homeDir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
 });
 
 test('uses symbolic labels instead of textual status prefixes', async () => {
@@ -138,9 +138,9 @@ test('uses symbolic labels instead of textual status prefixes', async () => {
 	);
 
 	assert.doesNotMatch(output, /\bmodel:|\bmode:|\bcwd:|\bbranch:|\btokens:|\btasks:|\bmcp:/);
-	assert.match(output, /🤖 test-model/u);
+	assert.match(output, /@ test-model/u);
 	assert.match(output, /⎇  default/u);
-	assert.match(output, /📁 \/tmp\/demo/u);
+	assert.match(output, />ˍ \/tmp\/demo/u);
 	assert.match(output, / dev/u);
 	assert.match(output, /\$ 1\.2k ↓ 3\.4k ↑/);
 	assert.match(output, /⚙️  1/u);

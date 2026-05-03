@@ -12,15 +12,18 @@ const H_TEAL = '#3d8a7c'; // dim teal — idle border, leading cue
 
 const noop = (): void => {};
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const IDLE_FRAMES = ['◇', '◈', '◆', '◈'];
 const IDLE_STATIC_FRAME = '◆';
 const SPINNER_STATIC_FRAME = '⠋';
 const BACKGROUND_STATIC_FRAME = '●';
 const STATIC_ELLIPSIS = '...';
-const ELLIPSIS_FRAMES = ['   ', '.  ', '.. ', '...'];
-const IDLE_ANIMATION_MS = 600;
-const BUSY_ANIMATION_MS = 120;
+// Busy spinner ticks slowly enough that Ink's full-frame redraw doesn't
+// produce visible flicker on the bottom panels (PromptInput / TodoPanel /
+// StatusBar all sit adjacent and get repainted on every tick).  ~5fps is
+// still smooth-feeling while halving the redraw rate of the previous 120ms.
+const BUSY_ANIMATION_MS = 220;
 const BACKGROUND_ANIMATION_MS = 900;
+const IDLE_SHORTCUTS = '/ commands · @ files · ↑↓ history · shift/alt+enter newline';
+const BUSY_SHORTCUTS = 'PgUp/Dn scroll · End resume · Esc Esc cancel';
 
 export function clipPromptPreviewLine(line: string, availableWidth: number): string {
 	const safeWidth = Math.max(1, availableWidth);
@@ -107,33 +110,36 @@ export function PromptInput({
 	const showBackgroundActivity = !busy && backgroundTaskCount > 0;
 	const backgroundTitle = `[bg] ${backgroundTaskCount} running`;
 	const canAnimate = animateSpinner ?? shouldAnimateSpinner();
+	// Only animate while busy or while background tasks are running. Idle
+	// animation forces Ink to repaint the whole TUI on every tick which
+	// causes visible flicker on most terminals (see commit 5276771 and the
+	// note in components/Spinner.tsx).
 	const animateNow = canAnimate && (busy || showBackgroundActivity);
-	const animateIdle = canAnimate && !busy && !showBackgroundActivity;
 	const spinnerFrame = animateNow
 		? SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length]
 		: SPINNER_STATIC_FRAME;
 	const backgroundFrame = animateNow
 		? SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length]
 		: BACKGROUND_STATIC_FRAME;
-	const idleFrame = animateIdle
-		? IDLE_FRAMES[frameIndex % IDLE_FRAMES.length]
-		: IDLE_STATIC_FRAME;
-	const dots = busy && animateNow
-		? ELLIPSIS_FRAMES[frameIndex % ELLIPSIS_FRAMES.length]
-		: STATIC_ELLIPSIS;
+	const idleFrame = IDLE_STATIC_FRAME;
+	// Keep the trailing ellipsis static even while busy: the braille spinner
+	// already conveys liveness, and animating both makes the title line churn
+	// 4 characters per tick which is the most visually flickery part of the
+	// prompt header.
+	const dots = STATIC_ELLIPSIS;
 	const title = busy ? `${busyTitle}${dots}` : showBackgroundActivity ? backgroundTitle : idleTitle;
 	const leadingCue = busy ? `${spinnerFrame} ` : showBackgroundActivity ? backgroundFrame : `${idleFrame} `;
 
 	useEffect(() => {
-		if (!animateNow && !animateIdle) {
+		if (!animateNow) {
 			return;
 		}
-		const interval = busy ? BUSY_ANIMATION_MS : showBackgroundActivity ? BACKGROUND_ANIMATION_MS : IDLE_ANIMATION_MS;
+		const interval = busy ? BUSY_ANIMATION_MS : BACKGROUND_ANIMATION_MS;
 		const timer = setInterval(() => {
-			setFrameIndex((index) => (index + 1) % (SPINNER_FRAMES.length * IDLE_FRAMES.length));
+			setFrameIndex((index) => (index + 1) % SPINNER_FRAMES.length);
 		}, interval);
 		return () => clearInterval(timer);
-	}, [animateNow, animateIdle, busy, showBackgroundActivity]);
+	}, [animateNow, busy]);
 
 	const {cols} = useTerminalSize();
 	const prefix = busy ? '... ' : '> ';
@@ -141,6 +147,7 @@ export function PromptInput({
 	// cols - App paddingX(1)*2 - border*2 - boxPaddingX(1)*2 - prefixWidth
 	const inputAvailableWidth = cols - 6 - stringWidth(prefix);
 	const footerColor = busy || showBackgroundActivity ? H_GOLD : H_TEAL;
+	const footerShortcuts = busy ? BUSY_SHORTCUTS : IDLE_SHORTCUTS;
 
 	return (
 		<Box
@@ -184,8 +191,7 @@ export function PromptInput({
 			</Box>
 			<Box marginTop={1} justifyContent="space-between">
 				<Box flexDirection="column" flexGrow={1} flexShrink={1}>
-					<Text dimColor>/ commands · @ files · ↑↓ history · alt+enter newline</Text>
-					<Text dimColor>wheel/PgUp scroll · End resume · esc esc cancel run · ctrl+c clear · ctrl+c ctrl+c exit</Text>
+					<Text dimColor>{footerShortcuts}</Text>
 				</Box>
 				<Box marginLeft={1} flexShrink={0} alignSelf="flex-end">
 					<Text color={footerColor} bold>{EXPAND_TRIGGER_SYMBOL}</Text>

@@ -8,6 +8,7 @@ import type {TaskSnapshot} from '../types.js';
 const H_GOLD = '#ffbd38';
 
 const SEP = ' \u2502 ';
+const CWD_MARKER = '>ˍ';
 
 const WRITE_TOOLS = new Set([
 	'Write', 'Edit', 'MultiEdit', 'NotebookEdit',
@@ -93,7 +94,7 @@ function StatusBarInner({
 					</>
 				) : null}
 				<Text dimColor>{SEP}</Text>
-				<Text dimColor>~ {cwd}</Text>
+				<Text dimColor>{CWD_MARKER} {cwd}</Text>
 				{gitBranch ? (
 					<>
 						<Text dimColor>{SEP}</Text>

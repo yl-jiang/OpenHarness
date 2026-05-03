@@ -46,6 +46,8 @@ export type SelectOptionPayload = {
 	label: string;
 	description?: string;
 	active?: boolean;
+	badge?: string;
+	badgeTone?: 'accent' | 'warning' | 'muted';
 };
 
 export type TodoItemSnapshot = {
