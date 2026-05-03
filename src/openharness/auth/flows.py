@@ -7,11 +7,13 @@ performs the interactive authentication and returns the obtained credential.
 from __future__ import annotations
 
 from openharness.utils.log import get_logger
+import os
 import platform
 import subprocess
 import sys
 from abc import ABC, abstractmethod
 from typing import Any
+from urllib.parse import urlparse
 
 logger = get_logger(__name__)
 
@@ -76,18 +78,15 @@ class DeviceCodeFlow(AuthFlow):
     @staticmethod
     def _try_open_browser(url: str) -> bool:
         """Attempt to open *url* in the default browser; return True if likely succeeded."""
+        if urlparse(url).scheme not in {"http", "https"}:
+            return False
         try:
             plat = platform.system()
             if plat == "Darwin":
                 subprocess.Popen(["open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 return True
             if plat == "Windows":
-                subprocess.Popen(
-                    ["start", "", url],
-                    shell=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+                os.startfile(url)  # type: ignore[attr-defined]
                 return True
             # Linux / WSL
             proc = subprocess.Popen(
@@ -102,6 +101,7 @@ class DeviceCodeFlow(AuthFlow):
                 return True
         except Exception:
             return False
+        return False
 
     def run(self) -> str:
         from openharness.api.copilot_auth import poll_for_access_token, request_device_code
