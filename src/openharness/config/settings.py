@@ -267,7 +267,7 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             default_model="deepseek-v4-flash",
             allowed_models=["deepseek-v4-flash", "deepseek-v4-pro"],
             base_url="https://api.deepseek.com/v1",
-            reasoning_effort="high",
+            reasoning_effort="max",
         ),
         "qwen": ProviderProfile(
             label="Qwen (DashScope)",
@@ -488,9 +488,9 @@ class Settings(BaseModel):
     timeout: float = 300.0
     context_window_tokens: int | None = None
     auto_compact_threshold_tokens: int | None = None
-    api_format: str = "anthropic"  # "anthropic", "openai", or "copilot"
+    api_format: str = "openai"  # "anthropic", "openai", or "copilot"
     provider: str = ""
-    active_profile: str = "claude-api"
+    active_profile: str = "deepseek"
     profiles: dict[str, ProviderProfile] = Field(default_factory=default_provider_profiles)
     max_turns: int = 200
 
