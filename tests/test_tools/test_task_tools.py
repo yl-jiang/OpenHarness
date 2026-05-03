@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from openharness.coordinator.coordinator_mode import get_team_registry
+from openharness.engine.types import ToolMetadataKey
 from openharness.swarm.types import SpawnResult
 from openharness.tasks import get_task_manager
 from openharness.tools.agent_tool import AgentTool, AgentToolInput
@@ -283,10 +284,10 @@ async def test_agent_tool_inherits_parent_model_for_claude_only_builtin_on_non_c
             cwd=tmp_path,
             metadata={
                 "session_id": "sess-123",
-                "current_model": "Kimi-K2.5",
-                "current_provider": "moonshot",
-                "current_api_format": "openai",
-                "current_base_url": "https://api.moonshot.cn/v1",
+                ToolMetadataKey.CURRENT_MODEL.value: "Kimi-K2.5",
+                ToolMetadataKey.CURRENT_PROVIDER.value: "moonshot",
+                ToolMetadataKey.CURRENT_API_FORMAT.value: "openai",
+                ToolMetadataKey.CURRENT_BASE_URL.value: "https://api.moonshot.cn/v1",
             },
         ),
     )
@@ -332,10 +333,10 @@ async def test_agent_tool_keeps_claude_builtin_model_on_claude_provider(
             cwd=tmp_path,
             metadata={
                 "session_id": "sess-claude",
-                "current_model": "claude-sonnet-4-6",
-                "current_provider": "anthropic",
-                "current_api_format": "anthropic",
-                "current_base_url": "https://relay.example.com",
+                ToolMetadataKey.CURRENT_MODEL.value: "claude-sonnet-4-6",
+                ToolMetadataKey.CURRENT_PROVIDER.value: "anthropic",
+                ToolMetadataKey.CURRENT_API_FORMAT.value: "anthropic",
+                ToolMetadataKey.CURRENT_BASE_URL.value: "https://relay.example.com",
             },
         ),
     )

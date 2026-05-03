@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 from openharness.coordinator.agent_definitions import get_agent_definition
 from openharness.coordinator.coordinator_mode import get_team_registry
+from openharness.engine.types import ToolMetadataKey
 from openharness.hooks import HookEvent
 from openharness.swarm.registry import get_backend_registry
 from openharness.swarm.types import TeammateSpawnConfig
@@ -18,10 +19,11 @@ from openharness.utils.log import get_logger
 logger = get_logger(__name__)
 
 
-def _context_value(context: ToolExecutionContext, key: str) -> str | None:
+def _context_value(context: ToolExecutionContext, key: ToolMetadataKey | str) -> str | None:
     if not isinstance(context.metadata, dict):
         return None
-    value = context.metadata.get(key)
+    resolved_key = key.value if isinstance(key, ToolMetadataKey) else key
+    value = context.metadata.get(resolved_key)
     return value if isinstance(value, str) and value.strip() else None
 
 
@@ -149,7 +151,7 @@ class AgentTool(BaseTool):
 
         resolved_model = _resolve_spawn_model(
             agent_default_model=agent_def.model if agent_def else None,
-            current_model=_context_value(context, "current_model"),
+            current_model=_context_value(context, ToolMetadataKey.CURRENT_MODEL),
         )
 
         # Use subprocess backend so spawned agents are registered in
@@ -166,9 +168,9 @@ class AgentTool(BaseTool):
             cwd=str(context.cwd),
             parent_session_id="main",
             model=resolved_model,
-            api_format=_context_value(context, "current_api_format"),
-            base_url=_context_value(context, "current_base_url"),
-            provider=_context_value(context, "current_provider"),
+            api_format=_context_value(context, ToolMetadataKey.CURRENT_API_FORMAT),
+            base_url=_context_value(context, ToolMetadataKey.CURRENT_BASE_URL),
+            provider=_context_value(context, ToolMetadataKey.CURRENT_PROVIDER),
             command=arguments.command,
             system_prompt=agent_def.system_prompt if agent_def else None,
             permissions=agent_def.permissions if agent_def else [],
