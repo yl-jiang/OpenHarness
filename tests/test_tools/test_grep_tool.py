@@ -121,6 +121,23 @@ async def test_grep_tool_discards_rg_stderr_for_directory_search(monkeypatch, tm
 
 
 @pytest.mark.asyncio
+async def test_grep_tool_python_fallback_reports_invalid_regex(monkeypatch, tmp_path: Path):
+    tool = GrepTool()
+    monkeypatch.setattr("openharness.tools.grep_tool.shutil.which", lambda _: None)
+    file_path = tmp_path / "notes.txt"
+    file_path.write_text("hello\n", encoding="utf-8")
+
+    result = await tool.execute(
+        GrepToolInput(pattern="hello(", root=str(file_path)),
+        type("Ctx", (), {"cwd": tmp_path})(),
+    )
+
+    assert result.is_error is False
+    assert "invalid regex pattern 'hello('" in result.output
+    assert "unterminated subpattern" in result.output
+
+
+@pytest.mark.asyncio
 async def test_grep_tool_discards_rg_stderr_for_file_search(monkeypatch, tmp_path: Path):
     tool = GrepTool()
     monkeypatch.setattr("openharness.tools.grep_tool.shutil.which", lambda _: "/usr/bin/rg")
