@@ -4,7 +4,7 @@ import {PassThrough} from 'node:stream';
 import React from 'react';
 import {render} from 'ink';
 
-import {nextSelectIndexForWheel, SelectModal, type SelectOption} from './SelectModal.js';
+import {nextSelectIndex, nextSelectIndexForWheel, SelectModal, type SelectOption} from './SelectModal.js';
 
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -69,6 +69,28 @@ async function renderSelectModal(options: SelectOption[], selectedIndex: number,
 	return strip ? stripAnsi(stableOutput) : stableOutput;
 }
 
+async function renderProviderModal(options: SelectOption[], selectedIndex: number, strip = true, columns = 120): Promise<string> {
+	const stdout = createTestStdout(columns);
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+
+	const instance = render(<SelectModal title="Provider Profile" command="provider" options={options} selectedIndex={selectedIndex} />, {
+		stdout: stdout as unknown as NodeJS.WriteStream,
+		debug: true,
+		patchConsole: false,
+	});
+
+	const exitPromise = instance.waitUntilExit();
+	const stableOutput = await waitForOutputToStabilize(() => output);
+	instance.unmount();
+	await exitPromise;
+	instance.cleanup();
+
+	return strip ? stripAnsi(stableOutput) : stableOutput;
+}
+
 test('windows long select menus around the selected option', async () => {
 	const options = Array.from({length: 12}, (_, index) => {
 		const n = String(index + 1).padStart(2, '0');
@@ -83,11 +105,17 @@ test('windows long select menus around the selected option', async () => {
 	assert.doesNotMatch(output, /skill-01/);
 });
 
-test('maps mouse wheel direction to a bounded select index', () => {
+test('cycles select indices for mouse wheel navigation', () => {
 	assert.equal(nextSelectIndexForWheel(0, 1, 12), 1);
-	assert.equal(nextSelectIndexForWheel(11, 1, 12), 11);
+	assert.equal(nextSelectIndexForWheel(11, 1, 12), 0);
 	assert.equal(nextSelectIndexForWheel(1, -1, 12), 0);
-	assert.equal(nextSelectIndexForWheel(0, -1, 12), 0);
+	assert.equal(nextSelectIndexForWheel(0, -1, 12), 11);
+});
+
+test('cycles select indices for keyboard navigation', () => {
+	assert.equal(nextSelectIndex(0, -1, 12), 11);
+	assert.equal(nextSelectIndex(11, 1, 12), 0);
+	assert.equal(nextSelectIndex(2, 1, 12), 3);
 });
 
 test('renders each skill description below its name with a stable indent', async () => {
@@ -164,4 +192,31 @@ test('shows the active skill-name filter and empty-state message when no skills 
 
 	assert.match(stableOutput, /Skill name filter: abc/);
 	assert.match(stableOutput, /No matching skills\./);
+});
+
+test('renders provider options with compact badges and secondary details', async () => {
+	const output = await renderProviderModal([
+		{
+			value: 'deepseek',
+			label: 'DeepSeek',
+			description: 'deepseek · API key',
+			active: true,
+			badge: 'current',
+			badgeTone: 'accent',
+		},
+		{
+			value: 'copilot',
+			label: 'GitHub Copilot',
+			description: 'copilot · OAuth · Auth required',
+			badge: 'setup',
+			badgeTone: 'warning',
+		},
+	], 0, true, 72);
+
+	assert.match(output, /❯ DeepSeek/);
+	assert.match(output, /\[current\]/);
+	assert.match(output, /deepseek · API key/);
+	assert.match(output, /\[setup\]/);
+	assert.doesNotMatch(output, /- DeepSeek/);
+	assert.doesNotMatch(output, /copilot \/ copilot_oauth/);
 });

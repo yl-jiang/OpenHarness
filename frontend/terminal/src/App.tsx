@@ -22,7 +22,7 @@ import {
 } from './components/ExpandedComposer.js';
 import {ModalHost} from './components/ModalHost.js';
 import {PromptInput} from './components/PromptInput.js';
-import {nextSelectIndexForWheel, SelectModal, type SelectOption} from './components/SelectModal.js';
+import {nextSelectIndex, nextSelectIndexForWheel, SelectModal, type SelectOption} from './components/SelectModal.js';
 import {StatusBar} from './components/StatusBar.js';
 import {SwarmPanel} from './components/SwarmPanel.js';
 import {TodoPanel} from './components/TodoPanel.js';
@@ -120,6 +120,22 @@ export function buildSubmittedValue(value: string, extraInputLines: string[]): s
 	return fullValue.trim() ? fullValue : null;
 }
 
+export function cyclePickerIndex(currentIndex: number, delta: number, itemCount: number): number {
+	if (itemCount <= 0) {
+		return 0;
+	}
+	return (currentIndex + delta + itemCount) % itemCount;
+}
+
+export function buildSlashCommandSelection(rootCommand: string, subcommand?: string): string {
+	const trimmedRoot = rootCommand.trim();
+	const trimmedSubcommand = subcommand?.trim();
+	if (!trimmedSubcommand) {
+		return trimmedRoot;
+	}
+	return `${trimmedRoot} ${trimmedSubcommand} `;
+}
+
 export function resolveEscapeAction({
 	busy,
 	paused,
@@ -190,6 +206,8 @@ function AppInner({
 	const [lastEscapeAt, setLastEscapeAt] = useState(0);
 	const [lastCtrlCAt, setLastCtrlCAt] = useState(0);
 	const [extraInputLines, setExtraInputLines] = useState<string[]>([]);
+	const [pickerSubIndex, setPickerSubIndex] = useState(0);
+	const [pickerSubmenuFocused, setPickerSubmenuFocused] = useState(false);
 	// Used to skip ink-text-input's onSubmit when Shift+Enter was just handled
 	const shiftEnterHandledRef = useRef(false);
 	// When App's useInput handles a Ctrl+<letter> shortcut that isn't filtered
@@ -300,13 +318,28 @@ function AppInner({
 	}, [mentionFiles, mentionQuery]);
 	const pickerHints = mentionHints.length > 0 ? mentionHints : commandHints;
 	const pickerTitle = mentionHints.length > 0 ? 'Files' : 'Commands & Skills';
+	const selectedPickerHint = pickerHints[pickerIndex];
+	const pickerSubHints = mentionHints.length > 0
+		? [] as string[]
+		: selectedPickerHint ? (commandPickerModel.subHintsByHint[selectedPickerHint] ?? []) : [];
 
 	const showPicker = !expandedComposer && pickerHints.length > 0 && !session.busy && !session.modal && !selectModal;
 	const outputStyle = String(session.status.output_style ?? 'default');
 
 	useEffect(() => {
 		setPickerIndex(0);
+		setPickerSubIndex(0);
+		setPickerSubmenuFocused(false);
 	}, [pickerHints.length, input]);
+
+	useEffect(() => {
+		if (pickerSubHints.length === 0 && pickerSubmenuFocused) {
+			setPickerSubmenuFocused(false);
+		}
+		if (pickerSubIndex >= pickerSubHints.length) {
+			setPickerSubIndex(Math.max(0, pickerSubHints.length - 1));
+		}
+	}, [pickerSubHints.length, pickerSubIndex, pickerSubmenuFocused]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -337,7 +370,14 @@ function AppInner({
 		setSelectModal({
 			title: req.title,
 			command: req.command,
-			options: req.options.map((o) => ({value: o.value, label: o.label, description: o.description, active: o.active})),
+			options: req.options.map((o) => ({
+				value: o.value,
+				label: o.label,
+				description: o.description,
+				active: o.active,
+				badge: o.badge,
+				badgeTone: o.badgeTone,
+			})),
 			onSelect: (value) => {
 				const selection = resolveSelectModalChoice(req.command, value);
 				if (selection.kind === 'prefill') {
@@ -581,11 +621,11 @@ function AppInner({
 		// --- Select modal (permissions picker etc.) ---
 		if (selectModal) {
 			if (key.upArrow) {
-				setSelectIndex((i) => Math.max(0, i - 1));
+				setSelectIndex((i) => nextSelectIndex(i, -1, visibleSelectOptions.length));
 				return;
 			}
 			if (key.downArrow) {
-				setSelectIndex((i) => Math.min(Math.max(visibleSelectOptions.length - 1, 0), i + 1));
+				setSelectIndex((i) => nextSelectIndex(i, 1, visibleSelectOptions.length));
 				return;
 			}
 			if (key.return) {
@@ -748,16 +788,47 @@ function AppInner({
 		// --- Command picker ---
 		if (showPicker) {
 			if (key.upArrow) {
-				setPickerIndex((i) => Math.max(0, i - 1));
+				if (pickerSubmenuFocused && pickerSubHints.length > 0) {
+					setPickerSubIndex((i) => cyclePickerIndex(i, -1, pickerSubHints.length));
+					return;
+				}
+				setPickerIndex((i) => cyclePickerIndex(i, -1, pickerHints.length));
+				setPickerSubIndex(0);
 				return;
 			}
 			if (key.downArrow) {
-				setPickerIndex((i) => Math.min(pickerHints.length - 1, i + 1));
+				if (pickerSubmenuFocused && pickerSubHints.length > 0) {
+					setPickerSubIndex((i) => cyclePickerIndex(i, 1, pickerSubHints.length));
+					return;
+				}
+				setPickerIndex((i) => cyclePickerIndex(i, 1, pickerHints.length));
+				setPickerSubIndex(0);
 				return;
+			}
+			if (key.rightArrow) {
+				if (!mentionHints.length && pickerSubHints.length > 0) {
+					setPickerSubmenuFocused(true);
+					return;
+				}
+			}
+			if (key.leftArrow) {
+				if (pickerSubmenuFocused) {
+					setPickerSubmenuFocused(false);
+					return;
+				}
 			}
 			if (key.return) {
 				const selected = pickerHints[pickerIndex];
 				if (selected) {
+					if (!mentionHints.length && pickerSubmenuFocused && pickerSubHints.length > 0) {
+						const selectedSubHint = pickerSubHints[pickerSubIndex];
+						if (selectedSubHint) {
+							setInput(buildSlashCommandSelection(selected, selectedSubHint));
+							setHistoryIndex(-1);
+							setCompletionKey((k) => k + 1);
+						}
+						return;
+					}
 					if (mentionQuery && mentionHints.length > 0) {
 						setInput(replaceMentionQuery(input, mentionQuery, selected));
 						setCompletionKey((k) => k + 1);
@@ -773,6 +844,15 @@ function AppInner({
 			if (key.tab) {
 				const selected = pickerHints[pickerIndex];
 				if (selected) {
+					if (!mentionHints.length && pickerSubmenuFocused && pickerSubHints.length > 0) {
+						const selectedSubHint = pickerSubHints[pickerSubIndex];
+						if (selectedSubHint) {
+							setInput(buildSlashCommandSelection(selected, selectedSubHint));
+							setHistoryIndex(-1);
+							setCompletionKey((k) => k + 1);
+						}
+						return;
+					}
 					if (mentionQuery && mentionHints.length > 0) {
 						setInput(replaceMentionQuery(input, mentionQuery, selected));
 						setCompletionKey((k) => k + 1);
@@ -944,6 +1024,7 @@ function AppInner({
 				<Box flexShrink={0} flexDirection="column">
 					<SelectModal
 						title={selectModal.title}
+						command={selectModal.command}
 						options={visibleSelectOptions}
 						selectedIndex={selectIndex}
 						query={selectModalSupportsFilter ? selectQuery : undefined}
@@ -960,6 +1041,8 @@ function AppInner({
 						selectedIndex={pickerIndex}
 						title={pickerTitle}
 						subHintsByHint={mentionHints.length > 0 ? {} : commandPickerModel.subHintsByHint}
+						subSelectedIndex={pickerSubIndex}
+						submenuFocused={pickerSubmenuFocused}
 					/>
 				</Box>
 			) : null}

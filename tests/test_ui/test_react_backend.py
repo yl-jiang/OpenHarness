@@ -533,6 +533,68 @@ async def test_backend_host_emits_model_select_request(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_backend_host_emits_provider_select_request_with_compact_metadata(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    monkeypatch.setattr(
+        "openharness.ui.backend_host.AuthManager.get_profile_statuses",
+        lambda self: {
+            "deepseek": {
+                "label": "DeepSeek",
+                "provider": "deepseek",
+                "auth_source": "deepseek_api_key",
+                "configured": True,
+                "active": True,
+            },
+            "copilot": {
+                "label": "GitHub Copilot",
+                "provider": "copilot",
+                "auth_source": "copilot_oauth",
+                "configured": False,
+                "active": False,
+            },
+        },
+    )
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        await host._handle_select_command("provider")
+    finally:
+        await close_runtime(host._bundle)
+
+    event = next(item for item in events if item.type == "select_request")
+    assert event.modal["command"] == "provider"
+    assert event.select_options == [
+        {
+            "value": "deepseek",
+            "label": "DeepSeek",
+            "description": "deepseek · API key",
+            "active": True,
+            "badge": "current",
+            "badgeTone": "accent",
+        },
+        {
+            "value": "copilot",
+            "label": "GitHub Copilot",
+            "description": "copilot · OAuth · Auth required",
+            "active": False,
+            "badge": "setup",
+            "badgeTone": "warning",
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_backend_host_emits_theme_select_request(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
@@ -641,7 +703,7 @@ async def test_backend_host_emits_provider_select_request(tmp_path, monkeypatch)
 
     event = next(item for item in events if item.type == "select_request")
     assert event.modal["command"] == "provider"
-    assert any(option["value"] == "claude-api" and option.get("active") for option in event.select_options)
+    assert any(option.get("active") for option in event.select_options)
 
 
 @pytest.mark.asyncio

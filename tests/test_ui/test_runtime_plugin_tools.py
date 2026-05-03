@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from openharness.engine.types import ToolMetadataKey
+from openharness.ui.runtime import _sync_runtime_tool_metadata
 from openharness.ui.runtime import build_runtime, close_runtime
 
 
@@ -84,3 +86,27 @@ async def test_build_runtime_whitelists_skill_directories_in_permission_checker(
         assert str((skill_dir / "*").resolve()) in patterns
     finally:
         await close_runtime(bundle)
+
+
+def test_sync_runtime_tool_metadata_uses_enum_keys():
+    from openharness.config.settings import Settings
+
+    tool_metadata: dict[str, object] = {}
+    settings = Settings(
+        model="gpt-5.4",
+        api_format="openai",
+        base_url="https://example.com/v1",
+    )
+
+    _sync_runtime_tool_metadata(
+        tool_metadata,
+        settings=settings,
+        provider_name="openai",
+    )
+
+    assert tool_metadata[ToolMetadataKey.CURRENT_MODEL.value] == "gpt-5.4"
+    assert tool_metadata[ToolMetadataKey.CURRENT_PROVIDER.value] == "openai"
+    assert tool_metadata[ToolMetadataKey.CURRENT_API_FORMAT.value] == "openai"
+    assert tool_metadata[ToolMetadataKey.CURRENT_BASE_URL.value] == "https://example.com/v1"
+    assert tool_metadata[ToolMetadataKey.CURRENT_ACTIVE_PROFILE.value] == "claude-api"
+    assert ToolMetadataKey.CURRENT_MODEL not in ToolMetadataKey.all_persisted_keys()

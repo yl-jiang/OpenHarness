@@ -53,16 +53,29 @@ export function createCommandPickerModel(commands: string[], input: string, skil
 	return {hints, subHintsByHint};
 }
 
+function getVisibleWindow(itemCount: number, selectedIndex: number): {windowStart: number; windowEnd: number} {
+	if (itemCount <= MAX_VISIBLE) {
+		return {windowStart: 0, windowEnd: itemCount};
+	}
+	let start = selectedIndex - Math.floor(MAX_VISIBLE / 2);
+	start = Math.max(0, Math.min(start, itemCount - MAX_VISIBLE));
+	return {windowStart: start, windowEnd: start + MAX_VISIBLE};
+}
+
 function CommandPickerInner({
 	hints,
 	selectedIndex,
+	subSelectedIndex = 0,
+	submenuFocused = false,
 	title = 'Commands',
 	subHintsByHint = {},
-	footerLabel = '↑↓ navigate  ⏎ select  tab complete  esc dismiss',
+	footerLabel = '↑↓ cycle  → submenu  ← back  ⏎ select  tab complete  esc dismiss',
 	showEnterLabel = true,
 }: {
 	hints: string[];
 	selectedIndex: number;
+	subSelectedIndex?: number;
+	submenuFocused?: boolean;
 	title?: string;
 	subHintsByHint?: Record<string, string[]>;
 	footerLabel?: string;
@@ -73,19 +86,18 @@ function CommandPickerInner({
 	}
 
 	const {windowStart, windowEnd} = useMemo(() => {
-		if (hints.length <= MAX_VISIBLE) {
-			return {windowStart: 0, windowEnd: hints.length};
-		}
-		let start = selectedIndex - Math.floor(MAX_VISIBLE / 2);
-		start = Math.max(0, Math.min(start, hints.length - MAX_VISIBLE));
-		return {windowStart: start, windowEnd: start + MAX_VISIBLE};
+		return getVisibleWindow(hints.length, selectedIndex);
 	}, [hints.length, selectedIndex]);
 
 	const visibleHints = hints.slice(windowStart, windowEnd);
 	const hasMore = hints.length > MAX_VISIBLE;
 	const selectedHint = hints[selectedIndex];
 	const subHints = selectedHint ? (subHintsByHint[selectedHint] ?? []) : [];
-	const visibleSubHints = subHints.slice(0, MAX_VISIBLE);
+	const {windowStart: subWindowStart, windowEnd: subWindowEnd} = useMemo(() => {
+		return getVisibleWindow(subHints.length, subSelectedIndex);
+	}, [subHints.length, subSelectedIndex]);
+	const visibleSubHints = subHints.slice(subWindowStart, subWindowEnd);
+	const hasMoreSubHints = subHints.length > MAX_VISIBLE;
 
 	return (
 		<Box flexDirection="row" marginBottom={0}>
@@ -110,13 +122,24 @@ function CommandPickerInner({
 				{windowEnd < hints.length ? <Text dimColor>  ↓ {hints.length - windowEnd} more</Text> : null}
 				<Text dimColor> {footerLabel}</Text>
 			</Box>
-			{subHints.length > 0 ? (
+				{subHints.length > 0 ? (
 				<Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} marginLeft={1}>
-					<Text dimColor bold> Subcommands</Text>
-					{visibleSubHints.map((hint) => (
-						<Text key={hint}>  {hint}</Text>
-					))}
-					{subHints.length > MAX_VISIBLE ? <Text dimColor>  ↓ {subHints.length - MAX_VISIBLE} more</Text> : null}
+					<Text dimColor bold> Subcommands{hasMoreSubHints ? ` (${subSelectedIndex + 1}/${subHints.length})` : ''}</Text>
+					{subWindowStart > 0 ? <Text dimColor>  ↑ {subWindowStart} more</Text> : null}
+					{visibleSubHints.map((hint, i) => {
+						const realIndex = subWindowStart + i;
+						const isSelected = realIndex === subSelectedIndex;
+						return (
+							<Box key={hint}>
+								<Text color={isSelected && submenuFocused ? 'cyan' : undefined} bold={isSelected && submenuFocused}>
+									{isSelected && submenuFocused ? '\u276F ' : '  '}
+									{hint}
+								</Text>
+								{isSelected && submenuFocused && showEnterLabel ? <Text dimColor> [enter]</Text> : null}
+							</Box>
+						);
+					})}
+					{subWindowEnd < subHints.length ? <Text dimColor>  ↓ {subHints.length - subWindowEnd} more</Text> : null}
 				</Box>
 			) : null}
 		</Box>

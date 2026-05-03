@@ -51,6 +51,8 @@ async function renderCommandPicker(
 	hints: string[],
 	selectedIndex: number,
 	subHintsByHint: Record<string, string[]> = {},
+	subSelectedIndex = 0,
+	submenuFocused = false,
 ): Promise<string> {
 	const stdout = createTestStdout();
 	let output = '';
@@ -63,6 +65,8 @@ async function renderCommandPicker(
 			hints={hints}
 			selectedIndex={selectedIndex}
 			subHintsByHint={subHintsByHint}
+			subSelectedIndex={subSelectedIndex}
+			submenuFocused={submenuFocused}
 		/>,
 		{stdout: stdout as unknown as NodeJS.WriteStream, debug: true, patchConsole: false},
 	);
@@ -98,6 +102,20 @@ test('does not show the side submenu when the selected command has no child comm
 	assert.match(output, /Commands/);
 	assert.doesNotMatch(output, /Subcommands/);
 	assert.doesNotMatch(output, /\blist\b/);
+});
+
+test('highlights the selected submenu entry when submenu focus is active', async () => {
+	const output = await renderCommandPicker(
+		['/memory', '/clear'],
+		0,
+		{'/memory': ['list', 'show', 'add']},
+		1,
+		true,
+	);
+
+	assert.match(output, /Subcommands/);
+	assert.match(output, /❯ show\s+\[enter\]/);
+	assert.doesNotMatch(output, /❯ list\s+\[enter\]/);
 });
 
 test('groups child command variants under their root command at the first menu level', async () => {

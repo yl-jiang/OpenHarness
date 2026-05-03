@@ -103,3 +103,24 @@ test('keeps the first escape during a busy turn as an arming press', () => {
 		{action: 'arm_escape', nextLastEscapeAt: 1_000},
 	);
 });
+
+test('cycles slash picker navigation at both ends', () => {
+	const cyclePickerIndex = (AppModule as {
+		cyclePickerIndex?: (currentIndex: number, delta: number, itemCount: number) => number;
+	}).cyclePickerIndex;
+
+	assert.equal(typeof cyclePickerIndex, 'function');
+	assert.equal(cyclePickerIndex?.(0, -1, 3), 2);
+	assert.equal(cyclePickerIndex?.(2, 1, 3), 0);
+	assert.equal(cyclePickerIndex?.(1, 1, 1), 0);
+});
+
+test('builds a full slash command when selecting a submenu item', () => {
+	const buildSlashCommandSelection = (AppModule as {
+		buildSlashCommandSelection?: (rootCommand: string, subcommand?: string) => string;
+	}).buildSlashCommandSelection;
+
+	assert.equal(typeof buildSlashCommandSelection, 'function');
+	assert.equal(buildSlashCommandSelection?.('/memory', 'show'), '/memory show ');
+	assert.equal(buildSlashCommandSelection?.('/resume', undefined), '/resume');
+});

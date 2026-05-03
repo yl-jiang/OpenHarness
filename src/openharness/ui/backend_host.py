@@ -41,6 +41,42 @@ logger = get_logger(__name__)
 _PROTOCOL_PREFIX = "OHJSON:"
 
 
+def _provider_auth_label(auth_source: str) -> str:
+    normalized = auth_source.strip().lower()
+    if normalized.endswith("_api_key"):
+        if normalized == "openai_api_key":
+            return "OpenAI API key"
+        return "API key"
+    if normalized.endswith("_oauth"):
+        return "OAuth"
+    if normalized.endswith("_subscription"):
+        return "Subscription"
+    return auth_source.replace("_", " ")
+
+
+def _provider_select_option(name: str, info: dict[str, object]) -> dict[str, object]:
+    configured = bool(info.get("configured"))
+    provider = str(info.get("provider") or "").strip()
+    auth_source = str(info.get("auth_source") or "").strip()
+    auth_label = _provider_auth_label(auth_source) if auth_source else ""
+    description_parts = [part for part in (provider, auth_label) if part]
+    if not configured:
+        description_parts.append("Auth required")
+    option: dict[str, object] = {
+        "value": name,
+        "label": info["label"],
+        "description": " · ".join(description_parts),
+        "active": info["active"],
+    }
+    if bool(info.get("active")):
+        option["badge"] = "current"
+        option["badgeTone"] = "accent"
+    elif not configured:
+        option["badge"] = "setup"
+        option["badgeTone"] = "warning"
+    return option
+
+
 @dataclass(frozen=True)
 class BackendHostConfig:
     """Configuration for one backend host session."""
@@ -605,15 +641,7 @@ class ReactBackendHost:
 
         if command == "provider":
             statuses = AuthManager(settings).get_profile_statuses()
-            options = [
-                {
-                    "value": name,
-                    "label": info["label"],
-                    "description": f"{info['provider']} / {info['auth_source']}" + (" [missing auth]" if not info["configured"] else ""),
-                    "active": info["active"],
-                }
-                for name, info in statuses.items()
-            ]
+            options = [_provider_select_option(name, info) for name, info in statuses.items()]
             await self._emit(
                 BackendEvent(
                     type="select_request",
