@@ -27,6 +27,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- React TUI prompt footer now shows a single context-aware shortcut line instead of two dense help rows, keeping idle composition hints separate from busy-state run controls.
 - React TUI now enables xterm bracketed paste mode and buffers pasted content into a single input event, so multi-line pastes preserve their original line layout, no longer drop earlier-typed characters, and never trip the submit shortcut on pasted carriage returns. Pasted CR/CRLF line endings are normalised to LF.
 - React TUI multiline composer no longer drops earlier-typed characters when a multiline paste arrives mid-session, and avoids replaying already-buffered preview lines when paste data streams in one character at a time.
 - React TUI multiline composer now submits buffered text even when the current line is empty after `Shift+Enter`, so users can end a multi-line draft with a blank cursor line and still send the message.
@@ -34,7 +35,9 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - React TUI `/skills` picker now pre-fills the selected skill as `/<skill-name> ` in the composer and waits for the user query, matching the intended skill-invocation flow instead of immediately loading the skill on selection.
 - React TUI slash autocomplete now includes direct `/<skill-name>` aliases alongside slash commands, so users can type a known skill prefix and complete or invoke it without opening the `/skills` picker first.
 - React TUI select menus now window long option lists, show skill descriptions below names with wrapping indentation, and highlight the selected option.
+- React TUI select menus now cycle on arrow-key and wheel navigation, so pickers like `/model` wrap from the last option back to the first (and vice versa).
 - React TUI slash command picker now groups subcommands under their root command and previews them in a side submenu.
+- React TUI slash command picker now supports cyclic browsing at both menu levels, lets `→` enter the subcommand column, and can prefill a combined `/<command> <subcommand> ` prompt from the submenu.
 - React TUI question modal input now preserves Shift-modified printable keys from terminals that emit modifyOtherKeys/CSI-u sequences.
 - Compaction now detects llama.cpp/OpenAI-compatible context overflow errors, accounts for image blocks in auto-compact token estimates, and strips image payloads from summarizer-only compaction requests.
 - Large tool results are now bounded in conversation history: oversized outputs are saved under `tool_artifacts`, old MCP results become microcompactable, and context collapse trims stale tool-result payloads.
