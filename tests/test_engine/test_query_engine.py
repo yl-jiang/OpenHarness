@@ -446,6 +446,75 @@ async def test_query_engine_reports_single_empty_invalid_tool_call(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_query_engine_injects_and_hides_internal_tool_name_repair_prompt(tmp_path: Path):
+    sample = tmp_path / "hello.txt"
+    sample.write_text("alpha\nbeta\n", encoding="utf-8")
+
+    class RepairAwareApiClient:
+        def __init__(self) -> None:
+            self.requests: list[list[ConversationMessage]] = []
+            self.calls = 0
+
+        async def stream_message(self, request):
+            self.requests.append(list(request.messages))
+            self.calls += 1
+            if self.calls == 1:
+                yield ApiMessageCompleteEvent(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            ToolUseBlock(
+                                id="toolu_repaired_read",
+                                name="read",
+                                input={"path": str(sample), "offset": 0, "limit": 1},
+                            )
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                    stop_reason=None,
+                )
+                return
+            if self.calls == 2:
+                last = request.messages[-1]
+                assert last.role == "user"
+                assert last.text.startswith("<openharness-internal:tool-name-repair>")
+                assert "read -> read_file (alias)" in last.text
+                assert "Do not mention this repair notice" in last.text
+                yield ApiMessageCompleteEvent(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="done")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                    stop_reason=None,
+                )
+                return
+            raise AssertionError(f"Unexpected API call count: {self.calls}")
+
+    client = RepairAwareApiClient()
+    engine = QueryEngine(
+        api_client=client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("read file")]
+
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "done"
+    assert client.calls == 2
+    public_text = "\n".join(message.text for message in engine.messages)
+    assert "<openharness-internal:tool-name-repair>" not in public_text
+    assert "read -> read_file (alias)" not in public_text
+    export_text = "\n".join(message.text for message in engine.export_messages)
+    assert "<openharness-internal:tool-name-repair>" not in export_text
+    assert "read -> read_file (alias)" not in export_text
+
+
+@pytest.mark.asyncio
 async def test_query_engine_auto_continues_after_empty_stop_following_tool_results(
     tmp_path: Path,
     monkeypatch,
@@ -1176,6 +1245,35 @@ async def test_execute_tool_call_repairs_tool_name_before_execution(tmp_path: Pa
 
     assert result.is_error is False
     assert result.content == "marker:ok"
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_call_records_tool_name_repair_notice_in_tool_metadata(tmp_path: Path):
+    sample = tmp_path / "hello.txt"
+    sample.write_text("alpha\nbeta\n", encoding="utf-8")
+    context = _tool_context(
+        tmp_path,
+        create_default_tool_registry(),
+        PermissionSettings(mode=PermissionMode.FULL_AUTO),
+    )
+    context.tool_metadata = {}
+
+    result = await _execute_tool_call(
+        context,
+        "read",
+        "toolu_read_alias",
+        {"path": str(sample), "offset": 0, "limit": 1},
+    )
+
+    assert result.is_error is False
+    assert context.tool_metadata[ToolMetadataKey.TOOL_NAME_REPAIR_NOTICES.value] == [
+        {
+            "requested_name": "read",
+            "resolved_name": "read_file",
+            "reason": "alias",
+            "tool_use_id": "toolu_read_alias",
+        }
+    ]
 
 
 @pytest.mark.asyncio

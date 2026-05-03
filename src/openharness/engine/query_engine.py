@@ -9,7 +9,15 @@ from openharness.api.client import SupportsStreamingMessages
 from openharness.engine.cost_tracker import CostTracker
 from openharness.coordinator.coordinator_mode import get_coordinator_user_context
 from openharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock
-from openharness.engine.query import AskUserPrompt, MaxTurnsExceeded, PermissionPrompt, QueryContext, remember_user_goal, run_query
+from openharness.engine.query import (
+    AskUserPrompt,
+    INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX,
+    MaxTurnsExceeded,
+    PermissionPrompt,
+    QueryContext,
+    remember_user_goal,
+    run_query,
+)
 from openharness.engine.stream_events import (
     AssistantTurnComplete,
     CompactProgressPhase,
@@ -165,7 +173,11 @@ class QueryEngine:
         if message.role != "user":
             return False
         text = message.text
-        return text == _INTERNAL_AUTO_CONTINUE_PROMPT or text.startswith("# Coordinator User Context\n\n")
+        return (
+            text == _INTERNAL_AUTO_CONTINUE_PROMPT
+            or text.startswith(INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX)
+            or text.startswith("# Coordinator User Context\n\n")
+        )
 
     @classmethod
     def _public_messages(cls, messages: list[ConversationMessage]) -> list[ConversationMessage]:

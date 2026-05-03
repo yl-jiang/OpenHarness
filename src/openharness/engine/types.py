@@ -30,7 +30,7 @@ def default_task_focus_state() -> dict[str, object]:
 
 class ToolMetadataKey(str, Enum):
     """Keys for tool metadata storage in the query context.
-    
+
     These keys are used to track various state and activity during query execution:
     - PERMISSION_MODE: Current permission mode setting
     - READ_FILE_STATE: History of file read operations
@@ -44,6 +44,7 @@ class ToolMetadataKey(str, Enum):
     - COMPACT_LAST: Last compaction state
     - SELF_EVOLUTION_STATE: Background memory/skill review counters
     - SELF_EVOLUTION_CONTROLLER: Session-only self-evolution controller
+    - CURRENT_*: Session-only runtime model/provider context
     """
 
     PERMISSION_MODE = "permission_mode"
@@ -58,9 +59,16 @@ class ToolMetadataKey(str, Enum):
     COMPACT_LAST = "compact_last"
     SELF_EVOLUTION_STATE = "self_evolution_state"
     SELF_EVOLUTION_CONTROLLER = "self_evolution_controller"
+    # Session-only runtime context: not persisted across sessions.
+    CURRENT_MODEL = "current_model"
+    CURRENT_PROVIDER = "current_provider"
+    CURRENT_API_FORMAT = "current_api_format"
+    CURRENT_BASE_URL = "current_base_url"
+    CURRENT_ACTIVE_PROFILE = "current_active_profile"
     # Session-only cache: not persisted across sessions.
     FILE_READ_CACHE = "file_read_cache"
     TOOL_CALL_HISTORY = "tool_call_history"
+    TOOL_NAME_REPAIR_NOTICES = "tool_name_repair_notices"
 
     @classmethod
     def all_persisted_keys(cls) -> tuple["ToolMetadataKey", ...]:
