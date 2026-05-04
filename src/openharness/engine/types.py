@@ -69,6 +69,7 @@ class ToolMetadataKey(str, Enum):
     FILE_READ_CACHE = "file_read_cache"
     TOOL_CALL_HISTORY = "tool_call_history"
     TOOL_NAME_REPAIR_NOTICES = "tool_name_repair_notices"
+    VISION_MODEL_CONFIG = "vision_model_config"
 
     @classmethod
     def all_persisted_keys(cls) -> tuple["ToolMetadataKey", ...]:
