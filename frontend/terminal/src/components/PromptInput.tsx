@@ -23,7 +23,7 @@ const STATIC_ELLIPSIS = '...';
 const BUSY_ANIMATION_MS = 220;
 const BACKGROUND_ANIMATION_MS = 900;
 const IDLE_SHORTCUTS = '/ commands · @ files · ↑↓ history · shift/alt+enter newline';
-const BUSY_SHORTCUTS = 'PgUp/Dn scroll · End resume · Esc Esc cancel';
+const BUSY_SHORTCUTS = 'PgUp/Dn scroll · End resume · /stop or Ctrl+C cancel';
 
 export function clipPromptPreviewLine(line: string, availableWidth: number): string {
 	const safeWidth = Math.max(1, availableWidth);
@@ -185,7 +185,7 @@ export function PromptInput({
 					key={inputKey}
 					value={input}
 					onChange={setInput}
-					onSubmit={suppressSubmit || busy ? noop : onSubmit}
+					onSubmit={suppressSubmit ? noop : onSubmit}
 					availableWidth={inputAvailableWidth}
 				/>
 			</Box>

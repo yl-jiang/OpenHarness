@@ -235,7 +235,7 @@ test('shows an animated busy indicator with the running tool name', async () => 
 test('shows a focused busy shortcut footer', async () => {
 	const output = await renderPromptInput({busy: true, toolName: 'bash'});
 
-	assert.match(output, /PgUp\/Dn scroll · End resume · Esc Esc cancel/);
+	assert.match(output, /PgUp\/Dn scroll · End resume · \/stop or Ctrl\+C cancel/);
 	assert.doesNotMatch(output, /@ files/);
 	assert.doesNotMatch(output, /ctrl\+c ctrl\+c exit/);
 });
