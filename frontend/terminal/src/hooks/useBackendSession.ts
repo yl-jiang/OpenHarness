@@ -272,27 +272,27 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			if (phase === 'hooks_start') {
 				setBusyLabel(
 					trigger === 'reactive'
-						? 'Preparing retry compaction…'
-						: 'Preparing conversation compaction…',
+						? 'Preparing retry compaction'
+						: 'Preparing conversation compaction',
 				);
 			} else if (phase === 'context_collapse_start') {
-				setBusyLabel('Collapsing oversized context…');
+				setBusyLabel('Collapsing oversized context');
 			} else if (phase === 'context_collapse_end') {
-				setBusyLabel('Context collapse complete…');
+				setBusyLabel('Context collapse complete');
 			} else if (phase === 'session_memory_start') {
-				setBusyLabel('Condensing earlier conversation…');
+				setBusyLabel('Condensing earlier conversation');
 			} else if (phase === 'compact_start') {
 				setBusyLabel(
 					trigger === 'reactive'
-						? 'Context is too large. Compacting and retrying…'
-						: 'Compacting conversation memory…',
+						? 'Context is too large. Compacting and retrying'
+						: 'Compacting conversation memory',
 				);
 			} else if (phase === 'compact_retry') {
-				setBusyLabel(attempt ? `Retrying compaction (${attempt})…` : 'Retrying compaction…');
+				setBusyLabel(attempt ? `Retrying compaction (${attempt})` : 'Retrying compaction');
 			} else if (phase === 'compact_end') {
-				setBusyLabel('Compaction complete. Continuing…');
+				setBusyLabel('Compaction complete. Continuing');
 			} else if (phase === 'compact_failed') {
-				setBusyLabel('Compaction failed. Continuing without it…');
+				setBusyLabel('Compaction failed. Continuing without it');
 			}
 			if (event.message) {
 				queueTranscriptItem({role: 'status', text: event.message!});
@@ -369,9 +369,9 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		if ((event.type === 'tool_started' || event.type === 'tool_completed') && event.item) {
 			if (event.type === 'tool_started') {
 				setBusy(true);
-				setBusyLabel(`Running ${event.tool_name ?? 'tool'}...`);
+				setBusyLabel(`Running ${event.tool_name ?? 'tool'}`);
 			} else {
-				setBusyLabel('Processing...');
+				setBusyLabel('Processing');
 			}
 			const enrichedItem: TranscriptItem = {
 				...event.item,

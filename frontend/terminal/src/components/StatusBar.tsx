@@ -63,10 +63,14 @@ function StatusBarInner({
 	status,
 	tasks,
 	activeToolName,
+	elapsedSeconds,
+	busy,
 }: {
 	status: Record<string, unknown>;
 	tasks: TaskSnapshot[];
 	activeToolName?: string;
+	elapsedSeconds?: number | null;
+	busy?: boolean;
 }): React.JSX.Element {
 	const model = String(status.model ?? 'unknown');
 	const mode = String(status.permission_mode ?? 'default');
@@ -117,6 +121,12 @@ function StatusBarInner({
 					<>
 						<Text dimColor>{SEP}</Text>
 						<Text dimColor>🔌 {mcpCount}</Text>
+					</>
+				) : null}
+				{elapsedSeconds != null ? (
+					<>
+						<Text dimColor>{SEP}</Text>
+						<Text color={busy ? 'cyan' : undefined} dimColor={!busy}>⏱ {elapsedSeconds}s</Text>
 					</>
 				) : null}
 			</Text>

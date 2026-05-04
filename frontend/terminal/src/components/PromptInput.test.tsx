@@ -9,10 +9,12 @@ import {PromptInput, shouldAnimateBackgroundCue, shouldAnimateSpinner} from './P
 
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const extractLastFrame = (output: string): string => {
 	const boundary = output.lastIndexOf('\n╭');
 	return boundary >= 0 ? output.slice(boundary + 1) : output;
 };
+const ignoreInput = (): void => {};
 
 type InkTestStdout = PassThrough & {
 	isTTY: boolean;
@@ -113,7 +115,7 @@ async function renderPromptInput({
 				setInput={() => {}}
 				onSubmit={() => {}}
 				toolName={toolName}
-				backgroundTaskCount={backgroundTaskCount}
+				hasBackgroundTasks={backgroundTaskCount > 0}
 				animateSpinner={animateSpinner}
 			/>
 		</ThemeProvider>,
@@ -137,10 +139,14 @@ async function renderPromptInput({
 async function renderInteractivePromptInput({
 	initialInput = '',
 	initialExtraInputLines = [],
+	backgroundTaskCount = 0,
+	animateSpinner,
 	stdoutColumns = 120,
 }: {
 	initialInput?: string;
 	initialExtraInputLines?: string[];
+	backgroundTaskCount?: number;
+	animateSpinner?: boolean;
 	stdoutColumns?: number;
 } = {}): Promise<{
 	stdin: InkTestStdin;
@@ -176,6 +182,8 @@ async function renderInteractivePromptInput({
 					setInput={handleInputChange}
 					onSubmit={() => {}}
 					extraInputLines={extraInputLines}
+					hasBackgroundTasks={backgroundTaskCount > 0}
+					animateSpinner={animateSpinner}
 				/>
 			</ThemeProvider>
 		);
@@ -193,6 +201,55 @@ async function renderInteractivePromptInput({
 	return {
 		stdin,
 		getOutput: async () => stripAnsi(await waitForOutputToStabilize(() => output)),
+		cleanup: async () => {
+			const exitPromise = instance.waitUntilExit();
+			instance.unmount();
+			await exitPromise;
+			instance.cleanup();
+		},
+	};
+}
+
+async function renderRerenderablePromptInput({
+	backgroundTaskCount = 0,
+}: {
+	backgroundTaskCount?: number;
+} = {}): Promise<{
+	rerenderWithBackgroundTaskCount: (count: number) => void;
+	getRawOutput: () => string;
+	cleanup: () => Promise<void>;
+}> {
+	const stdout = createTestStdout();
+	const stdin = createTestStdin();
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+
+	const renderPrompt = (count: number): React.JSX.Element => (
+		<ThemeProvider initialTheme="default">
+			<PromptInput
+				busy={false}
+				input=""
+				setInput={ignoreInput}
+				onSubmit={ignoreInput}
+				hasBackgroundTasks={count > 0}
+			/>
+		</ThemeProvider>
+	);
+
+	const instance = render(renderPrompt(backgroundTaskCount), {
+		stdout: stdout as unknown as NodeJS.WriteStream,
+		stdin: stdin as unknown as NodeJS.ReadStream,
+		debug: true,
+		patchConsole: false,
+	});
+
+	await waitForOutputToStabilize(() => output);
+
+	return {
+		rerenderWithBackgroundTaskCount: (count: number) => instance.rerender(renderPrompt(count)),
+		getRawOutput: () => output,
 		cleanup: async () => {
 			const exitPromise = instance.waitUntilExit();
 			instance.unmount();
@@ -240,11 +297,11 @@ test('shows a focused busy shortcut footer', async () => {
 	assert.doesNotMatch(output, /ctrl\+c ctrl\+c exit/);
 });
 
-test('shows a visual background activity cue while input remains idle', async () => {
+test('shows a static visual background activity cue while input remains idle', async () => {
 	const output = await renderPromptInput({backgroundTaskCount: 2});
 
-	assert.match(output, /\[bg\] 2 running/);
-	assert.match(output, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u);
+	assert.match(output, /\[bg\] running/);
+	assert.match(output, /● \| \[bg\] running/);
 	assert.match(output, /> /);
 	assert.doesNotMatch(output, /\[idle\]/);
 });
@@ -252,8 +309,36 @@ test('shows a visual background activity cue while input remains idle', async ()
 test('uses a static background cue when animation is disabled', async () => {
 	const output = await renderPromptInput({backgroundTaskCount: 1, animateSpinner: false});
 
-	assert.match(output, /● \| \[bg\] 1 running/);
+	assert.match(output, /● \| \[bg\] running/);
 	assert.doesNotMatch(output, /\[idle\]/);
+});
+
+test('does not repaint the prompt while only background tasks are running', async () => {
+	const prompt = await renderInteractivePromptInput({backgroundTaskCount: 1, animateSpinner: true});
+	try {
+		const before = await prompt.getOutput();
+		await sleep(950);
+		await nextLoopTurn();
+		const after = await prompt.getOutput();
+
+		assert.equal(after, before);
+	} finally {
+		await prompt.cleanup();
+	}
+});
+
+test('does not repaint the prompt when the active background task count changes', async () => {
+	const prompt = await renderRerenderablePromptInput({backgroundTaskCount: 3});
+	try {
+		const before = prompt.getRawOutput();
+		prompt.rerenderWithBackgroundTaskCount(2);
+		await nextLoopTurn();
+		await nextLoopTurn();
+
+		assert.equal(prompt.getRawOutput(), before);
+	} finally {
+		await prompt.cleanup();
+	}
 });
 
 test('uses a static busy cue when animation is disabled', async () => {

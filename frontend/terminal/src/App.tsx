@@ -28,6 +28,7 @@ import {SwarmPanel} from './components/SwarmPanel.js';
 import {TodoPanel} from './components/TodoPanel.js';
 import type {TerminalInputStream} from './input/terminalInput.js';
 import {useBackendSession} from './hooks/useBackendSession.js';
+import {useElapsedTimer} from './hooks/useElapsedTimer.js';
 import {useMouseWheel} from './hooks/useMouseWheel.js';
 import {useTerminalMouse} from './hooks/useTerminalMouse.js';
 import {useTerminalSize} from './hooks/useTerminalSize.js';
@@ -210,6 +211,10 @@ function AppInner({
 	const [pickerSubmenuFocused, setPickerSubmenuFocused] = useState(false);
 	// Used to skip ink-text-input's onSubmit when Shift+Enter was just handled
 	const shiftEnterHandledRef = useRef(false);
+	const onSubmitRef = useRef<(value: string) => void>(() => {});
+	const onSubmit = useCallback((value: string): void => {
+		onSubmitRef.current(value);
+	}, []);
 	// When App's useInput handles a Ctrl+<letter> shortcut that isn't filtered
 	// by ink-text-input (which only filters Ctrl+C), we record the letter so
 	// handleInputChange can strip the spurious insert from the composer.
@@ -238,6 +243,7 @@ function AppInner({
 	const [paused, setPaused] = useState(false);
 
 	const session = useBackendSession(config, () => exit());
+	const elapsedSeconds = useElapsedTimer(session.busy);
 	const deferredTranscript = useDeferredValue(session.transcript);
 	const deferredAssistantBuffer = useDeferredValue(session.assistantBuffer);
 	const deferredStatus = useDeferredValue(session.status);
@@ -937,7 +943,7 @@ function AppInner({
 		[],
 	);
 
-	const onSubmit = (value: string): void => {
+	onSubmitRef.current = (value: string): void => {
 		// ink-text-input fires onSubmit for any key.return including shift+return;
 		// skip if Shift+Enter was already handled by our useInput handler above.
 		if (shiftEnterHandledRef.current) {
@@ -1077,7 +1083,7 @@ function AppInner({
 
 			{session.ready ? (
 				<Box flexShrink={0} flexDirection="column">
-					<StatusBar status={deferredStatus} tasks={deferredTasks} activeToolName={session.busy ? currentToolName : undefined} />
+					<StatusBar status={deferredStatus} tasks={deferredTasks} activeToolName={session.busy ? currentToolName : undefined} elapsedSeconds={elapsedSeconds} busy={session.busy} />
 				</Box>
 			) : null}
 
@@ -1094,8 +1100,8 @@ function AppInner({
 						onSubmit={onSubmit}
 						extraInputLines={extraInputLines}
 						toolName={session.busy ? currentToolName : undefined}
-						statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `Running ${currentToolName}...` : 'Running agent loop...')) : undefined}
-						backgroundTaskCount={activeBackgroundTaskCount}
+						statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `Running ${currentToolName}` : 'Running agent loop')) : undefined}
+						hasBackgroundTasks={activeBackgroundTaskCount > 0}
 						suppressSubmit={showPicker}
 						inputKey={completionKey}
 					/>

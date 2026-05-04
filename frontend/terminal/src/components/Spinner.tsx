@@ -23,7 +23,7 @@ export function Spinner({label}: {label?: string}): React.JSX.Element {
 	return (
 		<Text>
 			<Text color={theme.colors.primary}>●</Text>
-			<Text dimColor> {label ?? 'Working...'}</Text>
+			<Text dimColor> {label ?? 'Working'}</Text>
 		</Text>
 	);
 }
