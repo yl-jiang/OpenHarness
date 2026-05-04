@@ -818,6 +818,15 @@ def create_default_command_registry(
             continue_turns=turns,
         )
 
+    async def _stop_handler(_: str, _context: CommandContext) -> CommandResult:
+        return CommandResult(
+            message=(
+                "No active turn is running in this command handler. "
+                "While the TUI is running, type /stop or press Ctrl+C to interrupt the current turn. "
+                "In ohmo remote channels, send /stop."
+            )
+        )
+
     async def _issue_handler(args: str, context: CommandContext) -> CommandResult:
         path = get_project_issue_file(context.cwd)
         tokens = args.split(maxsplit=1)
@@ -976,7 +985,7 @@ def create_default_command_registry(
                 context.app_state.set(permission_mode=settings.permission.mode.value)
             label = _MODE_LABELS.get(target_mode, target_mode)
             return CommandResult(message=f"Permission mode set to {label}", refresh_runtime=True)
-        return CommandResult(message="Usage: /permissions [show|MODE]")
+        return CommandResult(message="Usage: /permissions [show|default|full_auto|plan]")
 
     async def _plan_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1474,13 +1483,14 @@ def create_default_command_registry(
     registry.register(SlashCommand("mcp", "Show MCP status", _mcp_handler, subcommands=["show", "auth"]))
     registry.register(SlashCommand("plugin", "Manage plugins", _plugin_handler, remote_invocable=False, remote_admin_opt_in=True, subcommands=["list", "enable", "disable", "install", "uninstall"]))
     registry.register(SlashCommand("reload-plugins", "Reload plugin discovery for this workspace", _reload_plugins_handler, remote_invocable=False, remote_admin_opt_in=True))
-    registry.register(SlashCommand("permissions", "Show or update permission mode", _permissions_handler, remote_invocable=False, remote_admin_opt_in=True))
-    registry.register(SlashCommand("plan", "Toggle plan permission mode", _plan_handler, remote_invocable=False, remote_admin_opt_in=True))
+    registry.register(SlashCommand("permissions", "Show or update permission mode; Tab in the TUI opens the mode picker", _permissions_handler, remote_invocable=False, remote_admin_opt_in=True))
+    registry.register(SlashCommand("plan", "Toggle plan permission mode; /permissions default|full_auto exits plan explicitly", _plan_handler, remote_invocable=False, remote_admin_opt_in=True))
     registry.register(SlashCommand("fast", "Show or update fast mode", _fast_handler))
     registry.register(SlashCommand("effort", "Show or update reasoning effort", _effort_handler))
     registry.register(SlashCommand("passes", "Show or update reasoning pass count", _passes_handler))
     registry.register(SlashCommand("turns", "Show or update maximum agentic turn count", _turns_handler))
     registry.register(SlashCommand("continue", "Continue the previous tool loop if it was interrupted", _continue_handler))
+    registry.register(SlashCommand("stop", "Interrupt the running turn from TUI/ohmo channels", _stop_handler))
     registry.register(SlashCommand("provider", "Show or switch provider profiles", _provider_handler))
     registry.register(SlashCommand("model", "Show or update the default model", _model_handler))
     registry.register(SlashCommand("theme", "List, set, show or preview TUI themes", _theme_handler, subcommands=["show", "list", "set", "preview"]))

@@ -467,7 +467,14 @@ function AppInner({
 	};
 
 	const submitSubmittedValue = useCallback((submittedValue: string): boolean => {
-		if (!submittedValue || session.busy || !session.ready) {
+		if (!submittedValue || !session.ready) {
+			return false;
+		}
+		if (session.busy) {
+			if (submittedValue.trim() === '/stop') {
+				session.sendRequest({type: 'cancel_line'});
+				return true;
+			}
 			return false;
 		}
 		scrollToBottom();
@@ -587,6 +594,10 @@ function AppInner({
 		}
 
 		if (key.ctrl && chunk === 'c') {
+			if (session.busy) {
+				session.sendRequest({type: 'cancel_line'});
+				return;
+			}
 			const now = Date.now();
 			if (now - lastCtrlCAt < 1000) {
 				// Two Ctrl+C within 1 s → shut down and exit
@@ -782,6 +793,11 @@ function AppInner({
 		}
 
 		if (session.busy) {
+			return;
+		}
+
+		if (!showPicker && key.tab && input.trim() === '' && extraInputLines.length === 0) {
+			session.sendRequest({type: 'select_command', command: 'permissions'});
 			return;
 		}
 
