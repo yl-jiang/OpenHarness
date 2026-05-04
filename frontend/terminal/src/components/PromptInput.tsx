@@ -21,7 +21,6 @@ const STATIC_ELLIPSIS = '...';
 // StatusBar all sit adjacent and get repainted on every tick).  ~5fps is
 // still smooth-feeling while halving the redraw rate of the previous 120ms.
 const BUSY_ANIMATION_MS = 220;
-const BACKGROUND_ANIMATION_MS = 900;
 const IDLE_SHORTCUTS = '/ commands · @ files · ↑↓ history · shift/alt+enter newline';
 const BUSY_SHORTCUTS = 'PgUp/Dn scroll · End resume · /stop or Ctrl+C cancel';
 
@@ -79,19 +78,7 @@ export function shouldAnimateSpinner(
 
 export const shouldAnimateBackgroundCue = shouldAnimateSpinner;
 
-export function PromptInput({
-	busy,
-	input,
-	setInput,
-	onSubmit,
-	extraInputLines,
-	toolName,
-	suppressSubmit,
-	statusLabel,
-	inputKey,
-	backgroundTaskCount = 0,
-	animateSpinner,
-}: {
+type PromptInputProps = {
 	busy: boolean;
 	input: string;
 	setInput: (value: string) => void;
@@ -101,26 +88,38 @@ export function PromptInput({
 	suppressSubmit?: boolean;
 	statusLabel?: string;
 	inputKey?: number;
-	backgroundTaskCount?: number;
+	hasBackgroundTasks?: boolean;
 	animateSpinner?: boolean;
-}): React.JSX.Element {
+};
+
+function PromptInputInner({
+	busy,
+	input,
+	setInput,
+	onSubmit,
+	extraInputLines,
+	toolName,
+	suppressSubmit,
+	statusLabel,
+	inputKey,
+	hasBackgroundTasks = false,
+	animateSpinner,
+}: PromptInputProps): React.JSX.Element {
 	const [frameIndex, setFrameIndex] = useState(0);
 	const idleTitle = 'ready';
 	const busyTitle = statusLabel ?? (toolName ? `[run] ${toolName}` : '[run]');
-	const showBackgroundActivity = !busy && backgroundTaskCount > 0;
-	const backgroundTitle = `[bg] ${backgroundTaskCount} running`;
+	const showBackgroundActivity = !busy && hasBackgroundTasks;
+	const backgroundTitle = '[bg] running';
 	const canAnimate = animateSpinner ?? shouldAnimateSpinner();
-	// Only animate while busy or while background tasks are running. Idle
-	// animation forces Ink to repaint the whole TUI on every tick which
+	// Only animate while the foreground turn is busy. Timer-driven animation
+	// forces Ink to repaint the whole TUI on every tick which
 	// causes visible flicker on most terminals (see commit 5276771 and the
 	// note in components/Spinner.tsx).
-	const animateNow = canAnimate && (busy || showBackgroundActivity);
+	const animateNow = canAnimate && busy;
 	const spinnerFrame = animateNow
 		? SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length]
 		: SPINNER_STATIC_FRAME;
-	const backgroundFrame = animateNow
-		? SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length]
-		: BACKGROUND_STATIC_FRAME;
+	const backgroundFrame = BACKGROUND_STATIC_FRAME;
 	const idleFrame = IDLE_STATIC_FRAME;
 	// Keep the trailing ellipsis static even while busy: the braille spinner
 	// already conveys liveness, and animating both makes the title line churn
@@ -134,12 +133,11 @@ export function PromptInput({
 		if (!animateNow) {
 			return;
 		}
-		const interval = busy ? BUSY_ANIMATION_MS : BACKGROUND_ANIMATION_MS;
 		const timer = setInterval(() => {
 			setFrameIndex((index) => (index + 1) % SPINNER_FRAMES.length);
-		}, interval);
+		}, BUSY_ANIMATION_MS);
 		return () => clearInterval(timer);
-	}, [animateNow, busy]);
+	}, [animateNow]);
 
 	const {cols} = useTerminalSize();
 	const prefix = busy ? '... ' : '> ';
@@ -200,3 +198,5 @@ export function PromptInput({
 		</Box>
 	);
 }
+
+export const PromptInput = React.memo(PromptInputInner);
