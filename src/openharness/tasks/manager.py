@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import shlex
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
@@ -182,7 +183,7 @@ class BackgroundTaskManager:
                     "provider key such as OPENAI_API_KEY) as an environment variable, configure "
                     "credentials via 'oh auth', or provide an explicit command override."
                 )
-            cmd = ["python", "-m", "openharness", "--api-key", effective_api_key]
+            cmd = [sys.executable, "-m", "openharness", "--task-worker", "--api-key", effective_api_key]
             if model:
                 cmd.extend(["--model", model])
             command = " ".join(shlex.quote(part) for part in cmd)

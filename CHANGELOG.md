@@ -27,6 +27,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- Background `local_agent` tasks now launch the headless `--task-worker` mode instead of the React TUI, preventing Ink raw-mode failures when agents are spawned from TUI sessions.
 - React TUI prompt footer now shows a single context-aware shortcut line instead of two dense help rows, keeping idle composition hints separate from busy-state run controls.
 - React TUI now enables xterm bracketed paste mode and buffers pasted content into a single input event, so multi-line pastes preserve their original line layout, no longer drop earlier-typed characters, and never trip the submit shortcut on pasted carriage returns. Pasted CR/CRLF line endings are normalised to LF.
 - React TUI multiline composer no longer drops earlier-typed characters when a multiline paste arrives mid-session, and avoids replaying already-buffered preview lines when paste data streams in one character at a time.

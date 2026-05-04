@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +12,44 @@ import pytest
 import json
 
 from openharness.tasks.manager import BackgroundTaskManager, _encode_task_worker_payload
+
+
+class _FakeStdin:
+    def __init__(self) -> None:
+        self.writes: list[bytes] = []
+        self._closing = False
+
+    def write(self, data: bytes) -> None:
+        self.writes.append(data)
+
+    async def drain(self) -> None:
+        return None
+
+    def is_closing(self) -> bool:
+        return self._closing
+
+    def close(self) -> None:
+        self._closing = True
+
+    async def wait_closed(self) -> None:
+        return None
+
+
+class _FakeStdout:
+    async def read(self, size: int) -> bytes:
+        del size
+        return b""
+
+
+class _FakeProcess:
+    def __init__(self) -> None:
+        self.stdin = _FakeStdin()
+        self.stdout = _FakeStdout()
+        self.returncode: int | None = None
+
+    async def wait(self) -> int:
+        self.returncode = 0
+        return 0
 
 
 @pytest.mark.asyncio
@@ -45,6 +85,40 @@ async def test_create_agent_task_with_command_override_and_write(tmp_path: Path,
     await asyncio.wait_for(manager._waiters[task.id], timeout=5)  # type: ignore[attr-defined]
     # Initial prompt is JSON-encoded so multi-line prompts survive readline()
     assert '"text": "first"' in manager.read_task_output(task.id)
+
+
+@pytest.mark.asyncio
+async def test_create_agent_task_default_command_uses_headless_worker(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    captured_commands: list[str] = []
+
+    async def fake_create_shell_subprocess(command: str, **kwargs):
+        del kwargs
+        captured_commands.append(command)
+        return _FakeProcess()
+
+    monkeypatch.setattr(
+        "openharness.tasks.manager.create_shell_subprocess",
+        fake_create_shell_subprocess,
+    )
+    manager = BackgroundTaskManager()
+
+    task = await manager.create_agent_task(
+        prompt="research",
+        description="agent",
+        cwd=tmp_path,
+        api_key="test-key",
+    )
+
+    await asyncio.wait_for(manager._waiters[task.id], timeout=5)  # type: ignore[attr-defined]
+    assert captured_commands
+    assert shlex.split(captured_commands[0])[:4] == [
+        sys.executable,
+        "-m",
+        "openharness",
+        "--task-worker",
+    ]
+    assert "--api-key" in shlex.split(captured_commands[0])
 
 
 @pytest.mark.asyncio
