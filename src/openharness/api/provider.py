@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
+from openharness.api.registry import detect_provider_from_registry
 from openharness.auth.external import describe_external_binding
 from openharness.auth.storage import load_external_binding
-from openharness.api.registry import detect_provider_from_registry
 from openharness.config.settings import Settings
 
 _AUTH_KIND: dict[str, str] = {
@@ -123,3 +124,37 @@ def auth_status(settings: Settings) -> str:
     if resolved.source.startswith("external:"):
         return f"configured ({resolved.source.removeprefix('external:')})"
     return "configured"
+
+
+_MULTIMODAL_MODEL_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"^claude-3(?:\.\d+)?(?:-sonnet|-opus|-haiku)?"),
+    re.compile(r"^claude-(?:sonnet|opus|haiku)-\d"),
+    re.compile(r"^gpt-4o"),
+    re.compile(r"^o[1349]-"),
+    re.compile(r"^gemini-(?:pro-)?vision"),
+    re.compile(r"^gemini-2\.\d+"),
+    re.compile(r"^qwen-vl"),
+    re.compile(r"^qwen2\.5?-vl"),
+    re.compile(r"^qvq-"),
+    re.compile(r"^deepseek-vl"),
+    re.compile(r"^deepseek-vision"),
+    re.compile(r"^llava"),
+    re.compile(r"^cogvlm"),
+    re.compile(r"^internvl"),
+    re.compile(r"^glm-4v"),
+    re.compile(r"^kimi-k2\.5"),
+    re.compile(r"^step-2"),
+    re.compile(r"^step-1v"),
+    re.compile(r"^minimax-vl"),
+    re.compile(r"^pixtral"),
+    re.compile(r"vision"),
+    re.compile(r"(?:^|[-\s/])vl(?:$|[-\s])"),
+]
+
+
+def is_model_multimodal(model: str) -> bool:
+    """Return True when a model name indicates native image input support."""
+    normalized = model.strip().lower()
+    if "/" in normalized:
+        normalized = normalized.split("/", 1)[-1]
+    return any(pattern.search(normalized) is not None for pattern in _MULTIMODAL_MODEL_PATTERNS)

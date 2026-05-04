@@ -17,3 +17,28 @@ class RateLimitFailure(OpenHarnessApiError):
 
 class RequestFailure(OpenHarnessApiError):
     """Raised for generic request or transport failures."""
+
+
+_PROMPT_TOO_LONG_ERROR_MARKERS = (
+    "prompt too long",
+    "context_length_exceeded",
+    "context length",
+    "maximum context",
+    "context window",
+    "input tokens exceed",
+    "messages resulted in",
+    "reduce the length of the messages",
+    "configured limit",
+    "too many tokens",
+    "too large for the model",
+    "maximum context length",
+    "exceed_context",
+    "exceeds the available context size",
+    "available context size",
+)
+
+
+def is_prompt_too_long_error(exc: Exception) -> bool:
+    """Return True for common provider context-window overflow errors."""
+    text = str(exc).lower()
+    return any(marker in text for marker in _PROMPT_TOO_LONG_ERROR_MARKERS)

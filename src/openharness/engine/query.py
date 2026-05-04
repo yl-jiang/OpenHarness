@@ -16,8 +16,10 @@ from openharness.api.client import (
     ApiTextDeltaEvent,
     SupportsStreamingMessages,
 )
+from openharness.api.errors import is_prompt_too_long_error as _is_prompt_too_long_error
+from openharness.api.provider import is_model_multimodal
 from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, ToolResultBlock
+from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock
 from openharness.engine.messages import normalize_messages_for_api
 from openharness.engine.stream_events import (
     AssistantTextDelta,
@@ -46,6 +48,8 @@ from openharness.utils.log import get_logger
 
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
 REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
+IMAGE_PREPROCESS_STATUS_MESSAGE = "Converting image to text description via vision model..."
+MAX_SAFE_COMPLETION_TOKENS = 128_000
 
 logger = get_logger(__name__)
 
@@ -66,22 +70,37 @@ MAX_TRACKED_TOOL_NAME_REPAIRS = 8
 INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX = "<openharness-internal:tool-name-repair>"
 
 
-def _is_prompt_too_long_error(exc: Exception) -> bool:
+def _bounded_completion_tokens(max_tokens: int, context_window_tokens: int | None = None) -> int:
+    """Return a conservative per-request output token cap."""
+    limit = MAX_SAFE_COMPLETION_TOKENS
+    if context_window_tokens is not None and context_window_tokens > 0:
+        limit = min(limit, int(context_window_tokens))
+    return max(1, min(int(max_tokens), limit))
+
+
+def _extract_completion_token_limit(exc: Exception) -> int | None:
+    """Parse provider errors like "supports at most 128000 completion tokens"."""
+    text = str(exc).lower().replace(",", "")
+    patterns = (
+        r"supports at most\s+(\d+)\s+completion tokens",
+        r"at most\s+(\d+)\s+completion tokens",
+        r"max(?:imum)?(?:_completion)?[_\s-]tokens.*?(?:<=|less than or equal to|at most)\s+(\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            try:
+                return max(1, int(match.group(1)))
+            except ValueError:
+                return None
+    return None
+
+
+def _is_completion_token_limit_error(exc: Exception) -> bool:
     text = str(exc).lower()
-    return any(
-        needle in text
-        for needle in (
-            "prompt too long",
-            "context length",
-            "maximum context",
-            "context window",
-            "too many tokens",
-            "too large for the model",
-            "maximum context length",
-            "exceed_context",
-            "exceeds the available context size",
-            "available context size",
-        )
+    return (
+        ("max_tokens" in text or "max_completion_tokens" in text)
+        and ("too large" in text or "at most" in text or "completion tokens" in text)
     )
 
 
@@ -561,6 +580,68 @@ def _carryover_log(
             _remember_work_log(context.tool_metadata, entry="Exited plan mode")
 
 
+async def _preprocess_images_in_messages(
+    messages: list[ConversationMessage],
+    context: QueryContext,
+) -> AsyncIterator[StreamEvent]:
+    """Convert user image blocks to text when the active model is text-only."""
+    if is_model_multimodal(context.model):
+        return
+    if not isinstance(context.tool_metadata, dict):
+        return
+    vision_config = context.tool_metadata.get(ToolMetadataKey.VISION_MODEL_CONFIG.value)
+    if not isinstance(vision_config, dict) or not vision_config:
+        return
+
+    pending: list[tuple[int, int, ImageBlock]] = []
+    for msg_idx, msg in enumerate(messages):
+        if msg.role != "user":
+            continue
+        for block_idx, block in enumerate(msg.content):
+            if isinstance(block, ImageBlock):
+                pending.append((msg_idx, block_idx, block))
+    if not pending:
+        return
+
+    yield StatusEvent(message=IMAGE_PREPROCESS_STATUS_MESSAGE)
+
+    async def _describe(msg_idx: int, block_idx: int, block: ImageBlock) -> tuple[int, int, str]:
+        tool = context.tool_registry.get("image_to_text")
+        if tool is None:
+            return msg_idx, block_idx, "[Image: could not describe - image_to_text tool not available]"
+
+        tool_input = {
+            "image_data": block.data,
+            "media_type": block.media_type,
+            "prompt": (
+                "Describe this image in detail, including any text, UI elements, "
+                "code, diagrams, or visual information present."
+            ),
+        }
+        try:
+            parsed = tool.input_model.model_validate(tool_input)
+        except ValueError:
+            return msg_idx, block_idx, "[Image: could not parse image data]"
+
+        result = await tool.execute(
+            parsed,
+            ToolExecutionContext(
+                cwd=context.cwd,
+                metadata={
+                    **context.tool_metadata,
+                    ToolMetadataKey.VISION_MODEL_CONFIG.value: vision_config,
+                },
+            ),
+        )
+        if result.is_error:
+            return msg_idx, block_idx, f"[Image description failed: {result.output}]"
+        return msg_idx, block_idx, result.output
+
+    results = await asyncio.gather(*(_describe(msg_idx, block_idx, block) for msg_idx, block_idx, block in pending))
+    for msg_idx, block_idx, description in results:
+        messages[msg_idx].content[block_idx] = TextBlock(text=description)
+
+
 async def run_query(
     context: QueryContext,
     messages: list[ConversationMessage],
@@ -582,6 +663,11 @@ async def run_query(
     compact_state = AutoCompactState()
     reactive_compact_attempted = False
     last_compaction_result: tuple[list[ConversationMessage], bool] = (messages, False)
+    effective_max_tokens = _bounded_completion_tokens(
+        context.max_tokens,
+        context.context_window_tokens,
+    )
+    reported_token_clamp = False
     session_id = None
     if isinstance(context.tool_metadata, dict):
         raw_session_id = context.tool_metadata.get("session_id")
@@ -631,6 +717,14 @@ async def run_query(
     turn_count = 0
     while context.max_turns is None or turn_count < context.max_turns:
         turn_count += 1
+        if effective_max_tokens != context.max_tokens and not reported_token_clamp:
+            reported_token_clamp = True
+            yield StatusEvent(
+                message=(
+                    f"Requested max_tokens={context.max_tokens} exceeds the safe per-request "
+                    f"output cap; using {effective_max_tokens}."
+                )
+            ), None
         # --- auto-compact check before calling the model ---------------
         async for event, usage in _stream_compaction(trigger="auto"):
             yield event, usage
@@ -648,6 +742,9 @@ async def run_query(
             # content after the context has been compacted.
             context.tool_metadata.pop(ToolMetadataKey.FILE_READ_CACHE.value, None)
 
+        async for event in _preprocess_images_in_messages(messages, context):
+            yield event, None
+
         messages[:] = normalize_messages_for_api(messages)
 
         final_message: ConversationMessage | None = None
@@ -660,7 +757,7 @@ async def run_query(
                     model=context.model,
                     messages=messages,
                     system_prompt=context.system_prompt,
-                    max_tokens=context.max_tokens,
+                    max_tokens=effective_max_tokens,
                     tools=context.tool_registry.to_api_schema(),
                 )
             ):
@@ -692,6 +789,19 @@ async def run_query(
                 exc_type=type(exc).__name__,
                 exc_repr=repr(exc),
             )
+            if _is_completion_token_limit_error(exc):
+                supported_limit = _extract_completion_token_limit(exc)
+                if supported_limit is not None and effective_max_tokens > supported_limit:
+                    previous_max_tokens = effective_max_tokens
+                    effective_max_tokens = supported_limit
+                    yield StatusEvent(
+                        message=(
+                            f"Model rejected max_tokens={previous_max_tokens}; "
+                            f"retrying with provider limit {effective_max_tokens}."
+                        )
+                    ), None
+                    turn_count = max(0, turn_count - 1)
+                    continue
             if not reactive_compact_attempted and _is_prompt_too_long_error(exc):
                 reactive_compact_attempted = True
                 yield StatusEvent(message=REACTIVE_COMPACT_STATUS_MESSAGE), None

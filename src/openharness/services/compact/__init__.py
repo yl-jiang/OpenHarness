@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Literal
 from uuid import uuid4
 
+from openharness.api.errors import is_prompt_too_long_error as _is_prompt_too_long_error
 from openharness.engine.messages import (
     ConversationMessage,
     ContentBlock,
@@ -232,25 +233,6 @@ async def _emit_progress(
             attempt=attempt,
             checkpoint=checkpoint,
             metadata=_sanitize_metadata(metadata) if metadata else None,
-        )
-    )
-
-
-def _is_prompt_too_long_error(exc: Exception) -> bool:
-    text = str(exc).lower()
-    return any(
-        needle in text
-        for needle in (
-            "prompt too long",
-            "context length",
-            "maximum context",
-            "context window",
-            "too many tokens",
-            "too large for the model",
-            "maximum context length",
-            "exceed_context",
-            "exceeds the available context size",
-            "available context size",
         )
     )
 

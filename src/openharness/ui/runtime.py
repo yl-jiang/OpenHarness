@@ -59,6 +59,29 @@ ClearHandler = Callable[[], Awaitable[None]]
 logger = get_logger(__name__)
 
 
+def _resolve_vision_config(settings) -> dict[str, str]:
+    """Resolve vision fallback config from settings or environment."""
+    from openharness.config.settings import VisionModelConfig
+
+    cfg = settings.vision
+    if cfg.is_configured:
+        return {
+            "model": cfg.model,
+            "api_key": cfg.api_key,
+            "base_url": cfg.base_url,
+        }
+
+    env_cfg = VisionModelConfig.from_env()
+    if env_cfg.is_configured:
+        return {
+            "model": env_cfg.model,
+            "api_key": env_cfg.api_key,
+            "base_url": env_cfg.base_url,
+        }
+
+    return {}
+
+
 def _sync_runtime_tool_metadata(
     tool_metadata: dict[str, object],
     *,
@@ -433,6 +456,7 @@ async def build_runtime(
             "extra_plugin_roots": normalized_plugin_roots,
             "session_id": session_id,
             "todo_store": todo_store,
+            ToolMetadataKey.VISION_MODEL_CONFIG.value: _resolve_vision_config(settings),
             **restored_metadata,
         },
     )
