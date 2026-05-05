@@ -345,6 +345,8 @@ ohmo gateway restart
 - task lifecycle
 - background task execution
 
+默认应优先使用 `agent` 作为受管子代理入口；`task_create(local_agent)` 只保留为低层兼容路径，`task_create(local_bash)` 继续承担通用后台 shell 任务。
+
 ---
 
 ## 常见命令
