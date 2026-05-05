@@ -88,6 +88,28 @@ async def test_build_runtime_whitelists_skill_directories_in_permission_checker(
         await close_runtime(bundle)
 
 
+@pytest.mark.asyncio
+async def test_build_runtime_logs_session_mode_source(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("CLAUDE_CODE_COORDINATOR_MODE", "1")
+    events: list[tuple[str, dict[str, object]]] = []
+
+    def _fake_event(name: str, /, **kwargs) -> None:
+        events.append((name, kwargs))
+
+    monkeypatch.setattr("openharness.ui.runtime.logger.event", _fake_event)
+
+    bundle = await build_runtime(cwd=str(tmp_path), api_client=_StaticApiClient())
+    try:
+        mode_event = next(payload for name, payload in events if name == "runtime_session_mode_resolved")
+        assert mode_event["session_id"] == bundle.session_id
+        assert mode_event["session_mode"] == "coordinator"
+        assert mode_event["session_mode_source"] == "env"
+        assert mode_event["coordinator_env_value"] == "1"
+    finally:
+        await close_runtime(bundle)
+
+
 def test_sync_runtime_tool_metadata_uses_enum_keys():
     from openharness.config.settings import Settings
 

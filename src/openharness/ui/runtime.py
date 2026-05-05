@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -17,6 +18,7 @@ from openharness.bridge import get_bridge_manager
 from openharness.commands import CommandContext, CommandResult, MemoryCommandBackend, create_default_command_registry
 from openharness.commands.registry import resolve_skill_alias_command
 from openharness.config import get_config_file_path, load_settings
+from openharness.coordinator.coordinator_mode import is_coordinator_mode
 from openharness.engine import QueryEngine
 from openharness.engine.messages import (
     ConversationMessage,
@@ -57,6 +59,16 @@ StreamRenderer = Callable[[StreamEvent], Awaitable[None]]
 ClearHandler = Callable[[], Awaitable[None]]
 
 logger = get_logger(__name__)
+
+
+def _runtime_session_mode_log_fields() -> dict[str, object]:
+    raw_value = os.environ.get("CLAUDE_CODE_COORDINATOR_MODE")
+    session_mode = "coordinator" if is_coordinator_mode() else "worker"
+    return {
+        "session_mode": session_mode,
+        "session_mode_source": "env" if raw_value is not None else "default",
+        "coordinator_env_value": raw_value or "",
+    }
 
 
 def _resolve_vision_config(settings) -> dict[str, str]:
@@ -353,6 +365,11 @@ async def build_runtime(
     from uuid import uuid4
 
     session_id = uuid4().hex[:12]
+    logger.event(
+        "runtime_session_mode_resolved",
+        session_id=session_id,
+        **_runtime_session_mode_log_fields(),
+    )
     logger.event(
         "runtime_build_session_created",
         session_id=session_id,
