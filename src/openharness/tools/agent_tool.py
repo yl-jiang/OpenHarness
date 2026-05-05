@@ -11,12 +11,13 @@ from openharness.coordinator.coordinator_mode import get_team_registry
 from openharness.engine.types import ToolMetadataKey
 from openharness.hooks import HookEvent
 from openharness.swarm.registry import get_backend_registry
-from openharness.swarm.types import TeammateSpawnConfig
+from openharness.swarm.types import SpawnResult, TeammateSpawnConfig
 from openharness.tasks import get_task_manager
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.utils.log import get_logger
 
 logger = get_logger(__name__)
+_ALLOWED_AGENT_MODES = {"local_agent", "remote_agent", "in_process_teammate"}
 
 
 def _context_value(context: ToolExecutionContext, key: ToolMetadataKey | str) -> str | None:
@@ -31,10 +32,71 @@ def _resolve_spawn_model(
     *,
     agent_default_model: str | None,
     current_model: str | None,
+    current_provider: str | None,
 ) -> str | None:
-    if agent_default_model is None or agent_default_model == "inherit":
+    if agent_default_model is None:
+        return current_model
+    if agent_default_model == "inherit":
+        if current_provider in {"anthropic", "anthropic_claude"} and current_model and current_model.startswith(
+            "claude-"
+        ):
+            return "haiku"
         return current_model
     return agent_default_model
+
+
+async def spawn_background_agent(
+    *,
+    context: ToolExecutionContext,
+    prompt: str,
+    subagent_type: str | None = None,
+    command: str | None = None,
+    team: str | None = None,
+    mode: str = "local_agent",
+    model: str | None = None,
+) -> SpawnResult:
+    """Spawn a subprocess-backed agent task using the shared delegation path."""
+    if mode not in _ALLOWED_AGENT_MODES:
+        raise ValueError("Invalid mode. Use local_agent, remote_agent, or in_process_teammate.")
+
+    agent_def = get_agent_definition(subagent_type) if subagent_type else None
+    team_name = team or "default"
+    agent_name = subagent_type or "agent"
+    if model is not None and model != "inherit":
+        resolved_model = model
+    else:
+        resolved_model = _resolve_spawn_model(
+            agent_default_model=agent_def.model if agent_def else None,
+            current_model=_context_value(context, ToolMetadataKey.CURRENT_MODEL),
+            current_provider=_context_value(context, ToolMetadataKey.CURRENT_PROVIDER),
+        )
+
+    config = TeammateSpawnConfig(
+        name=agent_name,
+        team=team_name,
+        prompt=prompt,
+        cwd=str(context.cwd),
+        parent_session_id="main",
+        model=resolved_model,
+        api_format=_context_value(context, ToolMetadataKey.CURRENT_API_FORMAT),
+        base_url=_context_value(context, ToolMetadataKey.CURRENT_BASE_URL),
+        provider=_context_value(context, ToolMetadataKey.CURRENT_PROVIDER),
+        command=command,
+        system_prompt=agent_def.system_prompt if agent_def else None,
+        permissions=agent_def.permissions if agent_def else [],
+        disallowed_tools=agent_def.disallowed_tools if agent_def else [],
+        allowed_tools=agent_def.tools if agent_def else None,
+        session_id=_context_value(context, "session_id"),
+        task_type=mode,
+    )
+
+    # Use the subprocess backend so spawned agents are registered in
+    # BackgroundTaskManager and stay pollable via the task tools.
+    executor = get_backend_registry().get_executor("subprocess")
+    result = await executor.spawn(config)
+    if not result.success:
+        raise RuntimeError(result.error or "Failed to spawn agent")
+    return result
 
 
 class AgentToolInput(BaseModel):
@@ -55,11 +117,11 @@ class AgentToolInput(BaseModel):
 
 
 class AgentTool(BaseTool):
-    """Spawn a local agent subprocess."""
+    """Spawn a managed background subagent."""
 
     name = "agent"
     description = (
-        "Spawn a local background agent task to delegate complex multi-step work. "
+        "Preferred API for delegating work to managed subagents. "
         "Use subagent_type to control tool access: "
         "'research' for read-only investigation, 'worker' for full read/write access, "
         "'verification' for test/build verification. "
@@ -85,7 +147,7 @@ class AgentTool(BaseTool):
                     "subagent_type": {
                         "type": "string",
                         "description": (
-                            "Agent type controlling tools and system prompt. "
+                            "Optional agent profile controlling tools and system prompt. "
                             "Key types: "
                             "'research' — read-only investigation, cannot modify files, use for the Research phase; "
                             "'worker' — full tool access (read + write + run), use for the Implementation phase; "
@@ -129,7 +191,7 @@ class AgentTool(BaseTool):
             prompt_length=len(arguments.prompt),
             cwd=str(context.cwd),
         )
-        if arguments.mode not in {"local_agent", "remote_agent", "in_process_teammate"}:
+        if arguments.mode not in _ALLOWED_AGENT_MODES:
             logger.event(
                 "agent_tool_invalid_mode",
                 session_id=session_id,
@@ -140,48 +202,18 @@ class AgentTool(BaseTool):
                 is_error=True,
             )
 
-        # Look up agent definition if subagent_type is specified
-        agent_def = None
-        if arguments.subagent_type:
-            agent_def = get_agent_definition(arguments.subagent_type)
-
-        # Resolve team and agent name for the swarm backend
         team = arguments.team or "default"
         agent_name = arguments.subagent_type or "agent"
 
-        resolved_model = _resolve_spawn_model(
-            agent_default_model=agent_def.model if agent_def else None,
-            current_model=_context_value(context, ToolMetadataKey.CURRENT_MODEL),
-        )
-
-        # Use subprocess backend so spawned agents are registered in
-        # BackgroundTaskManager and are pollable by the task tools.
-        # in_process tasks return asyncio-internal IDs that task tools
-        # cannot query, and subprocess is always available on all platforms.
-        registry = get_backend_registry()
-        executor = registry.get_executor("subprocess")
-
-        config = TeammateSpawnConfig(
-            name=agent_name,
-            team=team,
-            prompt=arguments.prompt,
-            cwd=str(context.cwd),
-            parent_session_id="main",
-            model=resolved_model,
-            api_format=_context_value(context, ToolMetadataKey.CURRENT_API_FORMAT),
-            base_url=_context_value(context, ToolMetadataKey.CURRENT_BASE_URL),
-            provider=_context_value(context, ToolMetadataKey.CURRENT_PROVIDER),
-            command=arguments.command,
-            system_prompt=agent_def.system_prompt if agent_def else None,
-            permissions=agent_def.permissions if agent_def else [],
-            disallowed_tools=agent_def.disallowed_tools if agent_def else [],
-            allowed_tools=agent_def.tools if agent_def else None,
-            session_id=session_id,
-            task_type=arguments.mode,
-        )
-
         try:
-            result = await executor.spawn(config)
+            result = await spawn_background_agent(
+                context=context,
+                prompt=arguments.prompt,
+                subagent_type=arguments.subagent_type,
+                command=arguments.command,
+                team=arguments.team,
+                mode=arguments.mode,
+            )
         except Exception as exc:
             logger.exception(
                 "Failed to spawn agent",
@@ -198,19 +230,6 @@ class AgentTool(BaseTool):
                 error=str(exc),
             )
             return ToolResult(output=str(exc), is_error=True)
-
-        if not result.success:
-            logger.event(
-                "agent_tool_spawn_result",
-                session_id=session_id,
-                agent_name=agent_name,
-                team=team,
-                success=False,
-                backend_type=result.backend_type,
-                task_id=result.task_id,
-                error=result.error,
-            )
-            return ToolResult(output=result.error or "Failed to spawn agent", is_error=True)
 
         if arguments.team:
             registry = get_team_registry()

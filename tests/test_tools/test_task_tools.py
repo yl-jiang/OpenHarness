@@ -14,6 +14,7 @@ from openharness.swarm.types import SpawnResult
 from openharness.tasks import get_task_manager
 from openharness.tools.agent_tool import AgentTool, AgentToolInput
 from openharness.tools.base import ToolExecutionContext
+from openharness.tools.send_message_tool import SendMessageTool, SendMessageToolInput
 from openharness.tools.task_create_tool import TaskCreateTool, TaskCreateToolInput
 from openharness.tools.task_output_tool import TaskOutputTool, TaskOutputToolInput
 from openharness.tools.task_update_tool import TaskUpdateTool, TaskUpdateToolInput
@@ -57,6 +58,68 @@ async def test_task_create_and_output_tool(tmp_path: Path, monkeypatch):
         context,
     )
     assert "tool task" in output_result.output
+
+
+@pytest.mark.asyncio
+async def test_task_create_local_agent_uses_compatibility_spawn_path(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    context = ToolExecutionContext(cwd=tmp_path)
+
+    create_result = await TaskCreateTool().execute(
+        TaskCreateToolInput(
+            type="local_agent",
+            description="compat agent",
+            prompt="ready",
+            command=(
+                'python -u -c "import json,sys; '
+                "line=sys.stdin.readline().strip(); "
+                "payload=json.loads(line) if line.startswith('{') else {'text': line}; "
+                "print('TASK_AGENT:' + payload['text'])\""
+            ),
+        ),
+        context,
+    )
+    assert create_result.is_error is False
+    task_id = create_result.output.split()[2]
+
+    task = get_task_manager().get_task(task_id)
+    assert task is not None
+    assert task.type == "local_agent"
+    assert task.description == "compat agent"
+    assert task.metadata["spawn_entrypoint"] == "task_create"
+    assert task.metadata["spawn_api"] == "compatibility"
+
+    for _ in range(80):
+        output_result = await TaskOutputTool().execute(
+            TaskOutputToolInput(task_id=task_id),
+            context,
+        )
+        if "TASK_AGENT:ready" in output_result.output:
+            break
+        await asyncio.sleep(0.1)
+    else:
+        raise AssertionError("initial compatibility-path agent output did not become available in time")
+
+    send_result = await SendMessageTool().execute(
+        SendMessageToolInput(task_id=task_id, message="agent ping"),
+        context,
+    )
+    assert send_result.is_error is False
+
+    for _ in range(80):
+        output_result = await TaskOutputTool().execute(
+            TaskOutputToolInput(task_id=task_id),
+            context,
+        )
+        if "TASK_AGENT:agent ping" in output_result.output:
+            break
+        await asyncio.sleep(0.1)
+    else:
+        raise AssertionError("compatibility-path agent follow-up output did not become available in time")
+
+    assert "TASK_AGENT:ready" in output_result.output
+    assert "TASK_AGENT:agent ping" in output_result.output
+    await _wait_for_terminal_task(task_id)
 
 
 @pytest.mark.asyncio

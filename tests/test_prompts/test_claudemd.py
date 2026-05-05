@@ -143,6 +143,31 @@ def test_agent_prompt_profiles_control_runtime_sections(tmp_path: Path, monkeypa
     assert "Available Skills" not in compact_prompt
 
 
+def test_skills_section_uses_runtime_skill_manager_tool_name(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    skill_root = tmp_path / "skills"
+    skill_dir = skill_root / "review"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: review\ndescription: Review changes\n---\n\n# Review\nCheck changes.",
+        encoding="utf-8",
+    )
+
+    prompt = build_runtime_system_prompt(
+        Settings(memory={"enabled": False}),
+        cwd=repo,
+        extra_skill_dirs=[skill_root],
+        latest_user_prompt="review this project",
+    )
+
+    assert "via the `skill_manager` tool" in prompt
+    assert 'skill_manager(action="load", name="<skill_name>")' in prompt
+    assert "via the `skill` tool" not in prompt
+
+
 def test_format_prompt_blocks_debug_aligns_columns() -> None:
     output = format_prompt_blocks_debug(
         [

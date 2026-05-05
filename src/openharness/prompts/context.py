@@ -127,8 +127,9 @@ def _build_skills_section(
     lines = [SKILLS_GUIDANCE] + [
         "# Available Skills",
         "",
-        "The following skills are available via the `skill` tool. "
-        "When a user's request matches a skill, invoke it with `skill(name=\"<skill_name>\")` "
+        "The following skills are available via the `skill_manager` tool. "
+        "When a user's request matches a skill, invoke it with "
+        "`skill_manager(action=\"load\", name=\"<skill_name>\")` "
         "to load detailed instructions before proceeding.",
         "",
     ]
