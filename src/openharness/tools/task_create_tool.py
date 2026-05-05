@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import os
-
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 from openharness.tasks.manager import get_task_manager
+from openharness.tools.agent_tool import spawn_background_agent
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
@@ -26,7 +25,10 @@ class TaskCreateTool(BaseTool):
     """Create a background task."""
 
     name = "task_create"
-    description = "Create a background shell or local-agent task."
+    description = (
+        "Create low-level background tasks. Prefer local_bash for shell commands. "
+        "Use agent for managed subagents; local_agent remains a compatibility path."
+    )
     input_model = TaskCreateToolInput
 
     def to_api_schema(self) -> dict[str, Any]:
@@ -39,7 +41,10 @@ class TaskCreateTool(BaseTool):
                     "type": {
                         "type": "string",
                         "enum": ["local_bash", "local_agent"],
-                        "description": "Task type",
+                        "description": (
+                            "Task type. Prefer local_bash. "
+                            "local_agent is a low-level compatibility path; use agent for managed subagents."
+                        ),
                         "default": "local_bash",
                     },
                     "description": {
@@ -48,15 +53,21 @@ class TaskCreateTool(BaseTool):
                     },
                     "command": {
                         "type": "string",
-                        "description": "Shell command for local_bash tasks",
+                        "description": (
+                            "Shell command for local_bash tasks, or an explicit command override "
+                            "for local_agent compatibility tasks."
+                        ),
                     },
                     "prompt": {
                         "type": "string",
-                        "description": "Prompt for local_agent tasks",
+                        "description": "Initial prompt for local_agent compatibility tasks",
                     },
                     "model": {
                         "type": "string",
-                        "description": "Model override for local_agent tasks (e.g. 'claude-3-5-sonnet')",
+                        "description": (
+                            "Model override for local_agent compatibility tasks "
+                            "(e.g. 'claude-3-5-sonnet')"
+                        ),
                     },
                 },
                 "required": ["description"],
@@ -77,15 +88,21 @@ class TaskCreateTool(BaseTool):
             if not arguments.prompt:
                 return ToolResult(output="prompt is required for local_agent tasks", is_error=True)
             try:
-                task = await manager.create_agent_task(
+                result = await spawn_background_agent(
+                    context=context,
                     prompt=arguments.prompt,
-                    description=arguments.description,
-                    cwd=context.cwd,
+                    command=arguments.command,
+                    mode="local_agent",
                     model=arguments.model,
-                    api_key=os.environ.get("ANTHROPIC_API_KEY"),
                 )
-            except ValueError as exc:
+            except Exception as exc:
                 return ToolResult(output=str(exc), is_error=True)
+            task = manager.get_task(result.task_id)
+            if task is None:
+                return ToolResult(output=f"Spawned agent task {result.task_id} was not registered", is_error=True)
+            task.description = arguments.description
+            task.metadata["spawn_entrypoint"] = "task_create"
+            task.metadata["spawn_api"] = "compatibility"
         else:
             return ToolResult(output=f"unsupported task type: {arguments.type}", is_error=True)
 

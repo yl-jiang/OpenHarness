@@ -620,6 +620,7 @@ def test_sample_skill_files_uses_rg_and_stops_at_limit(tmp_path: Path, monkeypat
         del args, kwargs
         return fake_process
 
+    monkeypatch.setattr(skill_manager_module.shutil, "which", lambda _: "/usr/bin/rg")
     monkeypatch.setattr(skill_manager_module.subprocess, "Popen", _fake_popen)
 
     files = skill_manager_module._sample_skill_files(tmp_path, limit=2)
@@ -630,6 +631,24 @@ def test_sample_skill_files_uses_rg_and_stops_at_limit(tmp_path: Path, monkeypat
     ]
     assert fake_process.terminated is True
     assert fake_process.wait_called is True
+
+
+def test_sample_skill_files_falls_back_when_rg_missing(tmp_path: Path, monkeypatch):
+    (tmp_path / "references").mkdir()
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "SKILL.md").write_text("# Skill\n", encoding="utf-8")
+    (tmp_path / "references" / "guide.md").write_text("guide", encoding="utf-8")
+    (tmp_path / ".hidden" / "config.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "scripts" / "demo.sh").write_text("echo demo\n", encoding="utf-8")
+    monkeypatch.setattr(skill_manager_module.shutil, "which", lambda _: None)
+
+    files = skill_manager_module._sample_skill_files(tmp_path, limit=2)
+
+    assert files == [
+        str((tmp_path / ".hidden" / "config.json").resolve()),
+        str((tmp_path / "references" / "guide.md").resolve()),
+    ]
 
 
 @pytest.mark.asyncio

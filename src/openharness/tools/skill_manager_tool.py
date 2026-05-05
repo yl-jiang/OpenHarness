@@ -153,14 +153,31 @@ def _sample_skill_files(skill_dir: Path, *, limit: int = _SKILL_FILE_SAMPLE_LIMI
     if limit <= 0:
         return []
 
+    def _python_fallback() -> list[str]:
+        fallback_files: list[str] = []
+        for path in sorted(skill_dir.rglob("*")):
+            if len(fallback_files) >= limit or not path.is_file():
+                continue
+            if path.name.lower() == "skill.md":
+                continue
+            fallback_files.append(str(path.resolve()))
+        return fallback_files
+
+    rg = shutil.which("rg")
+    if not rg:
+        return _python_fallback()
+
     files: list[str] = []
-    process = subprocess.Popen(
-        ["rg", "--files", "--hidden"],
-        cwd=skill_dir,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        text=True,
-    )
+    try:
+        process = subprocess.Popen(
+            [rg, "--files", "--hidden"],
+            cwd=skill_dir,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except FileNotFoundError:
+        return _python_fallback()
     stdout = process.stdout
     if stdout is None:
         process.wait(timeout=1)
