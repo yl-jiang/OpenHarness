@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from openharness.config.paths import (
@@ -67,3 +68,13 @@ def test_get_logs_dir_env_override(tmp_path: Path, monkeypatch):
     logs_dir = get_logs_dir()
     assert logs_dir == custom
     assert logs_dir.is_dir()
+
+
+def test_suite_isolates_openharness_dirs_from_home():
+    config_dir = os.environ.get("OPENHARNESS_CONFIG_DIR")
+    data_dir = os.environ.get("OPENHARNESS_DATA_DIR")
+
+    assert config_dir is not None
+    assert data_dir is not None
+    assert get_config_dir() == Path(config_dir)
+    assert get_data_dir() == Path(data_dir)
