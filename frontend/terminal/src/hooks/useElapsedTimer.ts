@@ -6,15 +6,15 @@ import {useEffect, useRef, useState} from 'react';
  * When active becomes false, the value freezes at the final elapsed time.
  * Returns null before the first activation.
  */
-export function useElapsedTimer(active: boolean): number | null {
+export function useElapsedTimer(active: boolean, startedAtSeconds?: number | null): number | null {
 	const [elapsed, setElapsed] = useState<number | null>(null);
 	const startTimeRef = useRef<number | null>(null);
 	const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
 	useEffect(() => {
 		if (active) {
-			startTimeRef.current = Date.now();
-			setElapsed(0);
+			startTimeRef.current = startedAtSeconds != null ? startedAtSeconds * 1000 : (startTimeRef.current ?? Date.now());
+			setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
 
 			intervalRef.current = setInterval(() => {
 				if (startTimeRef.current !== null) {
@@ -37,7 +37,7 @@ export function useElapsedTimer(active: boolean): number | null {
 				intervalRef.current = null;
 			}
 		};
-	}, [active]);
+	}, [active, startedAtSeconds]);
 
 	return elapsed;
 }

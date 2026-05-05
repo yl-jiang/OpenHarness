@@ -51,6 +51,7 @@ class TaskSnapshot(BaseModel):
     type: str
     status: str
     description: str
+    started_at: float | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
 
     @classmethod
@@ -60,6 +61,7 @@ class TaskSnapshot(BaseModel):
             type=record.type,
             status=record.status,
             description=record.description,
+            started_at=record.started_at,
             metadata=dict(record.metadata),
         )
 

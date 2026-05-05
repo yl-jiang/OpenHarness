@@ -18,6 +18,7 @@ export type TaskSnapshot = {
 	type: string;
 	status: string;
 	description: string;
+	started_at?: number | null;
 	metadata: Record<string, string>;
 };
 

@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React from 'react';
 import {Box, Text} from 'ink';
 import stringWidth from 'string-width';
 import ScrollableTextInput from './ScrollableTextInput.js';
@@ -11,16 +11,10 @@ const H_GOLD = '#ffbd38'; // gold — active border, busy indicator
 const H_TEAL = '#3d8a7c'; // dim teal — idle border, leading cue
 
 const noop = (): void => {};
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+export const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const IDLE_STATIC_FRAME = '◆';
 const SPINNER_STATIC_FRAME = '⠋';
-const BACKGROUND_STATIC_FRAME = '●';
 const STATIC_ELLIPSIS = '...';
-// Busy spinner ticks slowly enough that Ink's full-frame redraw doesn't
-// produce visible flicker on the bottom panels (PromptInput / TodoPanel /
-// StatusBar all sit adjacent and get repainted on every tick).  ~5fps is
-// still smooth-feeling while halving the redraw rate of the previous 120ms.
-const BUSY_ANIMATION_MS = 220;
 const IDLE_SHORTCUTS = '/ commands · @ files · ↑↓ history · shift/alt+enter newline';
 const BUSY_SHORTCUTS = 'PgUp/Dn scroll · End resume · /stop or Ctrl+C cancel';
 
@@ -49,16 +43,18 @@ export function clipPromptPreviewLine(line: string, availableWidth: number): str
 }
 
 /**
- * Decide whether timer-driven spinner redraws are safe in the current terminal.
- *
- * Ink rewrites the dynamic frame on every state update, which on legacy Windows
- * conhost (cmd.exe / pre-Windows-Terminal PowerShell) and high-latency SSH
- * sessions manifests as visible flicker.  Modern terminals — Windows Terminal,
- * VS Code's integrated terminal, WezTerm, ConEmu, Alacritty, mintty — handle
- * frequent ANSI repaints cleanly, so we opt them in explicitly on Windows
- * rather than blanket-disabling the platform.
+ * Timer-driven spinner redraws are intentionally disabled for all terminals.
+ * Ink repaints the whole prompt on each state update, so even low-frequency
+ * animation can produce visible flicker while long-running work is otherwise idle.
  */
 export function shouldAnimateSpinner(
+	_platform: NodeJS.Platform = process.platform,
+	_env: NodeJS.ProcessEnv = process.env,
+): boolean {
+	return false;
+}
+
+export function shouldAnimateBackgroundCue(
 	platform: NodeJS.Platform = process.platform,
 	env: NodeJS.ProcessEnv = process.env,
 ): boolean {
@@ -75,8 +71,6 @@ export function shouldAnimateSpinner(
 	}
 	return true;
 }
-
-export const shouldAnimateBackgroundCue = shouldAnimateSpinner;
 
 type PromptInputProps = {
 	busy: boolean;
@@ -103,23 +97,14 @@ function PromptInputInner({
 	statusLabel,
 	inputKey,
 	hasBackgroundTasks = false,
-	animateSpinner,
+	animateSpinner: _animateSpinner,
 }: PromptInputProps): React.JSX.Element {
-	const [frameIndex, setFrameIndex] = useState(0);
 	const idleTitle = 'ready';
 	const busyTitle = statusLabel ?? (toolName ? `[run] ${toolName}` : '[run]');
 	const showBackgroundActivity = !busy && hasBackgroundTasks;
 	const backgroundTitle = '[bg] running';
-	const canAnimate = animateSpinner ?? shouldAnimateSpinner();
-	// Only animate while the foreground turn is busy. Timer-driven animation
-	// forces Ink to repaint the whole TUI on every tick which
-	// causes visible flicker on most terminals (see commit 5276771 and the
-	// note in components/Spinner.tsx).
-	const animateNow = canAnimate && busy;
-	const spinnerFrame = animateNow
-		? SPINNER_FRAMES[frameIndex % SPINNER_FRAMES.length]
-		: SPINNER_STATIC_FRAME;
-	const backgroundFrame = BACKGROUND_STATIC_FRAME;
+	const backgroundFrame = SPINNER_STATIC_FRAME;
+	const spinnerFrame = hasBackgroundTasks ? backgroundFrame : SPINNER_STATIC_FRAME;
 	const idleFrame = IDLE_STATIC_FRAME;
 	// Keep the trailing ellipsis static even while busy: the braille spinner
 	// already conveys liveness, and animating both makes the title line churn
@@ -128,16 +113,6 @@ function PromptInputInner({
 	const dots = STATIC_ELLIPSIS;
 	const title = busy ? `${busyTitle}${dots}` : showBackgroundActivity ? backgroundTitle : idleTitle;
 	const leadingCue = busy ? `${spinnerFrame} ` : showBackgroundActivity ? backgroundFrame : `${idleFrame} `;
-
-	useEffect(() => {
-		if (!animateNow) {
-			return;
-		}
-		const timer = setInterval(() => {
-			setFrameIndex((index) => (index + 1) % SPINNER_FRAMES.length);
-		}, BUSY_ANIMATION_MS);
-		return () => clearInterval(timer);
-	}, [animateNow]);
 
 	const {cols} = useTerminalSize();
 	const prefix = busy ? '... ' : '> ';
