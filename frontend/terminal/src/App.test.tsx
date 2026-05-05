@@ -1,9 +1,69 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {PassThrough} from 'node:stream';
+import React from 'react';
+import {render} from 'ink';
 
 import * as AppModule from './App.js';
 
-import {buildSubmittedValue, resolveSelectModalChoice} from './App.js';
+import {App, buildSubmittedValue, resolveSelectModalChoice} from './App.js';
+
+const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
+const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+type InkTestStdout = PassThrough & {
+	isTTY: boolean;
+	columns: number;
+	rows: number;
+	cursorTo: () => boolean;
+	clearLine: () => boolean;
+	moveCursor: () => boolean;
+};
+
+type InkTestStdin = PassThrough & {
+	isTTY: boolean;
+	isRaw: boolean;
+	setRawMode: (value: boolean) => InkTestStdin;
+	resume: () => InkTestStdin;
+	pause: () => InkTestStdin;
+	ref: () => InkTestStdin;
+	unref: () => InkTestStdin;
+};
+
+function createTestStdout(): InkTestStdout {
+	return Object.assign(new PassThrough(), {
+		isTTY: true,
+		columns: 120,
+		rows: 40,
+		cursorTo: () => true,
+		clearLine: () => true,
+		moveCursor: () => true,
+	});
+}
+
+function createTestStdin(): InkTestStdin {
+	return Object.assign(new PassThrough(), {
+		isTTY: true,
+		isRaw: false,
+		setRawMode(value: boolean) {
+			this.isRaw = value;
+			return this;
+		},
+		resume() {
+			return this;
+		},
+		pause() {
+			return this;
+		},
+		ref() {
+			return this;
+		},
+		unref() {
+			return this;
+		},
+	});
+}
 
 test('prefills the composer after selecting a skill instead of applying the selection immediately', () => {
 	const result = resolveSelectModalChoice('skills', 'weekly-report');
@@ -123,4 +183,136 @@ test('builds a full slash command when selecting a submenu item', () => {
 	assert.equal(typeof buildSlashCommandSelection, 'function');
 	assert.equal(buildSlashCommandSelection?.('/memory', 'show'), '/memory show ');
 	assert.equal(buildSlashCommandSelection?.('/resume', undefined), '/resume');
+});
+
+test('animates the prompt cue from backend task snapshots in the full app', async () => {
+	const stdout = createTestStdout();
+	const stdin = createTestStdin();
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+
+	const backendScript = `
+const emit = (event) => process.stdout.write('OHJSON:' + JSON.stringify(event) + '\\n');
+emit({type: 'ready', state: {model: 'test-model', permission_mode: 'default', cwd: process.cwd()}, tasks: []});
+setTimeout(() => emit({type: 'tasks_snapshot', tasks: [{id: 'task-1', type: 'local_agent', status: 'running', description: 'agent', started_at: Date.now() / 1000, metadata: {}}]}), 25);
+setInterval(() => {}, 1000);
+`;
+
+	const instance = render(
+		<App config={{backend_command: [process.execPath, '-e', backendScript], theme: 'default'}} />,
+		{
+			stdout: stdout as unknown as NodeJS.WriteStream,
+			stdin: stdin as unknown as NodeJS.ReadStream,
+			exitOnCtrlC: false,
+			patchConsole: false,
+			debug: true,
+		},
+	);
+
+	try {
+		await sleep(600);
+		await nextLoopTurn();
+		const text = stripAnsi(output);
+		assert.match(text, /⠋ \| \[bg\] running/u);
+		assert.match(text, /⠙ \| \[bg\] running/u);
+		assert.doesNotMatch(text, /⠙ \| \[bg\] running \d+s/u);
+		assert.match(text, /⚙ 1 · 00:00/u);
+		assert.doesNotMatch(text, /[◐◓◑◒]/u);
+		assert.doesNotMatch(text, /OpenHarness[^\n]*⚙/u);
+	} finally {
+		const exitPromise = instance.waitUntilExit();
+		instance.unmount();
+		await exitPromise;
+		instance.cleanup();
+	}
+});
+
+test('does not direct-write the prompt overlay while foreground processing output streams', async () => {
+	const stdout = createTestStdout();
+	const stdin = createTestStdin();
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+
+	const backendScript = `
+const emit = (event) => process.stdout.write('OHJSON:' + JSON.stringify(event) + '\\n');
+emit({type: 'ready', state: {model: 'test-model', permission_mode: 'default', cwd: process.cwd()}, tasks: []});
+setTimeout(() => emit({type: 'tool_started', tool_name: 'bash', item: {role: 'tool', text: 'run', tool_name: 'bash'}}), 25);
+setTimeout(() => emit({type: 'tool_completed', tool_name: 'bash', item: {role: 'tool_result', text: 'done', tool_name: 'bash'}}), 80);
+let i = 0;
+setInterval(() => process.stdout.write('history agent message ' + i++ + '\\n'), 40);
+setInterval(() => {}, 1000);
+`;
+
+	const instance = render(
+		<App config={{backend_command: [process.execPath, '-e', backendScript], theme: 'default'}} />,
+		{
+			stdout: stdout as unknown as NodeJS.WriteStream,
+			stdin: stdin as unknown as NodeJS.ReadStream,
+			exitOnCtrlC: false,
+			patchConsole: false,
+			debug: true,
+		},
+	);
+
+	try {
+		await sleep(180);
+		await nextLoopTurn();
+		output = '';
+		await sleep(700);
+		await nextLoopTurn();
+		assert.match(stripAnsi(output), /⠋ {2}\| Processing\.\.\./u);
+		assert.doesNotMatch(stripAnsi(output), /Processing\.\.\. \d+s/u);
+		assert.doesNotMatch(output, /\u001B\[s\u001B\[[0-9]+;4H[^\u001B]*.*Processing\.\.\./u);
+	} finally {
+		const exitPromise = instance.waitUntilExit();
+		instance.unmount();
+		await exitPromise;
+		instance.cleanup();
+	}
+});
+
+test('does not emit periodic full-frame Ink redraws while background work is idle', async () => {
+	const stdout = createTestStdout();
+	const stdin = createTestStdin();
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+
+	const backendScript = `
+const emit = (event) => process.stdout.write('OHJSON:' + JSON.stringify(event) + '\\n');
+emit({type: 'ready', state: {model: 'test-model', permission_mode: 'default', cwd: process.cwd()}, tasks: []});
+setTimeout(() => emit({type: 'tasks_snapshot', tasks: [{id: 'task-1', type: 'local_agent', status: 'running', description: 'agent', started_at: Date.now() / 1000, metadata: {}}]}), 25);
+setInterval(() => {}, 1000);
+`;
+
+	const instance = render(
+		<App config={{backend_command: [process.execPath, '-e', backendScript], theme: 'default'}} />,
+		{
+			stdout: stdout as unknown as NodeJS.WriteStream,
+			stdin: stdin as unknown as NodeJS.ReadStream,
+			exitOnCtrlC: false,
+			patchConsole: false,
+			debug: true,
+		},
+	);
+
+	try {
+		await sleep(350);
+		await nextLoopTurn();
+		output = '';
+		await sleep(1300);
+		await nextLoopTurn();
+
+		assert.doesNotMatch(stripAnsi(output), /OpenHarness|commands · @ files|PgUp\/Dn scroll|╭|╰/u);
+	} finally {
+		const exitPromise = instance.waitUntilExit();
+		instance.unmount();
+		await exitPromise;
+		instance.cleanup();
+	}
 });

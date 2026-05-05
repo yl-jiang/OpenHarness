@@ -21,6 +21,7 @@ import {
 	type ExpandedComposerState,
 } from './components/ExpandedComposer.js';
 import {ModalHost} from './components/ModalHost.js';
+import {InlineActivityIndicator} from './components/InlineActivityIndicator.js';
 import {PromptInput} from './components/PromptInput.js';
 import {nextSelectIndex, nextSelectIndexForWheel, SelectModal, type SelectOption} from './components/SelectModal.js';
 import {StatusBar} from './components/StatusBar.js';
@@ -28,7 +29,6 @@ import {SwarmPanel} from './components/SwarmPanel.js';
 import {TodoPanel} from './components/TodoPanel.js';
 import type {TerminalInputStream} from './input/terminalInput.js';
 import {useBackendSession} from './hooks/useBackendSession.js';
-import {useElapsedTimer} from './hooks/useElapsedTimer.js';
 import {useMouseWheel} from './hooks/useMouseWheel.js';
 import {useTerminalMouse} from './hooks/useTerminalMouse.js';
 import {useTerminalSize} from './hooks/useTerminalSize.js';
@@ -243,7 +243,6 @@ function AppInner({
 	const [paused, setPaused] = useState(false);
 
 	const session = useBackendSession(config, () => exit());
-	const elapsedSeconds = useElapsedTimer(session.busy);
 	const deferredTranscript = useDeferredValue(session.transcript);
 	const deferredAssistantBuffer = useDeferredValue(session.assistantBuffer);
 	const deferredStatus = useDeferredValue(session.status);
@@ -302,6 +301,13 @@ function AppInner({
 		() => deferredTasks.filter((task) => ACTIVE_BACKGROUND_TASK_STATUSES.has(task.status)).length,
 		[deferredTasks],
 	);
+	const oldestActiveBackgroundStartedAt = useMemo(() => {
+		const startedTimes = deferredTasks
+			.filter((task) => ACTIVE_BACKGROUND_TASK_STATUSES.has(task.status) && typeof task.started_at === 'number')
+			.map((task) => task.started_at as number);
+		return startedTimes.length > 0 ? Math.min(...startedTimes) : undefined;
+	}, [deferredTasks]);
+	const hasActiveWork = session.busy || activeBackgroundTaskCount > 0;
 
 	// Command hints
 	const commandPickerModel = useMemo(
@@ -1083,7 +1089,13 @@ function AppInner({
 
 			{session.ready ? (
 				<Box flexShrink={0} flexDirection="column">
-					<StatusBar status={deferredStatus} tasks={deferredTasks} activeToolName={session.busy ? currentToolName : undefined} elapsedSeconds={elapsedSeconds} busy={session.busy} />
+					<StatusBar
+						status={deferredStatus}
+						tasks={deferredTasks}
+						activeToolName={session.busy ? currentToolName : undefined}
+						busy={hasActiveWork}
+						showTaskSegment={activeBackgroundTaskCount === 0}
+					/>
 				</Box>
 			) : null}
 
@@ -1104,6 +1116,15 @@ function AppInner({
 						hasBackgroundTasks={activeBackgroundTaskCount > 0}
 						suppressSubmit={showPicker}
 						inputKey={completionKey}
+					/>
+					<InlineActivityIndicator
+						active={hasActiveWork}
+						busy={session.busy}
+						hasBackgroundTasks={activeBackgroundTaskCount > 0}
+						activeBackgroundTaskCount={activeBackgroundTaskCount}
+						statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `Running ${currentToolName}` : 'Running agent loop')) : undefined}
+						toolName={session.busy ? currentToolName : undefined}
+						startedAtSeconds={activeBackgroundTaskCount > 0 ? oldestActiveBackgroundStartedAt : undefined}
 					/>
 				</Box>
 			)}

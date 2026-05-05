@@ -137,12 +137,14 @@ async function renderPromptInput({
 }
 
 async function renderInteractivePromptInput({
+	busy = false,
 	initialInput = '',
 	initialExtraInputLines = [],
 	backgroundTaskCount = 0,
 	animateSpinner,
 	stdoutColumns = 120,
 }: {
+	busy?: boolean;
 	initialInput?: string;
 	initialExtraInputLines?: string[];
 	backgroundTaskCount?: number;
@@ -177,7 +179,7 @@ async function renderInteractivePromptInput({
 		return (
 			<ThemeProvider initialTheme="default">
 				<PromptInput
-					busy={false}
+					busy={busy}
 					input={input}
 					setInput={handleInputChange}
 					onSubmit={() => {}}
@@ -225,20 +227,27 @@ async function renderRerenderablePromptInput({
 	stdout.on('data', (chunk) => {
 		output += chunk.toString();
 	});
+	let setBackgroundTaskCount: ((count: number) => void) | null = null;
 
-	const renderPrompt = (count: number): React.JSX.Element => (
-		<ThemeProvider initialTheme="default">
-			<PromptInput
-				busy={false}
-				input=""
-				setInput={ignoreInput}
-				onSubmit={ignoreInput}
-				hasBackgroundTasks={count > 0}
-			/>
-		</ThemeProvider>
-	);
+	function Host(): React.JSX.Element {
+		const [count, setCount] = useState(backgroundTaskCount);
+		setBackgroundTaskCount = setCount;
 
-	const instance = render(renderPrompt(backgroundTaskCount), {
+		return (
+			<ThemeProvider initialTheme="default">
+				<PromptInput
+					busy={false}
+					input=""
+					setInput={ignoreInput}
+					onSubmit={ignoreInput}
+					hasBackgroundTasks={count > 0}
+					animateSpinner={false}
+				/>
+			</ThemeProvider>
+		);
+	}
+
+	const instance = render(<Host />, {
 		stdout: stdout as unknown as NodeJS.WriteStream,
 		stdin: stdin as unknown as NodeJS.ReadStream,
 		debug: true,
@@ -248,7 +257,7 @@ async function renderRerenderablePromptInput({
 	await waitForOutputToStabilize(() => output);
 
 	return {
-		rerenderWithBackgroundTaskCount: (count: number) => instance.rerender(renderPrompt(count)),
+		rerenderWithBackgroundTaskCount: (count: number) => setBackgroundTaskCount?.(count),
 		getRawOutput: () => output,
 		cleanup: async () => {
 			const exitPromise = instance.waitUntilExit();
@@ -279,13 +288,11 @@ test('shows a concise idle shortcut footer', async () => {
 	assert.doesNotMatch(output, /ctrl\+c ctrl\+c exit/);
 });
 
-test('shows an animated busy indicator with the running tool name', async () => {
+test('shows a static busy indicator with the running tool name', async () => {
 	const output = await renderPromptInput({busy: true, toolName: 'bash'});
 
-	// Busy state replaces the static ">>" cue with a braille spinner frame
-	// and renders the tool label with a trailing animated ellipsis.
 	assert.match(output, /\[run\] bash/);
-	assert.match(output, /[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]/u);
+	assert.match(output, /⠋ {2}\| \[run\] bash\.\.\./);
 	assert.doesNotMatch(output, /[◇◈◆] {2}\| \[run\]/);
 });
 
@@ -297,11 +304,11 @@ test('shows a focused busy shortcut footer', async () => {
 	assert.doesNotMatch(output, /ctrl\+c ctrl\+c exit/);
 });
 
-test('shows a static visual background activity cue while input remains idle', async () => {
+test('shows a stable visual background activity cue while input remains idle', async () => {
 	const output = await renderPromptInput({backgroundTaskCount: 2});
 
 	assert.match(output, /\[bg\] running/);
-	assert.match(output, /● \| \[bg\] running/);
+	assert.match(output, /⠋ \| \[bg\] running/);
 	assert.match(output, /> /);
 	assert.doesNotMatch(output, /\[idle\]/);
 });
@@ -309,12 +316,42 @@ test('shows a static visual background activity cue while input remains idle', a
 test('uses a static background cue when animation is disabled', async () => {
 	const output = await renderPromptInput({backgroundTaskCount: 1, animateSpinner: false});
 
-	assert.match(output, /● \| \[bg\] running/);
+	assert.match(output, /⠋ \| \[bg\] running/);
 	assert.doesNotMatch(output, /\[idle\]/);
 });
 
 test('does not repaint the prompt while only background tasks are running', async () => {
 	const prompt = await renderInteractivePromptInput({backgroundTaskCount: 1, animateSpinner: true});
+	try {
+		const before = await prompt.getOutput();
+		await sleep(260);
+		await nextLoopTurn();
+		const after = await prompt.getOutput();
+
+		assert.equal(after, before);
+		assert.match(after, /⠋ \| \[bg\] running/);
+	} finally {
+		await prompt.cleanup();
+	}
+});
+
+test('does not repaint the prompt while foreground busy work has background tasks', async () => {
+	const prompt = await renderInteractivePromptInput({busy: true, backgroundTaskCount: 1, animateSpinner: true});
+	try {
+		const before = await prompt.getOutput();
+		await sleep(260);
+		await nextLoopTurn();
+		const after = await prompt.getOutput();
+
+		assert.equal(after, before);
+		assert.match(after, /⠋ {2}\| \[run\]\.\.\./);
+	} finally {
+		await prompt.cleanup();
+	}
+});
+
+test('does not repaint the prompt while a foreground turn is busy', async () => {
+	const prompt = await renderInteractivePromptInput({busy: true, animateSpinner: true});
 	try {
 		const before = await prompt.getOutput();
 		await sleep(950);
@@ -349,13 +386,15 @@ test('uses a static busy cue when animation is disabled', async () => {
 
 test('disables spinner animation on flicker-prone terminals', () => {
 	assert.equal(shouldAnimateSpinner('win32', {}), false);
-	assert.equal(shouldAnimateSpinner('win32', {WT_SESSION: 'abc'}), true);
-	assert.equal(shouldAnimateSpinner('win32', {TERM_PROGRAM: 'vscode'}), true);
-	assert.equal(shouldAnimateSpinner('win32', {MSYSTEM: 'MINGW64'}), true);
+	assert.equal(shouldAnimateSpinner('win32', {WT_SESSION: 'abc'}), false);
+	assert.equal(shouldAnimateSpinner('win32', {TERM_PROGRAM: 'vscode'}), false);
+	assert.equal(shouldAnimateSpinner('win32', {MSYSTEM: 'MINGW64'}), false);
 	assert.equal(shouldAnimateSpinner('linux', {SSH_TTY: '/dev/pts/0'}), false);
-	assert.equal(shouldAnimateSpinner('darwin', {}), true);
-	assert.equal(shouldAnimateSpinner('linux', {}), true);
-	// Backwards-compatible alias.
+	assert.equal(shouldAnimateSpinner('darwin', {}), false);
+	assert.equal(shouldAnimateSpinner('linux', {}), false);
+	assert.equal(shouldAnimateBackgroundCue('win32', {}), false);
+	assert.equal(shouldAnimateBackgroundCue('win32', {WT_SESSION: 'abc'}), true);
+	assert.equal(shouldAnimateBackgroundCue('linux', {SSH_TTY: '/dev/pts/0'}), false);
 	assert.equal(shouldAnimateBackgroundCue('darwin', {}), true);
 });
 
