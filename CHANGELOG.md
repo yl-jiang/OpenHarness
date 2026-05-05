@@ -27,6 +27,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- React TUI keeps background-task activity visible with the animated prompt cue, elapsed timer, and compact dynamic status-bar cue, while avoiding foreground busy spinner churn and task metadata refreshes.
 - Background `local_agent` tasks now launch the headless `--task-worker` mode instead of the React TUI, preventing Ink raw-mode failures when agents are spawned from TUI sessions.
 - React TUI prompt footer now shows a single context-aware shortcut line instead of two dense help rows, keeping idle composition hints separate from busy-state run controls.
 - React TUI now enables xterm bracketed paste mode and buffers pasted content into a single input event, so multi-line pastes preserve their original line layout, no longer drop earlier-typed characters, and never trip the submit shortcut on pasted carriage returns. Pasted CR/CRLF line endings are normalised to LF.
@@ -72,6 +73,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - README now links to contribution docs, changelog, showcase material, and provider compatibility guidance.
 - README quick start now includes a one-command demo and clearer provider compatibility notes.
 - README provider compatibility section updated to include OpenAI-format providers.
+- `agent` is now the documented preferred API for managed subagent delegation, while `task_create(local_agent)` is described as a low-level compatibility path and reuses the same subprocess-backed spawn flow.
 
 ## [0.1.0] - 2026-04-01
 
