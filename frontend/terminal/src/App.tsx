@@ -22,13 +22,14 @@ import {
 } from './components/ExpandedComposer.js';
 import {ModalHost} from './components/ModalHost.js';
 import {InlineActivityIndicator} from './components/InlineActivityIndicator.js';
-import {PromptInput} from './components/PromptInput.js';
+import {PromptInput, shouldAnimateBackgroundCue} from './components/PromptInput.js';
 import {nextSelectIndex, nextSelectIndexForWheel, SelectModal, type SelectOption} from './components/SelectModal.js';
 import {StatusBar} from './components/StatusBar.js';
 import {SwarmPanel} from './components/SwarmPanel.js';
 import {TodoPanel} from './components/TodoPanel.js';
 import type {TerminalInputStream} from './input/terminalInput.js';
 import {useBackendSession} from './hooks/useBackendSession.js';
+import {useElapsedTimer} from './hooks/useElapsedTimer.js';
 import {useMouseWheel} from './hooks/useMouseWheel.js';
 import {useTerminalMouse} from './hooks/useTerminalMouse.js';
 import {useTerminalSize} from './hooks/useTerminalSize.js';
@@ -308,6 +309,11 @@ function AppInner({
 		return startedTimes.length > 0 ? Math.min(...startedTimes) : undefined;
 	}, [deferredTasks]);
 	const hasActiveWork = session.busy || activeBackgroundTaskCount > 0;
+	const inlineActivityEnabled = shouldAnimateBackgroundCue();
+	const elapsedSeconds = useElapsedTimer(
+		hasActiveWork && !inlineActivityEnabled,
+		activeBackgroundTaskCount > 0 ? oldestActiveBackgroundStartedAt : undefined,
+	);
 
 	// Command hints
 	const commandPickerModel = useMemo(
@@ -1093,8 +1099,9 @@ function AppInner({
 						status={deferredStatus}
 						tasks={deferredTasks}
 						activeToolName={session.busy ? currentToolName : undefined}
+						elapsedSeconds={elapsedSeconds}
 						busy={hasActiveWork}
-						showTaskSegment={activeBackgroundTaskCount === 0}
+						showTaskSegment={!inlineActivityEnabled || activeBackgroundTaskCount === 0}
 					/>
 				</Box>
 			) : null}

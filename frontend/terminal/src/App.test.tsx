@@ -276,6 +276,15 @@ setInterval(() => {}, 1000);
 });
 
 test('does not emit periodic full-frame Ink redraws while background work is idle', async () => {
+	// Ensure test behaves as non-SSH (InlineActivityIndicator handles bg tasks
+	// out-of-band, so Ink should not re-render periodically).
+	const origSSH_TTY = process.env.SSH_TTY;
+	const origSSH_CLIENT = process.env.SSH_CLIENT;
+	const origSSH_CONNECTION = process.env.SSH_CONNECTION;
+	delete process.env.SSH_TTY;
+	delete process.env.SSH_CLIENT;
+	delete process.env.SSH_CONNECTION;
+
 	const stdout = createTestStdout();
 	const stdin = createTestStdin();
 	let output = '';
@@ -310,6 +319,10 @@ setInterval(() => {}, 1000);
 
 		assert.doesNotMatch(stripAnsi(output), /OpenHarness|commands · @ files|PgUp\/Dn scroll|╭|╰/u);
 	} finally {
+		// Restore SSH env vars
+		if (origSSH_TTY !== undefined) process.env.SSH_TTY = origSSH_TTY;
+		if (origSSH_CLIENT !== undefined) process.env.SSH_CLIENT = origSSH_CLIENT;
+		if (origSSH_CONNECTION !== undefined) process.env.SSH_CONNECTION = origSSH_CONNECTION;
 		const exitPromise = instance.waitUntilExit();
 		instance.unmount();
 		await exitPromise;
