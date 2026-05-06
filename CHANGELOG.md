@@ -28,6 +28,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- Skill discovery and the runtime skills prompt now also load project-local skills from the launch directory's `.openharness/skills`, and prompt cache invalidation tracks those files so newly added workspace skills appear immediately.
 - `bash` tool now runs without a PTY, injects non-interactive shell defaults (`GIT_PAGER=cat`, `PAGER=cat`, `MANPAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `CI=1`), and preflights pager/editor-style commands like `git diff` without `--no-pager`, preventing React TUI sessions from appearing hung on `Running bash` while waiting on hidden terminal interaction.
 - Skill loading now skips invalid `SKILL.md` entries when the directory name does not match frontmatter `name` or when no real description is provided, and logs each loaded or skipped skill with its outcome.
 - React TUI keeps background-task activity visible with the animated prompt cue, elapsed timer, and compact dynamic status-bar cue, while avoiding foreground busy spinner churn and task metadata refreshes.

@@ -198,6 +198,32 @@ def test_skills_section_excludes_disable_model_invocation_skills(tmp_path: Path,
     assert "internal-review" not in prompt
 
 
+def test_skills_section_cache_tracks_project_local_skills(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    settings = Settings(memory={"enabled": False})
+
+    context_module.clear_runtime_system_prompt_cache()
+    try:
+        before = build_runtime_system_prompt(settings, cwd=repo, latest_user_prompt="review this project")
+
+        review_dir = repo / ".openharness" / "skills" / "project-review"
+        review_dir.mkdir(parents=True)
+        (review_dir / "SKILL.md").write_text(
+            "---\nname: project-review\ndescription: Review this workspace.\n---\n\n# Project Review\n",
+            encoding="utf-8",
+        )
+
+        after = build_runtime_system_prompt(settings, cwd=repo, latest_user_prompt="review this project")
+    finally:
+        context_module.clear_runtime_system_prompt_cache()
+
+    assert "project-review" not in before
+    assert "**project-review**: Review this workspace." in after
+
+
 def test_format_prompt_blocks_debug_aligns_columns() -> None:
     output = format_prompt_blocks_debug(
         [
