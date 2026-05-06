@@ -13,6 +13,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - Docker as an alternative sandbox backend (`sandbox.backend = "docker"`) for stronger execution isolation with configurable resource limits, network isolation, and automatic image management.
 - Built-in `gemini` provider profile so `oh setup` offers Google Gemini as a first-class provider choice, with `gemini_api_key` auth source and `gemini-2.5-flash` as the default model.
 - `diagnose` skill: trace agent run failures and regressions using structured evidence from run artifacts.
+- Skill frontmatter now supports `disable-model-invocation` for hiding a skill from model auto-discovery and `user-invocable` for hiding it from user-facing `/skills` entry points.
 - OpenAI-compatible API client (`--api-format openai`) supporting any provider that implements the OpenAI `/v1/chat/completions` format, including Alibaba DashScope, DeepSeek, GitHub Models, Groq, Together AI, Ollama, and more.
 - `OPENHARNESS_API_FORMAT` environment variable for selecting the API format.
 - `OPENAI_API_KEY` fallback when using OpenAI-format providers.
@@ -27,6 +28,8 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- `bash` tool now runs without a PTY, injects non-interactive shell defaults (`GIT_PAGER=cat`, `PAGER=cat`, `MANPAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `CI=1`), and preflights pager/editor-style commands like `git diff` without `--no-pager`, preventing React TUI sessions from appearing hung on `Running bash` while waiting on hidden terminal interaction.
+- Skill loading now skips invalid `SKILL.md` entries when the directory name does not match frontmatter `name` or when no real description is provided, and logs each loaded or skipped skill with its outcome.
 - React TUI keeps background-task activity visible with the animated prompt cue, elapsed timer, and compact dynamic status-bar cue, while avoiding foreground busy spinner churn and task metadata refreshes.
 - Background `local_agent` tasks now launch the headless `--task-worker` mode instead of the React TUI, preventing Ink raw-mode failures when agents are spawned from TUI sessions.
 - React TUI prompt footer now shows a single context-aware shortcut line instead of two dense help rows, keeping idle composition hints separate from busy-state run controls.

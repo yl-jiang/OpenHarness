@@ -2,20 +2,15 @@
 
 from __future__ import annotations
 
-from openharness.utils.log import get_logger
 from pathlib import Path
 from typing import Iterable
-
-import yaml
 
 from openharness.config.paths import get_config_dir
 from openharness.config.settings import PathRuleConfig, load_settings
 from openharness.skills.bundled import get_bundled_skills
+from openharness.skills.metadata import load_skill_definition
 from openharness.skills.registry import SkillRegistry
 from openharness.skills.types import SkillDefinition
-
-logger = get_logger(__name__)
-
 
 def get_user_skills_dir() -> Path:
     """Return the user skills directory."""
@@ -111,54 +106,12 @@ def load_skills_from_dirs(
             seen.add(path)
             content = path.read_text(encoding="utf-8")
             default_name = path.parent.name
-            name, description = _parse_skill_markdown(default_name, content)
-            skills.append(
-                SkillDefinition(
-                    name=name,
-                    description=description,
-                    content=content,
-                    source=source,
-                    path=str(path),
-                )
+            skill = load_skill_definition(
+                default_name,
+                content,
+                source=source,
+                path=path,
             )
+            if skill is not None:
+                skills.append(skill)
     return skills
-
-
-def _parse_skill_markdown(default_name: str, content: str) -> tuple[str, str]:
-    """Parse name and description from a skill markdown file with YAML frontmatter support."""
-    name = default_name
-    description = ""
-
-    lines = content.splitlines()
-
-    # Try YAML frontmatter first (--- ... ---)
-    if content.startswith("---\n"):
-        end_index = content.find("\n---\n", 4)
-        if end_index != -1:
-            try:
-                metadata = yaml.safe_load(content[4:end_index])
-                if isinstance(metadata, dict):
-                    val = metadata.get("name")
-                    if isinstance(val, str) and val.strip():
-                        name = val.strip()
-                    val = metadata.get("description")
-                    if isinstance(val, str) and val.strip():
-                        description = val.strip()
-            except yaml.YAMLError:
-                logger.debug("Failed to parse YAML frontmatter for skill %s", default_name)
-
-    # Fallback: extract from headings and first paragraph
-    if not description:
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("# "):
-                if not name or name == default_name:
-                    name = stripped[2:].strip() or default_name
-                continue
-            if stripped and not stripped.startswith("---") and not stripped.startswith("#"):
-                description = stripped[:200]
-                break
-
-    if not description:
-        description = f"Skill: {name}"
-    return name, description

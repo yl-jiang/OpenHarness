@@ -25,7 +25,7 @@ from openharness.coordinator.agent_definitions import (
 )
 from openharness.plugins.schemas import PluginManifest
 from openharness.plugins.types import LoadedPlugin, PluginCommandDefinition
-from openharness.skills.loader import _parse_skill_markdown
+from openharness.skills.metadata import load_skill_definition
 from openharness.skills.types import SkillDefinition
 from openharness.utils.log import get_logger
 
@@ -255,16 +255,14 @@ def _load_plugin_skills(path: Path) -> list[SkillDefinition]:
     direct_skill = path / "SKILL.md"
     if direct_skill.exists():
         content = direct_skill.read_text(encoding="utf-8")
-        name, description = _parse_skill_markdown(path.name, content)
-        skills.append(
-            SkillDefinition(
-                name=name,
-                description=description,
-                content=content,
-                source="plugin",
-                path=str(direct_skill),
-            )
+        skill = load_skill_definition(
+            path.name,
+            content,
+            source="plugin",
+            path=direct_skill,
         )
+        if skill is not None:
+            skills.append(skill)
         return skills
     for child in sorted(path.iterdir()):
         if not child.is_dir():
@@ -273,16 +271,14 @@ def _load_plugin_skills(path: Path) -> list[SkillDefinition]:
         if not skill_path.exists():
             continue
         content = skill_path.read_text(encoding="utf-8")
-        name, description = _parse_skill_markdown(child.name, content)
-        skills.append(
-            SkillDefinition(
-                name=name,
-                description=description,
-                content=content,
-                source="plugin",
-                path=str(skill_path),
-            )
+        skill = load_skill_definition(
+            child.name,
+            content,
+            source="plugin",
+            path=skill_path,
         )
+        if skill is not None:
+            skills.append(skill)
     return skills
 
 
