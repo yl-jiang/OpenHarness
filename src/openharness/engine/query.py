@@ -19,7 +19,13 @@ from openharness.api.client import (
 from openharness.api.errors import is_prompt_too_long_error as _is_prompt_too_long_error
 from openharness.api.provider import is_model_multimodal
 from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock
+from openharness.engine.messages import (
+    ConversationMessage,
+    ImageBlock,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+)
 from openharness.engine.messages import normalize_messages_for_api
 from openharness.engine.stream_events import (
     AssistantTextDelta,
@@ -68,6 +74,19 @@ MAX_TRACKED_VERIFIED_WORK = 10
 MAX_TRACKED_TOOL_NAME_REPAIRS = 8
 
 INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX = "<openharness-internal:tool-name-repair>"
+DONE_TOOL_NAME = "done"
+EXPLICIT_DONE_REQUIRED_PROMPT_PREFIX = "<openharness-internal:explicit-done-required>"
+EXPLICIT_DONE_REQUIRED_PROMPT = "\n".join(
+    (
+        EXPLICIT_DONE_REQUIRED_PROMPT_PREFIX,
+        "The previous assistant turn ended after tool work without calling the done tool.",
+        (
+            "Agent-loop completion must be explicit: if the current task is complete, "
+            "call done(message=...) with the final response."
+        ),
+        "If the task is not complete, continue with the appropriate tools.",
+    )
+)
 
 
 def _bounded_completion_tokens(max_tokens: int, context_window_tokens: int | None = None) -> int:
@@ -131,6 +150,7 @@ class QueryContext:
     hook_executor: HookExecutor | None = None
     tool_metadata: dict[str, object] | None = None
     permission_prompt_lock: asyncio.Lock | None = None
+    require_done_tool: bool = False
 
 
 def _append_capped_unique(bucket: list[Any], value: Any, *, limit: int) -> None:
@@ -295,6 +315,54 @@ def build_internal_tool_name_repair_prompt(
             )
         )
     )
+
+
+def _done_tool_available(context: QueryContext) -> bool:
+    return context.tool_registry.get(DONE_TOOL_NAME) is not None
+
+
+def _find_done_tool_call(message: ConversationMessage) -> ToolUseBlock | None:
+    for tool_use in message.tool_uses:
+        if tool_use.name == DONE_TOOL_NAME:
+            return tool_use
+    return None
+
+
+def _done_completion_message(message: ConversationMessage, done_input: dict[str, object]) -> str:
+    raw_message = done_input.get("message")
+    if raw_message is not None:
+        return str(raw_message).strip()
+    return message.text.strip()
+
+
+def _build_done_tool_results(
+    tool_calls: list[ToolUseBlock],
+    *,
+    done_tool_use_id: str,
+    completion_message: str,
+) -> list[ToolResultBlock]:
+    results: list[ToolResultBlock] = []
+    for tool_call in tool_calls:
+        if tool_call.id == done_tool_use_id:
+            results.append(
+                ToolResultBlock(
+                    tool_use_id=tool_call.id,
+                    content=completion_message,
+                    is_error=False,
+                )
+            )
+            continue
+        results.append(
+            ToolResultBlock(
+                tool_use_id=tool_call.id,
+                content=(
+                    "Skipped because done was called. Call done only after all other "
+                    "tool work is complete, and do not combine it with other tools."
+                ),
+                is_error=True,
+            )
+        )
+    return results
 
 
 def _remember_read_file(
@@ -715,6 +783,7 @@ async def run_query(
         return
     
     turn_count = 0
+    explicit_done_required = context.require_done_tool and _done_tool_available(context)
     while context.max_turns is None or turn_count < context.max_turns:
         turn_count += 1
         if effective_max_tokens != context.max_tokens and not reported_token_clamp:
@@ -830,6 +899,19 @@ async def run_query(
             if messages and messages[-1].role == "user" and messages[-1].text.startswith("# Coordinator User Context"):
                 coordinator_context_message = messages.pop()
 
+        done_tool_call = _find_done_tool_call(final_message)
+        done_completion_message = (
+            _done_completion_message(final_message, done_tool_call.input)
+            if done_tool_call is not None
+            else ""
+        )
+        if done_tool_call is not None and done_completion_message and not final_message.text.strip():
+            final_message = ConversationMessage(
+                role="assistant",
+                content=[TextBlock(text=done_completion_message), *final_message.content],
+            )
+            yield AssistantTextDelta(text=done_completion_message), None
+
         messages.append(final_message)
         logger.event(
             "api_message_complete",
@@ -846,6 +928,31 @@ async def run_query(
         if coordinator_context_message is not None:
             messages.append(coordinator_context_message)
 
+        if done_tool_call is not None and done_completion_message:
+            tool_results = _build_done_tool_results(
+                final_message.tool_uses,
+                done_tool_use_id=done_tool_call.id,
+                completion_message=done_completion_message,
+            )
+            messages.append(ConversationMessage(role="user", content=tool_results))
+            logger.event(
+                "query_done_tool_called",
+                session_id=session_id,
+                model=context.model,
+                turn_count=turn_count,
+                text_length=len(done_completion_message),
+                message_count=len(messages),
+            )
+            if context.hook_executor is not None:
+                await context.hook_executor.execute(
+                    HookEvent.STOP,
+                    {
+                        "event": HookEvent.STOP.value,
+                        "stop_reason": "done_tool",
+                    },
+                )
+            return
+
         if not final_message.tool_uses:
             logger.event(
                 "query_turn_finished_without_tool_use",
@@ -855,6 +962,16 @@ async def run_query(
                 text_length=len(final_message.text),
                 message_count=len(messages),
             )
+            if explicit_done_required:
+                messages.append(ConversationMessage.from_user_text(EXPLICIT_DONE_REQUIRED_PROMPT))
+                logger.event(
+                    "explicit_done_required_continue",
+                    session_id=session_id,
+                    model=context.model,
+                    turn_count=turn_count,
+                    message_count=len(messages),
+                )
+                continue
             if context.hook_executor is not None:
                 await context.hook_executor.execute(
                     HookEvent.STOP,
