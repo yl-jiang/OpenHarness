@@ -75,6 +75,7 @@ MAX_TRACKED_TOOL_NAME_REPAIRS = 8
 
 INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX = "<openharness-internal:tool-name-repair>"
 DONE_TOOL_NAME = "done"
+ASK_USER_QUESTION_TOOL_NAME = "ask_user_question"
 EXPLICIT_DONE_REQUIRED_PROMPT_PREFIX = "<openharness-internal:explicit-done-required>"
 EXPLICIT_DONE_REQUIRED_PROMPT = "\n".join(
     (
@@ -326,6 +327,31 @@ def _find_done_tool_call(message: ConversationMessage) -> ToolUseBlock | None:
         if tool_use.name == DONE_TOOL_NAME:
             return tool_use
     return None
+
+
+def _plain_text_follows_ask_user_question(messages: list[ConversationMessage]) -> bool:
+    if len(messages) < 3:
+        return False
+    final_message = messages[-1]
+    tool_result_message = messages[-2]
+    tool_use_message = messages[-3]
+    if (
+        final_message.role != "assistant"
+        or final_message.tool_uses
+        or not final_message.text.strip()
+        or tool_result_message.role != "user"
+        or tool_use_message.role != "assistant"
+    ):
+        return False
+    tool_result_ids = {
+        block.tool_use_id
+        for block in tool_result_message.content
+        if isinstance(block, ToolResultBlock)
+    }
+    return any(
+        tool_use.name == ASK_USER_QUESTION_TOOL_NAME and tool_use.id in tool_result_ids
+        for tool_use in tool_use_message.tool_uses
+    )
 
 
 def _done_completion_message(message: ConversationMessage, done_input: dict[str, object]) -> str:
@@ -963,6 +989,24 @@ async def run_query(
                 message_count=len(messages),
             )
             if explicit_done_required:
+                if _plain_text_follows_ask_user_question(messages):
+                    logger.event(
+                        "explicit_done_required_skipped_after_ask_user_question",
+                        session_id=session_id,
+                        model=context.model,
+                        turn_count=turn_count,
+                        text_length=len(final_message.text),
+                        message_count=len(messages),
+                    )
+                    if context.hook_executor is not None:
+                        await context.hook_executor.execute(
+                            HookEvent.STOP,
+                            {
+                                "event": HookEvent.STOP.value,
+                                "stop_reason": "ask_user_question_text",
+                            },
+                        )
+                    return
                 messages.append(ConversationMessage.from_user_text(EXPLICIT_DONE_REQUIRED_PROMPT))
                 logger.event(
                     "explicit_done_required_continue",

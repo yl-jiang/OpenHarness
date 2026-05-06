@@ -440,6 +440,72 @@ async def test_query_engine_requires_done_after_tool_work(tmp_path: Path, monkey
 
 
 @pytest.mark.asyncio
+async def test_query_engine_allows_plain_text_after_ask_user_question(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    asked_questions: list[str] = []
+
+    async def ask_user(question: str) -> str:
+        asked_questions.append(question)
+        return "blue"
+
+    client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_ask",
+                            name="ask_user_question",
+                            input={"question": "Pick a color"},
+                        ),
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="Color noted: blue.")],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_done_after_ask",
+                            name="done",
+                            input={"message": "Should not require done after ask_user_question."},
+                        ),
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+        ]
+    )
+    engine = QueryEngine(
+        api_client=client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        require_done_tool=True,
+        ask_user_prompt=ask_user,
+    )
+
+    events = [event async for event in engine.submit_message("choose")]
+
+    assert asked_questions == ["Pick a color"]
+    assert len(client.requests) == 2
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "Color noted: blue."
+    assert engine.has_pending_continuation() is False
+
+
+@pytest.mark.asyncio
 async def test_query_engine_requires_done_on_first_no_tool_turn(tmp_path: Path, monkeypatch):
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     client = FakeApiClient(
