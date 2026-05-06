@@ -50,9 +50,10 @@ class FakeApiClient:
 
     def __init__(self, responses: list[_FakeResponse]) -> None:
         self._responses = list(responses)
+        self.requests = []
 
     async def stream_message(self, request):
-        del request
+        self.requests.append(request)
         response = self._responses.pop(0)
         for block in response.message.content:
             if isinstance(block, TextBlock) and block.text:
@@ -372,6 +373,115 @@ async def test_query_engine_executes_tool_calls(tmp_path: Path, monkeypatch):
     assert isinstance(events[-1], AssistantTurnComplete)
     assert "alpha and beta" in events[-1].message.text
     assert len(engine.messages) == 4
+
+
+@pytest.mark.asyncio
+async def test_query_engine_requires_done_after_tool_work(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    sample = tmp_path / "hello.txt"
+    sample.write_text("alpha\n", encoding="utf-8")
+    client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_read",
+                            name="read_file",
+                            input={"path": str(sample), "offset": 0, "limit": 1},
+                        ),
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="I found alpha.")],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_done",
+                            name="done",
+                            input={"message": "Final answer: alpha is present."},
+                        ),
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+        ]
+    )
+    engine = QueryEngine(
+        api_client=client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        require_done_tool=True,
+    )
+
+    events = [event async for event in engine.submit_message("read the file")]
+
+    assert len(client.requests) == 3
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "Final answer: alpha is present."
+    assert all(
+        not (message.role == "user" and message.text.startswith("<openharness-internal:explicit-done-required>"))
+        for message in engine.messages
+    )
+    assert engine.has_pending_continuation() is False
+
+
+@pytest.mark.asyncio
+async def test_query_engine_requires_done_on_first_no_tool_turn(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    client = FakeApiClient(
+        [
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="This should not finish implicitly.")],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+            _FakeResponse(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[
+                        ToolUseBlock(
+                            id="toolu_done_first",
+                            name="done",
+                            input={"message": "Final answer via done."},
+                        ),
+                    ],
+                ),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            ),
+        ]
+    )
+    engine = QueryEngine(
+        api_client=client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        require_done_tool=True,
+    )
+
+    events = [event async for event in engine.submit_message("answer directly")]
+
+    assert len(client.requests) == 2
+    assert isinstance(events[-1], AssistantTurnComplete)
+    assert events[-1].message.text == "Final answer via done."
+    assert engine.has_pending_continuation() is False
 
 
 @pytest.mark.asyncio

@@ -25,6 +25,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - Built-in `codex` output style for compact, low-noise transcript rendering in React TUI.
 - React TUI `@` file mentions and `/skills` picker for manually loading a selected skill into the current session.
 - React TUI prompt composer now has a clickable expand affordance that opens a fullscreen editor for long drafts, keeps Enter/Shift+Enter as newline-only inside that view, and preserves leading slash command/skill completion via tab.
+- Built-in `done` tool for explicit agent-loop completion; the runtime now requires `done(message=...)` after tool work instead of treating a no-tool assistant turn as normal completion.
 
 ### Fixed
 
@@ -32,6 +33,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - `bash` tool now runs without a PTY, injects non-interactive shell defaults (`GIT_PAGER=cat`, `PAGER=cat`, `MANPAGER=cat`, `GIT_TERMINAL_PROMPT=0`, `CI=1`), and preflights pager/editor-style commands like `git diff` without `--no-pager`, preventing React TUI sessions from appearing hung on `Running bash` while waiting on hidden terminal interaction.
 - Skill loading now skips invalid `SKILL.md` entries when the directory name does not match frontmatter `name` or when no real description is provided, and logs each loaded or skipped skill with its outcome.
 - React TUI keeps background-task activity visible with the animated prompt cue, elapsed timer, and compact dynamic status-bar cue, while avoiding foreground busy spinner churn and task metadata refreshes.
+- React TUI on macOS now uses the prompt's own background-task spinner instead of the direct-write overlay, keeping the spinner visible inside the input box in local terminal sessions.
 - Background `local_agent` tasks now launch the headless `--task-worker` mode instead of the React TUI, preventing Ink raw-mode failures when agents are spawned from TUI sessions.
 - React TUI prompt footer now shows a single context-aware shortcut line instead of two dense help rows, keeping idle composition hints separate from busy-state run controls.
 - React TUI now enables xterm bracketed paste mode and buffers pasted content into a single input event, so multi-line pastes preserve their original line layout, no longer drop earlier-typed characters, and never trip the submit shortcut on pasted carriage returns. Pasted CR/CRLF line endings are normalised to LF.
