@@ -5,6 +5,7 @@ import tty from 'node:tty';
 
 import {App} from './App.js';
 import {createTerminalInputStream} from './input/terminalInput.js';
+import {installSyncOutput} from './syncOutput.js';
 import type {FrontendConfig} from './types.js';
 
 // Guard against EIO crashes in both stdin reads and setRawMode calls.
@@ -59,6 +60,7 @@ const restoreTerminal = (): void => {
 if (process.stdout.isTTY) {
 	process.stdout.write('\x1b[>4;2m\x1b[?2004h');
 }
+installSyncOutput(process.stdout);
 process.on('exit', restoreTerminal);
 process.on('SIGINT', () => {
 	restoreTerminal();
