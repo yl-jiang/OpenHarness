@@ -97,7 +97,7 @@ function StatusBarInner({
 	const outputTokens = Number(status.output_tokens ?? 0);
 	const isPlanMode = mode === 'plan' || mode === 'Plan Mode';
 	const hasElapsed = elapsedSeconds != null;
-	const taskActivity = hasElapsed ? `${TASK_ACTIVITY_FRAMES[elapsedSeconds % TASK_ACTIVITY_FRAMES.length]} ${formatDuration(elapsedSeconds)}` : null;
+	const taskActivity = hasElapsed ? `${TASK_ACTIVITY_FRAMES[elapsedSeconds % TASK_ACTIVITY_FRAMES.length]}  ${formatDuration(elapsedSeconds)}` : null;
 
 	return (
 		<Box flexDirection="column" marginTop={1}>
@@ -124,25 +124,25 @@ function StatusBarInner({
 				{showTaskSegment && taskCount > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>{'⚙ '}{taskCount}{taskActivity ? ` ${taskActivity}` : ''}</Text>
+						<Text dimColor>{'⚙  '}{taskCount}{taskActivity ? `  ${taskActivity}` : ''}</Text>
 					</>
 				) : null}
 				{reviewsCompleted > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>{'✦ '}{reviewsCompleted} reviewed</Text>
+						<Text dimColor>{'✦  '}{reviewsCompleted} reviewed</Text>
 					</>
 				) : null}
 				{mcpCount > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>{'⊞ '}{mcpCount}</Text>
+						<Text dimColor>{'⊞  '}{mcpCount}</Text>
 					</>
 				) : null}
 				{(taskCount === 0 || !showTaskSegment) && hasElapsed ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text color={busy ? 'cyan' : undefined} dimColor={!busy}>{'⏱ '}{formatDuration(elapsedSeconds)}</Text>
+						<Text color={busy ? 'cyan' : undefined} dimColor={!busy}>{TASK_ACTIVITY_FRAMES[elapsedSeconds % TASK_ACTIVITY_FRAMES.length]}  {formatDuration(elapsedSeconds)}</Text>
 					</>
 				) : null}
 			</Text>
