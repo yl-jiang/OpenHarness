@@ -7,7 +7,6 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry,
 from openharness.tools.brief_tool import BriefTool
 from openharness.tools.config_tool import ConfigTool
 from openharness.tools.cron_manager_tool import CronManagerTool
-from openharness.tools.done_tool import DoneTool
 from openharness.tools.enter_worktree_tool import EnterWorktreeTool
 from openharness.tools.exit_worktree_tool import ExitWorktreeTool
 from openharness.tools.file_edit_tool import FileEditTool
@@ -66,7 +65,6 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         ConfigTool(),
         BriefTool(),
         SleepTool(),
-        DoneTool(),
         EnterWorktreeTool(),
         ExitWorktreeTool(),
         TodoTool(),
