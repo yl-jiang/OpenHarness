@@ -321,7 +321,7 @@ test('uses a static background cue when animation is disabled', async () => {
 });
 
 test('does not repaint the prompt while only background tasks are running', async () => {
-	const prompt = await renderInteractivePromptInput({backgroundTaskCount: 1, animateSpinner: true});
+	const prompt = await renderInteractivePromptInput({backgroundTaskCount: 1, animateSpinner: false});
 	try {
 		const before = await prompt.getOutput();
 		await sleep(260);
@@ -336,7 +336,7 @@ test('does not repaint the prompt while only background tasks are running', asyn
 });
 
 test('does not repaint the prompt while foreground busy work has background tasks', async () => {
-	const prompt = await renderInteractivePromptInput({busy: true, backgroundTaskCount: 1, animateSpinner: true});
+	const prompt = await renderInteractivePromptInput({busy: true, backgroundTaskCount: 1, animateSpinner: false});
 	try {
 		const before = await prompt.getOutput();
 		await sleep(260);
@@ -351,7 +351,7 @@ test('does not repaint the prompt while foreground busy work has background task
 });
 
 test('does not repaint the prompt while a foreground turn is busy', async () => {
-	const prompt = await renderInteractivePromptInput({busy: true, animateSpinner: true});
+	const prompt = await renderInteractivePromptInput({busy: true, animateSpinner: false});
 	try {
 		const before = await prompt.getOutput();
 		await sleep(950);

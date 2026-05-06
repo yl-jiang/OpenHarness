@@ -310,9 +310,9 @@ function AppInner({
 	}, [deferredTasks]);
 	const hasActiveWork = session.busy || activeBackgroundTaskCount > 0;
 	const inlineActivityEnabled = shouldAnimateBackgroundCue();
+	const isFullAuto = String(deferredStatus.permission_mode ?? 'default') === 'full_auto';
 	const elapsedSeconds = useElapsedTimer(
-		hasActiveWork && !inlineActivityEnabled,
-		activeBackgroundTaskCount > 0 ? oldestActiveBackgroundStartedAt : undefined,
+		session.busy && isFullAuto && !inlineActivityEnabled,
 	);
 
 	// Command hints
@@ -1123,6 +1123,7 @@ function AppInner({
 						hasBackgroundTasks={activeBackgroundTaskCount > 0}
 						suppressSubmit={showPicker}
 						inputKey={completionKey}
+						animateSpinner={!inlineActivityEnabled}
 					/>
 					<InlineActivityIndicator
 						active={hasActiveWork}
