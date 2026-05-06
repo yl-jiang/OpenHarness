@@ -124,25 +124,25 @@ function StatusBarInner({
 				{showTaskSegment && taskCount > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>⚙️  {taskCount}{taskActivity ? ` ${taskActivity}` : ''}</Text>
+						<Text dimColor>{'⚙ '}{taskCount}{taskActivity ? ` ${taskActivity}` : ''}</Text>
 					</>
 				) : null}
 				{reviewsCompleted > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>🧠 {reviewsCompleted} reviewed</Text>
+						<Text dimColor>{'✦ '}{reviewsCompleted} reviewed</Text>
 					</>
 				) : null}
 				{mcpCount > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>🔌 {mcpCount}</Text>
+						<Text dimColor>{'⊞ '}{mcpCount}</Text>
 					</>
 				) : null}
 				{(taskCount === 0 || !showTaskSegment) && hasElapsed ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text color={busy ? 'cyan' : undefined} dimColor={!busy}>⏱ {formatDuration(elapsedSeconds)}</Text>
+						<Text color={busy ? 'cyan' : undefined} dimColor={!busy}>{'⏱ '}{formatDuration(elapsedSeconds)}</Text>
 					</>
 				) : null}
 			</Text>

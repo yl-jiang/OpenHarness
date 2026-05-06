@@ -310,7 +310,7 @@ function AppInner({
 	}, [deferredTasks]);
 	const hasActiveWork = session.busy || activeBackgroundTaskCount > 0;
 	const inlineActivityEnabled = shouldAnimateBackgroundCue();
-	const isFullAuto = String(deferredStatus.permission_mode ?? 'default') === 'full_auto';
+	const isFullAuto = String(deferredStatus.permission_mode ?? 'default') === 'Auto';
 	const elapsedSeconds = useElapsedTimer(
 		session.busy && isFullAuto && !inlineActivityEnabled,
 	);

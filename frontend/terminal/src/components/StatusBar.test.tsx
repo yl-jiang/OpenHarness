@@ -158,8 +158,8 @@ test('counts only active background tasks in the status bar', async () => {
 		{id: 'task-5', type: 'local_agent', status: 'killed', description: 'killed', metadata: {}},
 	]);
 
-	assert.match(output, /⚙️  2/u);
-	assert.doesNotMatch(output, /⚙️  5/u);
+	assert.match(output, /⚙ 2/u);
+	assert.doesNotMatch(output, /⚙ 5/u);
 });
 
 test('updates the activity timer during long running foreground work', async () => {
@@ -185,7 +185,7 @@ test('shows a dynamic background task activity segment with elapsed time', async
 		{elapsedSeconds: 12, busy: true},
 	);
 
-	assert.match(output, /⚙️  1 [◐◓◑◒] 12s/u);
+	assert.match(output, /⚙ 1 [◐◓◑◒] 12s/u);
 });
 
 test('does not repaint when active background task metadata changes', async () => {
@@ -258,6 +258,6 @@ test('uses symbolic labels instead of textual status prefixes', async () => {
 	assert.match(output, />ˍ \/tmp\/demo/u);
 	assert.match(output, / dev/u);
 	assert.match(output, /\$ 1\.2k ↓ 3\.4k ↑/);
-	assert.match(output, /⚙️  1/u);
-	assert.match(output, /🔌 2/u);
+	assert.match(output, /⚙ 1/u);
+	assert.match(output, /⊞ 2/u);
 });
