@@ -61,6 +61,9 @@ export function shouldAnimateBackgroundCue(
 	if (env.SSH_TTY || env.SSH_CLIENT || env.SSH_CONNECTION) {
 		return false;
 	}
+	if (platform === 'darwin') {
+		return false;
+	}
 	if (platform === 'win32') {
 		if (env.WT_SESSION) return true;
 		if (env.TERM_PROGRAM === 'vscode') return true;

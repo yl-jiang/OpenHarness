@@ -7,6 +7,7 @@ import {render} from 'ink';
 import * as AppModule from './App.js';
 
 import {App, buildSubmittedValue, resolveSelectModalChoice} from './App.js';
+import {shouldAnimateBackgroundCue} from './components/PromptInput.js';
 
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -218,9 +219,14 @@ setInterval(() => {}, 1000);
 		assert.match(text, /⠋ \| \[bg\] running/u);
 		assert.match(text, /⠙ \| \[bg\] running/u);
 		assert.doesNotMatch(text, /⠙ \| \[bg\] running \d+s/u);
-		assert.match(text, /⚙ 1 · 00:00/u);
-		assert.doesNotMatch(text, /[◐◓◑◒]/u);
-		assert.doesNotMatch(text, /OpenHarness[^\n]*⚙/u);
+		if (shouldAnimateBackgroundCue()) {
+			assert.match(text, /⚙ 1 · 00:00/u);
+			assert.doesNotMatch(text, /[◐◓◑◒]/u);
+			assert.doesNotMatch(text, /OpenHarness[^\n]*⚙/u);
+		} else {
+			assert.doesNotMatch(output, /\u001B\[s\u001B\[[0-9]+;4H/u);
+			assert.match(text, /OpenHarness[^\n]*⚙\s+1/u);
+		}
 	} finally {
 		const exitPromise = instance.waitUntilExit();
 		instance.unmount();
@@ -275,9 +281,9 @@ setInterval(() => {}, 1000);
 	}
 });
 
-test('does not emit periodic full-frame Ink redraws while background work is idle', async () => {
-	// Ensure test behaves as non-SSH (InlineActivityIndicator handles bg tasks
-	// out-of-band, so Ink should not re-render periodically).
+test('renders background work without full-frame redraws only when direct-write overlay is enabled', async () => {
+	// Ensure the terminal capability decision is based on the local platform,
+	// not an inherited SSH session.
 	const origSSH_TTY = process.env.SSH_TTY;
 	const origSSH_CLIENT = process.env.SSH_CLIENT;
 	const origSSH_CONNECTION = process.env.SSH_CONNECTION;
@@ -317,7 +323,12 @@ setInterval(() => {}, 1000);
 		await sleep(1300);
 		await nextLoopTurn();
 
-		assert.doesNotMatch(stripAnsi(output), /OpenHarness|commands · @ files|PgUp\/Dn scroll|╭|╰/u);
+		if (shouldAnimateBackgroundCue()) {
+			assert.doesNotMatch(stripAnsi(output), /OpenHarness|commands · @ files|PgUp\/Dn scroll|╭|╰/u);
+		} else {
+			assert.match(stripAnsi(output), /OpenHarness|commands · @ files|╭|╰/u);
+			assert.match(stripAnsi(output), /[⠙⠹⠸⠼⠴⠦⠧⠇⠏] \| \[bg\] running/u);
+		}
 	} finally {
 		// Restore SSH env vars
 		if (origSSH_TTY !== undefined) process.env.SSH_TTY = origSSH_TTY;

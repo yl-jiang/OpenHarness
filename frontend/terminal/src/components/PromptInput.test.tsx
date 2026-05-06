@@ -395,7 +395,7 @@ test('disables spinner animation on flicker-prone terminals', () => {
 	assert.equal(shouldAnimateBackgroundCue('win32', {}), false);
 	assert.equal(shouldAnimateBackgroundCue('win32', {WT_SESSION: 'abc'}), true);
 	assert.equal(shouldAnimateBackgroundCue('linux', {SSH_TTY: '/dev/pts/0'}), false);
-	assert.equal(shouldAnimateBackgroundCue('darwin', {}), true);
+	assert.equal(shouldAnimateBackgroundCue('darwin', {}), false);
 });
 
 test('keeps previously typed text when a paste arrives in the same prompt session', async () => {
