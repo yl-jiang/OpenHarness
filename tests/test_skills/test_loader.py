@@ -37,6 +37,26 @@ def test_load_skill_registry_includes_user_skills(tmp_path: Path, monkeypatch):
     assert "Deployment workflow guidance" in deploy.content
 
 
+def test_load_skill_registry_includes_project_local_skills(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    project_skills_dir = repo / ".openharness" / "skills"
+    review_dir = project_skills_dir / "project-review"
+    review_dir.mkdir(parents=True)
+    (review_dir / "SKILL.md").write_text(
+        "---\nname: project-review\ndescription: Review this workspace.\n---\n\n# Project Review\n",
+        encoding="utf-8",
+    )
+
+    registry = load_skill_registry(repo)
+    review = registry.get("project-review")
+
+    assert review is not None
+    assert review.source == "project"
+    assert "Project Review" in review.content
+
+
 def test_load_skill_registry_ignores_sibling_resource_files(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     skills_dir = get_user_skills_dir()

@@ -12,11 +12,17 @@ from openharness.skills.metadata import load_skill_definition
 from openharness.skills.registry import SkillRegistry
 from openharness.skills.types import SkillDefinition
 
+
 def get_user_skills_dir() -> Path:
     """Return the user skills directory."""
     path = get_config_dir() / "skills"
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def get_project_skills_dir(cwd: str | Path) -> Path:
+    """Return the project-local skills directory."""
+    return Path(cwd).expanduser().resolve() / ".openharness" / "skills"
 
 
 def load_skill_registry(
@@ -32,6 +38,13 @@ def load_skill_registry(
         registry.register(skill)
     for skill in load_user_skills():
         registry.register(skill)
+    if cwd is not None:
+        for skill in load_skills_from_dirs(
+            [get_project_skills_dir(cwd)],
+            source="project",
+            create_missing=False,
+        ):
+            registry.register(skill)
     for skill in load_skills_from_dirs(extra_skill_dirs):
         registry.register(skill)
     if cwd is not None:
@@ -81,6 +94,7 @@ def load_skills_from_dirs(
     directories: Iterable[str | Path] | None,
     *,
     source: str = "user",
+    create_missing: bool = True,
 ) -> list[SkillDefinition]:
     """Load markdown skills from one or more directories.
 
@@ -93,7 +107,13 @@ def load_skills_from_dirs(
     seen: set[Path] = set()
     for directory in directories:
         root = Path(directory).expanduser().resolve()
-        root.mkdir(parents=True, exist_ok=True)
+        if root.exists():
+            if not root.is_dir():
+                continue
+        elif create_missing:
+            root.mkdir(parents=True, exist_ok=True)
+        else:
+            continue
         candidates: list[Path] = []
         for child in sorted(root.iterdir()):
             if child.is_dir():
