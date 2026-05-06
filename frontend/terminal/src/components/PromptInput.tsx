@@ -1,4 +1,4 @@
-import React from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {Box, Text} from 'ink';
 import stringWidth from 'string-width';
 import ScrollableTextInput from './ScrollableTextInput.js';
@@ -97,14 +97,39 @@ function PromptInputInner({
 	statusLabel,
 	inputKey,
 	hasBackgroundTasks = false,
-	animateSpinner: _animateSpinner,
+	animateSpinner = false,
 }: PromptInputProps): React.JSX.Element {
+	const [frameIndex, setFrameIndex] = useState(0);
+	const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+	useEffect(() => {
+		const shouldAnimate = animateSpinner && (busy || hasBackgroundTasks);
+		if (shouldAnimate) {
+			intervalRef.current = setInterval(() => {
+				setFrameIndex((i) => (i + 1) % SPINNER_FRAMES.length);
+			}, 220);
+		} else {
+			if (intervalRef.current) {
+				clearInterval(intervalRef.current);
+				intervalRef.current = null;
+			}
+			setFrameIndex(0);
+		}
+		return () => {
+			if (intervalRef.current) {
+				clearInterval(intervalRef.current);
+				intervalRef.current = null;
+			}
+		};
+	}, [animateSpinner, busy, hasBackgroundTasks]);
+
 	const idleTitle = 'ready';
 	const busyTitle = statusLabel ?? (toolName ? `[run] ${toolName}` : '[run]');
 	const showBackgroundActivity = !busy && hasBackgroundTasks;
 	const backgroundTitle = '[bg] running';
-	const backgroundFrame = SPINNER_STATIC_FRAME;
-	const spinnerFrame = hasBackgroundTasks ? backgroundFrame : SPINNER_STATIC_FRAME;
+	const animatedFrame = SPINNER_FRAMES[frameIndex];
+	const backgroundFrame = animateSpinner ? animatedFrame : SPINNER_STATIC_FRAME;
+	const spinnerFrame = animateSpinner ? animatedFrame : (hasBackgroundTasks ? SPINNER_STATIC_FRAME : SPINNER_STATIC_FRAME);
 	const idleFrame = IDLE_STATIC_FRAME;
 	// Keep the trailing ellipsis static even while busy: the braille spinner
 	// already conveys liveness, and animating both makes the title line churn
