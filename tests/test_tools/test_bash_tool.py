@@ -164,6 +164,89 @@ async def test_bash_tool_collects_combined_output(monkeypatch, tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_bash_tool_runs_without_pty(monkeypatch, tmp_path: Path):
+    captured: dict[str, object] = {}
+    process = _FakeProcess(stdout=_FakeStdout([b"ok\n", b""]), returncode=0)
+
+    async def fake_create_shell_subprocess(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return process
+
+    monkeypatch.setattr("openharness.tools.bash_tool.create_shell_subprocess", fake_create_shell_subprocess)
+
+    result = await BashTool().execute(
+        BashToolInput(command="printf ok"),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error is False
+    assert captured["kwargs"]["prefer_pty"] is False
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_injects_non_interactive_environment(monkeypatch, tmp_path: Path):
+    captured: dict[str, object] = {}
+    process = _FakeProcess(stdout=_FakeStdout([b"ok\n", b""]), returncode=0)
+
+    async def fake_create_shell_subprocess(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return process
+
+    monkeypatch.setattr("openharness.tools.bash_tool.create_shell_subprocess", fake_create_shell_subprocess)
+    monkeypatch.setenv("PATH", "/test/bin")
+
+    result = await BashTool().execute(
+        BashToolInput(command="printf ok"),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    env = captured["kwargs"]["env"]
+
+    assert result.is_error is False
+    assert env["PATH"] == "/test/bin"
+    assert env["CI"] == "1"
+    assert env["GIT_PAGER"] == "cat"
+    assert env["PAGER"] == "cat"
+    assert env["MANPAGER"] == "cat"
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_preflights_explicit_interactive_commands(monkeypatch, tmp_path: Path):
+    async def fake_create_shell_subprocess(*args, **kwargs):
+        pytest.fail("interactive command should have been blocked before spawning")
+
+    monkeypatch.setattr("openharness.tools.bash_tool.create_shell_subprocess", fake_create_shell_subprocess)
+
+    result = await BashTool().execute(
+        BashToolInput(command="less README.md"),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error is True
+    assert result.metadata["interactive_required"] is True
+    assert "require interactive input" in result.output
+
+
+@pytest.mark.asyncio
+async def test_bash_tool_preflights_git_diff_without_no_pager(monkeypatch, tmp_path: Path):
+    async def fake_create_shell_subprocess(*args, **kwargs):
+        pytest.fail("git diff without --no-pager should have been blocked before spawning")
+
+    monkeypatch.setattr("openharness.tools.bash_tool.create_shell_subprocess", fake_create_shell_subprocess)
+
+    result = await BashTool().execute(
+        BashToolInput(command="git diff HEAD -- tests/"),
+        ToolExecutionContext(cwd=tmp_path),
+    )
+
+    assert result.is_error is True
+    assert result.metadata["interactive_required"] is True
+    assert "--no-pager" in result.output
+
+
+@pytest.mark.asyncio
 async def test_bash_tool_timeout_does_not_hang_when_stdout_stays_open(monkeypatch, tmp_path: Path):
     process = _FakeProcess(stdout=_NeverClosingStdout())
 

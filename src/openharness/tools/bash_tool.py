@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shlex
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -14,6 +16,17 @@ from openharness.utils.shell import create_shell_subprocess
 
 
 _READ_REMAINING_OUTPUT_TIMEOUT_SECONDS = 2.0
+_NON_INTERACTIVE_ENV_OVERRIDES = {
+    "CI": "1",
+    "GIT_PAGER": "cat",
+    "PAGER": "cat",
+    "MANPAGER": "cat",
+    "GIT_TERMINAL_PROMPT": "0",
+}
+_COMMAND_SEPARATORS = frozenset({";", "&&", "||", "|", "&"})
+_INTERACTIVE_PROGRAMS = frozenset({"less", "more", "most", "vim", "vi", "nvim", "view", "top", "htop", "watch", "man"})
+_GIT_PAGER_SUBCOMMANDS = frozenset({"diff", "log", "show"})
+_GIT_PAGER_DISABLE_MARKERS = frozenset({"--no-pager", "git_pager=cat", "pager=cat", "manpager=cat"})
 
 
 class BashToolInput(BaseModel):
@@ -30,7 +43,7 @@ class BashTool(BaseTool):
     name = "bash"
     description = (
         "Run a non-interactive shell command in the local repository. "
-        "stdout and stderr are merged and returned. "
+        "Commands run without a TTY, stdout and stderr are merged and returned. "
         "Prefer non-interactive flags (e.g. -y, --no-pager) when available."
     )
     input_model = BashToolInput
@@ -74,9 +87,10 @@ class BashTool(BaseTool):
             process = await create_shell_subprocess(
                 arguments.command,
                 cwd=cwd,
-                prefer_pty=True,
+                prefer_pty=False,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                env=_build_non_interactive_env(),
             )
         except SandboxUnavailableError as exc:
             return ToolResult(output=str(exc), is_error=True)
@@ -178,24 +192,45 @@ def _format_timeout_output(output_buffer: bytearray, *, command: str, timeout_se
 
 def _preflight_interactive_command(command: str) -> str | None:
     lowered_command = command.lower()
-    if not _looks_like_interactive_scaffold(lowered_command):
-        return None
-    return (
-        "This command appears to require interactive input before it can continue. "
-        "The bash tool is non-interactive, so it cannot answer installer/scaffold prompts live. "
-        "Prefer non-interactive flags (for example --yes, -y, --skip-install, --defaults, --non-interactive), "
-        "or run the scaffolding step once in an external terminal before asking the agent to continue."
-    )
+    if _looks_like_interactive_scaffold(lowered_command):
+        return (
+            "This command appears to require interactive input before it can continue. "
+            "The bash tool is non-interactive, so it cannot answer installer/scaffold prompts live. "
+            "Prefer non-interactive flags (for example --yes, -y, --skip-install, --defaults, --non-interactive), "
+            "or run the scaffolding step once in an external terminal before asking the agent to continue."
+        )
+    if _looks_like_explicit_interactive_command(command):
+        return (
+            "This command appears to require interactive input before it can continue. "
+            "The bash tool runs without a TTY, so it cannot drive pagers, editors, or other interactive terminal programs live. "
+            "Prefer a non-interactive alternative or run this command in an external terminal."
+        )
+    if _looks_like_git_pager_command(command):
+        return (
+            "This git command may open a pager in interactive terminals. "
+            "The bash tool is non-interactive, so rerun it with --no-pager "
+            "(for example `git --no-pager diff ...`) or use another non-interactive form."
+        )
+    return None
 
 
 def _interactive_command_hint(*, command: str, output: str) -> str | None:
     lowered_command = command.lower()
-    if _looks_like_interactive_scaffold(lowered_command) or _looks_like_prompt(output):
+    if (
+        _looks_like_interactive_scaffold(lowered_command)
+        or _looks_like_explicit_interactive_command(command)
+        or _looks_like_prompt(output)
+    ):
         return (
             "This command appears to require interactive input. "
             "The bash tool is non-interactive, so prefer non-interactive flags "
             "(for example --yes, -y, --skip-install, or similar) or run the "
             "scaffolding step once in an external terminal before continuing."
+        )
+    if _looks_like_git_pager_command(command):
+        return (
+            "This git command may require a pager in interactive terminals. "
+            "Rerun it with --no-pager when using the non-interactive bash tool."
         )
     return None
 
@@ -240,3 +275,77 @@ def _looks_like_prompt(output: str) -> bool:
     )
     lowered_output = output.lower()
     return any(marker in lowered_output for marker in prompt_markers)
+
+
+def _build_non_interactive_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env.update(_NON_INTERACTIVE_ENV_OVERRIDES)
+    return env
+
+
+def _tokenize_shell_command(command: str) -> list[str]:
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        return list(lexer)
+    except ValueError:
+        return command.split()
+
+
+def _split_command_segments(tokens: list[str]) -> list[list[str]]:
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in _COMMAND_SEPARATORS:
+            if current:
+                segments.append(current)
+                current = []
+            continue
+        current.append(token)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _strip_env_prefix(tokens: list[str]) -> list[str]:
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "env":
+            index += 1
+            continue
+        if "=" in token and not token.startswith(("=", "./", "../", "/")):
+            name, _, _value = token.partition("=")
+            if name:
+                index += 1
+                continue
+        break
+    return tokens[index:]
+
+
+def _looks_like_explicit_interactive_command(command: str) -> bool:
+    for segment in _split_command_segments(_tokenize_shell_command(command)):
+        stripped = _strip_env_prefix(segment)
+        if not stripped:
+            continue
+        program = stripped[0].lower()
+        if program in _INTERACTIVE_PROGRAMS:
+            return True
+        if program == "tail" and any(flag in {"-f", "-F", "--follow"} for flag in stripped[1:]):
+            return True
+    return False
+
+
+def _looks_like_git_pager_command(command: str) -> bool:
+    for segment in _split_command_segments(_tokenize_shell_command(command)):
+        lowered_segment = [token.lower() for token in _strip_env_prefix(segment)]
+        if not lowered_segment or lowered_segment[0] != "git":
+            continue
+        if any(marker in lowered_segment for marker in _GIT_PAGER_DISABLE_MARKERS):
+            continue
+        for token in lowered_segment[1:]:
+            if token.startswith("-"):
+                continue
+            return token in _GIT_PAGER_SUBCOMMANDS
+    return False
