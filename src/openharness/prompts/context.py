@@ -49,9 +49,8 @@ TOOL_USE_ENFORCEMENT_GUIDANCE = (
     "what you plan to do next time. If you have tools available that can accomplish "
     "the task, use them instead of telling the user what you would do.\n"
     "Every response should either (a) contain tool calls that make progress, or "
-    "(b) call `done(message=...)` with the final result for the user. Do not rely "
-    "on stopping without tool calls to finish an agent loop; completion must be explicit. "
-    "Responses that only describe intentions without acting are not acceptable.\n"
+    "(b) deliver a final result to the user. Responses that only describe intentions "
+    "without acting are not acceptable.\n"
 )
 
 _RUNTIME_SYSTEM_PROMPT_CACHE_SIZE = 32

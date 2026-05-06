@@ -10,8 +10,6 @@ from openharness.engine.cost_tracker import CostTracker
 from openharness.coordinator.coordinator_mode import get_coordinator_user_context
 from openharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock
 from openharness.engine.query import (
-    DONE_TOOL_NAME,
-    EXPLICIT_DONE_REQUIRED_PROMPT_PREFIX,
     AskUserPrompt,
     INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX,
     MaxTurnsExceeded,
@@ -74,7 +72,6 @@ class QueryEngine:
         ask_user_prompt: AskUserPrompt | None = None,
         hook_executor: HookExecutor | None = None,
         tool_metadata: dict[str, object] | None = None,
-        require_done_tool: bool = False,
     ) -> None:
         self._api_client = api_client
         self._tool_registry = tool_registry
@@ -90,7 +87,6 @@ class QueryEngine:
         self._ask_user_prompt = ask_user_prompt
         self._hook_executor = hook_executor
         self._tool_metadata = tool_metadata or {}
-        self._require_done_tool = require_done_tool
         self._messages: list[ConversationMessage] = []
         self._export_messages: list[ConversationMessage] = []
         self._cost_tracker = CostTracker()
@@ -179,7 +175,6 @@ class QueryEngine:
         text = message.text
         return (
             text == _INTERNAL_AUTO_CONTINUE_PROMPT
-            or text.startswith(EXPLICIT_DONE_REQUIRED_PROMPT_PREFIX)
             or text.startswith(INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX)
             or text.startswith("# Coordinator User Context\n\n")
         )
@@ -228,7 +223,7 @@ class QueryEngine:
         for message in reversed(messages[:-2]):
             if message.role != "assistant":
                 continue
-            return any(tool_use.name != DONE_TOOL_NAME for tool_use in message.tool_uses)
+            return bool(message.tool_uses)
         return False
 
     async def _stream_query_with_guards(
@@ -387,7 +382,7 @@ class QueryEngine:
         for msg in reversed(self._messages[:-1]):
             if msg.role != "assistant":
                 continue
-            return any(tool_use.name != DONE_TOOL_NAME for tool_use in msg.tool_uses)
+            return bool(msg.tool_uses)
         return False
 
     async def submit_message(self, prompt: str | ConversationMessage) -> AsyncIterator[StreamEvent]:
@@ -431,7 +426,6 @@ class QueryEngine:
             ask_user_prompt=self._ask_user_prompt,
             hook_executor=self._hook_executor,
             tool_metadata=self._tool_metadata,
-            require_done_tool=self._require_done_tool,
         )
         query_messages = list(self._messages)
         coordinator_context = self._build_coordinator_context_message()

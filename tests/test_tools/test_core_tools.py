@@ -242,17 +242,6 @@ def test_tool_registry_invalidates_schema_cache_on_register_and_unregister() -> 
     assert second_tool.schema_calls == 2
 
 
-def test_default_registry_exposes_done_tool() -> None:
-    registry = create_default_tool_registry()
-    tool = registry.get("done")
-
-    assert tool is not None
-    schema = tool.to_api_schema()
-    assert schema["name"] == "done"
-    assert schema["parameters"]["required"] == ["message"]
-    assert set(schema["parameters"]["properties"]) == {"message"}
-
-
 @pytest.mark.asyncio
 async def test_todo_write_merge_and_read(tmp_path: Path):
     tool = TodoTool()
