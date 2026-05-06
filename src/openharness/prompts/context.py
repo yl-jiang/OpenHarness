@@ -121,7 +121,7 @@ def _build_skills_section(
         extra_plugin_roots=extra_plugin_roots,
         settings=settings,
     )
-    skills = registry.list_skills()
+    skills = [skill for skill in registry.list_skills() if not skill.disable_model_invocation]
     if not skills:
         return None
     lines = [SKILLS_GUIDANCE] + [

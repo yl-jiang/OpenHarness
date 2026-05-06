@@ -47,6 +47,10 @@ def render_skill_load_prompt(skill: Any, args: str) -> str:
     return render_skill_template(skill.content, args)
 
 
+def _is_user_invocable_skill(skill: Any) -> bool:
+    return bool(getattr(skill, "user_invocable", True))
+
+
 def remember_loaded_skill(context: CommandContext, name: str) -> None:
     bucket = context.engine.tool_metadata.setdefault(ToolMetadataKey.INVOKED_SKILLS.value, [])
     if not isinstance(bucket, list):
@@ -83,7 +87,7 @@ def resolve_skill_alias_command(raw_input: str, context: CommandContext) -> Comm
         extra_plugin_roots=context.extra_plugin_roots,
     )
     skill = registry.get(skill_name)
-    if skill is None:
+    if skill is None or not _is_user_invocable_skill(skill):
         return None
     remember_loaded_skill(context, skill.name)
     return CommandResult(
@@ -100,7 +104,7 @@ async def handle_skills_command(args: str, context: CommandContext) -> CommandRe
     )
     tokens = args.split(maxsplit=2)
     if not tokens or tokens[0] == "list":
-        skills = skill_registry.list_skills()
+        skills = [skill for skill in skill_registry.list_skills() if _is_user_invocable_skill(skill)]
         if not skills:
             return CommandResult(message="No skills available.")
         lines = ["Available skills:"]
@@ -113,13 +117,13 @@ async def handle_skills_command(args: str, context: CommandContext) -> CommandRe
         if len(tokens) < 2:
             return CommandResult(message="Usage: /skills show NAME")
         skill = skill_registry.get(tokens[1])
-        if skill is None:
+        if skill is None or not _is_user_invocable_skill(skill):
             return CommandResult(message=f"Skill not found: {tokens[1]}")
         return CommandResult(message=skill.content)
 
     name, _, load_args = args.partition(" ")
     skill = skill_registry.get(name)
-    if skill is None:
+    if skill is None or not _is_user_invocable_skill(skill):
         return CommandResult(message=f"Skill not found: {name}")
     remember_loaded_skill(context, skill.name)
     return CommandResult(

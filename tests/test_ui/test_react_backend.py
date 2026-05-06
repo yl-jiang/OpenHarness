@@ -624,10 +624,16 @@ async def test_backend_host_emits_skill_select_request(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
-    skill_dir = tmp_path / "config" / "skills" / "review"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text(
+    visible_dir = tmp_path / "config" / "skills" / "review"
+    visible_dir.mkdir(parents=True)
+    (visible_dir / "SKILL.md").write_text(
         "---\nname: review\ndescription: Review changes carefully\n---\n\n# Review\nCheck the diff.",
+        encoding="utf-8",
+    )
+    hidden_dir = tmp_path / "config" / "skills" / "internal-review"
+    hidden_dir.mkdir(parents=True)
+    (hidden_dir / "SKILL.md").write_text(
+        "---\nname: internal-review\ndescription: Internal workflow\nuser-invocable: false\n---\n\n# Internal Review\nInternal only.",
         encoding="utf-8",
     )
 
@@ -654,6 +660,7 @@ async def test_backend_host_emits_skill_select_request(tmp_path, monkeypatch):
         and "Review changes carefully" in option["description"]
         for option in event.select_options
     )
+    assert all(option["value"] != "internal-review" for option in event.select_options)
 
 
 @pytest.mark.asyncio

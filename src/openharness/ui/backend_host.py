@@ -586,7 +586,7 @@ class ReactBackendHost:
             extra_plugin_roots=self._bundle.extra_plugin_roots,
             settings=self._bundle.current_settings(),
         )
-        return [skill.name for skill in registry.list_skills()]
+        return [skill.name for skill in registry.list_skills() if skill.user_invocable]
 
     async def _emit_todo_update_from_output(self, output: str) -> None:
         """Emit a todo_update event by extracting markdown checklist from tool output."""
@@ -837,6 +837,7 @@ class ReactBackendHost:
                     "description": f"{skill.description} [{skill.source}]",
                 }
                 for skill in registry.list_skills()
+                if skill.user_invocable
             ]
             await self._emit(
                 BackendEvent(

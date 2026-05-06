@@ -374,6 +374,39 @@ async def test_skill_alias_command_loads_skill_as_submit_prompt(tmp_path: Path, 
     assert context.engine.tool_metadata[ToolMetadataKey.INVOKED_SKILLS.value] == ["weekly-report"]
 
 
+@pytest.mark.asyncio
+async def test_non_user_invocable_skills_are_hidden_from_user_commands(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    visible_dir = tmp_path / "config" / "skills" / "review"
+    visible_dir.mkdir(parents=True)
+    (visible_dir / "SKILL.md").write_text(
+        "---\nname: review\ndescription: Review changes carefully\n---\n\n# Review\nCheck the diff.",
+        encoding="utf-8",
+    )
+    hidden_dir = tmp_path / "config" / "skills" / "internal-review"
+    hidden_dir.mkdir(parents=True)
+    (hidden_dir / "SKILL.md").write_text(
+        "---\nname: internal-review\ndescription: Internal workflow\nuser-invocable: false\n---\n\n# Internal Review\nFor internal use.",
+        encoding="utf-8",
+    )
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+
+    list_command, list_args = registry.lookup("/skills list")
+    assert list_command is not None
+    list_result = await list_command.handler(list_args, context)
+
+    assert "review [user]: Review changes carefully" in list_result.message
+    assert "internal-review" not in list_result.message
+
+    assert registry_module.resolve_skill_alias_command("/internal-review investigate this", context) is None
+
+    load_command, load_args = registry.lookup("/skills internal-review")
+    assert load_command is not None
+    load_result = await load_command.handler(load_args, context)
+    assert load_result.message == "Skill not found: internal-review"
+
+
 def test_render_skill_load_prompt_replaces_numbered_placeholders_with_greedy_last_argument() -> None:
     skill = SkillDefinition(
         name="translate",

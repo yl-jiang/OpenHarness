@@ -168,6 +168,36 @@ def test_skills_section_uses_runtime_skill_manager_tool_name(tmp_path: Path, mon
     assert "via the `skill` tool" not in prompt
 
 
+def test_skills_section_excludes_disable_model_invocation_skills(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    skill_root = tmp_path / "skills"
+    visible_dir = skill_root / "review"
+    visible_dir.mkdir(parents=True)
+    (visible_dir / "SKILL.md").write_text(
+        "---\nname: review\ndescription: Review changes\n---\n\n# Review\nCheck changes.",
+        encoding="utf-8",
+    )
+    hidden_dir = skill_root / "internal-review"
+    hidden_dir.mkdir(parents=True)
+    (hidden_dir / "SKILL.md").write_text(
+        "---\nname: internal-review\ndescription: Internal workflow\ndisable-model-invocation: true\n---\n\n# Internal Review\nCheck internal changes.",
+        encoding="utf-8",
+    )
+
+    prompt = build_runtime_system_prompt(
+        Settings(memory={"enabled": False}),
+        cwd=repo,
+        extra_skill_dirs=[skill_root],
+        latest_user_prompt="review this project",
+    )
+
+    assert "**review**: Review changes" in prompt
+    assert "internal-review" not in prompt
+
+
 def test_format_prompt_blocks_debug_aligns_columns() -> None:
     output = format_prompt_blocks_debug(
         [
