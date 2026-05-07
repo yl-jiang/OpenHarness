@@ -11,6 +11,7 @@ from openharness.coordinator.coordinator_mode import get_coordinator_user_contex
 from openharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock
 from openharness.engine.query import (
     AskUserPrompt,
+    INTERNAL_DONE_REMINDER_PREFIX,
     INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX,
     MaxTurnsExceeded,
     PermissionPrompt,
@@ -72,6 +73,7 @@ class QueryEngine:
         ask_user_prompt: AskUserPrompt | None = None,
         hook_executor: HookExecutor | None = None,
         tool_metadata: dict[str, object] | None = None,
+        require_explicit_done: bool = False,
     ) -> None:
         self._api_client = api_client
         self._tool_registry = tool_registry
@@ -87,6 +89,7 @@ class QueryEngine:
         self._ask_user_prompt = ask_user_prompt
         self._hook_executor = hook_executor
         self._tool_metadata = tool_metadata or {}
+        self._require_explicit_done = require_explicit_done
         self._messages: list[ConversationMessage] = []
         self._export_messages: list[ConversationMessage] = []
         self._cost_tracker = CostTracker()
@@ -157,6 +160,10 @@ class QueryEngine:
         """Update the active permission checker for future turns."""
         self._permission_checker = checker
 
+    def set_require_explicit_done(self, value: bool) -> None:
+        """Update whether the agent loop requires an explicit done() call to terminate."""
+        self._require_explicit_done = value
+
     def _build_coordinator_context_message(self) -> ConversationMessage | None:
         """Build a synthetic user message carrying coordinator runtime context."""
         context = get_coordinator_user_context()
@@ -176,6 +183,7 @@ class QueryEngine:
         return (
             text == _INTERNAL_AUTO_CONTINUE_PROMPT
             or text.startswith(INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX)
+            or text.startswith(INTERNAL_DONE_REMINDER_PREFIX)
             or text.startswith("# Coordinator User Context\n\n")
         )
 
@@ -426,6 +434,7 @@ class QueryEngine:
             ask_user_prompt=self._ask_user_prompt,
             hook_executor=self._hook_executor,
             tool_metadata=self._tool_metadata,
+            require_explicit_done=self._require_explicit_done,
         )
         query_messages = list(self._messages)
         coordinator_context = self._build_coordinator_context_message()
@@ -507,6 +516,7 @@ class QueryEngine:
             ask_user_prompt=self._ask_user_prompt,
             hook_executor=self._hook_executor,
             tool_metadata=self._tool_metadata,
+            require_explicit_done=self._require_explicit_done,
         )
         query_messages = list(self._messages)
         async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):

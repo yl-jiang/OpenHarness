@@ -959,6 +959,24 @@ def create_default_command_registry(
 
     _MODE_LABELS = {"default": "Default", "plan": "Plan Mode", "full_auto": "Auto"}
 
+    def _sync_full_auto_tools(context: CommandContext, is_full_auto: bool) -> None:
+        """Register/unregister tools based on full_auto mode and update engine flag."""
+        from openharness.tools.done_tool import DoneTool
+        from openharness.tools.ask_user_question_tool import AskUserQuestionTool
+
+        registry = context.tool_registry
+        if registry is None:
+            return
+        if is_full_auto:
+            if registry.get("done") is None:
+                registry.register(DoneTool())
+            registry.unregister("ask_user_question")
+        else:
+            registry.unregister("done")
+            if registry.get("ask_user_question") is None:
+                registry.register(AskUserQuestionTool())
+        context.engine.set_require_explicit_done(is_full_auto)
+
     async def _permissions_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
         tokens = args.split()
@@ -981,6 +999,7 @@ def create_default_command_registry(
             settings.permission.mode = PermissionMode(target_mode)
             save_settings(settings)
             context.engine.set_permission_checker(_build_permission_checker(settings, context))
+            _sync_full_auto_tools(context, settings.permission.mode == PermissionMode.FULL_AUTO)
             if context.app_state is not None:
                 context.app_state.set(permission_mode=settings.permission.mode.value)
             label = _MODE_LABELS.get(target_mode, target_mode)
@@ -994,6 +1013,7 @@ def create_default_command_registry(
             settings.permission.mode = PermissionMode.PLAN
             save_settings(settings)
             context.engine.set_permission_checker(_build_permission_checker(settings, context))
+            _sync_full_auto_tools(context, False)
             if context.app_state is not None:
                 context.app_state.set(permission_mode=settings.permission.mode.value)
             return CommandResult(message="Plan mode enabled.", refresh_runtime=True)
@@ -1001,6 +1021,7 @@ def create_default_command_registry(
             settings.permission.mode = PermissionMode.DEFAULT
             save_settings(settings)
             context.engine.set_permission_checker(_build_permission_checker(settings, context))
+            _sync_full_auto_tools(context, False)
             if context.app_state is not None:
                 context.app_state.set(permission_mode=settings.permission.mode.value)
             return CommandResult(message="Plan mode disabled.", refresh_runtime=True)
