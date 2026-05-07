@@ -6,7 +6,6 @@ import pytest
 
 from openharness.engine.messages import ToolResultBlock
 from openharness.engine.tool_pipeline import (
-    DEFAULT_TOOL_EXECUTION_STAGE_NAMES,
     ToolExecutionPipeline,
     ToolPipelineStage,
     ToolPipelineState,
@@ -14,7 +13,9 @@ from openharness.engine.tool_pipeline import (
 
 
 def test_default_tool_pipeline_stage_order_is_explicit() -> None:
-    assert DEFAULT_TOOL_EXECUTION_STAGE_NAMES == (
+    from openharness.engine.query import _default_tool_pipeline_stages
+
+    assert tuple(s.name for s in _default_tool_pipeline_stages()) == (
         "resolve_tool",
         "pre_hook",
         "validate_input",

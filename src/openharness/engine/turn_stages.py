@@ -36,12 +36,6 @@ from openharness.engine.stream_events import (
     ToolExecutionCompleted,
     ToolExecutionStarted,
 )
-from openharness.engine.tool_loop_guard import (
-    build_doom_loop_result,
-    record_tool_call_result,
-    should_block_tool_call,
-)
-from openharness.engine.tool_pipeline import ToolExecutionPipeline
 from openharness.engine.types import ToolMetadataKey
 from openharness.api.provider import is_model_multimodal
 from openharness.tools.base import ToolExecutionContext
@@ -482,6 +476,7 @@ async def done_gate_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, 
 
     # done() mixed with other tools: reject done, execute the rest
     context = state.context
+    from openharness.engine.query import _execute_tool_call
     tool_results = []
     for i, tc in enumerate(tool_calls):
         if i in done_indices:
@@ -525,6 +520,7 @@ async def tool_execution_stage(state: TurnState) -> AsyncIterator[tuple[StreamEv
         return
 
     context = state.context
+    from openharness.engine.query import _execute_tool_call
 
     if len(tool_calls) == 1:
         tc = tool_calls[0]
@@ -617,38 +613,6 @@ async def post_tool_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, 
     # Silence the type checker — yield nothing but satisfy AsyncIterator protocol
     return
     yield  # noqa: F841 — makes this an async generator
-
-
-# ---------------------------------------------------------------------------
-# Shared helper: _execute_tool_call (moved from query.py)
-# ---------------------------------------------------------------------------
-
-async def _execute_tool_call(
-    context,  # QueryContext
-    tool_name: str,
-    tool_use_id: str,
-    tool_input: dict[str, object],
-) -> ToolResultBlock:
-    """Execute a single tool call through the pipeline with doom-loop protection."""
-    from openharness.engine.query import _default_tool_pipeline_stages
-
-    doom_loop = should_block_tool_call(context.tool_metadata, tool_name, tool_input)
-    if doom_loop.blocked:
-        logger.warning("blocked repeated failing tool call: %s id=%s", tool_name, tool_use_id)
-        return build_doom_loop_result(
-            tool_use_id=tool_use_id,
-            tool_name=tool_name,
-            reason=doom_loop.reason,
-        )
-
-    result = await ToolExecutionPipeline(_default_tool_pipeline_stages()).run(
-        context=context,
-        tool_name=tool_name,
-        tool_use_id=tool_use_id,
-        tool_input=tool_input,
-    )
-    record_tool_call_result(context.tool_metadata, tool_name, tool_input, result)
-    return result
 
 
 # ---------------------------------------------------------------------------
