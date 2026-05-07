@@ -36,7 +36,8 @@ from openharness.engine.messages import ToolResultBlock
 from openharness.hooks import HookExecutionContext, HookExecutor, HookEvent
 from openharness.hooks.loader import HookRegistry
 from openharness.hooks.schemas import PromptHookDefinition
-from openharness.engine.query import QueryContext, _execute_tool_call, _is_prompt_too_long_error
+from openharness.api.errors import is_prompt_too_long_error as _is_prompt_too_long_error
+from openharness.engine.query import QueryContext, _execute_tool_call
 from openharness.engine.types import ToolMetadataKey
 
 
