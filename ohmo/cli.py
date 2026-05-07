@@ -289,6 +289,24 @@ def _prompt_channels(existing: GatewayConfig) -> tuple[list[str], dict[str, dict
                 "Feishu reaction emoji",
                 default=str(prior.get("react_emoji", "OK")),
             )
+            config["group_policy"] = _select_from_menu(
+                "Feishu group policy",
+                options=[
+                    ("managed_or_mention", "managed_or_mention - respond to managed groups + @mentions"),
+                    ("mention", "mention - only respond to @mentions"),
+                    ("managed", "managed - only respond to managed groups"),
+                    ("open", "open - respond to all group messages"),
+                ],
+                default_value=str(prior.get("group_policy", "managed_or_mention")),
+            )
+            config["bot_open_id"] = _text_prompt(
+                "Bot open_id (leave empty to auto-detect)",
+                default=str(prior.get("bot_open_id", "")),
+            )
+            config["bot_names"] = _text_prompt(
+                "Bot name keywords (comma separated)",
+                default=str(prior.get("bot_names", "ohmo,openclaw,openharness")),
+            )
         configs[channel] = config
     return enabled, configs
 
