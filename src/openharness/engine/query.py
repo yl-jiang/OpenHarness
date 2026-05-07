@@ -13,11 +13,9 @@ from openharness.api.client import (
     SupportsStreamingMessages,
 )
 from openharness.api.errors import is_prompt_too_long_error as _is_prompt_too_long_error  # noqa: F401 — re-exported for tests
-from openharness.api.provider import is_model_multimodal
 from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock
+from openharness.engine.messages import ConversationMessage, ToolResultBlock
 from openharness.engine.stream_events import (
-    StatusEvent,
     StreamEvent,
 )
 from openharness.engine.tool_loop_guard import (
@@ -37,7 +35,6 @@ from openharness.utils.log import get_logger
 
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
 REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
-IMAGE_PREPROCESS_STATUS_MESSAGE = "Converting image to text description via vision model..."
 MAX_SAFE_COMPLETION_TOKENS = 128_000
 # Maximum number of times we inject a "call done()" reminder when the model
 # stops without tool calls in require_explicit_done mode.
@@ -572,68 +569,6 @@ def _carryover_log(
             _remember_work_log(context.tool_metadata, entry="Entered plan mode")
         elif action == "exit":
             _remember_work_log(context.tool_metadata, entry="Exited plan mode")
-
-
-async def _preprocess_images_in_messages(
-    messages: list[ConversationMessage],
-    context: QueryContext,
-) -> AsyncIterator[StreamEvent]:
-    """Convert user image blocks to text when the active model is text-only."""
-    if is_model_multimodal(context.model):
-        return
-    if not isinstance(context.tool_metadata, dict):
-        return
-    vision_config = context.tool_metadata.get(ToolMetadataKey.VISION_MODEL_CONFIG.value)
-    if not isinstance(vision_config, dict) or not vision_config:
-        return
-
-    pending: list[tuple[int, int, ImageBlock]] = []
-    for msg_idx, msg in enumerate(messages):
-        if msg.role != "user":
-            continue
-        for block_idx, block in enumerate(msg.content):
-            if isinstance(block, ImageBlock):
-                pending.append((msg_idx, block_idx, block))
-    if not pending:
-        return
-
-    yield StatusEvent(message=IMAGE_PREPROCESS_STATUS_MESSAGE)
-
-    async def _describe(msg_idx: int, block_idx: int, block: ImageBlock) -> tuple[int, int, str]:
-        tool = context.tool_registry.get("image_to_text")
-        if tool is None:
-            return msg_idx, block_idx, "[Image: could not describe - image_to_text tool not available]"
-
-        tool_input = {
-            "image_data": block.data,
-            "media_type": block.media_type,
-            "prompt": (
-                "Describe this image in detail, including any text, UI elements, "
-                "code, diagrams, or visual information present."
-            ),
-        }
-        try:
-            parsed = tool.input_model.model_validate(tool_input)
-        except ValueError:
-            return msg_idx, block_idx, "[Image: could not parse image data]"
-
-        result = await tool.execute(
-            parsed,
-            ToolExecutionContext(
-                cwd=context.cwd,
-                metadata={
-                    **context.tool_metadata,
-                    ToolMetadataKey.VISION_MODEL_CONFIG.value: vision_config,
-                },
-            ),
-        )
-        if result.is_error:
-            return msg_idx, block_idx, f"[Image description failed: {result.output}]"
-        return msg_idx, block_idx, result.output
-
-    results = await asyncio.gather(*(_describe(msg_idx, block_idx, block) for msg_idx, block_idx, block in pending))
-    for msg_idx, block_idx, description in results:
-        messages[msg_idx].content[block_idx] = TextBlock(text=description)
 
 
 async def run_query(
