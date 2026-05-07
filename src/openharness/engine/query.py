@@ -9,15 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
-from openharness.api.client import (
-    SupportsStreamingMessages,
-)
-from openharness.api.errors import is_prompt_too_long_error as _is_prompt_too_long_error  # noqa: F401 — re-exported for tests
+from openharness.api.client import SupportsStreamingMessages
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import ConversationMessage, ToolResultBlock
-from openharness.engine.stream_events import (
-    StreamEvent,
-)
+from openharness.engine.stream_events import StreamEvent
 from openharness.engine.tool_loop_guard import (
     build_doom_loop_result,
     record_tool_call_result,
@@ -36,9 +31,6 @@ from openharness.utils.log import get_logger
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
 REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
 MAX_SAFE_COMPLETION_TOKENS = 128_000
-# Maximum number of times we inject a "call done()" reminder when the model
-# stops without tool calls in require_explicit_done mode.
-_MAX_DONE_REMINDER_RETRIES = 2
 
 logger = get_logger(__name__)
 
@@ -66,32 +58,6 @@ def _bounded_completion_tokens(max_tokens: int, context_window_tokens: int | Non
     if context_window_tokens is not None and context_window_tokens > 0:
         limit = min(limit, int(context_window_tokens))
     return max(1, min(int(max_tokens), limit))
-
-
-def _extract_completion_token_limit(exc: Exception) -> int | None:
-    """Parse provider errors like "supports at most 128000 completion tokens"."""
-    text = str(exc).lower().replace(",", "")
-    patterns = (
-        r"supports at most\s+(\d+)\s+completion tokens",
-        r"at most\s+(\d+)\s+completion tokens",
-        r"max(?:imum)?(?:_completion)?[_\s-]tokens.*?(?:<=|less than or equal to|at most)\s+(\d+)",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            try:
-                return max(1, int(match.group(1)))
-            except ValueError:
-                return None
-    return None
-
-
-def _is_completion_token_limit_error(exc: Exception) -> bool:
-    text = str(exc).lower()
-    return (
-        ("max_tokens" in text or "max_completion_tokens" in text)
-        and ("too large" in text or "at most" in text or "completion tokens" in text)
-    )
 
 
 class MaxTurnsExceeded(RuntimeError):

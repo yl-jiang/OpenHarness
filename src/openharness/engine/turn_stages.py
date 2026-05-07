@@ -269,9 +269,8 @@ async def preprocess_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent,
 
 async def api_call_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
     """Call the LLM API and handle retryable errors (token limit, prompt too long)."""
+    from openharness.engine.errors import _is_completion_token_limit_error, _extract_completion_token_limit
     from openharness.engine.query import (
-        _extract_completion_token_limit,
-        _is_completion_token_limit_error,
         REACTIVE_COMPACT_STATUS_MESSAGE,
     )
     from openharness.services.compact import auto_compact_if_needed
