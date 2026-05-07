@@ -248,7 +248,10 @@ class OpenAICompatibleClient:
         reasoning_effort: str | None = None,
         thinking_extra_body: dict | None = None,
     ) -> None:
-        kwargs: dict[str, Any] = {"api_key": api_key}
+        kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "default_headers": {"Authorization": f"Bearer {api_key}"},
+        }
         normalized_base_url = _normalize_openai_base_url(base_url)
         if normalized_base_url:
             kwargs["base_url"] = normalized_base_url
