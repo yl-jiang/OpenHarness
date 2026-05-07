@@ -10,26 +10,15 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 from openharness.api.client import (
-    ApiMessageCompleteEvent,
-    ApiMessageRequest,
-    ApiRetryEvent,
-    ApiTextDeltaEvent,
     SupportsStreamingMessages,
 )
-from openharness.api.errors import is_prompt_too_long_error as _is_prompt_too_long_error
+from openharness.api.errors import is_prompt_too_long_error as _is_prompt_too_long_error  # noqa: F401 — re-exported for tests
 from openharness.api.provider import is_model_multimodal
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock
-from openharness.engine.messages import normalize_messages_for_api
 from openharness.engine.stream_events import (
-    AssistantTextDelta,
-    AssistantTurnComplete,
-    CompactProgressEvent,
-    ErrorEvent,
     StatusEvent,
     StreamEvent,
-    ToolExecutionCompleted,
-    ToolExecutionStarted,
 )
 from openharness.engine.tool_loop_guard import (
     build_doom_loop_result,
@@ -44,7 +33,6 @@ from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.base import ToolRegistry
-from openharness.tools.done_tool import DONE_TOOL_NAME
 from openharness.utils.log import get_logger
 
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
@@ -659,357 +647,51 @@ async def run_query(
     the engine first tries a cheap microcompact (clearing old tool result
     content) and, if that is not enough, performs a full LLM-based
     summarization of older messages.
-    """
-    from openharness.services.compact import (
-        AutoCompactState,
-        auto_compact_if_needed,
-    )
 
-    external_messages = messages
-    compact_state = AutoCompactState()
-    reactive_compact_attempted = False
-    last_compaction_result: tuple[list[ConversationMessage], bool] = (messages, False)
-    effective_max_tokens = _bounded_completion_tokens(
-        context.max_tokens,
-        context.context_window_tokens,
+    The loop is decomposed into stages (defined in turn_stages.py).
+    Each stage yields events and signals the orchestrator via TurnState.action.
+    """
+    from openharness.engine.turn_stages import (
+        DEFAULT_TURN_STAGES,
+        TurnAction,
+        TurnState,
     )
-    reported_token_clamp = False
-    session_id = None
+    from openharness.services.compact import AutoCompactState
+
+    # Initialize turn state
+    state = TurnState(
+        context=context,
+        external_messages=messages,
+        messages=messages,
+        effective_max_tokens=_bounded_completion_tokens(
+            context.max_tokens,
+            context.context_window_tokens,
+        ),
+        compact_state=AutoCompactState(),
+        last_compaction_result=(messages, False),
+    )
     if isinstance(context.tool_metadata, dict):
         raw_session_id = context.tool_metadata.get("session_id")
         if isinstance(raw_session_id, str) and raw_session_id:
-            session_id = raw_session_id
+            state.session_id = raw_session_id
 
-    async def _stream_compaction(
-        *,
-        trigger: str,
-        force: bool = False,
-    ) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
-        nonlocal last_compaction_result
-        progress_queue: asyncio.Queue[CompactProgressEvent] = asyncio.Queue()
+    # Main loop
+    while context.max_turns is None or state.turn_count < context.max_turns:
+        state.turn_count += 1
+        state.reset_turn()
 
-        async def _progress(event: CompactProgressEvent) -> None:
-            await progress_queue.put(event)
+        for stage in DEFAULT_TURN_STAGES:
+            async for event_tuple in stage(state):
+                yield event_tuple
+            if state.action != TurnAction.PROCEED:
+                break
 
-        task = asyncio.create_task(
-            auto_compact_if_needed(
-                messages,
-                api_client=context.api_client,
-                model=context.model,
-                system_prompt=context.system_prompt,
-                state=compact_state,
-                progress_callback=_progress,
-                force=force,
-                trigger=trigger,
-                hook_executor=context.hook_executor,
-                carryover_metadata=context.tool_metadata,
-                context_window_tokens=context.context_window_tokens,
-                auto_compact_threshold_tokens=context.auto_compact_threshold_tokens,
-            )
-        )
-        while True:
-            try:
-                event = await asyncio.wait_for(progress_queue.get(), timeout=0.05)
-                yield event, None
-            except asyncio.TimeoutError:
-                if task.done():
-                    break
-                continue
-        while not progress_queue.empty():
-            yield progress_queue.get_nowait(), None
-        last_compaction_result = await task
-        return
-    
-    turn_count = 0
-    done_reminder_count = 0
-    while context.max_turns is None or turn_count < context.max_turns:
-        turn_count += 1
-        if effective_max_tokens != context.max_tokens and not reported_token_clamp:
-            reported_token_clamp = True
-            yield StatusEvent(
-                message=(
-                    f"Requested max_tokens={context.max_tokens} exceeds the safe per-request "
-                    f"output cap; using {effective_max_tokens}."
-                )
-            ), None
-        # --- auto-compact check before calling the model ---------------
-        async for event, usage in _stream_compaction(trigger="auto"):
-            yield event, usage
-        messages, was_compacted = last_compaction_result
-        if messages is not external_messages:
-            external_messages[:] = messages
-            messages = external_messages
-        # ---------------------------------------------------------------
-
-        if was_compacted:
-            todo_msg = context.tool_metadata['todo_store'].format_for_injection()
-            if todo_msg is not None:
-                messages.append(ConversationMessage.from_user_content(todo_msg))
-            # Clear the file-read cache so the agent re-reads files with fresh
-            # content after the context has been compacted.
-            context.tool_metadata.pop(ToolMetadataKey.FILE_READ_CACHE.value, None)
-
-        async for event in _preprocess_images_in_messages(messages, context):
-            yield event, None
-
-        messages[:] = normalize_messages_for_api(messages)
-
-        final_message: ConversationMessage | None = None
-        usage = UsageSnapshot()
-        stop_reason: str | None = None
-
-        try:
-            async for event in context.api_client.stream_message(
-                ApiMessageRequest(
-                    model=context.model,
-                    messages=messages,
-                    system_prompt=context.system_prompt,
-                    max_tokens=effective_max_tokens,
-                    tools=context.tool_registry.to_api_schema(),
-                )
-            ):
-                if isinstance(event, ApiTextDeltaEvent):
-                    yield AssistantTextDelta(text=event.text), None
-                    continue
-                if isinstance(event, ApiRetryEvent):
-                    yield StatusEvent(
-                        message=(
-                            f"Request failed; retrying in {event.delay_seconds:.1f}s "
-                            f"(attempt {event.attempt + 1} of {event.max_attempts}): {event.message}"
-                        )
-                    ), None
-                    continue
-
-                if isinstance(event, ApiMessageCompleteEvent):
-                    final_message = event.message
-                    usage = event.usage
-                    stop_reason = event.stop_reason
-        except Exception as exc:
-            # str(exc) can be empty for some exception types; use repr as fallback
-            error_msg = str(exc) or repr(exc)
-            logger.event(
-                "query_api_exception",
-                session_id=session_id,
-                model=context.model,
-                turn_count=turn_count,
-                error=error_msg,
-                exc_type=type(exc).__name__,
-                exc_repr=repr(exc),
-            )
-            if _is_completion_token_limit_error(exc):
-                supported_limit = _extract_completion_token_limit(exc)
-                if supported_limit is not None and effective_max_tokens > supported_limit:
-                    previous_max_tokens = effective_max_tokens
-                    effective_max_tokens = supported_limit
-                    yield StatusEvent(
-                        message=(
-                            f"Model rejected max_tokens={previous_max_tokens}; "
-                            f"retrying with provider limit {effective_max_tokens}."
-                        )
-                    ), None
-                    turn_count = max(0, turn_count - 1)
-                    continue
-            if not reactive_compact_attempted and _is_prompt_too_long_error(exc):
-                reactive_compact_attempted = True
-                yield StatusEvent(message=REACTIVE_COMPACT_STATUS_MESSAGE), None
-                async for event, usage in _stream_compaction(trigger="reactive", force=True):
-                    yield event, usage
-                messages, was_compacted = last_compaction_result
-                if messages is not external_messages:
-                    external_messages[:] = messages
-                    messages = external_messages
-                messages[:] = normalize_messages_for_api(messages)
-                if was_compacted:
-                    continue
-            if "connect" in error_msg.lower() or "timeout" in error_msg.lower() or "network" in error_msg.lower():
-                yield ErrorEvent(message=f"Network error: {error_msg}. Check your internet connection and try again."), None
-            else:
-                yield ErrorEvent(message=f"API error: {error_msg}"), None
+        if state.action == TurnAction.STOP:
             return
-
-        if final_message is None:
-            raise RuntimeError("Model stream finished without a final message")
-        
-        # TODO: call `post_api_request` hook
-
-        coordinator_context_message: ConversationMessage | None = None
-        if context.system_prompt.startswith("You are a **coordinator**."):
-            if messages and messages[-1].role == "user" and messages[-1].text.startswith("# Coordinator User Context"):
-                coordinator_context_message = messages.pop()
-
-        messages.append(final_message)
-        logger.event(
-            "api_message_complete",
-            session_id=session_id,
-            model=context.model,
-            turn_count=turn_count,
-            stop_reason=stop_reason,
-            text_length=len(final_message.text),
-            tool_use_count=len(final_message.tool_uses),
-            message_count=len(messages),
-        )
-        yield AssistantTurnComplete(message=final_message, usage=usage), usage
-
-        if coordinator_context_message is not None:
-            messages.append(coordinator_context_message)
-
-        if not final_message.tool_uses:
-            if context.require_explicit_done and done_reminder_count < _MAX_DONE_REMINDER_RETRIES:
-                # In full_auto mode, the model must call done() explicitly.
-                # Inject a reminder and continue the loop.
-                done_reminder_count += 1
-                logger.event(
-                    "done_reminder_injected",
-                    session_id=session_id,
-                    model=context.model,
-                    turn_count=turn_count,
-                    reminder_count=done_reminder_count,
-                )
-                messages.append(
-                    ConversationMessage.from_user_text(
-                        "<openharness-internal:done-reminder>\n"
-                        "You stopped without calling the done() tool. "
-                        "If the task is complete, you MUST call done(message=...) to signal completion. "
-                        "If you still have work to do, continue using tools."
-                    )
-                )
-                continue
-            logger.event(
-                "query_turn_finished_without_tool_use",
-                session_id=session_id,
-                model=context.model,
-                turn_count=turn_count,
-                text_length=len(final_message.text),
-                message_count=len(messages),
-            )
-            if context.hook_executor is not None:
-                await context.hook_executor.execute(
-                    HookEvent.STOP,
-                    {
-                        "event": HookEvent.STOP.value,
-                        "stop_reason": "tool_uses_empty",
-                    },
-                )
-            return
-
-        tool_calls = final_message.tool_uses
-
-        # Enforce: done() must be the sole tool call. If mixed with others,
-        # skip execution entirely and return an error for the done call.
-        done_indices = [i for i, tc in enumerate(tool_calls) if tc.name == DONE_TOOL_NAME]
-        if done_indices and len(tool_calls) > 1:
-            tool_results = []
-            for i, tc in enumerate(tool_calls):
-                if i in done_indices:
-                    tool_results.append(ToolResultBlock(
-                        tool_use_id=tc.id,
-                        content=(
-                            "Error: done() must be called alone, not alongside other tools. "
-                            "Finish your remaining work first, then call done() as the only tool."
-                        ),
-                        is_error=True,
-                    ))
-                else:
-                    # Execute the non-done tools normally
-                    yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input), None
-                    result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
-                    yield ToolExecutionCompleted(
-                        tool_name=tc.name,
-                        output=result.content,
-                        is_error=result.is_error,
-                    ), None
-                    tool_results.append(result)
-            messages.append(ConversationMessage(role="user", content=tool_results))
-            logger.event(
-                "done_tool_rejected_mixed",
-                session_id=session_id,
-                model=context.model,
-                turn_count=turn_count,
-                total_tools=len(tool_calls),
-            )
+        if state.action == TurnAction.RETRY_TURN:
+            state.turn_count = max(0, state.turn_count - 1)
             continue
-
-        if len(tool_calls) == 1:
-            # Single tool: sequential (stream events immediately)
-            tc = tool_calls[0]
-            yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input), None
-            result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
-            yield ToolExecutionCompleted(
-                tool_name=tc.name,
-                output=result.content,
-                is_error=result.is_error,
-            ), None
-            tool_results = [result]
-        else:
-            # Multiple tools: execute concurrently, emit events after
-            for tc in tool_calls:
-                yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input), None
-
-            async def _run(tc):
-                return await _execute_tool_call(context, tc.name, tc.id, tc.input)
-
-            # Use return_exceptions=True so a single failing tool does not abandon
-            # its siblings as cancelled coroutines and leave the conversation with
-            # un-replied tool_use blocks (Anthropic's API rejects the next request
-            # on the session if any tool_use is missing a matching tool_result).
-            raw_results = await asyncio.gather(
-                *[_run(tc) for tc in tool_calls], return_exceptions=True
-            )
-            tool_results = []
-            for tc, result in zip(tool_calls, raw_results):
-                if isinstance(result, BaseException):
-                    logger.exception(
-                        "tool execution raised: name=%s id=%s",
-                        tc.name,
-                        tc.id,
-                        exc_info=result,
-                    )
-                    result = ToolResultBlock(
-                        tool_use_id=tc.id,
-                        content=f"Tool {tc.name} failed: {type(result).__name__}: {result}",
-                        is_error=True,
-                    )
-                tool_results.append(result)
-
-            for tc, result in zip(tool_calls, tool_results):
-                yield ToolExecutionCompleted(
-                    tool_name=tc.name,
-                    output=result.content,
-                    is_error=result.is_error,
-                ), None
-
-        messages.append(ConversationMessage(role="user", content=tool_results))
-        repair_prompt = build_internal_tool_name_repair_prompt(context.tool_metadata)
-        if repair_prompt is not None:
-            messages.append(repair_prompt)
-        logger.event(
-            "tool_results_appended",
-            session_id=session_id,
-            model=context.model,
-            turn_count=turn_count,
-            tool_result_count=len(tool_results),
-            error_count=sum(1 for result in tool_results if result.is_error),
-            message_count=len(messages),
-        )
-
-        # Explicit done() detection: done is the sole tool call — exit the loop.
-        if len(tool_calls) == 1 and tool_calls[0].name == DONE_TOOL_NAME:
-            logger.event(
-                "query_done_tool_called",
-                session_id=session_id,
-                model=context.model,
-                turn_count=turn_count,
-                message_count=len(messages),
-            )
-            if context.hook_executor is not None:
-                await context.hook_executor.execute(
-                    HookEvent.STOP,
-                    {
-                        "event": HookEvent.STOP.value,
-                        "stop_reason": "done_tool_called",
-                    },
-                )
-            return
+        # NEXT_TURN and PROCEED both continue to next iteration
 
     if context.max_turns is not None:
         raise MaxTurnsExceeded(context.max_turns)
