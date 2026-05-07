@@ -44,12 +44,16 @@ from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.base import ToolRegistry
+from openharness.tools.done_tool import DONE_TOOL_NAME
 from openharness.utils.log import get_logger
 
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
 REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
 IMAGE_PREPROCESS_STATUS_MESSAGE = "Converting image to text description via vision model..."
 MAX_SAFE_COMPLETION_TOKENS = 128_000
+# Maximum number of times we inject a "call done()" reminder when the model
+# stops without tool calls in require_explicit_done mode.
+_MAX_DONE_REMINDER_RETRIES = 2
 
 logger = get_logger(__name__)
 
@@ -68,6 +72,7 @@ MAX_TRACKED_VERIFIED_WORK = 10
 MAX_TRACKED_TOOL_NAME_REPAIRS = 8
 
 INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX = "<openharness-internal:tool-name-repair>"
+INTERNAL_DONE_REMINDER_PREFIX = "<openharness-internal:done-reminder>"
 
 
 def _bounded_completion_tokens(max_tokens: int, context_window_tokens: int | None = None) -> int:
@@ -131,6 +136,7 @@ class QueryContext:
     hook_executor: HookExecutor | None = None
     tool_metadata: dict[str, object] | None = None
     permission_prompt_lock: asyncio.Lock | None = None
+    require_explicit_done: bool = False
 
 
 def _append_capped_unique(bucket: list[Any], value: Any, *, limit: int) -> None:
@@ -715,6 +721,7 @@ async def run_query(
         return
     
     turn_count = 0
+    done_reminder_count = 0
     while context.max_turns is None or turn_count < context.max_turns:
         turn_count += 1
         if effective_max_tokens != context.max_tokens and not reported_token_clamp:
@@ -847,6 +854,26 @@ async def run_query(
             messages.append(coordinator_context_message)
 
         if not final_message.tool_uses:
+            if context.require_explicit_done and done_reminder_count < _MAX_DONE_REMINDER_RETRIES:
+                # In full_auto mode, the model must call done() explicitly.
+                # Inject a reminder and continue the loop.
+                done_reminder_count += 1
+                logger.event(
+                    "done_reminder_injected",
+                    session_id=session_id,
+                    model=context.model,
+                    turn_count=turn_count,
+                    reminder_count=done_reminder_count,
+                )
+                messages.append(
+                    ConversationMessage.from_user_text(
+                        "<openharness-internal:done-reminder>\n"
+                        "You stopped without calling the done() tool. "
+                        "If the task is complete, you MUST call done(message=...) to signal completion. "
+                        "If you still have work to do, continue using tools."
+                    )
+                )
+                continue
             logger.event(
                 "query_turn_finished_without_tool_use",
                 session_id=session_id,
@@ -866,6 +893,41 @@ async def run_query(
             return
 
         tool_calls = final_message.tool_uses
+
+        # Enforce: done() must be the sole tool call. If mixed with others,
+        # skip execution entirely and return an error for the done call.
+        done_indices = [i for i, tc in enumerate(tool_calls) if tc.name == DONE_TOOL_NAME]
+        if done_indices and len(tool_calls) > 1:
+            tool_results = []
+            for i, tc in enumerate(tool_calls):
+                if i in done_indices:
+                    tool_results.append(ToolResultBlock(
+                        tool_use_id=tc.id,
+                        content=(
+                            "Error: done() must be called alone, not alongside other tools. "
+                            "Finish your remaining work first, then call done() as the only tool."
+                        ),
+                        is_error=True,
+                    ))
+                else:
+                    # Execute the non-done tools normally
+                    yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input), None
+                    result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
+                    yield ToolExecutionCompleted(
+                        tool_name=tc.name,
+                        output=result.content,
+                        is_error=result.is_error,
+                    ), None
+                    tool_results.append(result)
+            messages.append(ConversationMessage(role="user", content=tool_results))
+            logger.event(
+                "done_tool_rejected_mixed",
+                session_id=session_id,
+                model=context.model,
+                turn_count=turn_count,
+                total_tools=len(tool_calls),
+            )
+            continue
 
         if len(tool_calls) == 1:
             # Single tool: sequential (stream events immediately)
@@ -929,6 +991,25 @@ async def run_query(
             error_count=sum(1 for result in tool_results if result.is_error),
             message_count=len(messages),
         )
+
+        # Explicit done() detection: done is the sole tool call — exit the loop.
+        if len(tool_calls) == 1 and tool_calls[0].name == DONE_TOOL_NAME:
+            logger.event(
+                "query_done_tool_called",
+                session_id=session_id,
+                model=context.model,
+                turn_count=turn_count,
+                message_count=len(messages),
+            )
+            if context.hook_executor is not None:
+                await context.hook_executor.execute(
+                    HookEvent.STOP,
+                    {
+                        "event": HookEvent.STOP.value,
+                        "stop_reason": "done_tool_called",
+                    },
+                )
+            return
 
     if context.max_turns is not None:
         raise MaxTurnsExceeded(context.max_turns)
