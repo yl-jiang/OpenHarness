@@ -103,7 +103,7 @@ class TurnState:
 
 
 # ---------------------------------------------------------------------------
-# Stage: pre_turn — token clamp warning
+# Stage 1: pre_turn — token clamp warning
 # ---------------------------------------------------------------------------
 
 async def pre_turn_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
@@ -119,7 +119,7 @@ async def pre_turn_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, U
 
 
 # ---------------------------------------------------------------------------
-# Stage: compact — auto-compact check before calling the model
+# Stage 2: compact — auto-compact check before calling the model
 # ---------------------------------------------------------------------------
 
 async def compact_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
@@ -245,7 +245,7 @@ async def _preprocess_images_in_messages(
 
 
 # ---------------------------------------------------------------------------
-# Stage: preprocess — image conversion + message normalization
+# Stage 3: preprocess — image conversion + message normalization
 # ---------------------------------------------------------------------------
 
 
@@ -258,7 +258,7 @@ async def preprocess_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent,
 
 
 # ---------------------------------------------------------------------------
-# Stage: api_call — stream the model response, handle errors
+# Stage 4: api_call — stream the model response, handle errors
 # ---------------------------------------------------------------------------
 
 async def api_call_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
@@ -388,7 +388,7 @@ async def api_call_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, U
 
 
 # ---------------------------------------------------------------------------
-# Stage: response_routing — handle the model's response, route to tools or exit
+# Stage 5: response_routing — handle the model's response, route to tools or exit
 # ---------------------------------------------------------------------------
 
 async def response_routing_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
@@ -461,7 +461,7 @@ async def response_routing_stage(state: TurnState) -> AsyncIterator[tuple[Stream
 
 
 # ---------------------------------------------------------------------------
-# Stage: done_gate — enforce done() must be called alone
+# Stage 6: done_gate — enforce done() must be called alone
 # ---------------------------------------------------------------------------
 
 async def done_gate_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
@@ -510,7 +510,7 @@ async def done_gate_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, 
 
 
 # ---------------------------------------------------------------------------
-# Stage: tool_execution — execute tool calls (single or parallel)
+# Stage 7: tool_execution — execute tool calls (single or parallel)
 # ---------------------------------------------------------------------------
 
 async def tool_execution_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
@@ -569,7 +569,7 @@ async def tool_execution_stage(state: TurnState) -> AsyncIterator[tuple[StreamEv
 
 
 # ---------------------------------------------------------------------------
-# Stage: post_tool — append results, detect done completion
+# Stage 8: post_tool — append results, detect done completion
 # ---------------------------------------------------------------------------
 
 async def post_tool_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
