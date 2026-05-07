@@ -24,7 +24,7 @@ from openharness.api.client import (
 )
 from openharness.api.errors import is_prompt_too_long_error as _is_prompt_too_long_error
 from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, ToolResultBlock
+from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock
 from openharness.engine.messages import normalize_messages_for_api
 from openharness.engine.stream_events import (
     AssistantTextDelta,
@@ -43,6 +43,8 @@ from openharness.engine.tool_loop_guard import (
 )
 from openharness.engine.tool_pipeline import ToolExecutionPipeline
 from openharness.engine.types import ToolMetadataKey
+from openharness.api.provider import is_model_multimodal
+from openharness.tools.base import ToolExecutionContext
 from openharness.hooks import HookEvent
 from openharness.tools.done_tool import DONE_TOOL_NAME
 from openharness.utils.log import get_logger
@@ -52,6 +54,8 @@ logger = get_logger(__name__)
 # Maximum number of times we inject a "call done()" reminder when the model
 # stops without tool calls in require_explicit_done mode.
 MAX_DONE_REMINDER_RETRIES = 2
+
+IMAGE_PREPROCESS_STATUS_MESSAGE = "Converting image to text description via vision model..."
 
 
 class TurnAction(str, Enum):
@@ -180,13 +184,79 @@ async def compact_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, Us
 
 
 # ---------------------------------------------------------------------------
+# Helper: image preprocessing for text-only models
+# ---------------------------------------------------------------------------
+
+
+async def _preprocess_images_in_messages(
+    messages: list[ConversationMessage],
+    context,  # QueryContext
+) -> AsyncIterator[StreamEvent]:
+    """Convert user image blocks to text when the active model is text-only."""
+    if is_model_multimodal(context.model):
+        return
+    if not isinstance(context.tool_metadata, dict):
+        return
+    vision_config = context.tool_metadata.get(ToolMetadataKey.VISION_MODEL_CONFIG.value)
+    if not isinstance(vision_config, dict) or not vision_config:
+        return
+
+    pending: list[tuple[int, int, ImageBlock]] = []
+    for msg_idx, msg in enumerate(messages):
+        if msg.role != "user":
+            continue
+        for block_idx, block in enumerate(msg.content):
+            if isinstance(block, ImageBlock):
+                pending.append((msg_idx, block_idx, block))
+    if not pending:
+        return
+
+    yield StatusEvent(message=IMAGE_PREPROCESS_STATUS_MESSAGE)
+
+    async def _describe(msg_idx: int, block_idx: int, block: ImageBlock) -> tuple[int, int, str]:
+        tool = context.tool_registry.get("image_to_text")
+        if tool is None:
+            return msg_idx, block_idx, "[Image: could not describe - image_to_text tool not available]"
+
+        tool_input = {
+            "image_data": block.data,
+            "media_type": block.media_type,
+            "prompt": (
+                "Describe this image in detail, including any text, UI elements, "
+                "code, diagrams, or visual information present."
+            ),
+        }
+        try:
+            parsed = tool.input_model.model_validate(tool_input)
+        except ValueError:
+            return msg_idx, block_idx, "[Image: could not parse image data]"
+
+        result = await tool.execute(
+            parsed,
+            ToolExecutionContext(
+                cwd=context.cwd,
+                metadata={
+                    **context.tool_metadata,
+                    ToolMetadataKey.VISION_MODEL_CONFIG.value: vision_config,
+                },
+            ),
+        )
+        if result.is_error:
+            return msg_idx, block_idx, f"[Image description failed: {result.output}]"
+        return msg_idx, block_idx, result.output
+
+    results = await asyncio.gather(*(_describe(msg_idx, block_idx, block) for msg_idx, block_idx, block in pending))
+    for msg_idx, block_idx, description in results:
+        messages[msg_idx].content[block_idx] = TextBlock(text=description)
+
+
+# ---------------------------------------------------------------------------
 # Stage: preprocess — image conversion + message normalization
 # ---------------------------------------------------------------------------
 
+
 async def preprocess_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
     """Preprocess images for text-only models and normalize messages."""
-    from openharness.engine.query import _preprocess_images_in_messages
-
     async for event in _preprocess_images_in_messages(state.messages, state.context):
         yield event, None
 
