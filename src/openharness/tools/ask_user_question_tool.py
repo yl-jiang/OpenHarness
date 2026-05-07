@@ -16,24 +16,14 @@ AskUserPrompt = Callable[[str], Awaitable[str]]
 class AskUserQuestionToolInput(BaseModel):
     """Arguments for asking the user a question."""
 
-    question: str = Field(
-        description=(
-            "The exact question to show the user. Use this tool instead of asking in normal "
-            "assistant text whenever you need clarification, confirmation, or the user to "
-            "choose between options."
-        )
-    )
+    question: str = Field(description="The question to show the user.")
 
 
 class AskUserQuestionTool(BaseTool):
     """Ask the interactive user a question and return the answer."""
 
     name = "ask_user_question"
-    description = (
-        "Ask the interactive user a follow-up question and return the answer. Use this tool "
-        "instead of plain assistant text whenever you need clarification, confirmation, or "
-        "the user to make a choice."
-    )
+    description = "Ask the user a question and return their answer."
     input_model = AskUserQuestionToolInput
 
     def to_api_schema(self) -> dict[str, Any]:
@@ -45,11 +35,7 @@ class AskUserQuestionTool(BaseTool):
                 "properties": {
                     "question": {
                         "type": "string",
-                        "description": (
-                            "The exact question to show the user. Use this tool instead of "
-                            "asking in normal assistant text whenever you need clarification, "
-                            "confirmation, or the user to choose between options."
-                        ),
+                        "description": "The question to show the user.",
                     },
                 },
                 "required": ["question"],
