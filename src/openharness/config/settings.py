@@ -259,6 +259,14 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             default_model="MiniMax-M2.7",
             base_url="https://api.minimax.io/v1",
         ),
+        "nvidia": ProviderProfile(
+            label="NVIDIA NIM",
+            provider="nvidia",
+            api_format="openai",
+            auth_source="nvidia_api_key",
+            default_model="openai/gpt-oss-120b",
+            base_url="https://integrate.api.nvidia.com/v1",
+        ),
         "deepseek": ProviderProfile(
             label="DeepSeek",
             provider="deepseek",
@@ -365,6 +373,7 @@ def auth_source_provider_name(auth_source: str) -> str:
         "moonshot_api_key": "moonshot",
         "gemini_api_key": "gemini",
         "minimax_api_key": "minimax",
+        "nvidia_api_key": "nvidia",
         "deepseek_api_key": "deepseek",
     }
     return mapping.get(auth_source, auth_source)
@@ -407,6 +416,8 @@ def default_auth_source_for_provider(provider: str, api_format: str | None = Non
         return "gemini_api_key"
     if provider == "minimax":
         return "minimax_api_key"
+    if provider == "nvidia":
+        return "nvidia_api_key"
     if provider == "deepseek":
         return "deepseek_api_key"
     if provider == "openai" or api_format == "openai":
@@ -751,6 +762,7 @@ class Settings(BaseModel):
             "dashscope_api_key": "DASHSCOPE_API_KEY",
             "moonshot_api_key": "MOONSHOT_API_KEY",
             "minimax_api_key": "MINIMAX_API_KEY",
+            "nvidia_api_key": "NVIDIA_API_KEY",
             "deepseek_api_key": "DEEPSEEK_API_KEY",
             "gemini_api_key": "GEMINI_API_KEY",
         }.get(auth_source)
