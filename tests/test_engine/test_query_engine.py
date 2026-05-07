@@ -30,6 +30,7 @@ from openharness.tools import create_default_tool_registry
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from openharness.tools.glob_tool import GlobTool
 from openharness.tools.grep_tool import GrepTool
+from openharness.tools.todo_tool import TodoStore
 from pydantic import BaseModel
 from openharness.engine.messages import ToolResultBlock
 from openharness.hooks import HookExecutionContext, HookExecutor, HookEvent
@@ -2008,3 +2009,82 @@ async def test_subagent_stop_hook_fires_when_spawned_agent_finishes(tmp_path: Pa
     task = manager.get_task(payload["task_id"])
     assert task is not None
     assert task.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_query_engine_persists_compacted_tool_turn_history(tmp_path: Path, monkeypatch):
+    """Compaction must not make a completed tool turn disappear from engine history."""
+
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    monkeypatch.setattr("openharness.services.compact.try_session_memory_compaction", lambda *args, **kwargs: None)
+    should_calls = {"count": 0}
+
+    def _should_compact_once(*args, **kwargs):
+        del args, kwargs
+        should_calls["count"] += 1
+        return should_calls["count"] == 1
+
+    monkeypatch.setattr("openharness.services.compact.should_autocompact", _should_compact_once)
+
+    registry = ToolRegistry()
+    registry.register(_OkTool())
+    engine = QueryEngine(
+        api_client=FakeApiClient(
+            [
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="<summary>Earlier setup was completed.</summary>")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[
+                            TextBlock(text="I will verify with a tool."),
+                            ToolUseBlock(id="toolu_ok_after_compact", name="ok_tool", input={}),
+                        ],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+                _FakeResponse(
+                    message=ConversationMessage(
+                        role="assistant",
+                        content=[TextBlock(text="Tool finished after compact.")],
+                    ),
+                    usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                ),
+            ]
+        ),
+        tool_registry=registry,
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        tool_metadata={"todo_store": TodoStore(tmp_path)},
+    )
+    engine.load_messages(
+        [
+            ConversationMessage.from_user_text(f"historical user request {index}")
+            if index % 2 == 0
+            else ConversationMessage(role="assistant", content=[TextBlock(text=f"historical answer {index}")])
+            for index in range(8)
+        ]
+    )
+
+    events = [event async for event in engine.submit_message("new request after compact")]
+
+    assert any(isinstance(event, CompactProgressEvent) and event.phase == "compact_end" for event in events)
+    assert any("This session is being continued" in message.text for message in engine.messages)
+    assert any(
+        isinstance(block, ToolUseBlock) and block.id == "toolu_ok_after_compact"
+        for message in engine.messages
+        for block in message.content
+    )
+    assert any(
+        isinstance(block, ToolResultBlock) and block.tool_use_id == "toolu_ok_after_compact"
+        for message in engine.messages
+        for block in message.content
+    )
+    assert engine.messages[-1].text == "Tool finished after compact."
