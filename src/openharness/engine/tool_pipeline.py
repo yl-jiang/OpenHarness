@@ -8,17 +8,6 @@ from typing import Any
 
 from openharness.engine.messages import ToolResultBlock
 
-DEFAULT_TOOL_EXECUTION_STAGE_NAMES = (
-    "resolve_tool",
-    "pre_hook",
-    "validate_input",
-    "check_permission",
-    "execute_tool",
-    "normalize_result",
-    "update_metadata",
-    "post_hook",
-)
-
 StageHandler = Callable[["ToolPipelineState"], Awaitable["ToolPipelineState"]]
 
 
