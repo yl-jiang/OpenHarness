@@ -11,6 +11,7 @@ import pytest
 import openharness.tools.skill_manager_tool as skill_manager_module
 from openharness.tools.bash_tool import BashTool, BashToolInput
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
+from openharness.tools.ask_user_question_tool import AskUserQuestionTool
 from openharness.tools.brief_tool import BriefTool, BriefToolInput
 from openharness.tools.cron_manager_tool import CronManagerTool
 from openharness.tools.config_tool import ConfigTool, ConfigToolInput
@@ -164,6 +165,16 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
         ToolExecutionContext(cwd=tmp_path),
     )
     assert config_result.output == "Updated theme"
+
+
+def test_ask_user_question_tool_schema_guides_models_to_use_the_tool() -> None:
+    tool = AskUserQuestionTool()
+    schema = tool.to_api_schema()
+    question_description = schema["parameters"]["properties"]["question"]["description"]
+
+    assert "instead of plain assistant text" in schema["description"]
+    assert "instead of asking in normal assistant text" in question_description
+    assert "choose between options" in question_description
 
 
 def test_tool_registry_caches_api_schema_and_returns_defensive_copy() -> None:

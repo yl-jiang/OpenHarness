@@ -109,6 +109,25 @@ def test_runtime_prompt_blocks_expose_metadata_and_render_default_prompt(tmp_pat
     )
 
 
+def test_runtime_tool_enforcement_requires_ask_user_question_for_user_input(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    prompt = build_runtime_system_prompt(
+        Settings(memory={"enabled": False}),
+        cwd=repo,
+        latest_user_prompt="commit changes",
+    )
+
+    assert "ask_user_question" in prompt
+    assert "clarification, confirmation, or a choice" in prompt
+    assert "Do not end your turn with a plain-text question" in prompt
+
+
 def test_agent_prompt_profiles_control_runtime_sections(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)

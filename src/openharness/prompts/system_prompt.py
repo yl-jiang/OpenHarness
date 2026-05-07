@@ -53,7 +53,7 @@ Carefully consider the reversibility and blast radius of actions. Freely take lo
 # Tone and style
  - Be concise. Lead with the answer, not the reasoning. Skip filler and preamble.
  - When referencing code, include file_path:line_number for easy navigation.
- - Focus text output on: decisions needing user input, status updates at milestones, errors that change the plan.
+ - Focus text output on: final answers, status updates at milestones, and errors that change the plan.
  - If you can say it in one sentence, don't use three."""
 
 
