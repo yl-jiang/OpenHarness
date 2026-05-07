@@ -398,7 +398,7 @@ class QueryEngine:
             prompt_length=len(user_message.text),
             message_count_before=len(self._messages),
         )
-        if user_message.text.strip():
+        if user_message.text.strip() and not self._tool_metadata.pop("_suppress_next_user_goal", False):
             remember_user_goal(self._tool_metadata, user_message.text)
         self._begin_self_evolution_user_turn()
         self._messages.append(user_message)

@@ -19,6 +19,7 @@ class GatewayConfig(BaseModel):
     allowed_remote_admin_commands: list[str] = Field(default_factory=list)
     log_level: str = "INFO"
     channel_configs: dict[str, dict] = Field(default_factory=dict)
+    feishu_group_policy: str | None = None
 
 
 class GatewayState(BaseModel):
