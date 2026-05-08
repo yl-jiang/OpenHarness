@@ -10,9 +10,8 @@ import pytest
 
 from openharness.coordinator.coordinator_mode import get_team_registry
 from openharness.engine.types import ToolMetadataKey
-from openharness.swarm.types import SpawnResult
 from openharness.tasks import get_task_manager
-from openharness.tools.agent_tool import AgentTool, AgentToolInput
+from openharness.tools.agent_tool import AgentTool, AgentToolInput, _resolve_spawn_model
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.send_message_tool import SendMessageTool, SendMessageToolInput
 from openharness.tools.task_create_tool import TaskCreateTool, TaskCreateToolInput
@@ -312,98 +311,17 @@ async def test_agent_tool_supports_remote_and_teammate_modes(tmp_path: Path, mon
         await _wait_for_terminal_task(task_id)
 
 
-@pytest.mark.asyncio
-@pytest.mark.asyncio
-async def test_agent_tool_inherits_parent_model_for_claude_only_builtin_on_non_claude_provider(
-    tmp_path: Path, monkeypatch
-):
-    captured = {}
-
-    class _FakeExecutor:
-        type = "subprocess"
-
-        async def spawn(self, config):
-            captured["config"] = config
-            return SpawnResult(
-                task_id="t-inherit",
-                agent_id=f"{config.name}@{config.team}",
-                backend_type="subprocess",
-            )
-
-    class _FakeRegistry:
-        def get_executor(self, backend):
-            assert backend == "subprocess"
-            return _FakeExecutor()
-
-    monkeypatch.setattr("openharness.tools.agent_tool.get_backend_registry", lambda: _FakeRegistry())
-
-    result = await AgentTool().execute(
-        AgentToolInput(
-            description="inherit current Kimi model",
-            prompt="inspect the repo",
-            subagent_type="Explore",
-        ),
-        ToolExecutionContext(
-            cwd=tmp_path,
-            metadata={
-                "session_id": "sess-123",
-                ToolMetadataKey.CURRENT_MODEL.value: "Kimi-K2.5",
-                ToolMetadataKey.CURRENT_PROVIDER.value: "moonshot",
-                ToolMetadataKey.CURRENT_API_FORMAT.value: "openai",
-                ToolMetadataKey.CURRENT_BASE_URL.value: "https://api.moonshot.cn/v1",
-            },
-        ),
-    )
-
-    assert result.is_error is False
-    config = captured["config"]
-    assert config.model == "Kimi-K2.5"
-    assert config.api_format == "openai"
-    assert config.base_url == "https://api.moonshot.cn/v1"
+def test_agent_tool_inherits_parent_model_for_claude_only_builtin_on_non_claude_provider():
+    assert _resolve_spawn_model(
+        agent_default_model="inherit",
+        current_model="Kimi-K2.5",
+        current_provider="moonshot",
+    ) == "Kimi-K2.5"
 
 
-@pytest.mark.asyncio
-async def test_agent_tool_keeps_claude_builtin_model_on_claude_provider(
-    tmp_path: Path, monkeypatch
-):
-    captured = {}
-
-    class _FakeExecutor:
-        type = "subprocess"
-
-        async def spawn(self, config):
-            captured["config"] = config
-            return SpawnResult(
-                task_id="t-claude",
-                agent_id=f"{config.name}@{config.team}",
-                backend_type="subprocess",
-            )
-
-    class _FakeRegistry:
-        def get_executor(self, backend):
-            assert backend == "subprocess"
-            return _FakeExecutor()
-
-    monkeypatch.setattr("openharness.tools.agent_tool.get_backend_registry", lambda: _FakeRegistry())
-
-    result = await AgentTool().execute(
-        AgentToolInput(
-            description="keep builtin haiku",
-            prompt="inspect the repo",
-            subagent_type="Explore",
-        ),
-        ToolExecutionContext(
-            cwd=tmp_path,
-            metadata={
-                "session_id": "sess-claude",
-                ToolMetadataKey.CURRENT_MODEL.value: "claude-sonnet-4-6",
-                ToolMetadataKey.CURRENT_PROVIDER.value: "anthropic",
-                ToolMetadataKey.CURRENT_API_FORMAT.value: "anthropic",
-                ToolMetadataKey.CURRENT_BASE_URL.value: "https://relay.example.com",
-            },
-        ),
-    )
-
-    assert result.is_error is False
-    config = captured["config"]
-    assert config.model == "haiku"
+def test_agent_tool_keeps_claude_builtin_model_on_claude_provider():
+    assert _resolve_spawn_model(
+        agent_default_model="inherit",
+        current_model="claude-sonnet-4-6",
+        current_provider="anthropic",
+    ) == "haiku"
