@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 from openharness.commands.core import CommandContext, CommandResult
@@ -13,6 +14,13 @@ from openharness.skills.loader import apply_skill_path_rules
 
 _SKILL_ARG_REGEX = re.compile(r"""(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)""")
 _SKILL_PLACEHOLDER_REGEX = re.compile(r"\$(\d+)")
+_SOURCE_ORDER = ("project", "user", "plugin", "bundled")
+_SOURCE_LABELS = {
+    "project": "Project skills",
+    "user": "User skills",
+    "plugin": "Plugin skills",
+    "bundled": "Bundled skills",
+}
 
 
 def _tokenize_skill_arguments(raw_args: str) -> list[str]:
@@ -49,6 +57,48 @@ def render_skill_load_prompt(skill: Any, args: str) -> str:
 
 def _is_user_invocable_skill(skill: Any) -> bool:
     return bool(getattr(skill, "user_invocable", True))
+
+
+def _format_skill_path(path: str | None, cwd: str | Path) -> str | None:
+    if not path:
+        return None
+    resolved = Path(path).expanduser().resolve()
+    try:
+        return str(resolved.relative_to(Path(cwd).expanduser().resolve()))
+    except ValueError:
+        pass
+    try:
+        return f"~/{resolved.relative_to(Path.home().resolve())}"
+    except ValueError:
+        return str(resolved)
+
+
+def _format_skills_list(skills: list[Any], cwd: str | Path) -> str:
+    grouped: dict[str, list[Any]] = {}
+    for skill in skills:
+        grouped.setdefault(str(skill.source), []).append(skill)
+
+    ordered_sources = [source for source in _SOURCE_ORDER if source in grouped]
+    ordered_sources.extend(sorted(source for source in grouped if source not in _SOURCE_ORDER))
+
+    lines: list[str] = [f"Skills ({len(skills)})", ""]
+
+    for source in ordered_sources:
+        source_skills = grouped[source]
+        label = _SOURCE_LABELS.get(source, source.title() + " skills")
+        lines.append(f"{label} ({len(source_skills)})")
+        lines.append("-" * 48)
+        for skill in source_skills:
+            desc = skill.description or "No description"
+            lines.append(f"/{skill.name}")
+            lines.append(f"  description: {desc}")
+            display_path = _format_skill_path(skill.path, cwd)
+            if display_path:
+                lines.append(f"  path: {display_path}")
+            lines.append("")
+
+    lines.append("Use /skills show NAME for full content.")
+    return "\n".join(lines)
 
 
 def remember_loaded_skill(context: CommandContext, name: str) -> None:
@@ -107,11 +157,7 @@ async def handle_skills_command(args: str, context: CommandContext) -> CommandRe
         skills = [skill for skill in skill_registry.list_skills() if _is_user_invocable_skill(skill)]
         if not skills:
             return CommandResult(message="No skills available.")
-        lines = ["Available skills:"]
-        for skill in skills:
-            source = f" [{skill.source}]"
-            lines.append(f"- {skill.name}{source}: {skill.description}")
-        return CommandResult(message="\n".join(lines))
+        return CommandResult(message=_format_skills_list(skills, context.cwd))
 
     if tokens[0] == "show":
         if len(tokens) < 2:

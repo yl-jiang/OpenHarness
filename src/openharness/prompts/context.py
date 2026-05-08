@@ -26,7 +26,7 @@ from openharness.personalization.rules import load_local_rules
 from openharness.prompts.claudemd import discover_claude_md_files, load_claude_md_prompt
 from openharness.services import estimate_tokens
 from openharness.prompts.system_prompt import build_system_prompt
-from openharness.skills.loader import get_project_skills_dir, get_user_skills_dir, load_skill_registry
+from openharness.skills.loader import discover_project_skill_dirs, get_user_skill_dirs, load_skill_registry
 
 SKILLS_GUIDANCE = (
     "# Skill guidance\n"
@@ -587,8 +587,11 @@ def _runtime_prompt_dependency_fingerprint(
         _LOCAL_RULES_FILE,
     ]
     if not coordinator_mode:
-        paths.extend(_iter_prompt_dependency_files(get_user_skills_dir()))
-        paths.extend(_iter_prompt_dependency_files(get_project_skills_dir(root)))
+        for directory in get_user_skill_dirs():
+            paths.extend(_iter_prompt_dependency_files(directory))
+        if settings.allow_project_skills:
+            for directory in discover_project_skill_dirs(root, settings.project_skill_dirs):
+                paths.extend(_iter_prompt_dependency_files(directory))
         for directory in extra_skill_dirs:
             paths.extend(_iter_prompt_dependency_files(Path(directory)))
         for directory in extra_plugin_roots:
