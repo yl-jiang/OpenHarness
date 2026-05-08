@@ -9,6 +9,7 @@ import pytest
 
 import openharness.commands.registry as registry_module
 from openharness.commands.registry import CommandContext, create_default_command_registry
+from openharness.commands.skills import _format_skills_list
 from openharness.config.paths import get_feedback_log_path, get_project_issue_file, get_project_pr_comments_file
 from openharness.config.settings import load_settings, save_settings, Settings
 from openharness.engine.messages import ConversationMessage, TextBlock
@@ -330,6 +331,7 @@ async def test_plugin_command_registers_and_submits_prompt(tmp_path: Path, monke
 @pytest.mark.asyncio
 async def test_skills_command_manually_loads_skill_as_submit_prompt(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     skill_dir = tmp_path / "config" / "skills" / "review"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -354,6 +356,7 @@ async def test_skills_command_manually_loads_skill_as_submit_prompt(tmp_path: Pa
 @pytest.mark.asyncio
 async def test_skill_alias_command_loads_skill_as_submit_prompt(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     skill_dir = tmp_path / "config" / "skills" / "weekly-report"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -377,6 +380,7 @@ async def test_skill_alias_command_loads_skill_as_submit_prompt(tmp_path: Path, 
 @pytest.mark.asyncio
 async def test_non_user_invocable_skills_are_hidden_from_user_commands(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     visible_dir = tmp_path / "config" / "skills" / "review"
     visible_dir.mkdir(parents=True)
     (visible_dir / "SKILL.md").write_text(
@@ -396,7 +400,9 @@ async def test_non_user_invocable_skills_are_hidden_from_user_commands(tmp_path:
     assert list_command is not None
     list_result = await list_command.handler(list_args, context)
 
-    assert "review [user]: Review changes carefully" in list_result.message
+    assert "User skills (1)" in list_result.message
+    assert "/review" in list_result.message
+    assert "Review changes carefully" in list_result.message
     assert "internal-review" not in list_result.message
 
     assert registry_module.resolve_skill_alias_command("/internal-review investigate this", context) is None
@@ -405,6 +411,75 @@ async def test_non_user_invocable_skills_are_hidden_from_user_commands(tmp_path:
     assert load_command is not None
     load_result = await load_command.handler(load_args, context)
     assert load_result.message == "Skill not found: internal-review"
+
+
+@pytest.mark.asyncio
+async def test_project_skill_registers_as_context_slash_command(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    skill_dir = repo / ".claude" / "skills" / "shipit"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\n"
+        "name: shipit\n"
+        "description: Project ship workflow.\n"
+        "---\n\n"
+        "# Shipit\n\nShip this repo.\n",
+        encoding="utf-8",
+    )
+    context = _make_context(repo)
+
+    result = registry_module.resolve_skill_alias_command("/shipit now", context)
+
+    assert result is not None
+    assert result.submit_prompt is not None
+    assert "# Shipit\n\nShip this repo." in result.submit_prompt
+    assert result.submit_prompt.endswith("\n\nnow")
+
+
+@pytest.mark.asyncio
+async def test_skills_command_lists_project_skill_cleanly(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    skill_dir = repo / ".agents" / "skills" / "triage"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: triage\ndescription: Triage workflow.\n---\n\n# Triage\n",
+        encoding="utf-8",
+    )
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/skills")
+    assert command is not None
+
+    result = await command.handler(args, _make_context(repo))
+
+    assert "Project skills (1)" in result.message
+    assert "/triage" in result.message
+    assert "Triage workflow." in result.message
+    assert "path: .agents/skills/triage/SKILL.md" in result.message
+    assert ".agents/skills/triage/SKILL.md" in result.message
+    assert "triage [project]" not in result.message
+
+
+def test_format_skills_list_uses_separate_lines_for_description_and_path(tmp_path: Path):
+    skill = SkillDefinition(
+        name="triage",
+        description="Triage workflow.",
+        content="# Triage",
+        source="project",
+        path=str(tmp_path / ".agents" / "skills" / "triage" / "SKILL.md"),
+    )
+
+    result = _format_skills_list([skill], tmp_path)
+
+    assert "Project skills (1)" in result
+    assert "/triage" in result
+    assert "Triage workflow." in result
+    assert "path: .agents/skills/triage/SKILL.md" in result
 
 
 def test_render_skill_load_prompt_replaces_numbered_placeholders_with_greedy_last_argument() -> None:
@@ -466,6 +541,7 @@ def test_render_skill_load_prompt_respects_quoted_arguments_for_fixed_placeholde
 @pytest.mark.asyncio
 async def test_skills_command_list_and_show_do_not_invoke_model(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
     skill_dir = tmp_path / "config" / "skills" / "deploy"
     skill_dir.mkdir(parents=True)
     (skill_dir / "SKILL.md").write_text(
@@ -477,7 +553,9 @@ async def test_skills_command_list_and_show_do_not_invoke_model(tmp_path: Path, 
 
     list_command, list_args = registry.lookup("/skills list")
     list_result = await list_command.handler(list_args, context)
-    assert "deploy [user]: Deploy safely" in list_result.message
+    assert "User skills (1)" in list_result.message
+    assert "/deploy" in list_result.message
+    assert "Deploy safely" in list_result.message
     assert list_result.submit_prompt is None
 
     show_command, show_args = registry.lookup("/skills show deploy")
