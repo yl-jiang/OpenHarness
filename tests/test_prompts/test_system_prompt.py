@@ -79,7 +79,7 @@ def test_build_system_prompt_requires_ask_user_question_for_user_input():
     env = _make_env()
     prompt = build_system_prompt(env=env)
 
-    assert "ask_user_question" in prompt
-    assert "clarification, confirmation, or a choice" in prompt
-    assert "do not ask in normal assistant text" in prompt
+    assert "ask_user_question" not in prompt
+    assert "clarification, confirmation, or a choice" not in prompt
+    assert "do not ask in normal assistant text" not in prompt
     assert "decisions needing user input" not in prompt

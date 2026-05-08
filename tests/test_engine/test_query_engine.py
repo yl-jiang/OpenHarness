@@ -477,10 +477,12 @@ async def test_query_engine_ignores_empty_invalid_parallel_tool_calls(tmp_path: 
 
     started = [event for event in events if isinstance(event, ToolExecutionStarted)]
     completed = [event for event in events if isinstance(event, ToolExecutionCompleted)]
-    assert [event.tool_name for event in started] == ["read_file"]
-    assert len(completed) == 1
+    assert [event.tool_name for event in started] == ["read_file", "read_file"]
+    assert len(completed) == 2
     assert completed[0].is_error is False
     assert "alpha" in completed[0].output
+    assert completed[1].is_error is True
+    assert "Invalid input for read_file" in completed[1].output
     assert isinstance(events[-1], AssistantTurnComplete)
     assert "alpha and beta" in events[-1].message.text
 

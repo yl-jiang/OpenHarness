@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ohmo import __version__ as ohmo_version
@@ -16,6 +17,7 @@ def test_get_openharness_version_prefers_repo_pyproject(monkeypatch):
 def test_repo_versions_are_kept_in_sync():
     pyproject = Path(__file__).resolve().parents[1] / "pyproject.toml"
     text = pyproject.read_text(encoding="utf-8")
+    match = re.search(r'^version = "([^"]+)"', text, re.MULTILINE)
 
-    assert 'version = "0.1.7"' in text
-    assert ohmo_version == "0.1.7"
+    assert match is not None
+    assert ohmo_version == match.group(1)

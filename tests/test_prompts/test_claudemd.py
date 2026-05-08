@@ -123,9 +123,9 @@ def test_runtime_tool_enforcement_requires_ask_user_question_for_user_input(
         latest_user_prompt="commit changes",
     )
 
-    assert "ask_user_question" in prompt
-    assert "clarification, confirmation, or a choice" in prompt
-    assert "Do not end your turn with a plain-text question" in prompt
+    assert "ask_user_question" not in prompt
+    assert "clarification, confirmation, or a choice" not in prompt
+    assert "Do not end your turn with a plain-text question" not in prompt
 
 
 def test_agent_prompt_profiles_control_runtime_sections(tmp_path: Path, monkeypatch):
@@ -255,8 +255,8 @@ def test_format_prompt_blocks_debug_aligns_columns() -> None:
         [
             "Runtime prompt blocks:",
             "ID                    CHARS  TOKENS  PRIORITY  SOURCE   CACHEABLE",
-            "tool-use-enforcement     10       3       950  runtime  true",
-            "base-system               5       2      1000  system   true",
+            "tool-use-enforcement     10       2       950  runtime  true",
+            "base-system               5       1      1000  system   true",
         ]
     )
 

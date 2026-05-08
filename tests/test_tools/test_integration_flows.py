@@ -64,7 +64,7 @@ async def test_task_and_todo_flow_across_registry(tmp_path: Path, monkeypatch):
     context = ToolExecutionContext(cwd=tmp_path, metadata={"tool_registry": registry})
 
     tool_search = registry.get("tool_search")
-    todo_write = registry.get("todo_write")
+    todo_write = registry.get("todo")
     task_create = registry.get("task_create")
     task_get = registry.get("task_get")
     task_output = registry.get("task_output")
@@ -86,7 +86,8 @@ async def test_task_and_todo_flow_across_registry(tmp_path: Path, monkeypatch):
         context,
     )
     assert todo_result.is_error is False
-    assert "integration flow item" in (tmp_path / "TODO.md").read_text(encoding="utf-8")
+    assert "integration flow item" in todo_result.output
+    assert not (tmp_path / "TODO.md").exists()
 
     create_result = await task_create.execute(
         task_create.input_model(
@@ -167,7 +168,7 @@ async def test_agent_send_message_flow_restarts_completed_agent(tmp_path: Path, 
         agent.input_model(
             description="echo agent",
             prompt="ready",
-            command="python -u -c \"import sys; print('AGENT_ECHO:' + sys.stdin.readline().strip())\"",
+            command="python3 -u -c \"import sys; print('AGENT_ECHO:' + sys.stdin.readline().strip())\"",
         ),
         context,
     )
@@ -177,7 +178,7 @@ async def test_agent_send_message_flow_restarts_completed_agent(tmp_path: Path, 
 
     for _ in range(80):
         output = await task_output.execute(task_output.input_model(task_id=task_id), context)
-        if "AGENT_ECHO:ready" in output.output:
+        if 'AGENT_ECHO:{"text": "ready"}' in output.output:
             break
         await asyncio.sleep(0.1)
     else:
@@ -189,7 +190,6 @@ async def test_agent_send_message_flow_restarts_completed_agent(tmp_path: Path, 
     )
     assert send_result.is_error is False
 
-    await asyncio.sleep(0.2)
     for _ in range(80):
         output = await task_output.execute(task_output.input_model(task_id=task_id), context)
         if "AGENT_ECHO:agent ping" in output.output:
@@ -198,7 +198,8 @@ async def test_agent_send_message_flow_restarts_completed_agent(tmp_path: Path, 
     else:
         raise AssertionError("agent follow-up output did not become available in time")
 
-    assert "AGENT_ECHO:ready" in output.output
+    assert 'AGENT_ECHO:{"text": "ready"}' in output.output
+    assert "[OpenHarness] Agent task restarted; prior interactive context was not preserved." in output.output
     assert "AGENT_ECHO:agent ping" in output.output
     await _wait_for_terminal_task(task_id)
 

@@ -186,6 +186,22 @@ async def test_memory_show_reads_normal_entries_with_md_fallback(tmp_path: Path,
 @pytest.mark.asyncio
 async def test_model_command_persists(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_settings(
+        Settings().model_copy(
+            update={
+                "active_profile": "claude-api",
+                "profiles": {
+                    "claude-api": {
+                        "label": "Claude API",
+                        "provider": "anthropic",
+                        "api_format": "anthropic",
+                        "auth_source": "anthropic_api_key",
+                        "default_model": "sonnet",
+                    }
+                },
+            }
+        )
+    )
     registry = create_default_command_registry()
     command, args = registry.lookup("/model opus")
     assert command is not None
@@ -200,6 +216,22 @@ async def test_model_command_persists(tmp_path: Path, monkeypatch):
 @pytest.mark.asyncio
 async def test_model_command_accepts_direct_value(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_settings(
+        Settings().model_copy(
+            update={
+                "active_profile": "openai-compatible",
+                "profiles": {
+                    "openai-compatible": {
+                        "label": "OpenAI Compatible",
+                        "provider": "openai",
+                        "api_format": "openai",
+                        "auth_source": "openai_api_key",
+                        "default_model": "gpt-5.4",
+                    }
+                },
+            }
+        )
+    )
     registry = create_default_command_registry()
     command, args = registry.lookup("/model gpt-5.4")
     assert command is not None

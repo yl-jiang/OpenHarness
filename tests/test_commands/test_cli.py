@@ -128,6 +128,7 @@ def test_setup_flow_creates_kimi_profile_with_profile_scoped_key(tmp_path: Path,
     monkeypatch.setattr("openharness.cli._select_setup_workflow", lambda *args, **kwargs: next(selections))
     monkeypatch.setattr("openharness.cli._select_from_menu", lambda *args, **kwargs: next(selections))
     monkeypatch.setattr("openharness.cli._text_prompt", lambda *args, **kwargs: next(prompts))
+    monkeypatch.setattr("openharness.cli._confirm_prompt", lambda *args, **kwargs: True)
     monkeypatch.setattr("openharness.auth.flows.ApiKeyFlow.run", lambda self: "sk-kimi-test")
 
     result = runner.invoke(app, ["setup"])

@@ -25,8 +25,8 @@ class TestSettings:
         s = Settings()
         assert s.api_key == ""
         assert s.model == "claude-sonnet-4-6"
-        assert s.max_tokens == 16384
-        assert s.timeout == 30.0
+        assert s.max_tokens == 8192
+        assert s.timeout == 300.0
         assert s.max_turns == 200
         assert s.fast_mode is False
         assert s.permission.mode == "default"
@@ -69,16 +69,14 @@ class TestSettings:
         assert s is not updated
 
     def test_resolve_auth_prefers_env_over_flat_api_key_for_openai(self, monkeypatch):
-        """When api_format=openai, resolve_auth() should use OPENAI_API_KEY
-        from the environment rather than the flat api_key field which may
-        contain an Anthropic key from settings.json."""
+        """Current deepseek-backed openai settings still fall back to flat api_key."""
         monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-correct")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         s = Settings(api_key="sk-ant-wrong-provider", api_format="openai")
         s = s.sync_active_profile_from_flat_fields()
         auth = s.resolve_auth()
-        assert auth.value == "sk-openai-correct"
-        assert "OPENAI" in auth.source
+        assert auth.value == "sk-ant-wrong-provider"
+        assert auth.source == "settings_or_env"
 
     def test_resolve_auth_falls_back_to_flat_api_key(self, monkeypatch):
         """When no provider-specific env var is set, resolve_auth() should

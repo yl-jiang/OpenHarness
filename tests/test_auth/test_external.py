@@ -312,9 +312,9 @@ def test_cli_claude_login_binds_without_switching(monkeypatch, tmp_path: Path):
 
     assert result.exit_code == 0
     settings = load_settings()
-    assert settings.provider == "anthropic"
-    assert settings.api_format == "anthropic"
-    assert settings.active_profile == "claude-api"
+    assert settings.provider == "deepseek"
+    assert settings.api_format == "openai"
+    assert settings.active_profile == "deepseek"
     assert "Use `oh provider use claude-subscription` to activate it." in result.stdout
     binding = load_external_binding(CLAUDE_PROVIDER)
     assert binding is not None

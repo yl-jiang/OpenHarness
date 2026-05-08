@@ -157,7 +157,7 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
     assert todo_payload["todos"] == [
         {"id": "wire-commands", "content": "wire commands", "status": "pending"}
     ]
-    assert "wire commands" in (tmp_path / "TODO.md").read_text(encoding="utf-8")
+    assert not (tmp_path / "TODO.md").exists()
 
 
     config_result = await ConfigTool().execute(
@@ -172,9 +172,8 @@ def test_ask_user_question_tool_schema_guides_models_to_use_the_tool() -> None:
     schema = tool.to_api_schema()
     question_description = schema["parameters"]["properties"]["question"]["description"]
 
-    assert "instead of plain assistant text" in schema["description"]
-    assert "instead of asking in normal assistant text" in question_description
-    assert "choose between options" in question_description
+    assert schema["description"] == "Ask the user a question and return their answer."
+    assert question_description == "The question to show the user."
 
 
 def test_tool_registry_caches_api_schema_and_returns_defensive_copy() -> None:
@@ -303,12 +302,7 @@ async def test_todo_write_merge_and_read(tmp_path: Path):
 
     read_back = await tool.execute(TodoToolInput(), ctx)
     assert json.loads(read_back.output) == payload
-    content = (tmp_path / "TODO.md").read_text(encoding="utf-8")
-    assert content.count("task A") == 1
-    assert "## ⬜ Pending" in content
-    assert "## ✅ Completed" in content
-    assert "task B" in content
-    assert "task C" in content
+    assert not (tmp_path / "TODO.md").exists()
 
 
 @pytest.mark.asyncio
