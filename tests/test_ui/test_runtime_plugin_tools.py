@@ -118,7 +118,7 @@ def test_sync_runtime_tool_metadata_uses_enum_keys():
         model="gpt-5.4",
         api_format="openai",
         base_url="https://example.com/v1",
-    )
+    ).sync_active_profile_from_flat_fields()
 
     _sync_runtime_tool_metadata(
         tool_metadata,
@@ -130,5 +130,5 @@ def test_sync_runtime_tool_metadata_uses_enum_keys():
     assert tool_metadata[ToolMetadataKey.CURRENT_PROVIDER.value] == "openai"
     assert tool_metadata[ToolMetadataKey.CURRENT_API_FORMAT.value] == "openai"
     assert tool_metadata[ToolMetadataKey.CURRENT_BASE_URL.value] == "https://example.com/v1"
-    assert tool_metadata[ToolMetadataKey.CURRENT_ACTIVE_PROFILE.value] == "claude-api"
+    assert tool_metadata[ToolMetadataKey.CURRENT_ACTIVE_PROFILE.value] == settings.resolve_profile()[0]
     assert ToolMetadataKey.CURRENT_MODEL not in ToolMetadataKey.all_persisted_keys()

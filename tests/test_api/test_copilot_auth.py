@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -247,7 +248,7 @@ class TestPollForAccessToken:
     def test_timeout_raises_runtime_error(self, monkeypatch):
         """Polling beyond the deadline should raise RuntimeError."""
         # Make monotonic() return values past the deadline immediately
-        monotonic_calls = iter([0.0, 0.0, 999.0])
+        monotonic_calls = itertools.chain([0.0, 0.0, 999.0], itertools.repeat(999.0))
 
         def fake_monotonic() -> float:
             return next(monotonic_calls)

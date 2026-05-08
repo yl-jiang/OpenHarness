@@ -9,6 +9,7 @@ import pytest
 
 import openharness.engine.stream_events as stream_events
 import openharness.services.compact as compact_service
+import openharness.services.token_estimation as token_estimation
 from openharness.api.client import ApiMessageCompleteEvent
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, ToolResultBlock, ToolUseBlock
@@ -64,7 +65,8 @@ def test_compact_progress_phase_exposes_start_phases():
     )
 
 
-def test_token_estimation_helpers():
+def test_token_estimation_helpers(monkeypatch):
+    monkeypatch.setattr(token_estimation, "_get_tiktoken_encoder", lambda: None)
     assert estimate_tokens("") == 0
     assert estimate_tokens("abcd") == 1
     assert estimate_message_tokens(["abcd", "abcdefgh"]) == 3

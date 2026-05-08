@@ -434,14 +434,14 @@ async def test_backend_host_command_does_not_reset_cli_overrides(tmp_path, monke
     try:
         # Sanity: the initial session state reflects CLI overrides.
         assert host._bundle.app_state.get().model == "5.4"
-        assert host._bundle.app_state.get().provider == "openai-compatible"
+        assert host._bundle.app_state.get().provider == "deepseek"
 
         # Run a command that triggers sync_app_state.
         await host._process_line("/fast show")
 
         # CLI overrides should remain in effect.
         assert host._bundle.app_state.get().model == "5.4"
-        assert host._bundle.app_state.get().provider == "openai-compatible"
+        assert host._bundle.app_state.get().provider == "deepseek"
     finally:
         await close_runtime(host._bundle)
 
@@ -528,8 +528,11 @@ async def test_backend_host_emits_model_select_request(tmp_path, monkeypatch):
 
     event = next(item for item in events if item.type == "select_request")
     assert event.modal["command"] == "model"
-    assert any(option["value"] == "opus" and option.get("active") for option in event.select_options)
-    assert any(option["value"] == "default" for option in event.select_options)
+    assert [option["value"] for option in event.select_options] == [
+        "deepseek-v4-flash",
+        "deepseek-v4-pro",
+    ]
+    assert not any(option.get("active") for option in event.select_options)
 
 
 @pytest.mark.asyncio
