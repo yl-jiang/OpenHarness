@@ -78,6 +78,13 @@ def _convert_messages_to_codex(messages: list[ConversationMessage]) -> list[dict
     result: list[dict[str, Any]] = []
     for msg in messages:
         if msg.role == "user":
+            for block in msg.content:
+                if isinstance(block, ToolResultBlock):
+                    result.append({
+                        "type": "function_call_output",
+                        "call_id": block.tool_use_id,
+                        "output": block.content,
+                    })
             user_content: list[dict[str, Any]] = []
             for block in msg.content:
                 if isinstance(block, TextBlock) and block.text.strip():
@@ -89,13 +96,6 @@ def _convert_messages_to_codex(messages: list[ConversationMessage]) -> list[dict
                     })
             if user_content:
                 result.append({"role": "user", "content": user_content})
-            for block in msg.content:
-                if isinstance(block, ToolResultBlock):
-                    result.append({
-                        "type": "function_call_output",
-                        "call_id": block.tool_use_id,
-                        "output": block.content,
-                    })
             continue
 
         assistant_text = "".join(block.text for block in msg.content if isinstance(block, TextBlock))
