@@ -24,9 +24,17 @@ class _FakeTaskManager:
 
 
 @pytest.mark.asyncio
-async def test_subprocess_backend_forwards_replace_system_prompt(monkeypatch):
-    manager = _FakeTaskManager()
-    monkeypatch.setattr("openharness.swarm.subprocess_backend.get_task_manager", lambda: manager)
+async def test_subprocess_backend_forwards_replace_system_prompt(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    async def fake_create_agent_task(self, **kwargs):
+        captured.update(kwargs)
+        return _FakeTaskRecord(id="task-123")
+
+    monkeypatch.setattr(
+        "openharness.tasks.manager.BackgroundTaskManager.create_agent_task",
+        fake_create_agent_task,
+    )
     monkeypatch.setattr("openharness.swarm.subprocess_backend.get_teammate_command", lambda: "/usr/bin/python3")
     monkeypatch.setattr("openharness.swarm.subprocess_backend.build_inherited_env_vars", lambda **_: {})
 
@@ -36,7 +44,7 @@ async def test_subprocess_backend_forwards_replace_system_prompt(monkeypatch):
             name="Plan",
             team="default",
             prompt="design the feature",
-            cwd="/tmp/project",
+            cwd=str(tmp_path),
             parent_session_id="parent-1",
             model="inherit",
             system_prompt="PLAN_PROMPT",
@@ -45,15 +53,23 @@ async def test_subprocess_backend_forwards_replace_system_prompt(monkeypatch):
     )
 
     assert result.success is True
-    command = manager.calls[0]["command"]
+    command = str(captured["command"])
     assert "--task-worker" in command
     assert "--system-prompt PLAN_PROMPT" in command
 
 
 @pytest.mark.asyncio
-async def test_subprocess_backend_forwards_append_system_prompt(monkeypatch):
-    manager = _FakeTaskManager()
-    monkeypatch.setattr("openharness.swarm.subprocess_backend.get_task_manager", lambda: manager)
+async def test_subprocess_backend_forwards_append_system_prompt(monkeypatch, tmp_path):
+    captured: dict[str, object] = {}
+
+    async def fake_create_agent_task(self, **kwargs):
+        captured.update(kwargs)
+        return _FakeTaskRecord(id="task-123")
+
+    monkeypatch.setattr(
+        "openharness.tasks.manager.BackgroundTaskManager.create_agent_task",
+        fake_create_agent_task,
+    )
     monkeypatch.setattr("openharness.swarm.subprocess_backend.get_teammate_command", lambda: "/usr/bin/python3")
     monkeypatch.setattr("openharness.swarm.subprocess_backend.build_inherited_env_vars", lambda **_: {})
 
@@ -63,7 +79,7 @@ async def test_subprocess_backend_forwards_append_system_prompt(monkeypatch):
             name="verification",
             team="default",
             prompt="verify the implementation",
-            cwd="/tmp/project",
+            cwd=str(tmp_path),
             parent_session_id="parent-1",
             model="inherit",
             system_prompt="VERIFY_PROMPT",
@@ -72,5 +88,5 @@ async def test_subprocess_backend_forwards_append_system_prompt(monkeypatch):
     )
 
     assert result.success is True
-    command = manager.calls[0]["command"]
+    command = str(captured["command"])
     assert "--append-system-prompt VERIFY_PROMPT" in command
