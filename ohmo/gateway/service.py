@@ -7,7 +7,6 @@ import contextlib
 import json
 from openharness.utils.log import get_logger
 import os
-import os.path
 import signal
 import subprocess
 import sys
