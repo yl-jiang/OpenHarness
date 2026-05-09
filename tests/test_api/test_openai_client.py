@@ -410,3 +410,5 @@ class TestStreamMessageTokenParams:
         assert fake_sdk.chat.completions.last_kwargs is not None
         assert "max_tokens" in fake_sdk.chat.completions.last_kwargs
         assert "max_completion_tokens" not in fake_sdk.chat.completions.last_kwargs
+
+

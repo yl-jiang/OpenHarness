@@ -51,6 +51,11 @@ MAX_DONE_REMINDER_RETRIES = 2
 
 IMAGE_PREPROCESS_STATUS_MESSAGE = "Converting image to text description via vision model..."
 
+# Truncation recovery: when tool calls are dropped due to max_tokens
+# truncation, multiply effective_max_tokens by this factor for the retry.
+_TRUNCATION_RETRY_TOKEN_MULTIPLIER = 2.0
+_MAX_EFFECTIVE_TOKENS_CAP = 128_000
+
 
 class TurnAction(str, Enum):
     """Signal from a stage to the orchestrator."""
@@ -86,6 +91,7 @@ class TurnState:
     final_message: ConversationMessage | None = None
     usage: UsageSnapshot = field(default_factory=UsageSnapshot)
     stop_reason: str | None = None
+    truncated_tool_calls: int = 0
     tool_calls: list[Any] = field(default_factory=list)
     tool_results: list[ToolResultBlock] = field(default_factory=list)
 
@@ -97,6 +103,7 @@ class TurnState:
         self.final_message = None
         self.usage = UsageSnapshot()
         self.stop_reason = None
+        self.truncated_tool_calls = 0
         self.tool_calls = []
         self.tool_results = []
         self.action = TurnAction.PROCEED
@@ -299,6 +306,7 @@ async def api_call_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, U
                 state.final_message = event.message
                 state.usage = event.usage
                 state.stop_reason = event.stop_reason
+                state.truncated_tool_calls = event.truncated_tool_calls
     except Exception as exc:
         error_msg = str(exc) or repr(exc)
         logger.event(
@@ -421,6 +429,39 @@ async def response_routing_stage(state: TurnState) -> AsyncIterator[tuple[Stream
 
     # No tool calls — decide whether to exit or inject done-reminder
     if not final_message.tool_uses:
+        # All tool calls were truncated — bump max_tokens and retry
+        if state.truncated_tool_calls > 0:
+            previous = state.effective_max_tokens
+            state.effective_max_tokens = min(
+                int(previous * _TRUNCATION_RETRY_TOKEN_MULTIPLIER),
+                _MAX_EFFECTIVE_TOKENS_CAP,
+            )
+            logger.event(
+                "truncation_recovery",
+                session_id=state.session_id,
+                model=context.model,
+                turn_count=state.turn_count,
+                truncated_count=state.truncated_tool_calls,
+                previous_max_tokens=previous,
+                new_max_tokens=state.effective_max_tokens,
+            )
+            state.messages.append(
+                ConversationMessage.from_user_text(
+                    "<openharness-internal:truncation-recovery>\n"
+                    f"Your previous response was truncated (stop_reason=length). "
+                    f"{state.truncated_tool_calls} tool call(s) were dropped because their "
+                    f"arguments were incomplete. Please retry the incomplete tool call(s). "
+                    f"Output token budget has been increased from {previous} to "
+                    f"{state.effective_max_tokens}."
+                )
+            )
+            yield StatusEvent(
+                message=f"Response truncated — {state.truncated_tool_calls} tool call(s) dropped; "
+                        f"increasing max_tokens {previous} → {state.effective_max_tokens} for retry."
+            ), None
+            state.action = TurnAction.NEXT_TURN
+            return
+
         if context.require_explicit_done and state.done_reminder_count < MAX_DONE_REMINDER_RETRIES:
             state.done_reminder_count += 1
             logger.event(
@@ -595,6 +636,39 @@ async def post_tool_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, 
         message_count=len(state.messages),
     )
 
+    # Truncation recovery: if tool calls were dropped due to max_tokens
+    # truncation, bump effective_max_tokens and inject a notice so the model
+    # retries the incomplete calls in the next turn.
+    if state.truncated_tool_calls > 0:
+        previous = state.effective_max_tokens
+        state.effective_max_tokens = min(
+            int(previous * _TRUNCATION_RETRY_TOKEN_MULTIPLIER),
+            _MAX_EFFECTIVE_TOKENS_CAP,
+        )
+        logger.event(
+            "truncation_recovery",
+            session_id=state.session_id,
+            model=context.model,
+            turn_count=state.turn_count,
+            truncated_count=state.truncated_tool_calls,
+            previous_max_tokens=previous,
+            new_max_tokens=state.effective_max_tokens,
+        )
+        state.messages.append(
+            ConversationMessage.from_user_text(
+                "<openharness-internal:truncation-recovery>\n"
+                f"Your previous response was truncated (stop_reason=length). "
+                f"{state.truncated_tool_calls} tool call(s) were dropped because their "
+                f"arguments were incomplete. Please retry the incomplete tool call(s). "
+                f"Output token budget has been increased from {previous} to "
+                f"{state.effective_max_tokens}."
+            )
+        )
+        yield StatusEvent(
+            message=f"Response truncated — {state.truncated_tool_calls} tool call(s) dropped; "
+                    f"increasing max_tokens {previous} → {state.effective_max_tokens} for retry."
+        ), None
+
     # done() as sole tool call — exit the loop
     if len(tool_calls) == 1 and tool_calls[0].name == DONE_TOOL_NAME:
         logger.event(
@@ -610,9 +684,6 @@ async def post_tool_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, 
                 {"event": HookEvent.STOP.value, "stop_reason": "done_tool_called"},
             )
         state.action = TurnAction.STOP
-    # Silence the type checker — yield nothing but satisfy AsyncIterator protocol
-    return
-    yield  # noqa: F841 — makes this an async generator
 
 
 # ---------------------------------------------------------------------------

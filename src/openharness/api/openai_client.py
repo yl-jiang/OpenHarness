@@ -192,30 +192,6 @@ def _convert_assistant_message(msg: ConversationMessage) -> dict[str, Any]:
     return openai_msg
 
 
-def _parse_assistant_response(response: Any) -> ConversationMessage:
-    """Parse an OpenAI ChatCompletion response into a ConversationMessage."""
-    choice = response.choices[0]
-    message = choice.message
-    content: list[ContentBlock] = []
-
-    if message.content:
-        content.append(TextBlock(text=message.content))
-
-    if message.tool_calls:
-        for tc in message.tool_calls:
-            try:
-                args = json.loads(tc.function.arguments)
-            except (json.JSONDecodeError, TypeError):
-                args = {}
-            content.append(ToolUseBlock(
-                id=tc.id,
-                name=tc.function.name,
-                input=args,
-            ))
-
-    return ConversationMessage(role="assistant", content=content)
-
-
 def _normalize_openai_base_url(base_url: str | None) -> str | None:
     """Normalize custom OpenAI-compatible base URLs without dropping API path segments."""
     if not base_url:
@@ -399,6 +375,7 @@ class OpenAICompatibleClient:
         if collected_content:
             content.append(TextBlock(text=collected_content))
 
+        truncated_count = 0
         for _idx in sorted(collected_tool_calls.keys()):
             tc = collected_tool_calls[_idx]
             # Skip phantom/empty tool calls that some providers send
@@ -407,6 +384,13 @@ class OpenAICompatibleClient:
             try:
                 args = json.loads(tc["arguments"])
             except (json.JSONDecodeError, TypeError):
+                if finish_reason == "length":
+                    logger.warning(
+                        "dropping truncated tool call %s (id=%s): response hit max_tokens",
+                        tc["name"], tc["id"],
+                    )
+                    truncated_count += 1
+                    continue
                 args = {}
             content.append(ToolUseBlock(
                 id=tc["id"],
@@ -428,6 +412,7 @@ class OpenAICompatibleClient:
                 output_tokens=usage_data.get("output_tokens", 0),
             ),
             stop_reason=finish_reason,
+            truncated_tool_calls=truncated_count,
         )
 
     @staticmethod

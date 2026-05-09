@@ -13,6 +13,7 @@ from openharness.engine.query import (
     AskUserPrompt,
     INTERNAL_DONE_REMINDER_PREFIX,
     INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX,
+    INTERNAL_TRUNCATION_RECOVERY_PREFIX,
     MaxTurnsExceeded,
     PermissionPrompt,
     QueryContext,
@@ -184,6 +185,7 @@ class QueryEngine:
             text == _INTERNAL_AUTO_CONTINUE_PROMPT
             or text.startswith(INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX)
             or text.startswith(INTERNAL_DONE_REMINDER_PREFIX)
+            or text.startswith(INTERNAL_TRUNCATION_RECOVERY_PREFIX)
             or text.startswith("# Coordinator User Context\n\n")
         )
 
