@@ -134,7 +134,8 @@ export default function ScrollableTextInput({
 			if (
 				key.upArrow ||
 				key.downArrow ||
-				(key.ctrl && input === 'c') ||
+				key.ctrl ||
+				key.meta ||
 				key.tab ||
 				(key.shift && key.tab)
 			) {
