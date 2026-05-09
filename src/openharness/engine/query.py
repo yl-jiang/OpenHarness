@@ -50,6 +50,7 @@ MAX_TRACKED_TOOL_NAME_REPAIRS = 8
 
 INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX = "<openharness-internal:tool-name-repair>"
 INTERNAL_DONE_REMINDER_PREFIX = "<openharness-internal:done-reminder>"
+INTERNAL_TRUNCATION_RECOVERY_PREFIX = "<openharness-internal:truncation-recovery>"
 
 
 def _bounded_completion_tokens(max_tokens: int, context_window_tokens: int | None = None) -> int:

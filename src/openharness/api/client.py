@@ -61,6 +61,7 @@ class ApiMessageCompleteEvent:
     message: ConversationMessage
     usage: UsageSnapshot
     stop_reason: str | None = None
+    truncated_tool_calls: int = 0
 
 
 @dataclass(frozen=True)
