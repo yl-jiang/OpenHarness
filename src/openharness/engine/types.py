@@ -70,6 +70,7 @@ class ToolMetadataKey(str, Enum):
     TOOL_CALL_HISTORY = "tool_call_history"
     TOOL_NAME_REPAIR_NOTICES = "tool_name_repair_notices"
     VISION_MODEL_CONFIG = "vision_model_config"
+    IMAGE_GENERATION_CONFIG = "image_generation_config"
 
     @classmethod
     def all_persisted_keys(cls) -> tuple["ToolMetadataKey", ...]:

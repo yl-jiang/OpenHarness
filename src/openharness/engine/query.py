@@ -838,6 +838,7 @@ async def _normalize_tool_result_stage(state: ToolPipelineState) -> ToolPipeline
         tool_use_id=state.tool_use_id,
         content=normalized.inline_content,
         is_error=state.raw_result.is_error,
+        result_metadata=dict(state.raw_result.metadata or {}),
     )
     return state
 

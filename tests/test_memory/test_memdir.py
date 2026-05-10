@@ -6,6 +6,7 @@ from pathlib import Path
 
 from openharness.memory import (
     find_relevant_memories,
+    get_curated_memory_dir,
     get_memory_entrypoint,
     get_project_memory_dir,
     load_memory_prompt,
@@ -36,6 +37,10 @@ def test_load_memory_prompt_includes_entrypoint(tmp_path: Path, monkeypatch):
 
     assert prompt is not None
     assert "Persistent memory directory" in prompt
+    assert str(get_project_memory_dir(project_dir)) in prompt
+    assert "used by /memory" in prompt
+    assert str(get_curated_memory_dir(project_dir)) in prompt
+    assert "via the memory tool" in prompt
     assert "Testing" in prompt
 
 

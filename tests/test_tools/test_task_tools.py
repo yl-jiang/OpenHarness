@@ -9,7 +9,6 @@ from pathlib import Path
 import pytest
 
 from openharness.coordinator.coordinator_mode import get_team_registry
-from openharness.engine.types import ToolMetadataKey
 from openharness.tasks import get_task_manager
 from openharness.tools.agent_tool import AgentTool, AgentToolInput, _resolve_spawn_model
 from openharness.tools.base import ToolExecutionContext

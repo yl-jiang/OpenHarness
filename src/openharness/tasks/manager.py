@@ -136,14 +136,19 @@ class BackgroundTaskManager:
     async def create_shell_task(
         self,
         *,
-        command: str,
+        command: str | None = None,
+        argv: list[str] | None = None,
+        env: dict[str, str] | None = None,
         description: str,
         cwd: str | Path,
         task_type: TaskType = "local_bash",
     ) -> TaskRecord:
         """Start a background shell command."""
+        if command is None and argv is None:
+            raise ValueError("Shell task requires command or argv")
         task_id = _task_id(task_type)
         output_path = get_tasks_dir() / f"{task_id}.log"
+        display_command = command if command is not None else shlex.join(argv or [])
         record = TaskRecord(
             id=task_id,
             type=task_type,
@@ -151,7 +156,9 @@ class BackgroundTaskManager:
             description=description,
             cwd=str(Path(cwd).resolve()),
             output_file=output_path,
-            command=command,
+            command=display_command,
+            argv=list(argv) if argv is not None else None,
+            env=dict(env) if env is not None else None,
             created_at=time.time(),
             started_at=time.time(),
         )
@@ -303,6 +310,7 @@ class BackgroundTaskManager:
             task_type=task.type,
             return_code=task.return_code,
         )
+        await self._notify_completion_listeners(task)
         return task
 
     async def write_to_task(self, task_id: str, data: str) -> None:
@@ -411,28 +419,43 @@ class BackgroundTaskManager:
 
     async def _start_process(self, task_id: str) -> asyncio.subprocess.Process:
         task = self._require_task(task_id)
-        if task.command is None:
+        if task.command is None and task.argv is None:
             raise ValueError(f"Task {task_id} does not have a command to run")
 
         generation = self._generations.get(task_id, 0) + 1
         self._generations[task_id] = generation
         command = task.command or ""
+        command_head = task.argv[0] if task.argv else (command.split(maxsplit=1)[0] if command else None)
+        command_has_task_worker = (
+            "--task-worker" in task.argv if task.argv is not None else "--task-worker" in command
+        )
         logger.event(
             "task_manager_process_start",
             task_id=task.id,
             task_type=task.type,
             generation=generation,
             cwd=task.cwd,
-            command_head=(command.split(maxsplit=1)[0] if command else None),
-            command_has_task_worker="--task-worker" in command,
+            command_head=command_head,
+            command_has_task_worker=command_has_task_worker,
         )
-        process = await create_shell_subprocess(
-            task.command,
-            cwd=task.cwd,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
+        if task.argv is not None:
+            process = await asyncio.create_subprocess_exec(
+                *task.argv,
+                cwd=task.cwd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=task.env,
+            )
+        else:
+            process = await create_shell_subprocess(
+                task.command or "",
+                cwd=task.cwd,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=task.env,
+            )
         self._processes[task_id] = process
         self._waiters[task_id] = asyncio.create_task(
             self._watch_process(task_id, process, generation)
@@ -562,6 +585,7 @@ def _task_id(task_type: TaskType) -> str:
         "local_agent": "a",
         "remote_agent": "r",
         "in_process_teammate": "t",
+        "dream": "d",
     }
     return f"{prefixes[task_type]}{uuid4().hex[:8]}"
 

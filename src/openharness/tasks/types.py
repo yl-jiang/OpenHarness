@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 
-TaskType = Literal["local_bash", "local_agent", "remote_agent", "in_process_teammate"]
+TaskType = Literal["local_bash", "local_agent", "remote_agent", "in_process_teammate", "dream"]
 
 
 class TaskStatus(str, Enum):
@@ -51,6 +51,8 @@ class TaskRecord:
     cwd: str
     output_file: Path
     command: str | None = None
+    argv: list[str] | None = None
+    env: dict[str, str] | None = None
     prompt: str | None = None
     created_at: float = 0.0
     started_at: float | None = None
