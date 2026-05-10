@@ -8,6 +8,10 @@ from dataclasses import dataclass
 
 from openharness.config.settings import PermissionSettings
 from openharness.permissions.constants import (
+    AUTO_APPROVED_BASH_COMMANDS,
+    AUTO_APPROVED_BASH_PREFIXES,
+    AUTO_APPROVED_SINGLE_WORD_COMMANDS,
+    GIT_PAGER_DISABLE_MARKERS,
     INSTALL_MARKERS,
     SAFE_BASH_ALWAYS_PREFIXES,
     SAFE_SINGLE_WORD_COMMANDS,
@@ -240,6 +244,15 @@ class PermissionChecker:
                 always_patterns=always_patterns,
             )
 
+        if permission == "bash" and command and _is_auto_approved_bash_command(command):
+            return PermissionDecision(
+                allowed=True,
+                reason="safe bash command is allowed",
+                permission=permission,
+                patterns=patterns,
+                always_patterns=always_patterns,
+            )
+
         # Plan mode: block mutating tools
         if self._settings.mode == PermissionMode.PLAN:
             return PermissionDecision(
@@ -352,6 +365,7 @@ def _bash_command_allow_pattern(command: str) -> str:
         tokens = shlex.split(command)
     except ValueError:
         tokens = command.split()
+    tokens = _normalize_bash_allow_tokens(tokens)
 
     if not tokens:
         return command
@@ -365,6 +379,76 @@ def _bash_command_allow_pattern(command: str) -> str:
             return f"{prefix} *"
 
     return command
+
+
+def _normalize_bash_allow_tokens(tokens: list[str]) -> list[str]:
+    if not tokens:
+        return tokens
+    lowered = [token.lower() for token in tokens]
+    if "git" not in lowered:
+        return tokens
+
+    git_index = lowered.index("git")
+    if any(marker not in GIT_PAGER_DISABLE_MARKERS for marker in lowered[:git_index]):
+        return tokens
+
+    normalized = [tokens[git_index]]
+    normalized.extend(
+        token
+        for token in tokens[git_index + 1 :]
+        if token.lower() not in GIT_PAGER_DISABLE_MARKERS
+    )
+    return normalized
+
+
+def _is_auto_approved_bash_command(command: str) -> bool:
+    if _has_shell_control_syntax(command):
+        return False
+    if "|" in command:
+        return all(
+            _is_auto_approved_simple_bash_command(segment)
+            for segment in command.split("|")
+        )
+    return _is_auto_approved_simple_bash_command(command)
+
+
+def _is_auto_approved_simple_bash_command(command: str) -> bool:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    tokens = _normalize_bash_allow_tokens(tokens)
+    if not tokens or _has_external_path(tokens) or _uses_output_option(tokens):
+        return False
+
+    if " ".join(tokens) in AUTO_APPROVED_BASH_COMMANDS:
+        return True
+
+    if tokens[0] in AUTO_APPROVED_SINGLE_WORD_COMMANDS:
+        return True
+
+    if len(tokens) >= 2:
+        return f"{tokens[0]} {tokens[1]}" in AUTO_APPROVED_BASH_PREFIXES
+
+    return False
+
+
+def _has_shell_control_syntax(command: str) -> bool:
+    return any(marker in command for marker in (";", "&&", "||", "|&", ">", "<", "&", "`", "$("))
+
+
+def _has_external_path(tokens: list[str]) -> bool:
+    for token in tokens:
+        if token == "--":
+            continue
+        value = token.split("=", 1)[1] if token.startswith("--") and "=" in token else token
+        if value.startswith(("/", "~")) or value == ".." or value.startswith("../") or "/../" in value:
+            return True
+    return False
+
+
+def _uses_output_option(tokens: list[str]) -> bool:
+    return any(token == "--output" or token.startswith("--output=") for token in tokens)
 
 
 def _bash_permission_hint(command: str | None) -> str:

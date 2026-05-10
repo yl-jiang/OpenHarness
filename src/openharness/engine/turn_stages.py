@@ -536,6 +536,7 @@ async def done_gate_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, 
                 tool_name=tc.name,
                 output=result.content,
                 is_error=result.is_error,
+                metadata=result.result_metadata,
             ), None
             tool_results.append(result)
 
@@ -571,6 +572,7 @@ async def tool_execution_stage(state: TurnState) -> AsyncIterator[tuple[StreamEv
             tool_name=tc.name,
             output=result.content,
             is_error=result.is_error,
+            metadata=result.result_metadata,
         ), None
         state.tool_results = [result]
     else:
@@ -604,6 +606,7 @@ async def tool_execution_stage(state: TurnState) -> AsyncIterator[tuple[StreamEv
                 tool_name=tc.name,
                 output=result.content,
                 is_error=result.is_error,
+                metadata=result.result_metadata,
             ), None
 
         state.tool_results = tool_results

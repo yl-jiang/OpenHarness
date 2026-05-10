@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import AsyncIterator
 
 from openharness.api.client import SupportsStreamingMessages
+from openharness.config.settings import Settings
 from openharness.engine.cost_tracker import CostTracker
 from openharness.coordinator.coordinator_mode import get_coordinator_user_context
 from openharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock, sanitize_conversation_messages
@@ -30,6 +31,7 @@ from openharness.engine.stream_events import (
 from openharness.engine.types import ToolMetadataKey
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.checker import PermissionChecker
+from openharness.services.autodream.service import schedule_auto_dream
 from openharness.tools.base import ToolRegistry
 from openharness.utils.log import get_logger
 
@@ -75,6 +77,7 @@ class QueryEngine:
         hook_executor: HookExecutor | None = None,
         tool_metadata: dict[str, object] | None = None,
         require_explicit_done: bool = False,
+        settings: Settings | None = None,
     ) -> None:
         self._api_client = api_client
         self._tool_registry = tool_registry
@@ -91,6 +94,7 @@ class QueryEngine:
         self._hook_executor = hook_executor
         self._tool_metadata = tool_metadata or {}
         self._require_explicit_done = require_explicit_done
+        self._settings = settings
         self._messages: list[ConversationMessage] = []
         self._export_messages: list[ConversationMessage] = []
         self._cost_tracker = CostTracker()
@@ -380,6 +384,20 @@ class QueryEngine:
             return
         self._export_messages = list(messages)
 
+    def _schedule_auto_dream(self) -> None:
+        """Fire-and-forget background memory consolidation after a user turn."""
+        if self._settings is None:
+            return
+        context = self._tool_metadata.get("autodream_context")
+        kwargs = dict(context) if isinstance(context, dict) else {}
+        schedule_auto_dream(
+            cwd=self._cwd,
+            settings=self._settings,
+            model=self._model,
+            current_session_id=str(self._tool_metadata.get("session_id") or ""),
+            **kwargs,
+        )
+
     def has_pending_continuation(self) -> bool:
         """Return True when the conversation ends with tool results awaiting a follow-up model turn."""
         if not self._messages:
@@ -443,8 +461,11 @@ class QueryEngine:
         coordinator_context = self._build_coordinator_context_message()
         if coordinator_context is not None:
             query_messages.append(coordinator_context)
-        async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):
-            yield event
+        try:
+            async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):
+                yield event
+        finally:
+            self._schedule_auto_dream()
         self._maybe_spawn_self_evolution_review(
             user_message.text,
             messages_snapshot=self._public_messages(query_messages),

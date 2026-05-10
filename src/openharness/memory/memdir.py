@@ -34,10 +34,16 @@ def load_memory_prompt(cwd: str | Path, *, max_entrypoint_lines: int = 200) -> s
     entrypoint = get_memory_entrypoint(cwd)
     lines = [
         "# Memory",
-        f"- Persistent memory directory: {memory_dir}",
-        f"- Curated memory directory: {curated_dir}",
-        "- Use this directory to store durable user or project context that should survive future sessions.",
-        "- Prefer concise topic files plus an index entry in MEMORY.md.",
+        (
+            f"- Persistent memory directory: {memory_dir} "
+            "(human-managed topic files plus the root MEMORY.md index; used by /memory)"
+        ),
+        (
+            f"- Curated memory directory: {curated_dir} "
+            "(tool-managed durable facts for USER.md and MEMORY.md prompt injection)"
+        ),
+        "- Store concise project notes and topical entries in the persistent memory directory.",
+        "- Store compact, stable user or project facts in the curated memory directory via the memory tool.",
     ]
 
     if entrypoint.exists():

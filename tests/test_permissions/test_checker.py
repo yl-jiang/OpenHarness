@@ -75,24 +75,88 @@ def test_remembered_bash_allow_pattern_skips_repeated_prompt():
     first = checker.evaluate(
         "bash",
         is_read_only=False,
-        command="git status --short",
+        command="git remote -v",
     )
     assert first.allowed is False
     assert first.requires_confirmation is True
     assert first.permission == "bash"
-    assert first.patterns == ("git status --short",)
-    assert first.always_patterns == ("git status *",)
+    assert first.patterns == ("git remote -v",)
+    assert first.always_patterns == ("git remote *",)
 
     checker.remember_allow(first)
 
     second = checker.evaluate(
         "bash",
         is_read_only=False,
-        command="git status --porcelain",
+        command="git remote show origin",
     )
     assert second.allowed is True
     assert second.requires_confirmation is False
     assert "remembered" in second.reason
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git --no-pager diff --stat",
+        "git --no-pager diff HEAD -- src/openharness/services/autodream/ --stat",
+        "git --no-pager diff HEAD -- src/openharness/services/autodream/service.py | head -100",
+        "GIT_PAGER=cat git diff --name-only",
+        "git branch --show-current",
+    ],
+)
+def test_default_mode_auto_allows_safe_git_forms(command):
+    checker = PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT))
+    decision = checker.evaluate(
+        "bash",
+        is_read_only=False,
+        command=command,
+    )
+    assert decision.allowed is True
+    assert decision.requires_confirmation is False
+    assert "safe bash command" in decision.reason
+
+
+def test_default_mode_does_not_auto_allow_mutating_git_branch_command():
+    checker = PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT))
+    decision = checker.evaluate("bash", is_read_only=False, command="git branch demo")
+
+    assert decision.allowed is False
+    assert decision.requires_confirmation is True
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_pattern"),
+    [
+        ("rg TODO src", "rg *"),
+        ("stat README.md", "stat *"),
+        ("git ls-files src", "git ls-files *"),
+    ],
+)
+def test_default_mode_auto_allows_additional_read_only_commands(command, expected_pattern):
+    checker = PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT))
+    decision = checker.evaluate("bash", is_read_only=False, command=command)
+
+    assert decision.allowed is True
+    assert decision.requires_confirmation is False
+    assert decision.always_patterns == (expected_pattern,)
+    assert "safe bash command" in decision.reason
+
+
+def test_default_mode_does_not_auto_allow_safe_command_with_shell_redirection():
+    checker = PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT))
+    decision = checker.evaluate("bash", is_read_only=False, command="rg TODO src > matches.txt")
+
+    assert decision.allowed is False
+    assert decision.requires_confirmation is True
+
+
+def test_default_mode_does_not_auto_allow_shell_or_pipeline_mutation():
+    checker = PermissionChecker(PermissionSettings(mode=PermissionMode.DEFAULT))
+    decision = checker.evaluate("bash", is_read_only=False, command="git diff | tee diff.txt")
+
+    assert decision.allowed is False
+    assert decision.requires_confirmation is True
 
 
 def test_remembered_edit_allow_is_limited_to_same_file(tmp_path):
