@@ -202,6 +202,15 @@ class CronManagerTool(BaseTool):
             is_error=True,
         )
 
+    def _with_scheduler_hint(self, output: str, *, active: bool) -> ToolResult:
+        if active and not is_scheduler_running():
+            output = (
+                f"{output}\n"
+                "Scheduler is stopped. This change is saved, but jobs will not run automatically "
+                "until you start it with 'oh cron start'."
+            )
+        return ToolResult(output=output)
+
     # ── list ────────────────────────────────────────────────────────────────
 
     def _list(self) -> ToolResult:
@@ -302,8 +311,9 @@ class CronManagerTool(BaseTool):
             job["notify"] = arguments.notify
         upsert_cron_job(job)
         status = "enabled" if enabled else "disabled"
-        return ToolResult(
-            output=f"Cron job '{arguments.name}' created [{arguments.schedule}] ({status})."
+        return self._with_scheduler_hint(
+            f"Cron job '{arguments.name}' created [{arguments.schedule}] ({status}).",
+            active=enabled,
         )
 
     # ── update ───────────────────────────────────────────────────────────────
@@ -373,8 +383,9 @@ class CronManagerTool(BaseTool):
             )
 
         upsert_cron_job(updated)
-        return ToolResult(
-            output=f"Cron job '{arguments.name}' updated ({', '.join(changed)})."
+        return self._with_scheduler_hint(
+            f"Cron job '{arguments.name}' updated ({', '.join(changed)}).",
+            active=bool(updated.get("enabled", True)),
         )
 
     # ── toggle ───────────────────────────────────────────────────────────────
@@ -394,7 +405,10 @@ class CronManagerTool(BaseTool):
                 is_error=True,
             )
         state = "enabled" if arguments.enabled else "disabled"
-        return ToolResult(output=f"Cron job '{arguments.name}' is now {state}.")
+        return self._with_scheduler_hint(
+            f"Cron job '{arguments.name}' is now {state}.",
+            active=arguments.enabled,
+        )
 
     # ── delete ───────────────────────────────────────────────────────────────
 
