@@ -156,6 +156,37 @@ class EmptyAssistantApiClient:
         )
 
 
+class EmptyAssistantThenDoneApiClient:
+    def __init__(self) -> None:
+        self.requests: list[list[ConversationMessage]] = []
+        self._calls = 0
+
+    async def stream_message(self, request):
+        self.requests.append(list(request.messages))
+        self._calls += 1
+        if self._calls == 1:
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(role="assistant", content=[]),
+                usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+                stop_reason=None,
+            )
+            return
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(
+                role="assistant",
+                content=[
+                    ToolUseBlock(
+                        id="toolu_done_1",
+                        name="done",
+                        input={"message": "All set."},
+                    ),
+                ],
+            ),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            stop_reason=None,
+        )
+
+
 class _RecordingEvolutionController:
     def __init__(self) -> None:
         self.started: list[tuple[bool, bool]] = []
@@ -752,6 +783,38 @@ async def test_query_engine_continues_again_after_two_silent_stops_with_progress
     )
     # Final public history ends with the visible answer
     assert engine.messages[-1].text == "Done: data has x and y."
+
+
+@pytest.mark.asyncio
+async def test_query_engine_done_reminder_retry_does_not_replay_empty_assistant(
+    tmp_path: Path,
+    monkeypatch,
+):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    api_client = EmptyAssistantThenDoneApiClient()
+
+    engine = QueryEngine(
+        api_client=api_client,
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings()),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        require_explicit_done=True,
+    )
+
+    _ = [event async for event in engine.submit_message("finish the task")]
+
+    assert len(api_client.requests) == 2
+    second_request_messages = api_client.requests[1]
+    assert any(
+        msg.role == "user" and "done-reminder" in msg.text
+        for msg in second_request_messages
+    )
+    assert not any(
+        msg.role == "assistant" and msg.is_effectively_empty()
+        for msg in second_request_messages
+    )
 
 
 @pytest.mark.asyncio
