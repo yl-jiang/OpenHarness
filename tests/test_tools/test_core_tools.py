@@ -456,6 +456,61 @@ async def test_cron_manager_create_agent_turn_payload(tmp_path: Path, monkeypatc
     assert "payload: agent_turn -> feishu:ou_test" in list_result.output
 
 
+@pytest.mark.asyncio
+async def test_cron_manager_scheduler_hint_for_active_jobs_only(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr("openharness.tools.cron_manager_tool.is_scheduler_running", lambda: False)
+    context = ToolExecutionContext(cwd=tmp_path)
+    tool = CronManagerTool()
+
+    create_result = await tool.execute(
+        tool.input_model(
+            action="create",
+            name="nightly",
+            schedule="0 0 * * *",
+            command="printf 'CRON_OK'",
+        ),
+        context,
+    )
+    assert create_result.is_error is False
+    assert "Scheduler is stopped." in create_result.output
+    assert "oh cron start" in create_result.output
+
+    update_result = await tool.execute(
+        tool.input_model(action="update", name="nightly", command="printf 'CRON_OK_2'"),
+        context,
+    )
+    assert update_result.is_error is False
+    assert "Scheduler is stopped." in update_result.output
+
+    disable_result = await tool.execute(
+        tool.input_model(action="toggle", name="nightly", enabled=False),
+        context,
+    )
+    assert disable_result.is_error is False
+    assert "Scheduler is stopped." not in disable_result.output
+
+    enable_result = await tool.execute(
+        tool.input_model(action="toggle", name="nightly", enabled=True),
+        context,
+    )
+    assert enable_result.is_error is False
+    assert "Scheduler is stopped." in enable_result.output
+
+    create_disabled_result = await tool.execute(
+        tool.input_model(
+            action="create",
+            name="manual",
+            schedule="30 8 * * *",
+            command="printf 'MANUAL'",
+            enabled=False,
+        ),
+        context,
+    )
+    assert create_disabled_result.is_error is False
+    assert "Scheduler is stopped." not in create_disabled_result.output
+
+
 # ---------------------------------------------------------------------------
 # write_skill_tool tests
 # ---------------------------------------------------------------------------
