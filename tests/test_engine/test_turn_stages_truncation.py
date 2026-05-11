@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from openharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
-from openharness.engine.stream_events import StatusEvent
+from openharness.engine.stream_events import AssistantTurnComplete, StatusEvent
 from openharness.engine.turn_stages import (
     TurnAction,
     TurnState,
@@ -98,6 +98,68 @@ class TestResponseRoutingTruncationRecovery:
         _ = [ev async for ev in response_routing_stage(state)]
 
         assert state.effective_max_tokens == _MAX_EFFECTIVE_TOKENS_CAP
+
+    @pytest.mark.asyncio
+    async def test_empty_truncation_retry_does_not_persist_empty_assistant(self):
+        msg = ConversationMessage(role="assistant", content=[])
+        state = _make_state(
+            final_message=msg,
+            stop_reason="length",
+            truncated_tool_calls=1,
+            effective_max_tokens=8192,
+        )
+
+        events = [ev async for ev in response_routing_stage(state)]
+
+        assert state.action == TurnAction.NEXT_TURN
+        assert len(state.messages) == 1
+        assert "truncation-recovery" in state.messages[0].text
+        assert not any(
+            isinstance(event, AssistantTurnComplete)
+            for event, _ in events
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_done_reminder_does_not_persist_empty_assistant(self):
+        msg = ConversationMessage(role="assistant", content=[])
+        state = _make_state(
+            final_message=msg,
+            stop_reason="stop",
+            truncated_tool_calls=0,
+        )
+        state.context.require_explicit_done = True
+
+        events = [ev async for ev in response_routing_stage(state)]
+
+        assert state.action == TurnAction.NEXT_TURN
+        assert len(state.messages) == 1
+        assert "done-reminder" in state.messages[0].text
+        assert not any(
+            isinstance(event, AssistantTurnComplete)
+            for event, _ in events
+        )
+
+    @pytest.mark.asyncio
+    async def test_non_empty_done_reminder_preserves_assistant_message(self):
+        msg = ConversationMessage(role="assistant", content=[TextBlock(text="Almost done.")])
+        state = _make_state(
+            final_message=msg,
+            stop_reason="stop",
+            truncated_tool_calls=0,
+        )
+        state.context.require_explicit_done = True
+
+        events = [ev async for ev in response_routing_stage(state)]
+
+        assert state.action == TurnAction.NEXT_TURN
+        assert [message.role for message in state.messages] == ["assistant", "user"]
+        assert state.messages[0].text == "Almost done."
+        assert "done-reminder" in state.messages[1].text
+        assistant_events = [
+            event for event, _ in events if isinstance(event, AssistantTurnComplete)
+        ]
+        assert len(assistant_events) == 1
+        assert assistant_events[0].message.text == "Almost done."
 
 
 class TestPostToolTruncationRecovery:

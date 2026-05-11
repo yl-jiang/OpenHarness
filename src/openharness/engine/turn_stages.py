@@ -404,6 +404,17 @@ async def response_routing_stage(state: TurnState) -> AsyncIterator[tuple[Stream
     context = state.context
     final_message = state.final_message
     assert final_message is not None
+    retry_without_persisting_empty_assistant = (
+        final_message.is_effectively_empty()
+        and not final_message.tool_uses
+        and (
+            state.truncated_tool_calls > 0
+            or (
+                context.require_explicit_done
+                and state.done_reminder_count < MAX_DONE_REMINDER_RETRIES
+            )
+        )
+    )
 
     # Handle coordinator context message
     coordinator_context_message: ConversationMessage | None = None
@@ -411,7 +422,8 @@ async def response_routing_stage(state: TurnState) -> AsyncIterator[tuple[Stream
         if state.messages and state.messages[-1].role == "user" and state.messages[-1].text.startswith("# Coordinator User Context"):
             coordinator_context_message = state.messages.pop()
 
-    state.messages.append(final_message)
+    if not retry_without_persisting_empty_assistant:
+        state.messages.append(final_message)
     logger.event(
         "api_message_complete",
         session_id=state.session_id,
@@ -421,8 +433,10 @@ async def response_routing_stage(state: TurnState) -> AsyncIterator[tuple[Stream
         text_length=len(final_message.text),
         tool_use_count=len(final_message.tool_uses),
         message_count=len(state.messages),
+        persisted=not retry_without_persisting_empty_assistant,
     )
-    yield AssistantTurnComplete(message=final_message, usage=state.usage), state.usage
+    if not retry_without_persisting_empty_assistant:
+        yield AssistantTurnComplete(message=final_message, usage=state.usage), state.usage
 
     if coordinator_context_message is not None:
         state.messages.append(coordinator_context_message)
