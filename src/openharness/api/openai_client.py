@@ -104,6 +104,9 @@ def _convert_messages_to_openai(
     for msg in messages:
         if msg.role == "assistant":
             openai_msg = _convert_assistant_message(msg)
+            if openai_msg.get("content") is None and not openai_msg.get("tool_calls"):
+                logger.warning("Skipping empty assistant message when building OpenAI payload")
+                continue
             openai_messages.append(openai_msg)
         elif msg.role == "user":
             # User messages may contain text or tool_result blocks
