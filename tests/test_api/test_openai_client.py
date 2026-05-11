@@ -148,6 +148,13 @@ class TestConvertMessagesToOpenai:
         assert tc["function"]["name"] == "read_file"
         assert json.loads(tc["function"]["arguments"]) == {"path": "/tmp/x"}
 
+    def test_empty_assistant_message_is_skipped(self):
+        msg = ConversationMessage(role="assistant", content=[])
+
+        result = _convert_messages_to_openai([msg], None)
+
+        assert result == []
+
     def test_preserves_reasoning_content_after_message_normalization(self):
         msg = ConversationMessage(
             role="assistant",
@@ -410,5 +417,4 @@ class TestStreamMessageTokenParams:
         assert fake_sdk.chat.completions.last_kwargs is not None
         assert "max_tokens" in fake_sdk.chat.completions.last_kwargs
         assert "max_completion_tokens" not in fake_sdk.chat.completions.last_kwargs
-
 
