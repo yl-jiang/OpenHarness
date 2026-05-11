@@ -47,6 +47,10 @@ _SINK_IDS: list[int] = []
 _CURRENT_CONFIG: tuple[str, str, str, str, str] | None = None
 _DEFAULT_ROTATION = "10 MB"
 _DEFAULT_RETENTION = "30 days"
+_DEFAULT_LOG_BASENAME = "openharness"
+_DEFAULT_LOG_SUFFIX = ".jsonl"
+_DEFAULT_LOG_RETENTION_GLOB = f"{_DEFAULT_LOG_BASENAME}*{_DEFAULT_LOG_SUFFIX}"
+_DEFAULT_LOG_PATH: Path | None = None
 _SIZE_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)", re.IGNORECASE)
 
 
@@ -121,44 +125,51 @@ def _do_rotate(path: Path) -> None:
     path.rename(backup)
 
 
-def _cleanup_old_files(path: Path, retention: str) -> None:
+def _build_timestamped_log_path(
+    directory: Path,
+    *,
+    basename: str = _DEFAULT_LOG_BASENAME,
+    suffix: str = _DEFAULT_LOG_SUFFIX,
+) -> Path:
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    candidate = directory / f"{basename}.{timestamp}{suffix}"
+    counter = 0
+    while candidate.exists():
+        counter += 1
+        candidate = directory / f"{basename}.{timestamp}_{counter}{suffix}"
+    return candidate
+
+
+def _cleanup_old_files(path: Path, retention: str, *, cleanup_glob: str | None = None) -> None:
     days = _parse_retention_days(retention)
     if days <= 0:
         return
     cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
-    for f in path.parent.glob(f"{path.stem}.*{path.suffix}"):
+    pattern = cleanup_glob or f"{path.stem}.*{path.suffix}"
+    for f in path.parent.glob(pattern):
         if f == path:
             continue
         try:
-            name = f.stem
-            prefix = f"{path.stem}."
-            if not name.startswith(prefix):
-                continue
-            rest = name[len(prefix) :]
-            date_part = rest.split("_")[0]
-            file_date = datetime.datetime.strptime(date_part, "%Y-%m-%d")
-            if file_date < cutoff:
+            if datetime.datetime.fromtimestamp(f.stat().st_mtime) < cutoff:
                 f.unlink()
         except Exception:
             pass
 
 
-def _maybe_rotate(path: Path, *, rotation: str, retention: str) -> None:
-    if not path.exists():
-        return
-
-    if _SIZE_PATTERN.search(rotation):
-        size_limit = _parse_size(rotation)
-        if path.stat().st_size >= size_limit:
-            _do_rotate(path)
-    else:
-        mtime = datetime.datetime.fromtimestamp(path.stat().st_mtime)
-        now = datetime.datetime.now()
-        if mtime.date() != now.date():
-            _do_rotate(path)
+def _maybe_rotate(path: Path, *, rotation: str, retention: str, cleanup_glob: str | None = None) -> None:
+    if path.exists():
+        if _SIZE_PATTERN.search(rotation):
+            size_limit = _parse_size(rotation)
+            if path.stat().st_size >= size_limit:
+                _do_rotate(path)
+        else:
+            mtime = datetime.datetime.fromtimestamp(path.stat().st_mtime)
+            now = datetime.datetime.now()
+            if mtime.date() != now.date():
+                _do_rotate(path)
 
     if retention:
-        _cleanup_old_files(path, retention)
+        _cleanup_old_files(path, retention, cleanup_glob=cleanup_glob)
 
 
 def _write_json_line(
@@ -167,11 +178,12 @@ def _write_json_line(
     *,
     rotation: str = _DEFAULT_ROTATION,
     retention: str = _DEFAULT_RETENTION,
+    cleanup_glob: str | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str)
     with _FILE_LOCK:
-        _maybe_rotate(path, rotation=rotation, retention=retention)
+        _maybe_rotate(path, rotation=rotation, retention=retention, cleanup_glob=cleanup_glob)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(encoded)
             handle.write("\n")
@@ -221,13 +233,20 @@ def _build_jsonl_sink(
     *,
     rotation: str = _DEFAULT_ROTATION,
     retention: str = _DEFAULT_RETENTION,
+    cleanup_glob: str | None = None,
 ):
     def _sink(message) -> None:
         record = message.record
         path = path_resolver(record)
         if path is None:
             return
-        _write_json_line(path, _payload_from_record(record), rotation=rotation, retention=retention)
+        _write_json_line(
+            path,
+            _payload_from_record(record),
+            rotation=rotation,
+            retention=retention,
+            cleanup_glob=cleanup_glob,
+        )
 
     return _sink
 
@@ -256,7 +275,10 @@ def get_default_log_path() -> Path:
     explicit = os.environ.get("OPENHARNESS_LOG_FILE")
     if explicit:
         return Path(explicit).expanduser()
-    return get_logs_dir() / "openharness.jsonl"
+    global _DEFAULT_LOG_PATH
+    if _DEFAULT_LOG_PATH is None:
+        _DEFAULT_LOG_PATH = _build_timestamped_log_path(get_logs_dir())
+    return _DEFAULT_LOG_PATH
 
 
 # Sentinel to indicate "no console output" (distinct from None which means use default)
@@ -277,9 +299,17 @@ def configure_logging(
     level_name = _resolve_level_name(debug=debug, level=level)
     disable_console = console_stream is _DISABLE_CONSOLE
     stream = None if disable_console else (console_stream or sys.stderr)
-    app_log_path = Path(log_file).expanduser() if log_file is not None else get_default_log_path()
+    explicit_env_log_file = os.environ.get("OPENHARNESS_LOG_FILE")
+    using_generated_default_log = log_file is None and not explicit_env_log_file
+    if log_file is not None:
+        app_log_path = Path(log_file).expanduser()
+    elif explicit_env_log_file:
+        app_log_path = Path(explicit_env_log_file).expanduser()
+    else:
+        app_log_path = get_default_log_path()
     rotation = rotation or os.environ.get("OPENHARNESS_LOG_ROTATION") or _DEFAULT_ROTATION
     retention = retention or os.environ.get("OPENHARNESS_LOG_RETENTION") or _DEFAULT_RETENTION
+    cleanup_glob = _DEFAULT_LOG_RETENTION_GLOB if using_generated_default_log else None
     stream_id = "disabled" if disable_console else str(id(stream))
     desired_config = (level_name, str(app_log_path), stream_id, rotation, retention)
 
@@ -291,16 +321,21 @@ def configure_logging(
         # sinks so the library's default stderr sink cannot leak logs into TUI mode.
         _remove_sinks_locked()
 
-        # Auto-rotate existing log file on startup so prior runs don't clutter
-        # the current investigation (especially in TUI development loops).
-        if app_log_path.exists():
+        # Keep explicit/fixed log files split by process start, but let generated
+        # timestamped default files stand on their own without startup rotation.
+        if app_log_path.exists() and not using_generated_default_log:
             _do_rotate(app_log_path)
 
         if stream is not None:
             _SINK_IDS.append(_loguru_logger.add(_build_console_sink(stream), level=level_name, colorize=False))
         _SINK_IDS.append(
             _loguru_logger.add(
-                _build_jsonl_sink(lambda _record: app_log_path, rotation=rotation, retention=retention),
+                _build_jsonl_sink(
+                    lambda _record: app_log_path,
+                    rotation=rotation,
+                    retention=retention,
+                    cleanup_glob=cleanup_glob,
+                ),
                 level="DEBUG",
             )
         )
@@ -309,8 +344,10 @@ def configure_logging(
 
 
 def reset_logging() -> None:
+    global _DEFAULT_LOG_PATH
     with _CONFIG_LOCK:
         _remove_sinks_locked()
+        _DEFAULT_LOG_PATH = None
 
 
 def _format_message(message: str, args: tuple[Any, ...]) -> str:

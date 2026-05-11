@@ -3,11 +3,12 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
-from openharness.utils.log import configure_logging, get_logger, reset_logging
+from openharness.utils.log import configure_logging, get_default_log_path, get_logger, reset_logging
 
 
 def _read_json_lines(path: Path) -> list[dict[str, object]]:
@@ -136,6 +137,66 @@ def test_configure_logging_rotates_existing_file_on_startup(tmp_path, monkeypatc
     backup_lines = _read_json_lines(backups[0])
     assert len(backup_lines) == 1
     assert backup_lines[0]["message"] == "first run message"
+
+
+def test_get_default_log_path_uses_process_stable_timestamped_file_when_env_unset(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENHARNESS_LOG_FILE", raising=False)
+    monkeypatch.setenv("OPENHARNESS_LOGS_DIR", str(tmp_path))
+    reset_logging()
+
+    first_path = get_default_log_path()
+    second_path = get_default_log_path()
+
+    assert first_path == second_path
+    assert first_path.parent == tmp_path
+    assert re.fullmatch(r"openharness\.\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:_\d+)?\.jsonl", first_path.name)
+
+    configure_logging(console_stream=io.StringIO())
+    get_logger("test.default_log_path").info("default path message")
+
+    assert first_path.exists()
+    assert _read_json_lines(first_path)[-1]["message"] == "default path message"
+
+
+def test_generated_default_log_files_are_cleaned_by_retention(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENHARNESS_LOG_FILE", raising=False)
+    monkeypatch.setenv("OPENHARNESS_LOGS_DIR", str(tmp_path))
+    reset_logging()
+
+    stale_default_log = tmp_path / "openharness.2000-01-01_00-00-00.jsonl"
+    stale_default_log.write_text('{"message":"stale"}\n', encoding="utf-8")
+    os.utime(stale_default_log, (946684800, 946684800))
+
+    unrelated_log = tmp_path / "other.2000-01-01_00-00-00.jsonl"
+    unrelated_log.write_text('{"message":"keep"}\n', encoding="utf-8")
+    os.utime(unrelated_log, (946684800, 946684800))
+
+    configure_logging(console_stream=io.StringIO(), retention="1 days")
+    get_logger("test.retention").info("fresh message")
+
+    assert not stale_default_log.exists()
+    assert unrelated_log.exists()
+
+
+def test_generated_default_log_files_start_new_run_without_rotating_previous_file(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENHARNESS_LOG_FILE", raising=False)
+    monkeypatch.setenv("OPENHARNESS_LOGS_DIR", str(tmp_path))
+    reset_logging()
+
+    configure_logging(console_stream=io.StringIO())
+    first_path = get_default_log_path()
+    get_logger("test.default_restart").info("first run")
+
+    reset_logging()
+    configure_logging(console_stream=io.StringIO())
+    second_path = get_default_log_path()
+    get_logger("test.default_restart").info("second run")
+
+    assert first_path != second_path
+    assert first_path.exists()
+    assert second_path.exists()
+    assert _read_json_lines(first_path)[-1]["message"] == "first run"
+    assert _read_json_lines(second_path)[-1]["message"] == "second run"
 
 
 def test_unified_log_module_uses_loguru_backend() -> None:
