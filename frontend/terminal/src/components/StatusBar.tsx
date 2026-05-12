@@ -153,6 +153,15 @@ function StatusBarInner({
 export const StatusBar = React.memo(StatusBarInner, areStatusBarPropsEqual);
 
 function formatNum(n: number): string {
+	if (n >= 1_000_000_000_000) {
+		return `${(n / 1_000_000_000_000).toFixed(1)}T`;
+	}
+	if (n >= 1_000_000_000) {
+		return `${(n / 1_000_000_000).toFixed(1)}B`;
+	}
+	if (n >= 1_000_000) {
+		return `${(n / 1_000_000).toFixed(1)}M`;
+	}
 	if (n >= 1000) {
 		return `${(n / 1000).toFixed(1)}k`;
 	}

@@ -261,3 +261,17 @@ test('uses symbolic labels instead of textual status prefixes', async () => {
 	assert.match(output, /⚙  1/u);
 	assert.match(output, /⊞  2/u);
 });
+
+test('formatNum scales token units: k → M → B → T', async () => {
+	const cases: Array<[number, number, string]> = [
+		[500,                   800,                  '$ 500 ↓ 800 ↑'],
+		[1_200,                 3_400,                '$ 1.2k ↓ 3.4k ↑'],
+		[1_500_000,             2_300_000,            '$ 1.5M ↓ 2.3M ↑'],
+		[1_200_000_000,         3_400_000_000,        '$ 1.2B ↓ 3.4B ↑'],
+		[1_200_000_000_000,     3_400_000_000_000,    '$ 1.2T ↓ 3.4T ↑'],
+	];
+	for (const [input_tokens, output_tokens, expected] of cases) {
+		const output = await renderStatusBar([], {input_tokens, output_tokens});
+		assert.match(output, new RegExp(expected.replace(/\./g, '\\.').replace(/\$/g, '\\$')));
+	}
+});
