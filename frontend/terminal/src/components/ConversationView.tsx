@@ -22,6 +22,7 @@ type ToolPair = {kind: 'pair'; call: TranscriptItem; result: TranscriptItem; ind
 type SoloTool = {kind: 'tool'; item: TranscriptItem; index: number};
 type SoloMessage = {kind: 'message'; item: TranscriptItem; index: number};
 type RenderGroup = ToolPair | SoloTool | SoloMessage;
+type ContentMode = 'welcome' | 'conversation';
 
 const TURN_DIVIDER = '╌'.repeat(18);
 
@@ -234,12 +235,16 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		const contentRef = useRef<DOMElement | null>(null);
 		const [viewportHeight, setViewportHeight] = useState(0);
 		const [contentHeight, setContentHeight] = useState(0);
+		const [measuredContentMode, setMeasuredContentMode] = useState<ContentMode | null>(null);
 		const [scrollFromTop, setScrollFromTop] = useState(0);
 		const [paused, setPaused] = useState(false);
 
 		const groups = buildGroups(transcript);
 		const treePositions = assignTreePositions(groups);
 		const liveAssistantStartsNewRun = previousConversationOwner(groups, groups.length) !== 'assistant';
+		const hasConversation = groups.length > 0 || (assistantBuffer != null && assistantBuffer.length > 0);
+		const showWelcomeBanner = showWelcome;
+		const contentMode: ContentMode = hasConversation ? 'conversation' : 'welcome';
 
 		useEffect(() => {
 			if (viewportRef.current) {
@@ -249,6 +254,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 			if (contentRef.current) {
 				const h = measureElement(contentRef.current).height;
 				if (h !== contentHeight) setContentHeight(h);
+				if (measuredContentMode !== contentMode) setMeasuredContentMode(contentMode);
 			}
 		});
 
@@ -256,11 +262,12 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 			onPauseChange?.(paused);
 		}, [paused, onPauseChange]);
 
-		const maxScroll = Math.max(0, contentHeight - viewportHeight);
-		// When there's no conversation yet (home page), pin to the top so the
-		// WelcomeBanner's header/logo stays visible even on small terminals.
-		// Once conversation starts, switch to follow mode (scroll to bottom).
-		const hasConversation = groups.length > 0 || (assistantBuffer != null && assistantBuffer.length > 0);
+		const measuredHeightForCurrentContent = measuredContentMode === contentMode ? contentHeight : 0;
+		const maxScroll = Math.max(0, measuredHeightForCurrentContent - viewportHeight);
+		// Keep the empty welcome screen pinned to the top. Once conversation
+		// content exists, keep the banner in scrollback and follow the live tail.
+		// The content-mode check above prevents the first user turn from
+		// inheriting the welcome-only measured height and jumping for one frame.
 		const effectiveScroll = paused
 			? Math.max(0, Math.min(scrollFromTop, maxScroll))
 			: (hasConversation ? maxScroll : 0);
@@ -311,7 +318,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		return (
 			<Box ref={viewportRef} flexGrow={1} flexShrink={1} flexDirection="column" overflow="hidden">
 				<Box ref={contentRef} flexShrink={0} flexDirection="column" marginTop={marginTop}>
-					{showWelcome ? <WelcomeBanner version={welcomeVersion} /> : null}
+					{showWelcomeBanner ? <WelcomeBanner version={welcomeVersion} /> : null}
 					{groups.map((group, i) => {
 						const showAssistantHeader = shouldRenderAssistantHeaderBeforeGroup(groups, i, outputStyle);
 						const showTurnDivider = shouldRenderTurnDividerBeforeGroup(groups, i, outputStyle);

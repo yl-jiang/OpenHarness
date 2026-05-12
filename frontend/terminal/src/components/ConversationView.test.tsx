@@ -117,6 +117,17 @@ test('renders the welcome banner with the runtime version', async () => {
 	assert.doesNotMatch(output, /v0\.1\.6/);
 });
 
+test('keeps the welcome banner in scrollback after the first transcript item', async () => {
+	const output = await renderConversation(
+		[{role: 'user', text: 'first turn'}],
+		{showWelcome: true, welcomeVersion: '9.9.9', rows: 12},
+	);
+
+	assert.match(output, /you · first turn/);
+	assert.match(output, /v9\.9\.9/);
+	assert.match(output, /autonomous coding agent/);
+});
+
 test('keeps an unfinished trailing tool call rendered in the live region', async () => {
 	const output = await renderConversation([
 		{role: 'user', text: 'do it'},

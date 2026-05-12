@@ -45,6 +45,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	const lastTasksSnapshotRef = useRef('');
 	const lastMcpSnapshotRef = useRef('');
 	const lastBridgeSnapshotRef = useRef('');
+	const stderrLinesRef = useRef<string[]>([]);
 
 	// Streaming deltas can arrive one token at a time; updating Ink state for each
 	// delta causes heavy re-rendering/flicker. Buffer and flush at ~30fps.
@@ -79,6 +80,14 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 
 	const queueTranscriptItem = (item: TranscriptItem): void => {
 		pendingTranscriptItemsRef.current.push(item);
+		if (item.role === 'user') {
+			if (transcriptFlushTimerRef.current) {
+				clearTimeout(transcriptFlushTimerRef.current);
+				transcriptFlushTimerRef.current = null;
+			}
+			flushTranscriptItems();
+			return;
+		}
 		if (!transcriptFlushTimerRef.current) {
 			transcriptFlushTimerRef.current = setTimeout(() => {
 				transcriptFlushTimerRef.current = null;
@@ -116,8 +125,9 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	useEffect(() => {
 		const [command, ...args] = config.backend_command;
 		const useDetachedGroup = process.platform !== 'win32';
+		stderrLinesRef.current = [];
 		const child = spawn(command, args, {
-			stdio: ['pipe', 'pipe', 'inherit'],
+			stdio: ['pipe', 'pipe', 'pipe'],
 			env: process.env,
 			// On Windows, a detached child gets its own console window and can
 			// flash open/closed. Keep detached groups for POSIX only.
@@ -135,9 +145,22 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			const event = JSON.parse(line.slice(PROTOCOL_PREFIX.length)) as BackendEvent;
 			handleEvent(event);
 		});
+		const stderrReader = readline.createInterface({input: child.stderr});
+		stderrReader.on('line', (line) => {
+			const text = line.trimEnd();
+			if (!text) {
+				return;
+			}
+			stderrLinesRef.current = [...stderrLinesRef.current, text].slice(-40);
+		});
 
 		child.on('exit', (code) => {
 			flushTranscriptItems();
+			if (code != null && code !== 0 && stderrLinesRef.current.length > 0) {
+				for (const line of stderrLinesRef.current.slice(-12)) {
+					queueTranscriptItem({role: 'log', text: line});
+				}
+			}
 			queueTranscriptItem({role: 'system', text: `backend exited with code ${code ?? 0}`});
 			process.exitCode = code ?? 0;
 			onExit(code);
@@ -170,6 +193,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 
 		return () => {
 			reader.close();
+			stderrReader.close();
 			killChild();
 			process.removeListener('exit', killChild);
 			process.removeListener('SIGINT', killChild);
