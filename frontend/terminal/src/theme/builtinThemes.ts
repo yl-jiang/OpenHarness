@@ -6,6 +6,8 @@ export type ThemeConfig = {
 		accent: string;
 		foreground: string;
 		background: string;
+		/** Tinted background for the input area (used by HalfLinePaddedBox). */
+		inputBackground: string;
 		muted: string;
 		success: string;
 		warning: string;
@@ -31,6 +33,7 @@ export const defaultTheme: ThemeConfig = {
 		accent: 'cyan',
 		foreground: 'white',
 		background: 'black',
+		inputBackground: '#333333',
 		muted: 'gray',
 		success: 'green',
 		warning: 'yellow',
@@ -56,6 +59,7 @@ export const darkTheme: ThemeConfig = {
 		accent: '#bb9af7',
 		foreground: '#c0caf5',
 		background: '#1a1b26',
+		inputBackground: '#2a2b3d',
 		muted: '#565f89',
 		success: '#9ece6a',
 		warning: '#e0af68',
@@ -81,6 +85,7 @@ export const minimalTheme: ThemeConfig = {
 		accent: 'white',
 		foreground: 'white',
 		background: 'black',
+		inputBackground: '#222222',
 		muted: 'gray',
 		success: 'white',
 		warning: 'white',
@@ -106,6 +111,7 @@ export const cyberpunkTheme: ThemeConfig = {
 		accent: '#ffe600',
 		foreground: '#00fff9',
 		background: '#0d0d0d',
+		inputBackground: '#1a1a2e',
 		muted: '#444444',
 		success: '#00ff41',
 		warning: '#ffe600',
@@ -131,6 +137,7 @@ export const solarizedTheme: ThemeConfig = {
 		accent: '#2aa198',
 		foreground: '#839496',
 		background: '#002b36',
+		inputBackground: '#073642',
 		muted: '#586e75',
 		success: '#859900',
 		warning: '#b58900',
@@ -156,6 +163,7 @@ export const hermesTheme: ThemeConfig = {
 		accent: '#ffbd38',    // gold — Hermes warmGlow base
 		foreground: '#ffe6cb',
 		background: '#041c1c', // deep dark teal — Hermes background
+		inputBackground: '#0a2e2e', // slightly lighter teal for input
 		muted: '#3d8a7c',      // mid teal
 		success: '#5fba8a',
 		warning: '#ffbd38',

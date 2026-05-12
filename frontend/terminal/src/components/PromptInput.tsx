@@ -3,20 +3,15 @@ import {Box, Text} from 'ink';
 import stringWidth from 'string-width';
 import ScrollableTextInput from './ScrollableTextInput.js';
 import {EXPAND_TRIGGER_SYMBOL} from './ExpandedComposer.js';
+import {HalfLinePaddedBox} from './HalfLinePaddedBox.js';
 import {useTerminalSize} from '../hooks/useTerminalSize.js';
-
-// Hermes-inspired palette — matches WelcomeBanner brand identity
-const H_WARM = '#ffe6cb'; // warm almond — prompt cursor, input prefix
-const H_GOLD = '#ffbd38'; // gold — active border, busy indicator
-const H_TEAL = '#3d8a7c'; // dim teal — idle border, leading cue
+import {useTheme} from '../theme/ThemeContext.js';
 
 const noop = (): void => {};
 export const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-const IDLE_STATIC_FRAME = '◆';
 const SPINNER_STATIC_FRAME = '⠋';
-const STATIC_ELLIPSIS = '...';
-const IDLE_SHORTCUTS = '/ commands · @ files · ↑↓ history · shift/alt+enter newline';
-const BUSY_SHORTCUTS = 'PgUp/Dn scroll · End resume · /stop or Ctrl+C cancel';
+const IDLE_SHORTCUTS = '/ commands · @ files · ↑↓ history · shift+enter newline';
+const BUSY_SHORTCUTS = 'esc×2 cancel · ctrl+c stop';
 
 export function clipPromptPreviewLine(line: string, availableWidth: number): string {
 	const safeWidth = Math.max(1, availableWidth);
@@ -104,6 +99,7 @@ function PromptInputInner({
 }: PromptInputProps): React.JSX.Element {
 	const [frameIndex, setFrameIndex] = useState(0);
 	const intervalRef = useRef<NodeJS.Timeout | null>(null);
+	const {theme} = useTheme();
 
 	useEffect(() => {
 		const shouldAnimate = animateSpinner && (busy || hasBackgroundTasks);
@@ -126,77 +122,75 @@ function PromptInputInner({
 		};
 	}, [animateSpinner, busy, hasBackgroundTasks]);
 
-	const idleTitle = 'ready';
-	const busyTitle = statusLabel ?? (toolName ? `[run] ${toolName}` : '[run]');
-	const showBackgroundActivity = !busy && hasBackgroundTasks;
-	const backgroundTitle = '[bg] running';
-	const animatedFrame = SPINNER_FRAMES[frameIndex];
-	const backgroundFrame = animateSpinner ? animatedFrame : SPINNER_STATIC_FRAME;
-	const spinnerFrame = animateSpinner ? animatedFrame : (hasBackgroundTasks ? SPINNER_STATIC_FRAME : SPINNER_STATIC_FRAME);
-	const idleFrame = IDLE_STATIC_FRAME;
-	// Keep the trailing ellipsis static even while busy: the braille spinner
-	// already conveys liveness, and animating both makes the title line churn
-	// 4 characters per tick which is the most visually flickery part of the
-	// prompt header.
-	const dots = STATIC_ELLIPSIS;
-	const title = busy ? `${busyTitle}${dots}` : showBackgroundActivity ? backgroundTitle : idleTitle;
-	const leadingCue = busy ? `${spinnerFrame} ` : showBackgroundActivity ? backgroundFrame : `${idleFrame} `;
-
 	const {cols} = useTerminalSize();
-	const prefix = busy ? '... ' : '> ';
-	// Available width for the text input viewport:
-	// cols - App paddingX(1)*2 - border*2 - boxPaddingX(1)*2 - prefixWidth
-	const inputAvailableWidth = cols - 6 - stringWidth(prefix);
-	const footerColor = busy || showBackgroundActivity ? H_GOLD : H_TEAL;
+	const showBackgroundActivity = !busy && hasBackgroundTasks;
+
+	// Prompt prefix: '> ' when idle, spinner frame + ' ' when busy/bg
+	const spinnerFrame = animateSpinner ? SPINNER_FRAMES[frameIndex] : SPINNER_STATIC_FRAME;
+	const prefix = busy || showBackgroundActivity ? `${spinnerFrame} ` : '> ';
+	const prefixWidth = stringWidth(prefix);
+
+	// Status text shown inline when busy
+	const statusText = busy
+		? (statusLabel ?? (toolName ? toolName : 'running'))
+		: (showBackgroundActivity ? 'bg tasks running' : '');
+
+	// App's outer Box uses paddingX={1}, so available content width = cols - 2
+	const containerWidth = cols - 2;
+	const inputAvailableWidth = containerWidth - prefixWidth;
+	const previewAvailableWidth = inputAvailableWidth;
+
+	// Colors from theme
+	const accentColor = theme.colors.accent;
+	const prefixColor = busy || showBackgroundActivity ? theme.colors.warning : accentColor;
+	const lineColor = theme.colors.muted;
+
+	const placeholder = '  Type your message or @path/to/file';
 	const footerShortcuts = busy ? BUSY_SHORTCUTS : IDLE_SHORTCUTS;
 
 	return (
-		<Box
-			flexDirection="column"
-			marginTop={1}
-			borderStyle="round"
-			borderColor={busy || showBackgroundActivity ? H_GOLD : H_TEAL}
-			paddingX={1}
-			overflow="hidden"
-		>
-			<Box>
-				<Text color={busy || showBackgroundActivity ? H_GOLD : H_TEAL} bold>
-					{leadingCue}
-				</Text>
-				<Text dimColor>{' | '}</Text>
-				<Text color={busy || showBackgroundActivity ? H_GOLD : undefined} dimColor={!busy && !showBackgroundActivity}>
-					{title}
-				</Text>
-			</Box>
-			{extraInputLines && extraInputLines.length > 0 && (
-				<Box flexDirection="column" marginTop={1}>
-					{extraInputLines.map((line, i) => (
-						<Box key={i}>
-							<Text color={H_WARM} bold>{'  '}</Text>
-							<Box flexGrow={1} flexShrink={1}>
-								<Text dimColor>{clipPromptPreviewLine(line, inputAvailableWidth) || ' '}</Text>
-							</Box>
+		<Box flexDirection="column" marginTop={1} flexShrink={0}>
+			{/* Main input area framed by horizontal separators */}
+			<HalfLinePaddedBox lineColor={lineColor}>
+				<Box flexDirection="column" paddingX={1}>
+					{/* Extra input lines (multiline preview) */}
+					{extraInputLines && extraInputLines.length > 0 && (
+						<Box flexDirection="column">
+							{extraInputLines.map((line, i) => (
+								<Box key={i}>
+									<Text dimColor>{'  '}</Text>
+									<Box flexGrow={1} flexShrink={1}>
+										<Text dimColor>{clipPromptPreviewLine(line, previewAvailableWidth) || ' '}</Text>
+									</Box>
+								</Box>
+							))}
 						</Box>
-					))}
+					)}
+
+					{/* Input row: prefix + text input or status */}
+					<Box>
+						<Text color={prefixColor} bold>{prefix}</Text>
+						{busy ? (
+							<Text color={theme.colors.warning} dimColor>{statusText}</Text>
+						) : (
+							<ScrollableTextInput
+								key={inputKey}
+								value={input}
+								onChange={setInput}
+								onSubmit={suppressSubmit ? noop : onSubmit}
+								availableWidth={inputAvailableWidth}
+								placeholder={placeholder}
+								accentColor={accentColor}
+							/>
+						)}
+					</Box>
 				</Box>
-			)}
-			<Box marginTop={1}>
-				<Text color={H_WARM} bold>{prefix}</Text>
-				<ScrollableTextInput
-					key={inputKey}
-					value={input}
-					onChange={setInput}
-					onSubmit={suppressSubmit ? noop : onSubmit}
-					availableWidth={inputAvailableWidth}
-				/>
-			</Box>
-			<Box marginTop={1} justifyContent="space-between">
-				<Box flexDirection="column" flexGrow={1} flexShrink={1}>
-					<Text dimColor>{footerShortcuts}</Text>
-				</Box>
-				<Box marginLeft={1} flexShrink={0} alignSelf="flex-end">
-					<Text color={footerColor} bold>{EXPAND_TRIGGER_SYMBOL}</Text>
-				</Box>
+			</HalfLinePaddedBox>
+
+			{/* Footer: shortcuts + expand trigger */}
+			<Box justifyContent="space-between" paddingX={1}>
+				<Text dimColor>{footerShortcuts}</Text>
+				<Text color={prefixColor} bold>{EXPAND_TRIGGER_SYMBOL}</Text>
 			</Box>
 		</Box>
 	);

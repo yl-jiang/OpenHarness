@@ -11,8 +11,17 @@ const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const extractLastFrame = (output: string): string => {
-	const boundary = output.lastIndexOf('\n╭');
-	return boundary >= 0 ? output.slice(boundary + 1) : output;
+	// Each frame has two ─ separator lines (top + bottom of input box).
+	// Find the top separator of the last frame.
+	const bottomSep = output.lastIndexOf('\n─');
+	if (bottomSep >= 0) {
+		const topSep = output.lastIndexOf('\n─', bottomSep - 1);
+		if (topSep >= 0) return output.slice(topSep + 1);
+		return output.slice(bottomSep + 1);
+	}
+	// Fallback: look for the > prompt prefix
+	const promptBoundary = output.lastIndexOf('\n> ');
+	return promptBoundary >= 0 ? output.slice(promptBoundary + 1) : output;
 };
 const ignoreInput = (): void => {};
 
@@ -268,56 +277,45 @@ async function renderRerenderablePromptInput({
 	};
 }
 
-test('uses ascii-only idle title cues above the prompt input', async () => {
+test('shows prompt prefix and shortcuts in idle state', async () => {
 	const output = await renderPromptInput();
 
-	assert.doesNotMatch(output, /\bPrompt\b/);
-	assert.doesNotMatch(output, /\bReady\b/);
-	assert.match(output, /[◇◈◆] {2}\| ready/);
+	// New layout: > prefix, placeholder, shortcuts footer, expand trigger
+	assert.match(output, /> /);
 	assert.match(output, /⇖⇘/u);
-	assert.doesNotMatch(output, /↖↘/u);
-	assert.doesNotMatch(output, /◢/u);
-	assert.doesNotMatch(output, /[⌨️⏳●⏎›]/u);
+	assert.match(output, /\/ commands/);
 });
 
 test('shows a concise idle shortcut footer', async () => {
 	const output = await renderPromptInput();
 
-	assert.match(output, /\/ commands · @ files · ↑↓ history · shift\/alt\+enter newline/);
-	assert.doesNotMatch(output, /wheel\/PgUp scroll/);
-	assert.doesNotMatch(output, /ctrl\+c ctrl\+c exit/);
+	assert.match(output, /\/ commands · @ files · ↑↓ history · shift\+enter newline/);
 });
 
 test('shows a static busy indicator with the running tool name', async () => {
 	const output = await renderPromptInput({busy: true, toolName: 'bash'});
 
-	assert.match(output, /\[run\] bash/);
-	assert.match(output, /⠋ {2}\| \[run\] bash\.\.\./);
-	assert.doesNotMatch(output, /[◇◈◆] {2}\| \[run\]/);
+	assert.match(output, /⠋ bash/);
 });
 
 test('shows a focused busy shortcut footer', async () => {
 	const output = await renderPromptInput({busy: true, toolName: 'bash'});
 
-	assert.match(output, /PgUp\/Dn scroll · End resume · \/stop or Ctrl\+C cancel/);
+	assert.match(output, /esc×2 cancel · ctrl\+c stop/);
 	assert.doesNotMatch(output, /@ files/);
-	assert.doesNotMatch(output, /ctrl\+c ctrl\+c exit/);
 });
 
 test('shows a stable visual background activity cue while input remains idle', async () => {
 	const output = await renderPromptInput({backgroundTaskCount: 2});
 
-	assert.match(output, /\[bg\] running/);
-	assert.match(output, /⠋ \| \[bg\] running/);
-	assert.match(output, /> /);
-	assert.doesNotMatch(output, /\[idle\]/);
+	// Background tasks: spinner prefix indicates activity, input still editable
+	assert.match(output, /⠋ /);
 });
 
 test('uses a static background cue when animation is disabled', async () => {
 	const output = await renderPromptInput({backgroundTaskCount: 1, animateSpinner: false});
 
-	assert.match(output, /⠋ \| \[bg\] running/);
-	assert.doesNotMatch(output, /\[idle\]/);
+	assert.match(output, /⠋ /);
 });
 
 test('does not repaint the prompt while only background tasks are running', async () => {
@@ -329,7 +327,7 @@ test('does not repaint the prompt while only background tasks are running', asyn
 		const after = await prompt.getOutput();
 
 		assert.equal(after, before);
-		assert.match(after, /⠋ \| \[bg\] running/);
+		assert.match(after, /⠋ /);
 	} finally {
 		await prompt.cleanup();
 	}
@@ -344,7 +342,7 @@ test('does not repaint the prompt while foreground busy work has background task
 		const after = await prompt.getOutput();
 
 		assert.equal(after, before);
-		assert.match(after, /⠋ {2}\| \[run\]\.\.\./);
+		assert.match(after, /⠋ running/);
 	} finally {
 		await prompt.cleanup();
 	}
@@ -381,7 +379,7 @@ test('does not repaint the prompt when the active background task count changes'
 test('uses a static busy cue when animation is disabled', async () => {
 	const output = await renderPromptInput({busy: true, toolName: 'bash', animateSpinner: false});
 
-	assert.match(output, /⠋ {2}\| \[run\] bash\.\.\./);
+	assert.match(output, /⠋ bash/);
 });
 
 test('disables spinner animation on flicker-prone terminals', () => {
@@ -467,8 +465,10 @@ test('renders buffered multiline preview lines without wrapping wide text', asyn
 	try {
 		const output = extractLastFrame(await prompt.getOutput());
 
-		assert.match(output, /│   \.\.\.长很长很长很长很长的一行文本/);
-		assert.doesNotMatch(output, /\n│   文本/);
+		// The preview line should be clipped with ellipsis
+		assert.match(output, /\.\.\./);
+		assert.match(output, /一行文本/);
+		assert.match(output, /> tail/);
 	} finally {
 		await prompt.cleanup();
 	}

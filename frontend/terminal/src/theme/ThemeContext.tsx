@@ -1,4 +1,4 @@
-import React, {createContext, useContext, useState} from 'react';
+import React, {createContext, useCallback, useContext, useMemo, useState} from 'react';
 
 import {type ThemeConfig, BUILTIN_THEMES, defaultTheme, getTheme} from './builtinThemes.js';
 
@@ -23,13 +23,15 @@ export function ThemeProvider({
 }): React.JSX.Element {
 	const [theme, setTheme] = useState<ThemeConfig>(() => getTheme(initialTheme));
 
-	const setThemeName = (name: string): void => {
+	const setThemeName = useCallback((name: string): void => {
 		const resolved = BUILTIN_THEMES[name] ?? defaultTheme;
 		setTheme(resolved);
-	};
+	}, []);
+
+	const value = useMemo(() => ({theme, setThemeName}), [theme, setThemeName]);
 
 	return (
-		<ThemeContext.Provider value={{theme, setThemeName}}>
+		<ThemeContext.Provider value={value}>
 			{children}
 		</ThemeContext.Provider>
 	);
