@@ -202,7 +202,7 @@ class OhmoGatewayBridge:
 
         metadata = dict(message.metadata)
         metadata["_ohmo_group_command"] = True
-        metadata["_ohmo_group_raw_request"] = args
+        metadata["_ohmo_group_raw_request"] = args  # the message behind the /group command, for better agent reasoning and tool use
         prompt = _build_group_agent_prompt(args)
         return InboundMessage(
             channel=message.channel,
