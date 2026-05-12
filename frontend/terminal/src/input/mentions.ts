@@ -6,7 +6,7 @@ export type MentionQuery = {
 	query: string;
 };
 
-const SKIPPED_DIRS = new Set(['.git', '.hg', '.svn', '.venv', 'venv', 'node_modules', '__pycache__', 'dist', 'build']);
+const SKIPPED_DIRS = new Set(['venv', 'node_modules', '__pycache__', 'dist', 'build']);
 
 export function findMentionQuery(value: string, cursor = value.length): MentionQuery | null {
 	const beforeCursor = value.slice(0, cursor);
@@ -34,7 +34,7 @@ export function replaceMentionQuery(value: string, mention: MentionQuery, filePa
 	return `${prefix}${replacement}${spacer}${suffix}`;
 }
 
-export function filterMentionCandidates(files: string[], query: string, limit = 10): string[] {
+export function filterMentionCandidates(files: string[], query: string): string[] {
 	const needle = query.toLowerCase();
 	return files
 		.filter((file) => {
@@ -57,8 +57,7 @@ export function filterMentionCandidates(files: string[], query: string, limit = 
 				return aDepth - bDepth;
 			}
 			return a.localeCompare(b);
-		})
-		.slice(0, limit);
+		});
 }
 
 export async function discoverMentionFiles(cwd: string, limit = 2000): Promise<string[]> {
@@ -80,12 +79,12 @@ export async function discoverMentionFiles(cwd: string, limit = 2000): Promise<s
 				return;
 			}
 			if (entry.isDirectory()) {
-				if (!SKIPPED_DIRS.has(entry.name)) {
+				if (!entry.name.startsWith('.') && !SKIPPED_DIRS.has(entry.name)) {
 					await walk(path.join(directory, entry.name));
 				}
 				continue;
 			}
-			if (!entry.isFile()) {
+			if (!entry.isFile() || entry.name.startsWith('.')) {
 				continue;
 			}
 			files.push(path.relative(root, path.join(directory, entry.name)).split(path.sep).join('/'));
