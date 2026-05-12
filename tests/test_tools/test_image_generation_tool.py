@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,21 @@ def _fake_codex_token() -> str:
     return f"{_b64url({'alg': 'none', 'typ': 'JWT'})}.{_b64url(payload)}.sig"
 
 
+def test_to_api_schema_is_handcrafted_without_warning() -> None:
+    tool = ImageGenerationTool()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        schema = tool.to_api_schema()
+
+    assert caught == []
+    assert schema["name"] == "image_generation"
+    parameters = schema["parameters"]
+    assert parameters["type"] == "object"
+    assert parameters["properties"]["prompt"]["type"] == "string"
+    assert parameters["properties"]["provider"]["enum"] == ["auto", "openai", "codex"]
+    assert parameters["properties"]["image_paths"]["items"] == {"type": "string"}
+
+
 @pytest.mark.asyncio
 async def test_execute_requires_api_key_for_openai(tmp_path: Path) -> None:
     tool = ImageGenerationTool()
@@ -100,7 +116,7 @@ async def test_execute_generate_writes_file(monkeypatch: pytest.MonkeyPatch, tmp
     out = tmp_path / "assets" / "cat.png"
     assert not result.is_error
     assert out.read_bytes() == image_bytes
-    assert result.metadata["paths"] == [str(out)]
+    assert result.metadata["paths"] == [str(out.resolve())]
     assert result.metadata["provider"] == "openai"
 
 
@@ -195,7 +211,7 @@ def test_resolve_output_paths_multiple(tmp_path: Path) -> None:
         ImageGenerationToolInput(output_path="hero.png", n=2),
         tmp_path,
     )
-    assert paths == [tmp_path / "hero-1.png", tmp_path / "hero-2.png"]
+    assert paths == [(tmp_path / "hero-1.png").resolve(), (tmp_path / "hero-2.png").resolve()]
 
 
 def test_image_generation_config_from_env(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -85,6 +85,99 @@ class ImageGenerationTool(BaseTool):
     )
     input_model = ImageGenerationToolInput
 
+    def to_api_schema(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string",
+                        "description": "Image generation or edit prompt.",
+                        "default": _DEFAULT_PROMPT,
+                    },
+                    "provider": {
+                        "type": "string",
+                        "enum": ["auto", "openai", "codex"],
+                        "description": "Image generation provider: auto, openai, or codex.",
+                        "default": "auto",
+                    },
+                    "image_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Local image paths to edit or use as references.",
+                        "default": [],
+                    },
+                    "mask_path": {
+                        "type": "string",
+                        "description": "Optional PNG mask path for OpenAI edit mode.",
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": "Optional output path. For multiple images, numeric suffixes are added.",
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Output directory used when output_path is not provided.",
+                        "default": _DEFAULT_OUTPUT_DIR,
+                    },
+                    "model": {
+                        "type": "string",
+                        "description": "OpenAI image model override.",
+                    },
+                    "n": {
+                        "type": "integer",
+                        "description": "Number of images to generate.",
+                        "default": 1,
+                        "minimum": 1,
+                        "maximum": 10,
+                    },
+                    "size": {
+                        "type": "string",
+                        "description": "OpenAI image size, e.g. auto, 1024x1024, 1536x1024.",
+                        "default": "auto",
+                    },
+                    "quality": {
+                        "type": "string",
+                        "description": "OpenAI image quality, e.g. low, medium, high, auto.",
+                        "default": "medium",
+                    },
+                    "background": {
+                        "type": "string",
+                        "enum": ["transparent", "opaque", "auto"],
+                        "description": "Optional OpenAI background mode when supported by the provider.",
+                    },
+                    "output_format": {
+                        "type": "string",
+                        "enum": ["png", "jpeg", "webp"],
+                        "description": "Output image format.",
+                        "default": "png",
+                    },
+                    "output_compression": {
+                        "type": "integer",
+                        "description": "Optional OpenAI compression level for lossy output formats.",
+                        "minimum": 0,
+                        "maximum": 100,
+                    },
+                    "input_fidelity": {
+                        "type": "string",
+                        "enum": ["low", "high"],
+                        "description": "Optional OpenAI edit input fidelity when supported by the provider.",
+                    },
+                    "moderation": {
+                        "type": "string",
+                        "description": "Optional OpenAI moderation setting.",
+                    },
+                    "overwrite": {
+                        "type": "boolean",
+                        "description": "Whether to overwrite existing output files.",
+                        "default": False,
+                    },
+                },
+            },
+        }
+
     async def execute(self, arguments: ImageGenerationToolInput, context: ToolExecutionContext) -> ToolResult:
         config = context.metadata.get(ToolMetadataKey.IMAGE_GENERATION_CONFIG.value, {})
         if not isinstance(config, dict):
