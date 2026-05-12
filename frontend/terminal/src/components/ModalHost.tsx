@@ -7,6 +7,7 @@ import {truncateWithEllipsis} from '../textLayout.js';
 
 const MIN_REASON_WIDTH = 20;
 const MAX_PERMISSION_REASON_LINES = 4;
+const MAX_DIFF_LINES = 40;
 
 type WrappedPreview = {
 	lines: string[];
@@ -163,6 +164,105 @@ function QuestionModal({
 	);
 }
 
+type DiffLineType = 'add' | 'del' | 'hunk' | 'context';
+
+type ParsedDiffLine = {
+	type: DiffLineType;
+	content: string;
+};
+
+function parseDiffLines(diffText: string): ParsedDiffLine[] {
+	const result: ParsedDiffLine[] = [];
+	for (const raw of diffText.split('\n')) {
+		if (raw.startsWith('+++') || raw.startsWith('---')) continue;
+		if (raw.startsWith('@@')) {
+			result.push({type: 'hunk', content: raw});
+		} else if (raw.startsWith('+')) {
+			result.push({type: 'add', content: raw.slice(1)});
+		} else if (raw.startsWith('-')) {
+			result.push({type: 'del', content: raw.slice(1)});
+		} else if (raw) {
+			result.push({type: 'context', content: raw.startsWith(' ') ? raw.slice(1) : raw});
+		}
+	}
+	return result;
+}
+
+function EditDiffModal({modal}: {modal: Record<string, unknown>}): React.JSX.Element {
+	const {cols} = useTerminalSize();
+	const path = String(modal.path ?? '');
+	const diffText = String(modal.diff ?? '');
+	const added = Number(modal.added ?? 0);
+	const removed = Number(modal.removed ?? 0);
+
+	const allLines = parseDiffLines(diffText);
+	const visibleLines = allLines.slice(0, MAX_DIFF_LINES);
+	const hiddenCount = allLines.length - visibleLines.length;
+	const maxContentWidth = Math.max(20, cols - 6);
+
+	return (
+		<Box flexDirection="column" marginTop={1}>
+			<Text>
+				<Text color="yellow" bold>{'\u250C '}</Text>
+				<Text bold>Edit </Text>
+				<Text color="cyan" bold>{path}</Text>
+				<Text bold>{'  '}</Text>
+				<Text color="green">{`+${added}`}</Text>
+				<Text>{' '}</Text>
+				<Text color="red">{`-${removed}`}</Text>
+			</Text>
+			{visibleLines.map((line, i) => {
+				if (line.type === 'hunk') {
+					return (
+						<Text key={i}>
+							<Text color="yellow">{'\u2502 '}</Text>
+							<Text color="cyan" dimColor>{truncateWithEllipsis(line.content, maxContentWidth)}</Text>
+						</Text>
+					);
+				}
+				if (line.type === 'add') {
+					return (
+						<Text key={i}>
+							<Text color="yellow">{'\u2502 '}</Text>
+							<Text color="green">{'+'}</Text>
+							<Text color="green">{truncateWithEllipsis(line.content, maxContentWidth - 1)}</Text>
+						</Text>
+					);
+				}
+				if (line.type === 'del') {
+					return (
+						<Text key={i}>
+							<Text color="yellow">{'\u2502 '}</Text>
+							<Text color="red">{'-'}</Text>
+							<Text color="red">{truncateWithEllipsis(line.content, maxContentWidth - 1)}</Text>
+						</Text>
+					);
+				}
+				return (
+					<Text key={i}>
+						<Text color="yellow">{'\u2502 '}</Text>
+						<Text dimColor>{' '}{truncateWithEllipsis(line.content, maxContentWidth - 1)}</Text>
+					</Text>
+				);
+			})}
+			{hiddenCount > 0 && (
+				<Text>
+					<Text color="yellow">{'\u2502 '}</Text>
+					<Text dimColor>... {hiddenCount} more lines hidden</Text>
+				</Text>
+			)}
+			<Text>
+				<Text color="yellow">{'\u2514 '}</Text>
+				<Text color="green">[y] Once</Text>
+				<Text>{'  '}</Text>
+				<Text color="green">[a] Always</Text>
+				<Text>{'  '}</Text>
+				<Text color="red">[n] Deny</Text>
+			</Text>
+		</Box>
+	);
+}
+
 function ModalHostInner({
 	modal,
 	modalInput,
@@ -212,6 +312,9 @@ function ModalHostInner({
 				</Text>
 			</Box>
 		);
+	}
+	if (modal?.kind === 'edit_diff') {
+		return <EditDiffModal modal={modal} />;
 	}
 	if (modal?.kind === 'question') {
 		return (

@@ -716,7 +716,7 @@ function AppInner({
 		}
 
 		// --- Permission modal ---
-		if (session.modal?.kind === 'permission') {
+		if (session.modal?.kind === 'permission' || session.modal?.kind === 'edit_diff') {
 			if (chunk.toLowerCase() === 'y') {
 				session.sendRequest({
 					type: 'permission_response',

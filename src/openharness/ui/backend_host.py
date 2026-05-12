@@ -117,6 +117,8 @@ class ReactBackendHost:
         self._active_request_task: asyncio.Task[bool] | None = None
         # Track last tool input per name for rich event emission
         self._last_tool_inputs: dict[str, dict] = {}
+        # Whether the user has chosen "always" for edit approvals this session
+        self._edit_always_approved = False
 
     def _save_snapshot(self) -> None:
         if self._bundle is None:
@@ -150,6 +152,7 @@ class ReactBackendHost:
             restore_tool_metadata=self._config.restore_tool_metadata,
             permission_prompt=self._ask_permission,
             ask_user_prompt=self._ask_question,
+            edit_approval_prompt=self._ask_edit_approval,
             enforce_max_turns=self._config.enforce_max_turns,
             permission_mode=self._config.permission_mode,
             session_backend=self._config.session_backend,
@@ -961,6 +964,51 @@ class ReactBackendHost:
             finally:
                 self._permission_requests.pop(request_id, None)
                 await self._emit(BackendEvent(type="modal_request", modal=None))
+
+    async def _ask_edit_approval(
+        self, path: str, diff: str, added: int, removed: int
+    ) -> str:
+        """Ask the user to approve an edit. Returns 'once', 'always', or 'reject'.
+
+        When the user has previously chosen 'always', or when the session is in
+        full_auto mode, skips the modal and returns 'always' immediately.
+        """
+        if self._edit_always_approved:
+            return "always"
+        # Read live permission mode so runtime switches via /permissions take effect.
+        from openharness.config.settings import load_settings
+        from openharness.permissions.modes import PermissionMode
+
+        if load_settings().permission.mode == PermissionMode.FULL_AUTO:
+            return "always"
+        async with self._permission_lock:
+            request_id = uuid4().hex
+            future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+            self._permission_requests[request_id] = future
+            await self._emit(
+                BackendEvent(
+                    type="modal_request",
+                    modal={
+                        "kind": "edit_diff",
+                        "request_id": request_id,
+                        "path": path,
+                        "diff": diff,
+                        "added": added,
+                        "removed": removed,
+                    },
+                )
+            )
+            try:
+                reply = await asyncio.wait_for(future, timeout=300)
+            except asyncio.TimeoutError:
+                logger.warning("Edit approval request %s timed out, denying", request_id)
+                reply = "reject"
+            finally:
+                self._permission_requests.pop(request_id, None)
+                await self._emit(BackendEvent(type="modal_request", modal=None))
+            if reply == "always":
+                self._edit_always_approved = True
+            return reply
 
     async def _ask_question(self, question: str) -> str:
         request_id = uuid4().hex
