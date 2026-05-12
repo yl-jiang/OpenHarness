@@ -25,14 +25,23 @@ test('filterMentionCandidates ranks starts-with matches before substring matches
 	]);
 });
 
-test('discoverMentionFiles lists workspace files while skipping dependency and vcs directories', async () => {
+test('filterMentionCandidates returns all matching files without truncation', () => {
+	const files = Array.from({length: 20}, (_, i) => `src/file${i}.ts`);
+	const results = filterMentionCandidates(files, 'file');
+	assert.equal(results.length, 20);
+});
+
+test('discoverMentionFiles lists workspace files while skipping dependency, vcs, and hidden directories', async () => {
 	const root = await mkdtemp(path.join(tmpdir(), 'openharness-mentions-'));
 	await mkdir(path.join(root, 'src'), {recursive: true});
 	await mkdir(path.join(root, 'node_modules', 'pkg'), {recursive: true});
 	await mkdir(path.join(root, '.git'), {recursive: true});
+	await mkdir(path.join(root, '.github'), {recursive: true});
 	await writeFile(path.join(root, 'src', 'app.ts'), '');
+	await writeFile(path.join(root, '.gitignore'), '');
 	await writeFile(path.join(root, 'node_modules', 'pkg', 'index.js'), '');
 	await writeFile(path.join(root, '.git', 'HEAD'), '');
+	await writeFile(path.join(root, '.github', 'ci.yml'), '');
 
 	assert.deepEqual(await discoverMentionFiles(root), ['src/app.ts']);
 });
