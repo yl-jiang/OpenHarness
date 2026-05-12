@@ -2,10 +2,8 @@ import React, {useEffect, useState} from 'react';
 import {Box, Text} from 'ink';
 
 import {formatDisplayPath} from '../pathDisplay.js';
+import {useTheme} from '../theme/ThemeContext.js';
 import type {TaskSnapshot} from '../types.js';
-
-// Hermes brand gold — matches WelcomeBanner palette
-const H_GOLD = '#ffbd38';
 
 const SEP = ' \u2502 ';
 const CWD_MARKER = '>ˍ';
@@ -86,6 +84,7 @@ function StatusBarInner({
 	busy,
 	showTaskSegment = true,
 }: StatusBarProps): React.JSX.Element {
+	const {theme} = useTheme();
 	const model = String(status.model ?? 'unknown');
 	const mode = String(status.permission_mode ?? 'default');
 	const cwd = formatDisplayPath(status.cwd);
@@ -102,7 +101,7 @@ function StatusBarInner({
 	return (
 		<Box flexDirection="column" marginTop={1}>
 			<Text dimColor>
-				<Text color={H_GOLD} bold>OpenHarness</Text>
+				<Text color={theme.colors.primary} bold>OpenHarness</Text>
 				<Text dimColor>{SEP}</Text>
 				<Text dimColor>@ {model}</Text>
 				<Text dimColor>{SEP}</Text>
