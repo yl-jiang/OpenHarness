@@ -1,5 +1,6 @@
 /**
- * A text input component with horizontal scrolling.
+ * A text input component with horizontal scrolling, inline syntax highlighting,
+ * word-level navigation and line editing operations.
  *
  * Unlike `ink-text-input`, the displayed text never wraps to multiple lines.
  * When the text is wider than `availableWidth`, only a viewport window around
@@ -10,8 +11,10 @@
  */
 import React, {useEffect, useRef, useState} from 'react';
 import {Text, useInput} from 'ink';
-import chalk from 'chalk';
 import stringWidth from 'string-width';
+
+/** Regex to detect /commands and @file references for syntax highlighting. */
+const HIGHLIGHT_REGEX = /^\/[a-zA-Z0-9_-]+|(?<![\\])@[^\s]+/g;
 
 export interface ScrollableTextInputProps {
 	value: string;
@@ -21,11 +24,67 @@ export interface ScrollableTextInputProps {
 	placeholder?: string;
 	/** Visual columns available for the text + cursor.  Must be ≥ 1. */
 	availableWidth: number;
+	/** Accent color for syntax-highlighted tokens (/commands, @files). */
+	accentColor?: string;
 }
 
 /** Split a string into an array of user-perceived characters (handles surrogate pairs). */
 function toChars(s: string): string[] {
 	return [...s];
+}
+
+/** Check if a character is a word character (alphanumeric or underscore). */
+function isWordChar(c: string): boolean {
+	return /[\w]/.test(c);
+}
+
+/** Find the offset of the previous word boundary. */
+function prevWordBoundary(chars: string[], offset: number): number {
+	let i = offset - 1;
+	// Skip whitespace
+	while (i > 0 && !isWordChar(chars[i]!)) i--;
+	// Skip word characters
+	while (i > 0 && isWordChar(chars[i - 1]!)) i--;
+	return Math.max(0, i);
+}
+
+/** Find the offset of the next word boundary. */
+function nextWordBoundary(chars: string[], offset: number): number {
+	let i = offset;
+	// Skip current word characters
+	while (i < chars.length && isWordChar(chars[i]!)) i++;
+	// Skip whitespace/non-word
+	while (i < chars.length && !isWordChar(chars[i]!)) i++;
+	return i;
+}
+
+/**
+ * Tokenize input text for syntax highlighting.
+ * Returns segments with type ('text' | 'command' | 'file') and content.
+ */
+function tokenize(text: string): Array<{type: 'text' | 'command' | 'file'; content: string}> {
+	const segments: Array<{type: 'text' | 'command' | 'file'; content: string}> = [];
+	let lastIndex = 0;
+
+	for (const match of text.matchAll(HIGHLIGHT_REGEX)) {
+		const start = match.index ?? 0;
+		if (start > lastIndex) {
+			segments.push({type: 'text', content: text.slice(lastIndex, start)});
+		}
+		const token = match[0];
+		segments.push({
+			type: token.startsWith('/') ? 'command' : 'file',
+			content: token,
+		});
+		lastIndex = start + token.length;
+	}
+	if (lastIndex < text.length) {
+		segments.push({type: 'text', content: text.slice(lastIndex)});
+	}
+	if (segments.length === 0 && text.length > 0) {
+		segments.push({type: 'text', content: text});
+	}
+	return segments;
 }
 
 /**
@@ -74,23 +133,70 @@ function computeViewport(
 	return {startIdx, endIdx};
 }
 
-/** Render visible chars with chalk.inverse cursor highlight. */
-function renderViewport(
+/** A render segment with text content and optional styling. */
+interface RenderSegment {
+	text: string;
+	color?: string;
+	inverse?: boolean;
+}
+
+/**
+ * Build an array of styled segments for the visible viewport.
+ * Uses per-character color map from tokenization and cursor position.
+ */
+function buildViewportSegments(
 	chars: string[],
 	startIdx: number,
 	endIdx: number,
 	cursorOffset: number,
 	focus: boolean,
-): string {
-	let out = '';
-	for (let i = startIdx; i < endIdx; i++) {
-		out += focus && i === cursorOffset ? chalk.inverse(chars[i]) : chars[i];
+	segments: Array<{type: 'text' | 'command' | 'file'; content: string}>,
+	accentColor: string,
+): RenderSegment[] {
+	// Build a per-character color map from segments
+	const colorMap: Array<string | undefined> = new Array(chars.length).fill(undefined) as Array<string | undefined>;
+	let charIdx = 0;
+	for (const seg of segments) {
+		const segChars = toChars(seg.content);
+		for (let j = 0; j < segChars.length && charIdx < chars.length; j++, charIdx++) {
+			if (seg.type !== 'text') {
+				colorMap[charIdx] = accentColor;
+			}
+		}
 	}
+
+	// Group consecutive chars with same styling
+	const result: RenderSegment[] = [];
+	let currentText = '';
+	let currentColor: string | undefined = undefined;
+	let currentInverse = false;
+
+	for (let i = startIdx; i < endIdx; i++) {
+		const char = chars[i]!;
+		const color = colorMap[i];
+		const inverse = focus && i === cursorOffset;
+
+		if (color === currentColor && inverse === currentInverse) {
+			currentText += char;
+		} else {
+			if (currentText) {
+				result.push({text: currentText, color: currentColor, inverse: currentInverse});
+			}
+			currentText = char;
+			currentColor = color;
+			currentInverse = inverse;
+		}
+	}
+	if (currentText) {
+		result.push({text: currentText, color: currentColor, inverse: currentInverse});
+	}
+
 	// Cursor block at end of text
 	if (focus && cursorOffset >= chars.length && endIdx === chars.length) {
-		out += chalk.inverse(' ');
+		result.push({text: ' ', inverse: true});
 	}
-	return out;
+
+	return result;
 }
 
 export default function ScrollableTextInput({
@@ -100,6 +206,7 @@ export default function ScrollableTextInput({
 	focus = true,
 	placeholder = '',
 	availableWidth,
+	accentColor = '#bb9af7',
 }: ScrollableTextInputProps): React.JSX.Element {
 	const [cursorOffset, setCursorOffset] = useState(value.length);
 	const [draftValue, setDraftValue] = useState(value);
@@ -134,8 +241,6 @@ export default function ScrollableTextInput({
 			if (
 				key.upArrow ||
 				key.downArrow ||
-				key.ctrl ||
-				key.meta ||
 				key.tab ||
 				(key.shift && key.tab)
 			) {
@@ -149,10 +254,37 @@ export default function ScrollableTextInput({
 
 			const currentOffset = cursorOffsetRef.current;
 			const currentValue = draftValueRef.current;
+			const chars = toChars(currentValue);
 			let nextOffset = currentOffset;
 			let nextValue = currentValue;
 
-			if (key.leftArrow) {
+			// --- Word-level navigation ---
+			if (key.ctrl && key.leftArrow) {
+				nextOffset = prevWordBoundary(chars, currentOffset);
+			} else if (key.ctrl && key.rightArrow) {
+				nextOffset = nextWordBoundary(chars, currentOffset);
+			// --- Home / End ---
+			} else if (key.ctrl && input === 'a') {
+				nextOffset = 0;
+			} else if (key.ctrl && input === 'e') {
+				nextOffset = currentValue.length;
+			// --- Line editing ---
+			} else if (key.ctrl && input === 'k') {
+				// Kill to end of line
+				nextValue = currentValue.slice(0, currentOffset);
+				nextOffset = currentOffset;
+			} else if (key.ctrl && input === 'u') {
+				// Kill to start of line
+				nextValue = currentValue.slice(currentOffset);
+				nextOffset = 0;
+			} else if (key.ctrl && input === 'w') {
+				// Delete word backward
+				const boundary = prevWordBoundary(chars, currentOffset);
+				nextValue = currentValue.slice(0, boundary) + currentValue.slice(currentOffset);
+				nextOffset = boundary;
+			} else if (key.ctrl || key.meta) {
+				return;
+			} else if (key.leftArrow) {
 				nextOffset = Math.max(0, currentOffset - 1);
 			} else if (key.rightArrow) {
 				nextOffset = Math.min(currentValue.length, currentOffset + 1);
@@ -174,12 +306,7 @@ export default function ScrollableTextInput({
 			if (nextValue !== currentValue) {
 				// When the new value contains a newline, the parent (App) is expected
 				// to consume the segments before the final '\n' as buffered preview
-				// lines and keep only the trailing segment as the live input.  We
-				// mirror that behaviour locally so that subsequent input events
-				// — which often arrive faster than React can flush the parent state
-				// back through the controlled `value` prop — build on the post-\n
-				// segment instead of replaying the already-consumed prefix and
-				// duplicating buffered lines.
+				// lines and keep only the trailing segment as the live input.
 				const newlineIndex = nextValue.lastIndexOf('\n');
 				if (newlineIndex >= 0) {
 					const trailing = nextValue.slice(newlineIndex + 1);
@@ -204,13 +331,14 @@ export default function ScrollableTextInput({
 	// Empty value → show placeholder
 	if (!draftValue) {
 		if (focus) {
-			const ph =
-				placeholder.length > 0
-					? chalk.inverse(placeholder[0]) + chalk.grey(placeholder.slice(1))
-					: chalk.inverse(' ');
-			return <Text>{ph}</Text>;
+			return (
+				<Text>
+					<Text inverse>{placeholder.length > 0 ? placeholder[0] : ' '}</Text>
+					{placeholder.length > 1 && <Text dimColor>{placeholder.slice(1)}</Text>}
+				</Text>
+			);
 		}
-		return placeholder ? <Text>{chalk.grey(placeholder)}</Text> : <Text>{' '}</Text>;
+		return placeholder ? <Text dimColor>{placeholder}</Text> : <Text>{' '}</Text>;
 	}
 
 	const chars = toChars(draftValue);
@@ -221,7 +349,14 @@ export default function ScrollableTextInput({
 		cursorOffset,
 		safeWidth,
 	);
-	const rendered = renderViewport(chars, startIdx, endIdx, cursorOffset, focus);
+	const tokenized = tokenize(draftValue);
+	const viewportSegments = buildViewportSegments(chars, startIdx, endIdx, cursorOffset, focus, tokenized, accentColor);
 
-	return <Text>{rendered}</Text>;
+	return (
+		<Text>
+			{viewportSegments.map((seg, i) => (
+				<Text key={i} color={seg.color} inverse={seg.inverse}>{seg.text}</Text>
+			))}
+		</Text>
+	);
 }

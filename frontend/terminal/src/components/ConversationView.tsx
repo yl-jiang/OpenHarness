@@ -257,9 +257,13 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		}, [paused, onPauseChange]);
 
 		const maxScroll = Math.max(0, contentHeight - viewportHeight);
+		// When there's no conversation yet (home page), pin to the top so the
+		// WelcomeBanner's header/logo stays visible even on small terminals.
+		// Once conversation starts, switch to follow mode (scroll to bottom).
+		const hasConversation = groups.length > 0 || (assistantBuffer != null && assistantBuffer.length > 0);
 		const effectiveScroll = paused
 			? Math.max(0, Math.min(scrollFromTop, maxScroll))
-			: maxScroll;
+			: (hasConversation ? maxScroll : 0);
 		const marginTop = -effectiveScroll;
 
 		// In follow mode keep `scrollFromTop` mirrored to the live tail so
