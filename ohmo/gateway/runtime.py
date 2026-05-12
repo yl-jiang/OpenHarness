@@ -750,7 +750,7 @@ class OhmoSessionRuntimePool:
             "source_chat_id": str(message.chat_id),
             "source_session_key": session_key,
             "sender_display_name": message.metadata.get("sender_display_name"),
-            "raw_request": message.metadata.get("_ohmo_group_raw_request") or "",
+            "raw_request": message.metadata.get("_ohmo_group_raw_request") or "",  # the message behind the /group command, for better agent reasoning and tool use
             "used": False,
         }
         return previous
