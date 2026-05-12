@@ -2,12 +2,31 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 import pytest_asyncio
 
 from openharness.tasks.manager import shutdown_task_manager
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def tmp_path() -> Iterator[Path]:
+    with tempfile.TemporaryDirectory(prefix="openharness-test-") as tmp_dir:
+        path = Path(tmp_dir)
+        yield path
+        try:
+            cwd = Path.cwd()
+        except FileNotFoundError:
+            os.chdir(_REPO_ROOT)
+            return
+        if cwd == path or path in cwd.parents:
+            os.chdir(_REPO_ROOT)
 
 
 @pytest.fixture(autouse=True)
