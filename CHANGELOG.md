@@ -28,6 +28,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- `write_file` now waits for edit approval before creating missing parent directories, so rejected writes no longer leave empty folders behind.
 - Default app logging now creates a process-stable timestamped file when `OPENHARNESS_LOG_FILE` is unset, avoids redundant startup rotation for those generated files, and still applies retention cleanup across older `openharness*.jsonl` runs.
 - `cron_manager` now keeps create/update/enable operations non-blocking when the scheduler daemon is stopped, while returning an explicit `oh cron start` hint so saved jobs are not mistaken for active scheduling.
 - Skill discovery and the runtime skills prompt now also load project-local skills from the launch directory's `.openharness/skills`, and prompt cache invalidation tracks those files so newly added workspace skills appear immediately.
