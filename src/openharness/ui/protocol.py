@@ -32,12 +32,15 @@ class FrontendRequest(BaseModel):
     allowed: bool | None = None
     permission_reply: Literal["once", "always", "reject"] | None = None
     answer: str | None = None
+    input_mode: Literal["chat", "shell"] = "chat"
 
 
 class TranscriptItem(BaseModel):
     """One transcript row rendered by the frontend."""
 
-    role: Literal["system", "user", "assistant", "tool", "tool_result", "log"]
+    role: Literal[
+        "system", "user", "user_shell", "assistant", "tool", "tool_result", "log"
+    ]
     text: str
     tool_name: str | None = None
     tool_input: dict[str, Any] | None = None

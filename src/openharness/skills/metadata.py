@@ -32,6 +32,7 @@ class SkillMarkdownMetadata:
     context: str | None = None
     disable_model_invocation: bool = False
     user_invocable: bool = True
+    shell_injection: bool = False
 
 def load_skill_definition(
     default_name: str,
@@ -81,6 +82,7 @@ def _build_skill_definition_from_metadata(
         context=metadata.context,
         disable_model_invocation=metadata.disable_model_invocation,
         user_invocable=metadata.user_invocable,
+        shell_injection=metadata.shell_injection,
     )
 
 
@@ -135,6 +137,9 @@ def parse_skill_markdown(
     disable_model_invocation = bool(frontmatter.get("disable-model-invocation", False))
     user_invocable_raw = frontmatter.get("user-invocable")
     user_invocable = True if user_invocable_raw is None else bool(user_invocable_raw)
+    shell_injection = bool(
+        frontmatter.get("shell-injection", frontmatter.get("shell_injection", False))
+    )
 
     return SkillMarkdownMetadata(
         name=name,
@@ -151,6 +156,7 @@ def parse_skill_markdown(
         context=context,
         disable_model_invocation=disable_model_invocation,
         user_invocable=user_invocable,
+        shell_injection=shell_injection,
     )
 
 

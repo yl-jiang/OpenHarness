@@ -164,6 +164,22 @@ test('renders assistant header before tool runs in a later turn', async () => {
 	assert.equal(countOccurrences(frame, '╰─ assistant'), 2);
 });
 
+test('does not render an assistant header for user shell tool runs', async () => {
+	const output = await renderConversation([
+		{role: 'user_shell', text: 'ls'},
+		{role: 'tool', text: 'bash', tool_name: 'bash', tool_input: {command: 'ls', origin: 'user_shell'}},
+		{role: 'tool_result', text: 'README.md\nsrc'},
+	]);
+	const frame = finalFrameFrom(output, '! ls');
+
+	assert.match(frame, /! ls/);
+	assert.match(frame, /╭/);
+	assert.match(frame, /✓\s+Shell Command ls/);
+	assert.match(frame, /README\.md/);
+	assert.match(frame, /src/);
+	assert.doesNotMatch(frame, /╰─ assistant/);
+});
+
 test('adds spacing before replies and a divider between completed turns', async () => {
 	const output = await renderConversation([
 		{role: 'user', text: 'hi'},

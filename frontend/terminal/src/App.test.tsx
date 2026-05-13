@@ -6,7 +6,7 @@ import {render} from 'ink';
 
 import * as AppModule from './App.js';
 
-import {App, buildSubmittedValue, resolveSelectModalChoice} from './App.js';
+import {App, buildSubmittedValue, resolveSelectModalChoice, shouldEnterShellModeFromInput} from './App.js';
 import {shouldAnimateBackgroundCue} from './components/PromptInput.js';
 
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
@@ -115,6 +115,13 @@ test('builds a submittable multiline value when the current line is empty but pr
 
 test('does not submit whitespace-only buffered lines', () => {
 	assert.equal(buildSubmittedValue('', ['', '   ']), null);
+});
+
+test('recognizes a bare bang as shell-mode input only at an empty chat prompt', () => {
+	assert.equal(shouldEnterShellModeFromInput('!', 'chat', 0), true);
+	assert.equal(shouldEnterShellModeFromInput('!ls', 'chat', 0), false);
+	assert.equal(shouldEnterShellModeFromInput('!', 'shell', 0), false);
+	assert.equal(shouldEnterShellModeFromInput('!', 'chat', 1), false);
 });
 
 test('treats double escape while busy as a cancellation request', () => {
@@ -227,6 +234,48 @@ setInterval(() => {}, 1000);
 			assert.doesNotMatch(output, /\u001B\[s\u001B\[[0-9]+;4H/u);
 			assert.match(text, /OpenHarness[^\n]*⚙\s+1/u);
 		}
+	} finally {
+		const exitPromise = instance.waitUntilExit();
+		instance.unmount();
+		await exitPromise;
+		instance.cleanup();
+	}
+});
+
+test('switches the visible prompt to shell mode when a bare bang is typed', async () => {
+	const stdout = createTestStdout();
+	const stdin = createTestStdin();
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+
+	const backendScript = `
+const emit = (event) => process.stdout.write('OHJSON:' + JSON.stringify(event) + '\\n');
+emit({type: 'ready', state: {model: 'test-model', permission_mode: 'default', cwd: process.cwd()}, tasks: []});
+setInterval(() => {}, 1000);
+`;
+
+	const instance = render(
+		<App config={{backend_command: [process.execPath, '-e', backendScript], theme: 'default'}} />,
+		{
+			stdout: stdout as unknown as NodeJS.WriteStream,
+			stdin: stdin as unknown as NodeJS.ReadStream,
+			exitOnCtrlC: false,
+			patchConsole: false,
+			debug: true,
+		},
+	);
+
+	try {
+		await sleep(120);
+		output = '';
+		stdin.write('!');
+		await sleep(120);
+		await nextLoopTurn();
+		const text = stripAnsi(output);
+		assert.match(text, /shell mode · type "exit" or esc to leave/u);
+		assert.match(text, /Type a shell command/u);
 	} finally {
 		const exitPromise = instance.waitUntilExit();
 		instance.unmount();

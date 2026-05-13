@@ -244,7 +244,9 @@ class ReactBackendHost:
                     continue
                 self._busy = True
                 try:
-                    should_continue = await self._run_active_request(self._process_line(line))
+                    should_continue = await self._run_active_request(
+                        self._process_line(line, input_mode=request.input_mode)
+                    )
                 finally:
                     self._busy = False
                 if not should_continue:
@@ -300,17 +302,37 @@ class ReactBackendHost:
         finally:
             self._active_request_task = None
 
-    async def _process_line(self, line: str, *, transcript_line: str | None = None) -> bool:
+    async def _process_line(
+        self,
+        line: str,
+        *,
+        transcript_line: str | None = None,
+        input_mode: str = "chat",
+    ) -> bool:
         assert self._bundle is not None
+        # A line is "shell-bound" when the frontend is in shell mode or the
+        # user typed a direct ``!cmd`` in chat mode.  These echo as a
+        # distinct transcript role so the frontend can render them with a
+        # shell affordance (``!`` prefix) instead of the normal user voice.
+        is_shell_line = input_mode == "shell" or (
+            input_mode == "chat" and line.startswith("!")
+        )
         logger.event(
             "backend_process_line_start",
             session_id=self._bundle.session_id,
             line=line,
             transcript_line=transcript_line or "",
             busy=self._busy,
+            input_mode=input_mode,
         )
         await self._emit(
-            BackendEvent(type="transcript_item", item=TranscriptItem(role="user", text=transcript_line or line))
+            BackendEvent(
+                type="transcript_item",
+                item=TranscriptItem(
+                    role="user_shell" if is_shell_line else "user",
+                    text=transcript_line or line,
+                ),
+            )
         )
 
         async def _print_system(message: str) -> None:
@@ -498,6 +520,7 @@ class ReactBackendHost:
                 print_system=_print_system,
                 render_event=_render_event,
                 clear_output=_clear_output,
+                input_mode=input_mode,
             )
         except asyncio.CancelledError:
             self._save_snapshot()

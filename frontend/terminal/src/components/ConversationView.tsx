@@ -25,6 +25,11 @@ type RenderGroup = ToolPair | SoloTool | SoloMessage;
 type ContentMode = 'welcome' | 'conversation';
 
 const TURN_DIVIDER = '╌'.repeat(18);
+const USER_SHELL_ORIGIN = 'user_shell';
+
+function isUserShellToolItem(item: TranscriptItem | undefined): boolean {
+	return item?.tool_input?.origin === USER_SHELL_ORIGIN;
+}
 
 function buildGroups(items: TranscriptItem[]): RenderGroup[] {
 	const groups: RenderGroup[] = [];
@@ -105,6 +110,7 @@ function renderGroup(
 				resultItem={group.result}
 				outputStyle={outputStyle}
 				treePos={treePos}
+				terminalWidth={cols}
 			/>
 		);
 	}
@@ -116,6 +122,7 @@ function renderGroup(
 				resultItem={undefined}
 				outputStyle={outputStyle}
 				treePos={treePos}
+				terminalWidth={cols}
 			/>
 		);
 	}
@@ -131,14 +138,17 @@ function renderGroup(
 }
 
 function conversationOwner(group: RenderGroup): 'assistant' | 'user' | null {
-	if (group.kind === 'pair' || group.kind === 'tool') {
-		return 'assistant';
+	if (group.kind === 'pair') {
+		return isUserShellToolItem(group.call) ? 'user' : 'assistant';
 	}
-	if (group.item.role === 'user') {
+	if (group.kind === 'tool') {
+		return isUserShellToolItem(group.item) ? 'user' : 'assistant';
+	}
+	if (group.item.role === 'user' || group.item.role === 'user_shell') {
 		return 'user';
 	}
 	if (group.item.role === 'tool_result') {
-		return 'assistant';
+		return isUserShellToolItem(group.item) ? 'user' : 'assistant';
 	}
 	if (group.item.role === 'assistant' && group.item.text.trim().length > 0) {
 		return 'assistant';
@@ -376,6 +386,21 @@ function MessageRow({
 }): React.JSX.Element {
 	const isCodexStyle = outputStyle === 'codex';
 	switch (item.role) {
+		case 'user_shell': {
+			const warning = theme.colors.warning;
+			const lines = item.text.split('\n');
+			return (
+				<Box marginTop={0} marginBottom={0} flexDirection="column">
+					{lines.map((line, i) => (
+						<Text key={i}>
+							<Text color={warning} bold>{i === 0 ? '! ' : '  '}</Text>
+							<Text color={warning}>{line}</Text>
+						</Text>
+					))}
+				</Box>
+			);
+		}
+
 		case 'user': {
 			const isMultiline = item.text.includes('\n');
 			if (isCodexStyle) {

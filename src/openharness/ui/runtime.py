@@ -46,6 +46,7 @@ from openharness.plugins import load_plugins
 from openharness.prompts import build_runtime_system_prompt
 from openharness.prompts.environment import detect_git_info
 from openharness.skills.loader import apply_skill_path_rules
+from openharness.ui.shell_dispatcher import ShellCommandDispatcher
 from openharness.state import AppState, AppStateStore
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
 from openharness.tools import ToolRegistry, create_default_tool_registry
@@ -766,6 +767,7 @@ async def handle_line(
     print_system: SystemPrinter,
     render_event: StreamRenderer,
     clear_output: ClearHandler,
+    input_mode: str = "chat",
 ) -> bool:
     """Handle one submitted line for either headless or TUI rendering."""
     if not bundle.external_api_client:
@@ -788,13 +790,35 @@ async def handle_line(
         memory_backend=bundle.memory_backend,
         include_project_memory=bundle.include_project_memory,
     )
+    # Shell-mode input bypasses slash/skill resolution: every line is a
+    # local shell command.  Direct ``!cmd`` is handled later in the
+    # fallthrough path so slash commands keep precedence in chat mode.
+    if input_mode == "shell":
+        shell_dispatcher = ShellCommandDispatcher(print_system=print_system)
+        outcome = await shell_dispatcher.dispatch(
+            line=line,
+            input_mode="shell",
+            engine=bundle.engine,
+            tool_registry=bundle.tool_registry,
+            cwd=bundle.cwd,
+            render_event=render_event,
+        )
+        if outcome.handled:
+            _save_runtime_snapshot(
+                bundle,
+                model=bundle.engine.model,
+                system_prompt=bundle.engine.system_prompt,
+            )
+            sync_app_state(bundle)
+            return True
+
     parsed = bundle.commands.lookup(line)
     result: CommandResult | None = None
     if parsed is not None:
         command, args = parsed
         result = await command.handler(args, context)
     elif line.startswith("/"):
-        result = resolve_skill_alias_command(line, context)
+        result = await resolve_skill_alias_command(line, context)
 
     if result is not None:
         if result.refresh_runtime:
@@ -866,6 +890,27 @@ async def handle_line(
             )
         sync_app_state(bundle)
         return not result.should_exit
+
+    # No slash/skill matched.  Try direct ``!cmd`` shell dispatch before
+    # forwarding the line to the model.
+    if line.lstrip().startswith("!"):
+        shell_dispatcher = ShellCommandDispatcher(print_system=print_system)
+        outcome = await shell_dispatcher.dispatch(
+            line=line,
+            input_mode="chat",
+            engine=bundle.engine,
+            tool_registry=bundle.tool_registry,
+            cwd=bundle.cwd,
+            render_event=render_event,
+        )
+        if outcome.handled:
+            _save_runtime_snapshot(
+                bundle,
+                model=bundle.engine.model,
+                system_prompt=bundle.engine.system_prompt,
+            )
+            sync_app_state(bundle)
+            return True
 
     settings = bundle.current_settings()
     if bundle.enforce_max_turns:

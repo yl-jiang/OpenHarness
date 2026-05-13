@@ -398,7 +398,7 @@ async def test_skill_alias_command_loads_skill_as_submit_prompt(tmp_path: Path, 
 
     context = _make_context(tmp_path)
 
-    result = registry_module.resolve_skill_alias_command("/weekly-report what shipped this week?", context)
+    result = await registry_module.resolve_skill_alias_command("/weekly-report what shipped this week?", context)
 
     assert result is not None
     assert result.message == "Loaded skill: weekly-report"
@@ -437,7 +437,7 @@ async def test_non_user_invocable_skills_are_hidden_from_user_commands(tmp_path:
     assert "Review changes carefully" in list_result.message
     assert "internal-review" not in list_result.message
 
-    assert registry_module.resolve_skill_alias_command("/internal-review investigate this", context) is None
+    assert await registry_module.resolve_skill_alias_command("/internal-review investigate this", context) is None
 
     load_command, load_args = registry.lookup("/skills internal-review")
     assert load_command is not None
@@ -463,7 +463,7 @@ async def test_project_skill_registers_as_context_slash_command(tmp_path: Path, 
     )
     context = _make_context(repo)
 
-    result = registry_module.resolve_skill_alias_command("/shipit now", context)
+    result = await registry_module.resolve_skill_alias_command("/shipit now", context)
 
     assert result is not None
     assert result.submit_prompt is not None
