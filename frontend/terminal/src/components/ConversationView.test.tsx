@@ -112,9 +112,13 @@ test('renders transcript items from the beginning when the full history is provi
 
 test('renders the welcome banner with the runtime version', async () => {
 	const output = await renderConversation([], {showWelcome: true, welcomeVersion: '9.9.9'});
+	const plainOutput = stripAnsi(output);
 
-	assert.match(output, /v9\.9\.9/);
-	assert.doesNotMatch(output, /v0\.1\.6/);
+	assert.match(plainOutput, /╭────╮ ╷   ╷/);
+	assert.match(plainOutput, /v9\.9\.9/);
+	assert.match(plainOutput, /plans · tools · skills · memory/);
+	assert.match(plainOutput, /@ files/);
+	assert.doesNotMatch(plainOutput, /v0\.1\.6/);
 });
 
 test('keeps the welcome banner in scrollback after the first transcript item', async () => {
