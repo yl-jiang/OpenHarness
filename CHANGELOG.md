@@ -26,6 +26,10 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - React TUI `@` file mentions and `/skills` picker for manually loading a selected skill into the current session.
 - React TUI prompt composer now has a clickable expand affordance that opens a fullscreen editor for long drafts, keeps Enter/Shift+Enter as newline-only inside that view, and preserves leading slash command/skill completion via tab.
 
+### Changed
+
+- **Approval architecture refactor**: Consolidated three scattered approval entry points into a single `ApprovalCoordinator` subsystem (`src/openharness/permissions/approvals.py`).  `PermissionChecker` is now a pure policy engine (no session memory); all remembered-approval state lives in `ApprovalState` inside `ApprovalCoordinator`.  Preview-capable tools (`edit_file`, `write_file`) defer the soft-confirmation check to the richer diff-preview prompt so users see exactly one approval modal per file write.  Approval state persists correctly across conversation turns via `QueryEngine._approval_coordinator`.
+
 ### Fixed
 
 - `write_file` now waits for edit approval before creating missing parent directories, so rejected writes no longer leave empty folders behind.

@@ -41,6 +41,7 @@ from openharness.mcp.config import load_mcp_server_configs
 from openharness.memory.lifecycle import setup_memory_provider_manager, teardown_memory_provider_manager
 from openharness.memory.paths import get_curated_memory_dir
 from openharness.permissions import PermissionChecker
+from openharness.permissions.approvals import ApprovalCoordinator, PromptFn
 from openharness.plugins import load_plugins
 from openharness.prompts import build_runtime_system_prompt
 from openharness.prompts.environment import detect_git_info
@@ -54,7 +55,6 @@ from openharness.utils.log import get_logger
 
 PermissionPrompt = Callable[[str, str], Awaitable[bool]]
 AskUserPrompt = Callable[[str], Awaitable[str]]
-EditApprovalPrompt = Callable[[str, str, int, int], Awaitable[str]]
 SystemPrinter = Callable[[str], Awaitable[None]]
 StreamRenderer = Callable[[StreamEvent], Awaitable[None]]
 ClearHandler = Callable[[], Awaitable[None]]
@@ -308,7 +308,7 @@ async def build_runtime(
     api_client: SupportsStreamingMessages | None = None,
     permission_prompt: PermissionPrompt | None = None,
     ask_user_prompt: AskUserPrompt | None = None,
-    edit_approval_prompt: EditApprovalPrompt | None = None,
+    prompt_fn: PromptFn | None = None,
     restore_messages: list[dict] | None = None,
     restore_tool_metadata: dict[str, object] | None = None,
     enforce_max_turns: bool = True,
@@ -498,6 +498,10 @@ async def build_runtime(
         )
 
     todo_store = TodoStore(Path(cwd))
+    approval_coordinator = ApprovalCoordinator(
+        permission_checker,
+        prompt_fn=prompt_fn,
+    )
     engine = QueryEngine(
         api_client=resolved_api_client,
         tool_registry=tool_registry,
@@ -517,6 +521,7 @@ async def build_runtime(
         hook_executor=hook_executor,
         require_explicit_done=is_full_auto,
         settings=settings,
+        approval_coordinator=approval_coordinator,
         tool_metadata={
             "mcp_manager": mcp_manager,
             "bridge_manager": bridge_manager,
@@ -524,7 +529,6 @@ async def build_runtime(
             "extra_plugin_roots": normalized_plugin_roots,
             "session_id": session_id,
             "todo_store": todo_store,
-            "edit_approval_prompt": edit_approval_prompt,
             ToolMetadataKey.VISION_MODEL_CONFIG.value: _resolve_vision_config(settings),
             ToolMetadataKey.IMAGE_GENERATION_CONFIG.value: _resolve_image_generation_config(settings),
             **restored_metadata,

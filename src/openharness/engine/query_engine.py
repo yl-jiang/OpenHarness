@@ -30,6 +30,7 @@ from openharness.engine.stream_events import (
 )
 from openharness.engine.types import ToolMetadataKey
 from openharness.hooks import HookEvent, HookExecutor
+from openharness.permissions.approvals import ApprovalCoordinator, ApprovalRequest, PromptFn
 from openharness.permissions.checker import PermissionChecker
 from openharness.services.autodream.service import schedule_auto_dream
 from openharness.tools.base import ToolRegistry
@@ -78,6 +79,7 @@ class QueryEngine:
         tool_metadata: dict[str, object] | None = None,
         require_explicit_done: bool = False,
         settings: Settings | None = None,
+        approval_coordinator: ApprovalCoordinator | None = None,
     ) -> None:
         self._api_client = api_client
         self._tool_registry = tool_registry
@@ -98,6 +100,46 @@ class QueryEngine:
         self._messages: list[ConversationMessage] = []
         self._export_messages: list[ConversationMessage] = []
         self._cost_tracker = CostTracker()
+
+        if approval_coordinator is not None:
+            self._approval_coordinator: ApprovalCoordinator = approval_coordinator
+        else:
+            self._approval_coordinator = self._make_default_coordinator(
+                permission_checker, permission_prompt, hook_executor
+            )
+
+    @staticmethod
+    def _make_default_coordinator(
+        checker: PermissionChecker,
+        permission_prompt: PermissionPrompt | None,
+        hook_executor: HookExecutor | None,
+    ) -> ApprovalCoordinator:
+        async def _notify_hook(request: ApprovalRequest) -> None:
+            if hook_executor is not None and request.kind == "tool":
+                await hook_executor.execute(
+                    HookEvent.NOTIFICATION,
+                    {
+                        "event": HookEvent.NOTIFICATION.value,
+                        "notification_type": "permission_prompt",
+                        "tool_name": request.tool_name,
+                        "reason": request.reason,
+                    },
+                )
+
+        prompt_fn: PromptFn | None = None
+        if permission_prompt is not None:
+            _perm = permission_prompt
+
+            async def _legacy_prompt(request: ApprovalRequest) -> str:
+                return await _perm(request.tool_name, request.reason)  # type: ignore[arg-type]
+
+            prompt_fn = _legacy_prompt
+
+        return ApprovalCoordinator(
+            checker,
+            prompt_fn=prompt_fn,
+            notify_fn=_notify_hook,
+        )
 
     @property
     def messages(self) -> list[ConversationMessage]:
@@ -164,6 +206,7 @@ class QueryEngine:
     def set_permission_checker(self, checker: PermissionChecker) -> None:
         """Update the active permission checker for future turns."""
         self._permission_checker = checker
+        self._approval_coordinator.set_checker(checker)
 
     def set_require_explicit_done(self, value: bool) -> None:
         """Update whether the agent loop requires an explicit done() call to terminate."""
@@ -456,6 +499,7 @@ class QueryEngine:
             hook_executor=self._hook_executor,
             tool_metadata=self._tool_metadata,
             require_explicit_done=self._require_explicit_done,
+            approval_coordinator=self._approval_coordinator,
         )
         query_messages = list(self._messages)
         coordinator_context = self._build_coordinator_context_message()
@@ -541,6 +585,7 @@ class QueryEngine:
             hook_executor=self._hook_executor,
             tool_metadata=self._tool_metadata,
             require_explicit_done=self._require_explicit_done,
+            approval_coordinator=self._approval_coordinator,
         )
         query_messages = list(self._messages)
         async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):

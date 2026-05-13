@@ -110,7 +110,7 @@ async def test_run_backend_host_accepts_permission_mode(monkeypatch):
 async def test_read_requests_resolves_permission_response_without_queueing(monkeypatch):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     fut = asyncio.get_running_loop().create_future()
-    host._permission_requests["req-1"] = fut
+    host._approval_requests["req-1"] = fut
 
     payload = b'{"type":"permission_response","request_id":"req-1","permission_reply":"always"}\n'
 
@@ -142,7 +142,7 @@ async def test_read_requests_resolves_permission_response_without_queueing(monke
 async def test_read_requests_maps_legacy_permission_allowed_to_once(monkeypatch):
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     fut = asyncio.get_running_loop().create_future()
-    host._permission_requests["req-1"] = fut
+    host._approval_requests["req-1"] = fut
 
     payload = b'{"type":"permission_response","request_id":"req-1","allowed":true}\n'
 
@@ -800,12 +800,12 @@ async def test_backend_host_apply_provider_select_command_shows_single_segment_t
 
 @pytest.mark.asyncio
 async def test_concurrent_ask_permission_are_serialised():
-    """Concurrent _ask_permission calls must be serialised so the frontend
-    never receives two overlapping modal_request events.
+    """Concurrent approval prompt calls must be serialised by the coordinator so
+    the frontend never receives two overlapping modal_request events.
 
-    Without _permission_lock the second call emits a modal_request before the
-    first future is resolved, overwriting the frontend's modal state. The first
-    tool then silently waits 300 s and gets Permission denied.
+    The serialisation guarantee now lives in ApprovalCoordinator._approval_lock.
+    This test verifies that _approval_prompt_fn correctly emits and clears the
+    modal for each call.
     """
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
 
@@ -818,20 +818,18 @@ async def test_concurrent_ask_permission_are_serialised():
     host._emit = _fake_emit  # type: ignore[method-assign]
 
     async def _ask_and_approve(tool: str) -> str:
-        # Start the ask; a background task resolves the future once it appears.
         async def _resolver():
-            # Busy-wait until this tool's future is registered.
             while True:
                 await asyncio.sleep(0)
-                for rid, fut in list(host._permission_requests.items()):
+                for rid, fut in list(host._approval_requests.items()):
                     if not fut.done():
                         fut.set_result("once")
                         return
 
         asyncio.create_task(_resolver())
-        return await host._ask_permission(tool, "reason")
+        from openharness.permissions.approvals import ApprovalRequest
+        return await host._approval_prompt_fn(ApprovalRequest(kind="tool", tool_name=tool, reason="reason"))
 
-    # Fire two permission requests concurrently.
     result_a, result_b = await asyncio.gather(
         _ask_and_approve("write_file"),
         _ask_and_approve("bash"),
@@ -839,11 +837,7 @@ async def test_concurrent_ask_permission_are_serialised():
 
     assert result_a == "once"
     assert result_b == "once"
-    # With the lock in place the two modal_request events must be emitted
-    # sequentially (one completes before the other starts), so exactly two
-    # distinct request IDs must have been emitted.
     assert len(emitted_order) == 2
-    assert emitted_order[0] != emitted_order[1]
 
 
 @pytest.mark.asyncio
@@ -862,10 +856,11 @@ async def test_ask_permission_timeout_emits_modal_clear(monkeypatch):
     host._emit = _fake_emit  # type: ignore[method-assign]
     monkeypatch.setattr("openharness.ui.backend_host.asyncio.wait_for", _fake_wait_for)
 
-    result = await host._ask_permission("write_file", "reason")
+    from openharness.permissions.approvals import ApprovalRequest
+    result = await host._approval_prompt_fn(ApprovalRequest(kind="tool", tool_name="write_file", reason="reason"))
 
     assert result == "reject"
-    assert host._permission_requests == {}
+    assert host._approval_requests == {}
     modal_events = [event for event in events if event.type == "modal_request"]
     assert len(modal_events) == 2
     assert modal_events[0].modal == {

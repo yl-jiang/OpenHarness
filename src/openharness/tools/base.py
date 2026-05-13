@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from openharness.hooks.executor import HookExecutor
+    from openharness.permissions.approvals import ApprovalCoordinator
 
 
 @dataclass
@@ -23,6 +24,7 @@ class ToolExecutionContext:
     cwd: Path
     metadata: dict[str, Any] = field(default_factory=dict)
     hook_executor: HookExecutor | None = None
+    approval_coordinator: ApprovalCoordinator | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +51,16 @@ class BaseTool(ABC):
         """Return whether the invocation is read-only."""
         del arguments
         return False
+
+    async def compute_preview(self, arguments: BaseModel, cwd: Path) -> tuple[str, int, int] | None:
+        """Return ``(diff_text, added_lines, removed_lines)`` before execution.
+
+        The pipeline calls this before ``authorize_tool`` so the diff can be
+        embedded in the approval request.  Return ``None`` when no meaningful
+        preview is available (default for all non-mutating tools).
+        """
+        del arguments, cwd
+        return None
 
     def to_api_schema(self) -> dict[str, Any]:
         """Return the tool schema sent to the LLM API (Anthropic format).

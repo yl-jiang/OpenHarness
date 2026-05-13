@@ -7,7 +7,7 @@ import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Awaitable, Callable
+from typing import Any, AsyncIterator, Awaitable, Callable, TYPE_CHECKING
 
 from openharness.api.client import SupportsStreamingMessages
 from openharness.api.usage import UsageSnapshot
@@ -27,6 +27,9 @@ from openharness.permissions.checker import PermissionChecker
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.base import ToolRegistry
 from openharness.utils.log import get_logger
+
+if TYPE_CHECKING:
+    from openharness.permissions.approvals import ApprovalCoordinator
 
 AUTO_COMPACT_STATUS_MESSAGE = "Auto-compacting conversation memory to keep things fast and focused."
 REACTIVE_COMPACT_STATUS_MESSAGE = "Prompt too long; compacting conversation memory and retrying."
@@ -89,6 +92,25 @@ class QueryContext:
     tool_metadata: dict[str, object] | None = None
     permission_prompt_lock: asyncio.Lock | None = None
     require_explicit_done: bool = False
+    approval_coordinator: ApprovalCoordinator | None = None
+
+    def __post_init__(self) -> None:
+        if self.approval_coordinator is None:
+            from openharness.permissions.approvals import ApprovalCoordinator, ApprovalRequest, PromptFn
+
+            prompt_fn: PromptFn | None = None
+            if self.permission_prompt is not None:
+                _perm = self.permission_prompt
+
+                async def _legacy_prompt(request: ApprovalRequest) -> str:
+                    return await _perm(request.tool_name, request.reason)  # type: ignore[arg-type]
+
+                prompt_fn = _legacy_prompt
+
+            self.approval_coordinator = ApprovalCoordinator(
+                self.permission_checker,
+                prompt_fn=prompt_fn,
+            )
 
 
 def _append_capped_unique(bucket: list[Any], value: Any, *, limit: int) -> None:
@@ -717,65 +739,36 @@ async def _check_tool_permission_stage(state: ToolPipelineState) -> ToolPipeline
     logger.debug("permission check: %s read_only=%s path=%s cmd=%s", 
                  state.tool_name, state.tool.is_read_only(state.parsed_input), state.permission_file_path,
                  state.permission_command and state.permission_command[:80])
-    decision = context.permission_checker.evaluate(
-        state.tool_name,
-        is_read_only=state.tool.is_read_only(state.parsed_input),
-        file_path=state.permission_file_path,
-        command=state.permission_command,
-    )
+
+    is_read_only = state.tool.is_read_only(state.parsed_input)
+    coordinator = context.approval_coordinator
+    if coordinator is not None:
+        preview = await state.tool.compute_preview(state.parsed_input, context.cwd)
+        decision = await coordinator.authorize_tool(
+            state.tool_name,
+            is_read_only=is_read_only,
+            file_path=state.permission_file_path,
+            command=state.permission_command,
+            preview=preview,
+        )
+    else:
+        decision = context.permission_checker.evaluate(
+            state.tool_name,
+            is_read_only=is_read_only,
+            file_path=state.permission_file_path,
+            command=state.permission_command,
+        )
+
     if not decision.allowed:
-        if decision.requires_confirmation and context.permission_prompt is not None:
-            async with _permission_prompt_lock(context):
-                decision = context.permission_checker.evaluate(
-                    state.tool_name,
-                    is_read_only=state.tool.is_read_only(state.parsed_input),
-                    file_path=state.permission_file_path,
-                    command=state.permission_command,
-                )
-                if decision.allowed:
-                    logger.debug("permission allowed after recheck for %s: %s", state.tool_name, decision.reason)
-                elif decision.requires_confirmation:
-                    logger.debug("permission prompt for %s: %s", state.tool_name, decision.reason)
-                    if context.hook_executor is not None:
-                        await context.hook_executor.execute(
-                            HookEvent.NOTIFICATION,
-                            {
-                                "event": HookEvent.NOTIFICATION.value,
-                                "notification_type": "permission_prompt",
-                                "tool_name": state.tool_name,
-                                "reason": decision.reason,
-                            },
-                        )
-                    confirmed = await context.permission_prompt(state.tool_name, decision.reason)
-                    reply = _normalize_permission_reply(confirmed)
-                    if reply == "reject":
-                        logger.debug("permission denied by user for %s", state.tool_name)
-                        state.result = ToolResultBlock(
-                            tool_use_id=state.tool_use_id,
-                            content=decision.reason or f"Permission denied for {state.tool_name}",
-                            is_error=True,
-                        )
-                        state.stop = True
-                        return state
-                    if reply == "always":
-                        context.permission_checker.remember_allow(decision)
-                else:
-                    logger.debug("permission blocked after recheck for %s: %s", state.tool_name, decision.reason)
-                    state.result = ToolResultBlock(
-                        tool_use_id=state.tool_use_id,
-                        content=decision.reason or f"Permission denied for {state.tool_name}",
-                        is_error=True,
-                    )
-                    state.stop = True
-                    return state
-        else:
-            logger.debug("permission blocked for %s: %s", state.tool_name, decision.reason)
-            state.result = ToolResultBlock(
-                tool_use_id=state.tool_use_id,
-                content=decision.reason or f"Permission denied for {state.tool_name}",
-                is_error=True,
-            )
-            state.stop = True
+        logger.debug("permission blocked for %s: %s", state.tool_name, decision.reason)
+        state.result = ToolResultBlock(
+            tool_use_id=state.tool_use_id,
+            content=decision.reason or f"Permission denied for {state.tool_name}",
+            is_error=True,
+        )
+        state.stop = True
+    else:
+        logger.debug("permission granted for %s: %s", state.tool_name, decision.reason)
     return state
 
 
@@ -802,6 +795,7 @@ async def _execute_tool_stage(state: ToolPipelineState) -> ToolPipelineState:
                     **(context.tool_metadata or {}),
                 },
                 hook_executor=context.hook_executor,
+                approval_coordinator=context.approval_coordinator,
             ),
         )
     except Exception as exc:

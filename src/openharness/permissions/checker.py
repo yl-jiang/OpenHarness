@@ -45,20 +45,17 @@ class PathRule:
     allow: bool  # True = allow, False = deny
 
 
-@dataclass(frozen=True)
-class RememberedAllowRule:
-    """An in-memory allow rule approved by the user for this session."""
-
-    permission: str
-    pattern: str
-
-
 class PermissionChecker:
-    """Evaluate tool usage against the configured permission mode and rules."""
+    """Evaluate tool usage against the configured permission mode and rules.
+
+    This is a **pure policy engine**: it decides what *would* require
+    confirmation based on static settings, tool name, file path, and command.
+    Session-local remembered approvals live in ``ApprovalState`` (managed by
+    ``ApprovalCoordinator``), not here.
+    """
 
     def __init__(self, settings: PermissionSettings) -> None:
         self._settings = settings
-        self._remembered_allow_rules: list[RememberedAllowRule] = []
         self._decision_cache: dict[tuple[str, bool, str, str], PermissionDecision] = {}
         # Parse path rules from settings
         self._path_rules: list[PathRule] = []
@@ -78,26 +75,6 @@ class PermissionChecker:
                     "Skipping path rule with missing, empty, or non-string 'pattern' field: %r",
                     rule,
                 )
-
-    def remember_allow(self, decision: PermissionDecision) -> None:
-        """Remember a user-approved allow pattern for the current process."""
-        permission = decision.permission.strip()
-        patterns = decision.always_patterns or decision.patterns
-        if not permission or not patterns:
-            return
-        existing = {(rule.permission, rule.pattern) for rule in self._remembered_allow_rules}
-        added = False
-        for pattern in patterns:
-            normalized = pattern.strip()
-            if not normalized or (permission, normalized) in existing:
-                continue
-            self._remembered_allow_rules.append(
-                RememberedAllowRule(permission=permission, pattern=normalized)
-            )
-            existing.add((permission, normalized))
-            added = True
-        if added:
-            self._decision_cache.clear()
 
     def evaluate(
         self,
@@ -215,16 +192,6 @@ class PermissionChecker:
                 always_patterns=always_patterns,
             )
 
-        if self._is_remembered_allowed(permission, patterns):
-            return PermissionDecision(
-                allowed=True,
-                reason=f"{permission} matches a remembered allow rule for this session",
-                permission=permission,
-                patterns=patterns,
-                always_patterns=always_patterns,
-            )
-
-        # Full auto: allow everything
         if self._settings.mode == PermissionMode.FULL_AUTO:
             return PermissionDecision(
                 allowed=True,
@@ -284,19 +251,6 @@ class PermissionChecker:
             always_patterns=always_patterns,
         )
 
-    def _is_remembered_allowed(self, permission: str, patterns: tuple[str, ...]) -> bool:
-        if not patterns:
-            return False
-        rules = [
-            rule
-            for rule in self._remembered_allow_rules
-            if fnmatch.fnmatch(permission, rule.permission)
-        ]
-        if not rules:
-            return False
-        return all(
-            any(fnmatch.fnmatch(pattern, rule.pattern) for rule in rules) for pattern in patterns
-        )
 
 
 def _policy_match_paths(file_path: str) -> tuple[str, ...]:
