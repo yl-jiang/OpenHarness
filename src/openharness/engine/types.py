@@ -71,7 +71,6 @@ class ToolMetadataKey(str, Enum):
     TOOL_NAME_REPAIR_NOTICES = "tool_name_repair_notices"
     VISION_MODEL_CONFIG = "vision_model_config"
     IMAGE_GENERATION_CONFIG = "image_generation_config"
-    EDIT_ALWAYS_APPROVED = "edit_always_approved"
 
     @classmethod
     def all_persisted_keys(cls) -> tuple["ToolMetadataKey", ...]:

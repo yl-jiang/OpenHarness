@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import difflib
 from pathlib import Path
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -26,7 +25,7 @@ class FileWriteTool(BaseTool):
     description = "Create or overwrite a text file in the local repository."
     input_model = FileWriteToolInput
 
-    def to_api_schema(self) -> dict[str, Any]:
+    def to_api_schema(self) -> dict:
         return {
             "name": self.name,
             "description": self.description,
@@ -51,6 +50,13 @@ class FileWriteTool(BaseTool):
             },
         }
 
+    async def compute_preview(
+        self, arguments: FileWriteToolInput, cwd: Path  # type: ignore[override]
+    ) -> tuple[str, int, int] | None:
+        path = _resolve_path(cwd, arguments.path)
+        original = path.read_text(encoding="utf-8") if path.exists() else ""
+        return _compute_diff(str(path), original, arguments.content)
+
     async def execute(
         self,
         arguments: FileWriteToolInput,
@@ -67,23 +73,13 @@ class FileWriteTool(BaseTool):
             if not allowed:
                 return ToolResult(output=f"Sandbox: {reason}", is_error=True)
 
-        approval_prompt = context.metadata.get("edit_approval_prompt") if context.metadata else None
-        if approval_prompt is not None:
-            original = path.read_text(encoding="utf-8") if path.exists() else ""
-            diff_text, added, removed = _compute_diff(str(path), original, arguments.content)
-            reply = await approval_prompt(str(path), diff_text, added, removed)
-            if reply == "reject":
-                return ToolResult(output=f"Write rejected by user: {path}", is_error=True)
-            if arguments.create_directories:
-                path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(arguments.content, encoding="utf-8")
-            stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
-            return ToolResult(output=f"Wrote {path}{stats}")
-
+        original = path.read_text(encoding="utf-8") if path.exists() else ""
+        _, added, removed = _compute_diff(str(path), original, arguments.content)
         if arguments.create_directories:
             path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(arguments.content, encoding="utf-8")
-        return ToolResult(output=f"Wrote {path}")
+        stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
+        return ToolResult(output=f"Wrote {path}{stats}")
 
 
 def _resolve_path(base: Path, candidate: str) -> Path:

@@ -34,6 +34,21 @@ class FileEditTool(BaseTool):
     )
     input_model = FileEditToolInput
 
+    async def compute_preview(
+        self, arguments: FileEditToolInput, cwd: Path  # type: ignore[override]
+    ) -> tuple[str, int, int] | None:
+        path = _resolve_path(cwd, arguments.path)
+        if not path.exists():
+            return None
+        original = path.read_text(encoding="utf-8")
+        if arguments.old_str not in original:
+            return None
+        if arguments.replace_all:
+            updated = original.replace(arguments.old_str, arguments.new_str)
+        else:
+            updated = original.replace(arguments.old_str, arguments.new_str, 1)
+        return _compute_diff(str(path), original, updated)
+
     def to_api_schema(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -97,18 +112,10 @@ class FileEditTool(BaseTool):
         else:
             updated = original.replace(arguments.old_str, arguments.new_str, 1)
 
-        approval_prompt = context.metadata.get("edit_approval_prompt") if context.metadata else None
-        if approval_prompt is not None:
-            diff_text, added, removed = _compute_diff(str(path), original, updated)
-            reply = await approval_prompt(str(path), diff_text, added, removed)
-            if reply == "reject":
-                return ToolResult(output=f"Edit rejected by user: {path}", is_error=True)
-            path.write_text(updated, encoding="utf-8")
-            stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
-            return ToolResult(output=f"Updated {path}{stats}")
-
+        _, added, removed = _compute_diff(str(path), original, updated)
         path.write_text(updated, encoding="utf-8")
-        return ToolResult(output=f"Updated {path}")
+        stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
+        return ToolResult(output=f"Updated {path}{stats}")
 
 
 def _resolve_path(base: Path, candidate: str) -> Path:
