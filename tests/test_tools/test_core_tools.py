@@ -59,6 +59,58 @@ async def test_file_write_read_and_edit(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_file_write_defers_directory_creation_until_after_approval(tmp_path: Path):
+    parent_seen_during_prompt: bool | None = None
+
+    async def reject_write(path: str, diff: str, added: int, removed: int) -> str:
+        del diff, added, removed
+        nonlocal parent_seen_during_prompt
+        parent_seen_during_prompt = Path(path).parent.exists()
+        return "reject"
+
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={"edit_approval_prompt": reject_write},
+    )
+
+    result = await FileWriteTool().execute(
+        FileWriteToolInput(path="pending/note.txt", content="draft\n"),
+        context,
+    )
+
+    assert result.is_error is True
+    assert "Write rejected by user" in result.output
+    assert parent_seen_during_prompt is False
+    assert not (tmp_path / "pending").exists()
+    assert not (tmp_path / "pending" / "note.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_file_write_creates_directory_after_approval(tmp_path: Path):
+    parent_seen_during_prompt: bool | None = None
+
+    async def approve_write(path: str, diff: str, added: int, removed: int) -> str:
+        del diff, added, removed
+        nonlocal parent_seen_during_prompt
+        parent_seen_during_prompt = Path(path).parent.exists()
+        return "once"
+
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={"edit_approval_prompt": approve_write},
+    )
+
+    result = await FileWriteTool().execute(
+        FileWriteToolInput(path="pending/note.txt", content="draft\n"),
+        context,
+    )
+
+    assert result.is_error is False
+    assert parent_seen_during_prompt is False
+    assert (tmp_path / "pending" / "note.txt").read_text(encoding="utf-8") == "draft\n"
+
+
+@pytest.mark.asyncio
 async def test_glob_and_grep(tmp_path: Path):
     context = ToolExecutionContext(cwd=tmp_path)
     (tmp_path / "a.py").write_text("def alpha():\n    return 1\n", encoding="utf-8")

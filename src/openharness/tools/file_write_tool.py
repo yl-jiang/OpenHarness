@@ -67,9 +67,6 @@ class FileWriteTool(BaseTool):
             if not allowed:
                 return ToolResult(output=f"Sandbox: {reason}", is_error=True)
 
-        if arguments.create_directories:
-            path.parent.mkdir(parents=True, exist_ok=True)
-
         approval_prompt = context.metadata.get("edit_approval_prompt") if context.metadata else None
         if approval_prompt is not None:
             original = path.read_text(encoding="utf-8") if path.exists() else ""
@@ -77,10 +74,14 @@ class FileWriteTool(BaseTool):
             reply = await approval_prompt(str(path), diff_text, added, removed)
             if reply == "reject":
                 return ToolResult(output=f"Write rejected by user: {path}", is_error=True)
+            if arguments.create_directories:
+                path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(arguments.content, encoding="utf-8")
             stats = f"  ({_ANSI_GREEN}+{added}{_ANSI_RESET} {_ANSI_RED}-{removed}{_ANSI_RESET})"
             return ToolResult(output=f"Wrote {path}{stats}")
 
+        if arguments.create_directories:
+            path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(arguments.content, encoding="utf-8")
         return ToolResult(output=f"Wrote {path}")
 
