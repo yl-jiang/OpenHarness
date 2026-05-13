@@ -122,6 +122,14 @@ export function buildSubmittedValue(value: string, extraInputLines: string[]): s
 	return fullValue.trim() ? fullValue : null;
 }
 
+export function shouldEnterShellModeFromInput(
+	value: string,
+	inputMode: 'chat' | 'shell',
+	extraInputLineCount: number,
+): boolean {
+	return inputMode === 'chat' && extraInputLineCount === 0 && value === '!';
+}
+
 export function cyclePickerIndex(currentIndex: number, delta: number, itemCount: number): number {
 	if (itemCount <= 0) {
 		return 0;
@@ -201,6 +209,7 @@ function AppInner({
 	const {theme, setThemeName} = useTheme();
 	const {rows, cols} = useTerminalSize();
 	const [input, setInput] = useState('');
+	const [inputMode, setInputMode] = useState<'chat' | 'shell'>('chat');
 	const [completionKey, setCompletionKey] = useState(0);
 	const [modalInput, setModalInput] = useState('');
 	const [history, setHistory] = useState<string[]>([]);
@@ -495,18 +504,33 @@ function AppInner({
 			}
 			return false;
 		}
+		const trimmed = submittedValue.trim();
+		// Bare "!" toggles shell mode on (only meaningful in chat mode).
+		if (inputMode === 'chat' && trimmed === '!') {
+			setInputMode('shell');
+			return true;
+		}
+		// "exit"/"quit" inside shell mode returns to chat without sending.
+		if (inputMode === 'shell' && (trimmed === 'exit' || trimmed === 'quit')) {
+			setInputMode('chat');
+			return true;
+		}
 		scrollToBottom();
-		if (handleCommand(submittedValue)) {
+		if (inputMode === 'chat' && handleCommand(submittedValue)) {
 			setHistory((items) => [...items, submittedValue]);
 			setHistoryIndex(-1);
 			return true;
 		}
-		session.sendRequest({type: 'submit_line', line: submittedValue});
+		const payload: Record<string, unknown> = {type: 'submit_line', line: submittedValue};
+		if (inputMode === 'shell') {
+			payload.input_mode = 'shell';
+		}
+		session.sendRequest(payload);
 		setHistory((items) => [...items, submittedValue]);
 		setHistoryIndex(-1);
 		session.setBusy(true);
 		return true;
-	}, [handleCommand, scrollToBottom, session]);
+	}, [handleCommand, inputMode, scrollToBottom, session]);
 
 	const submitExpandedComposer = useCallback(() => {
 		if (!expandedComposer) {
@@ -784,6 +808,11 @@ function AppInner({
 				setInput('');
 				return;
 			}
+			// Esc in shell mode with empty buffer returns to chat mode.
+			if (inputMode === 'shell' && !session.busy && !input && extraInputLines.length === 0) {
+				setInputMode('chat');
+				return;
+			}
 			const now = Date.now();
 			const escapeAction = resolveEscapeAction({
 				busy: session.busy,
@@ -944,6 +973,12 @@ function AppInner({
 				}
 			}
 			if (!next.includes('\n')) {
+				if (shouldEnterShellModeFromInput(next, inputMode, extraInputLines.length)) {
+					setInputMode('shell');
+					setInput('');
+					setCompletionKey((key) => key + 1);
+					return;
+				}
 				setInput(next);
 				return;
 			}
@@ -952,7 +987,7 @@ function AppInner({
 			setExtraInputLines((prev) => [...prev, ...parts]);
 			setInput(lastPart);
 		},
-		[],
+		[extraInputLines.length, inputMode],
 	);
 
 	onSubmitRef.current = (value: string): void => {
@@ -1124,6 +1159,7 @@ function AppInner({
 						suppressSubmit={showPicker}
 						inputKey={completionKey}
 						animateSpinner={!inlineActivityEnabled}
+						inputMode={inputMode}
 					/>
 					<InlineActivityIndicator
 						active={hasActiveWork}

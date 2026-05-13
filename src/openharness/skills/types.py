@@ -24,3 +24,4 @@ class SkillDefinition:
     context: str | None = None
     disable_model_invocation: bool = False
     user_invocable: bool = True
+    shell_injection: bool = False

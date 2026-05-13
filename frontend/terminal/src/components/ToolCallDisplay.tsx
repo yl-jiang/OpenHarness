@@ -6,16 +6,21 @@ import type {TranscriptItem} from '../types.js';
 
 export type TreePos = 'single' | 'first' | 'middle' | 'last';
 
-export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item: TranscriptItem; resultItem?: TranscriptItem; outputStyle?: string; treePos?: TreePos}): React.JSX.Element {
+const USER_SHELL_ORIGIN = 'user_shell';
+
+export function ToolCallDisplay({item, resultItem, outputStyle, treePos, terminalWidth}: {item: TranscriptItem; resultItem?: TranscriptItem; outputStyle?: string; treePos?: TreePos; terminalWidth?: number}): React.JSX.Element {
 	const {theme} = useTheme();
 	const isCodexStyle = outputStyle === 'codex';
 
 	if (item.role === 'tool') {
-		const toolName = item.tool_name ?? 'tool';
-		const summary = summarizeInput(toolName, item.tool_input, item.text).replace(/\s+/g, ' ').trim();
+		const isUserShellTool = item.tool_input?.origin === USER_SHELL_ORIGIN;
+		const toolName = isUserShellTool ? 'shell' : (item.tool_name ?? 'tool');
+		const summaryToolName = item.tool_name ?? toolName;
+		const summary = summarizeInput(summaryToolName, item.tool_input, item.text).replace(/\s+/g, ' ').trim();
 
 		let statusNode: React.ReactNode = null;
 		let errorLines: string[] | null = null;
+		let outputLines: string[] | null = null;
 
 		if (resultItem) {
 			if (resultItem.is_error) {
@@ -31,13 +36,31 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 				const lineCount = resultItem.text.split('\n').filter((l) => l.trim()).length;
 				const resultLabel = lineCount > 0 ? `${lineCount}L` : theme.icons.success.trim();
 				statusNode = <Text dimColor> → {resultLabel}</Text>;
+				if (isUserShellTool) {
+					outputLines = resultItem.text.length > 0 ? resultItem.text.split('\n') : [''];
+				}
 			} else {
 				const lineCount = resultItem.text.split('\n').filter((l) => l.trim()).length;
 				statusNode = <Text dimColor>{lineCount > 0 ? ` ${lineCount}L` : ''}</Text>;
+				if (isUserShellTool) {
+					outputLines = resultItem.text.length > 0 ? resultItem.text.split('\n') : [''];
+				}
 			}
 		} else if (!isCodexStyle) {
 			// Tool is still in progress — no result yet
 			statusNode = <Text dimColor> → …</Text>;
+		}
+
+		if (isUserShellTool && !isCodexStyle) {
+			return (
+				<ShellToolPanel
+					command={summary}
+					resultItem={resultItem}
+					outputLines={outputLines}
+					errorLines={errorLines}
+					terminalWidth={terminalWidth}
+				/>
+			);
 		}
 
 		if (isCodexStyle) {
@@ -53,6 +76,15 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 							</Text>
 						);
 					})}
+					{outputLines?.map((line, i) => {
+						const prefix = i === outputLines.length - 1 ? '└ ' : '│ ';
+						return (
+							<Text key={i} dimColor>
+								{prefix}
+								{line || ' '}
+							</Text>
+						);
+					})}
 				</Box>
 			);
 		}
@@ -62,19 +94,25 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 		const connectorIcon = isParallel
 			? (treePos === 'last' ? '  └─ ' : '  ├─ ')
 			: theme.icons.tool;
-		const connectorColor = isParallel ? theme.colors.muted : theme.colors.accent;
+		const toolColor = isUserShellTool ? theme.colors.warning : theme.colors.accent;
+		const connectorColor = isParallel ? theme.colors.muted : toolColor;
 
 		return (
 			<Box marginLeft={2} flexDirection="column">
 				<Text>
 					<Text color={connectorColor}>{connectorIcon}</Text>
-					<Text color={theme.colors.accent} bold>{toolName}</Text>
+					<Text color={toolColor} bold>{toolName}</Text>
 					<Text dimColor> {summary}</Text>
 					{statusNode}
 				</Text>
 				{errorLines?.map((line, i) => (
 					<Box key={i} marginLeft={4}>
 						<Text color={theme.colors.error}>{line}</Text>
+					</Box>
+				))}
+				{outputLines?.map((line, i) => (
+					<Box key={i} marginLeft={4}>
+						<Text>{line || ' '}</Text>
 					</Box>
 				))}
 			</Box>
@@ -116,6 +154,52 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 	}
 
 	return <Text>{item.text}</Text>;
+}
+
+function ShellToolPanel({
+	command,
+	resultItem,
+	outputLines,
+	errorLines,
+	terminalWidth,
+}: {
+	command: string;
+	resultItem?: TranscriptItem;
+	outputLines: string[] | null;
+	errorLines: string[] | null;
+	terminalWidth?: number;
+}): React.JSX.Element {
+	const {theme} = useTheme();
+	const panelWidth = terminalWidth ? Math.max(24, terminalWidth - 4) : undefined;
+	const statusColor = resultItem?.is_error ? theme.colors.error : theme.colors.success;
+	const statusSymbol = resultItem ? (resultItem.is_error ? 'x' : '✓') : '⊷';
+	const bodyLines = resultItem?.is_error ? errorLines : outputLines;
+
+	return (
+		<Box marginLeft={2} width={panelWidth} borderStyle="round" borderColor={statusColor} flexDirection="column" paddingX={1}>
+			<Text>
+				<Text color={statusColor} bold>{statusSymbol}</Text>
+				<Text>{'  '}</Text>
+				<Text bold>Shell Command</Text>
+				{command ? (
+					<>
+						<Text>{' '}</Text>
+						<Text color={theme.colors.muted}>{command}</Text>
+					</>
+				) : null}
+			</Text>
+			{bodyLines && bodyLines.length > 0 ? (
+				<>
+					<Text> </Text>
+					{bodyLines.map((line, i) => (
+						<Text key={i} color={resultItem?.is_error ? theme.colors.error : undefined}>
+							{line || ' '}
+						</Text>
+					))}
+				</>
+			) : null}
+		</Box>
+	);
 }
 
 function summarizeInput(toolName: string, toolInput?: Record<string, unknown>, fallback?: string): string {

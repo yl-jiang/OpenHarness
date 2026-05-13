@@ -8,6 +8,11 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Added
 
+- Shell injection support in the React TUI and skills:
+  - Pressing **bare `!`** in the chat composer (or typing `!cmd`) opens a one-shot shell prompt. The command is dispatched to the built-in `bash` tool with `origin="user_shell"`, runs under the existing permission model, and its output is injected back into the conversation as a tool result the model can read.
+  - Type `exit` / `quit` (or press `Esc` on an empty buffer) to leave shell mode.
+  - Skill Markdown can opt in to template-time shell substitution by setting `shell-injection: true` (or `shell_injection: true`) in frontmatter. Inside the skill body, `!{cmd}` is replaced with the captured stdout/stderr of `cmd`. All commands are stage-authorized before any execution, and argument placeholders (`$1`, `$ARGUMENTS`, …) are shell-escaped with `shlex.quote` before substitution.
+  - A new transcript role `user_shell` renders user-initiated shell commands with a `!` warning-coloured prefix.
 - Built-in `qwen` provider profile so `oh setup` offers Qwen (DashScope) as a first-class provider choice, with `dashscope_api_key` auth source, `qwen-plus` as the default model, and the DashScope OpenAI-compatible endpoint.
 - `oh --dry-run` safe preview mode for inspecting resolved runtime settings, auth state, prompt assembly, commands, skills, tools, and configured MCP servers without executing the model or tools.
 - Docker as an alternative sandbox backend (`sandbox.backend = "docker"`) for stronger execution isolation with configurable resource limits, network isolation, and automatic image management.

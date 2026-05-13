@@ -11,6 +11,7 @@ const noop = (): void => {};
 export const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const SPINNER_STATIC_FRAME = '⠋';
 const IDLE_SHORTCUTS = '/ commands · @ files · ↑↓ history · shift+enter newline';
+const SHELL_SHORTCUTS = 'shell mode · type "exit" or esc to leave';
 const BUSY_SHORTCUTS = 'esc×2 cancel · ctrl+c stop';
 
 export function clipPromptPreviewLine(line: string, availableWidth: number): string {
@@ -82,6 +83,7 @@ type PromptInputProps = {
 	inputKey?: number;
 	hasBackgroundTasks?: boolean;
 	animateSpinner?: boolean;
+	inputMode?: 'chat' | 'shell';
 };
 
 function PromptInputInner({
@@ -96,6 +98,7 @@ function PromptInputInner({
 	inputKey,
 	hasBackgroundTasks = false,
 	animateSpinner = false,
+	inputMode = 'chat',
 }: PromptInputProps): React.JSX.Element {
 	const [frameIndex, setFrameIndex] = useState(0);
 	const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -125,9 +128,10 @@ function PromptInputInner({
 	const {cols} = useTerminalSize();
 	const showBackgroundActivity = !busy && hasBackgroundTasks;
 
-	// Prompt prefix: '> ' when idle, spinner frame + ' ' when busy/bg
+	// Prompt prefix: '! ' when in shell mode (idle), '> ' when chat idle, spinner when busy/bg
 	const spinnerFrame = animateSpinner ? SPINNER_FRAMES[frameIndex] : SPINNER_STATIC_FRAME;
-	const prefix = busy || showBackgroundActivity ? `${spinnerFrame} ` : '> ';
+	const isShellIdle = inputMode === 'shell' && !busy && !showBackgroundActivity;
+	const prefix = busy || showBackgroundActivity ? `${spinnerFrame} ` : isShellIdle ? '! ' : '> ';
 	const prefixWidth = stringWidth(prefix);
 
 	// Status text shown inline when busy
@@ -142,11 +146,11 @@ function PromptInputInner({
 
 	// Colors from theme
 	const accentColor = theme.colors.accent;
-	const prefixColor = busy || showBackgroundActivity ? theme.colors.warning : accentColor;
+	const prefixColor = busy || showBackgroundActivity ? theme.colors.warning : isShellIdle ? theme.colors.warning : accentColor;
 	const lineColor = theme.colors.muted;
 
-	const placeholder = '  Type your message or @path/to/file';
-	const footerShortcuts = busy ? BUSY_SHORTCUTS : IDLE_SHORTCUTS;
+	const placeholder = isShellIdle ? '  Type a shell command (exit to leave)' : '  Type your message or @path/to/file';
+	const footerShortcuts = busy ? BUSY_SHORTCUTS : isShellIdle ? SHELL_SHORTCUTS : IDLE_SHORTCUTS;
 
 	return (
 		<Box flexDirection="column" marginTop={1} flexShrink={0}>

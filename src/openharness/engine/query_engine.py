@@ -208,6 +208,44 @@ class QueryEngine:
         self._permission_checker = checker
         self._approval_coordinator.set_checker(checker)
 
+    @property
+    def approval_coordinator(self) -> ApprovalCoordinator:
+        """Expose the approval coordinator for out-of-loop tool authorization."""
+        return self._approval_coordinator
+
+    async def authorize_tool(
+        self,
+        tool_name: str,
+        *,
+        is_read_only: bool,
+        file_path: str | None = None,
+        command: str | None = None,
+    ):
+        """Run an approval check for a tool invocation outside the main loop.
+
+        Returns a :class:`PermissionDecision`.  Callers must respect the
+        ``allowed`` flag; the coordinator already prompts the user when
+        ``requires_confirmation`` is set.
+        """
+        return await self._approval_coordinator.authorize_tool(
+            tool_name,
+            is_read_only=is_read_only,
+            file_path=file_path,
+            command=command,
+        )
+
+    def inject_user_message(self, text: str) -> None:
+        """Append a user message without triggering a model turn.
+
+        Used by user-initiated shell commands (``!cmd``) so the resulting
+        output is visible to the next model turn and persists to session
+        export history.
+        """
+        msg = ConversationMessage.from_user_text(text)
+        self._messages = sanitize_conversation_messages(self._messages)
+        self._messages.append(msg)
+        self.capture_export_checkpoint(self._messages)
+
     def set_require_explicit_done(self, value: bool) -> None:
         """Update whether the agent loop requires an explicit done() call to terminate."""
         self._require_explicit_done = value

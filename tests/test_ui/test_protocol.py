@@ -35,3 +35,24 @@ def test_status_snapshot_includes_skill_aliases() -> None:
     )
 
     assert event.skills == ["weekly-report", "write"]
+
+
+def test_frontend_request_defaults_to_chat_input_mode() -> None:
+    from openharness.ui.protocol import FrontendRequest
+
+    request = FrontendRequest(type="submit_line", line="hello")
+    assert request.input_mode == "chat"
+
+
+def test_frontend_request_accepts_shell_input_mode() -> None:
+    from openharness.ui.protocol import FrontendRequest
+
+    request = FrontendRequest(type="submit_line", line="ls", input_mode="shell")
+    assert request.input_mode == "shell"
+
+
+def test_transcript_item_supports_user_shell_role() -> None:
+    from openharness.ui.protocol import TranscriptItem
+
+    item = TranscriptItem(role="user_shell", text="!ls")
+    assert item.role == "user_shell"

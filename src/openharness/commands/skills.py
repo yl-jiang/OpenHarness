@@ -11,6 +11,11 @@ from openharness.engine.types import ToolMetadataKey
 from openharness.permissions import PermissionChecker
 from openharness.skills import load_skill_registry
 from openharness.skills.loader import apply_skill_path_rules
+from openharness.skills.shell_injection import (
+    SkillShellInjectionError,
+    extract_injections,
+    render_skill_prompt_with_shell,
+)
 
 _SKILL_ARG_REGEX = re.compile(r"""(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)""")
 _SKILL_PLACEHOLDER_REGEX = re.compile(r"\$(\d+)")
@@ -53,6 +58,28 @@ def render_skill_template(template: str, args: str) -> str:
 
 def render_skill_load_prompt(skill: Any, args: str) -> str:
     return render_skill_template(skill.content, args)
+
+
+async def _render_skill_prompt(
+    skill: Any,
+    args: str,
+    *,
+    context: CommandContext,
+) -> str:
+    """Render a skill prompt, expanding ``!{cmd}`` injections when enabled.
+
+    Skills without shell injection fall through to the cheap synchronous
+    template path so the existing test surface and behaviour are preserved.
+    Skills containing ``!{`` without ``shell-injection: true`` raise
+    :class:`SkillShellInjectionError` rather than silently leaking the
+    template through to the model.
+    """
+
+    segments = extract_injections(skill.content)
+    has_shell = any(seg.kind == "shell" for seg in segments)
+    if not has_shell:
+        return render_skill_load_prompt(skill, args)
+    return await render_skill_prompt_with_shell(skill, args, context=context)
 
 
 def _is_user_invocable_skill(skill: Any) -> bool:
@@ -122,7 +149,9 @@ def build_permission_checker(settings: Any, context: CommandContext) -> Permissi
     return PermissionChecker(settings.permission)
 
 
-def resolve_skill_alias_command(raw_input: str, context: CommandContext) -> CommandResult | None:
+async def resolve_skill_alias_command(
+    raw_input: str, context: CommandContext
+) -> CommandResult | None:
     """Resolve ``/<skill-name> ...`` as a direct skill invocation."""
 
     if not raw_input.startswith("/"):
@@ -140,9 +169,13 @@ def resolve_skill_alias_command(raw_input: str, context: CommandContext) -> Comm
     if skill is None or not _is_user_invocable_skill(skill):
         return None
     remember_loaded_skill(context, skill.name)
+    try:
+        prompt = await _render_skill_prompt(skill, args, context=context)
+    except SkillShellInjectionError as exc:
+        return CommandResult(message=str(exc))
     return CommandResult(
         message=f"Loaded skill: {skill.name}",
-        submit_prompt=render_skill_load_prompt(skill, args),
+        submit_prompt=prompt,
     )
 
 
@@ -172,7 +205,11 @@ async def handle_skills_command(args: str, context: CommandContext) -> CommandRe
     if skill is None or not _is_user_invocable_skill(skill):
         return CommandResult(message=f"Skill not found: {name}")
     remember_loaded_skill(context, skill.name)
+    try:
+        prompt = await _render_skill_prompt(skill, load_args, context=context)
+    except SkillShellInjectionError as exc:
+        return CommandResult(message=str(exc))
     return CommandResult(
         message=f"Loaded skill: {skill.name}",
-        submit_prompt=render_skill_load_prompt(skill, load_args),
+        submit_prompt=prompt,
     )
