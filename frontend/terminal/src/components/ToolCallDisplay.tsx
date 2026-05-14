@@ -8,7 +8,7 @@ export type TreePos = 'single' | 'first' | 'middle' | 'last';
 
 const USER_SHELL_ORIGIN = 'user_shell';
 
-export function ToolCallDisplay({item, resultItem, outputStyle, treePos, terminalWidth}: {item: TranscriptItem; resultItem?: TranscriptItem; outputStyle?: string; treePos?: TreePos; terminalWidth?: number}): React.JSX.Element {
+export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item: TranscriptItem; resultItem?: TranscriptItem; outputStyle?: string; treePos?: TreePos}): React.JSX.Element {
 	const {theme} = useTheme();
 	const isCodexStyle = outputStyle === 'codex';
 
@@ -58,7 +58,6 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, termina
 					resultItem={resultItem}
 					outputLines={outputLines}
 					errorLines={errorLines}
-					terminalWidth={terminalWidth}
 				/>
 			);
 		}
@@ -161,22 +160,19 @@ function ShellToolPanel({
 	resultItem,
 	outputLines,
 	errorLines,
-	terminalWidth,
 }: {
 	command: string;
 	resultItem?: TranscriptItem;
 	outputLines: string[] | null;
 	errorLines: string[] | null;
-	terminalWidth?: number;
 }): React.JSX.Element {
 	const {theme} = useTheme();
-	const panelWidth = terminalWidth ? Math.max(24, terminalWidth - 4) : undefined;
 	const statusColor = resultItem?.is_error ? theme.colors.error : theme.colors.success;
 	const statusSymbol = resultItem ? (resultItem.is_error ? 'x' : '✓') : '⊷';
 	const bodyLines = resultItem?.is_error ? errorLines : outputLines;
 
 	return (
-		<Box marginLeft={2} width={panelWidth} borderStyle="round" borderColor={statusColor} flexDirection="column" paddingX={1}>
+		<Box marginLeft={2} flexDirection="column">
 			<Text>
 				<Text color={statusColor} bold>{statusSymbol}</Text>
 				<Text>{'  '}</Text>
@@ -191,11 +187,16 @@ function ShellToolPanel({
 			{bodyLines && bodyLines.length > 0 ? (
 				<>
 					<Text> </Text>
-					{bodyLines.map((line, i) => (
-						<Text key={i} color={resultItem?.is_error ? theme.colors.error : undefined}>
-							{line || ' '}
-						</Text>
-					))}
+					{bodyLines.map((line, i) => {
+						const lineColor = resultItem?.is_error ? theme.colors.error : undefined;
+						return (
+							<Box key={i} marginLeft={4}>
+								<Text color={lineColor} dimColor>
+									{line || ' '}
+								</Text>
+							</Box>
+						);
+					})}
 				</>
 			) : null}
 		</Box>

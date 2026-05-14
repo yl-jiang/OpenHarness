@@ -56,11 +56,13 @@ async function renderConversation(
 		welcomeVersion,
 		columns,
 		rows,
+		strip = true,
 	}: {
 		showWelcome?: boolean;
 		welcomeVersion?: string;
 		columns?: number;
 		rows?: number;
+		strip?: boolean;
 	} = {},
 ): Promise<string> {
 	const stdout = createTestStdout(columns, rows);
@@ -88,7 +90,7 @@ async function renderConversation(
 	await exitPromise;
 	instance.cleanup();
 
-	return stripAnsi(stableOutput);
+	return strip ? stripAnsi(stableOutput) : stableOutput;
 }
 
 const countOccurrences = (value: string, needle: string): number =>
@@ -169,14 +171,17 @@ test('does not render an assistant header for user shell tool runs', async () =>
 		{role: 'user_shell', text: 'ls'},
 		{role: 'tool', text: 'bash', tool_name: 'bash', tool_input: {command: 'ls', origin: 'user_shell'}},
 		{role: 'tool_result', text: 'README.md\nsrc'},
-	]);
-	const frame = finalFrameFrom(output, '! ls');
+	], {strip: false});
+	const plainOutput = stripAnsi(output);
+	const frame = finalFrameFrom(plainOutput, '! ls');
 
 	assert.match(frame, /! ls/);
-	assert.match(frame, /╭/);
+	assert.doesNotMatch(frame, /[╭╮╰╯]/);
 	assert.match(frame, /✓\s+Shell Command ls/);
 	assert.match(frame, /README\.md/);
 	assert.match(frame, /src/);
+	assert.match(output, /\u001B\[[0-9;]*2m(?:\u001B\[[0-9;]*m){0,3}README\.md/u);
+	assert.match(output, /\u001B\[[0-9;]*2m(?:\u001B\[[0-9;]*m){0,3}src/u);
 	assert.doesNotMatch(frame, /╰─ assistant/);
 });
 

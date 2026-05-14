@@ -110,7 +110,6 @@ function renderGroup(
 				resultItem={group.result}
 				outputStyle={outputStyle}
 				treePos={treePos}
-				terminalWidth={cols}
 			/>
 		);
 	}
@@ -122,7 +121,6 @@ function renderGroup(
 				resultItem={undefined}
 				outputStyle={outputStyle}
 				treePos={treePos}
-				terminalWidth={cols}
 			/>
 		);
 	}
