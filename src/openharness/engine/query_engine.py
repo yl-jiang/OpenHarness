@@ -240,10 +240,17 @@ class QueryEngine:
         Used by user-initiated shell commands (``!cmd``) so the resulting
         output is visible to the next model turn and persists to session
         export history.
+
+        Consecutive injections are merged into the trailing user message to
+        preserve the provider-required user/assistant alternation.
         """
-        msg = ConversationMessage.from_user_text(text)
         self._messages = sanitize_conversation_messages(self._messages)
-        self._messages.append(msg)
+        if self._messages and self._messages[-1].role == "user":
+            last = self._messages[-1]
+            merged_content = list(last.content) + [TextBlock(text="\n\n" + text)]
+            self._messages[-1] = ConversationMessage(role="user", content=merged_content)
+        else:
+            self._messages.append(ConversationMessage.from_user_text(text))
         self.capture_export_checkpoint(self._messages)
 
     def set_require_explicit_done(self, value: bool) -> None:
