@@ -151,27 +151,6 @@ class ShellCommandDispatcher:
             ToolExecutionStarted(tool_name="bash", tool_input=tool_input_payload)
         )
 
-        decision = await engine.authorize_tool(
-            "bash",
-            is_read_only=False,
-            command=command,
-        )
-        if not decision.allowed:
-            reason = decision.reason or "Permission denied."
-            error_text = f"Permission denied for bash: {reason}"
-            await render_event(
-                ToolExecutionCompleted(
-                    tool_name="bash",
-                    output=error_text,
-                    is_error=True,
-                    metadata={"origin": SHELL_TOOL_ORIGIN, "denied": True},
-                )
-            )
-            engine.inject_user_message(
-                format_shell_history_message(command, error_text)
-            )
-            return ShellDispatchOutcome(handled=True, executed=False)
-
         bash_input = BashToolInput(command=command)
         exec_context = ToolExecutionContext(
             cwd=Path(cwd),
