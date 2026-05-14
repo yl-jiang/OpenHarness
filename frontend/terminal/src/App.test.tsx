@@ -273,8 +273,9 @@ setInterval(() => {}, 1000);
 		stdin.write('!');
 		await sleep(120);
 		await nextLoopTurn();
+		assert.equal(output.includes('shell mode · tab complete · type "exit" or esc to leave'), false);
 		const text = stripAnsi(output);
-		assert.match(text, /shell mode · type "exit" or esc to leave/u);
+		assert.match(text, /shell mode · tab complete · type "exit" or esc to leave/u);
 		assert.match(text, /Type a shell command/u);
 	} finally {
 		const exitPromise = instance.waitUntilExit();

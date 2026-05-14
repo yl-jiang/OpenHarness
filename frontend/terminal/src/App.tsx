@@ -34,6 +34,14 @@ import {useMouseWheel} from './hooks/useMouseWheel.js';
 import {useTerminalMouse} from './hooks/useTerminalMouse.js';
 import {useTerminalSize} from './hooks/useTerminalSize.js';
 import {discoverMentionFiles, filterMentionCandidates, findMentionQuery, replaceMentionQuery} from './input/mentions.js';
+import {
+	advanceShellCompletionCycle,
+	discoverShellCommandCandidates,
+	discoverShellPathCandidates,
+	filterShellCommandCandidates,
+	findShellCompletionQuery,
+	type ShellCompletionCycle,
+} from './input/shellCompletions.js';
 import {ThemeProvider, useTheme} from './theme/ThemeContext.js';
 import type {FrontendConfig} from './types.js';
 
@@ -210,6 +218,8 @@ function AppInner({
 	const {rows, cols} = useTerminalSize();
 	const [input, setInput] = useState('');
 	const [inputMode, setInputMode] = useState<'chat' | 'shell'>('chat');
+	const inputRef = useRef(input);
+	const inputModeRef = useRef(inputMode);
 	const [completionKey, setCompletionKey] = useState(0);
 	const [modalInput, setModalInput] = useState('');
 	const [history, setHistory] = useState<string[]>([]);
@@ -235,7 +245,26 @@ function AppInner({
 	const [selectIndex, setSelectIndex] = useState(0);
 	const [selectQuery, setSelectQuery] = useState('');
 	const [mentionFiles, setMentionFiles] = useState<string[]>([]);
+	const [shellCommands, setShellCommands] = useState<string[]>([]);
+	const [shellPathHints, setShellPathHints] = useState<string[]>([]);
+	const [shellCompletionCycle, setShellCompletionCycle] = useState<ShellCompletionCycle | null>(null);
+	const shellCompletionCycleRef = useRef<ShellCompletionCycle | null>(null);
 	const [expandedComposer, setExpandedComposer] = useState<ExpandedComposerState | null>(null);
+
+	const setInputValue = useCallback((next: string): void => {
+		inputRef.current = next;
+		setInput(next);
+	}, []);
+
+	const setInputModeValue = useCallback((next: 'chat' | 'shell'): void => {
+		inputModeRef.current = next;
+		setInputMode(next);
+	}, []);
+
+	const setShellCompletionCycleValue = useCallback((next: ShellCompletionCycle | null): void => {
+		shellCompletionCycleRef.current = next;
+		setShellCompletionCycle(next);
+	}, []);
 
 	const visibleSelectOptions = useMemo(
 		() => (selectModal ? filterSelectModalOptions(selectModal.command, selectModal.options, selectQuery) : []),
@@ -343,6 +372,19 @@ function AppInner({
 		}
 		return filterMentionCandidates(mentionFiles, mentionQuery.query);
 	}, [mentionFiles, mentionQuery]);
+	const shellCompletionQuery = useMemo(
+		() => inputMode === 'shell' ? findShellCompletionQuery(input) : null,
+		[input, inputMode],
+	);
+	const shellHints = useMemo(() => {
+		if (inputMode !== 'shell' || !shellCompletionQuery) {
+			return [] as string[];
+		}
+		if (shellCompletionQuery.kind === 'path') {
+			return shellPathHints;
+		}
+		return filterShellCommandCandidates(shellCommands, shellCompletionQuery.query);
+	}, [inputMode, shellCommands, shellCompletionQuery, shellPathHints]);
 	const pickerHints = mentionHints.length > 0 ? mentionHints : commandHints;
 	const pickerTitle = mentionHints.length > 0 ? 'Files' : 'Commands & Skills';
 	const selectedPickerHint = pickerHints[pickerIndex];
@@ -350,7 +392,7 @@ function AppInner({
 		? [] as string[]
 		: selectedPickerHint ? (commandPickerModel.subHintsByHint[selectedPickerHint] ?? []) : [];
 
-	const showPicker = !expandedComposer && pickerHints.length > 0 && !session.busy && !session.modal && !selectModal;
+	const showPicker = inputMode === 'chat' && !expandedComposer && pickerHints.length > 0 && !session.busy && !session.modal && !selectModal;
 	const outputStyle = String(session.status.output_style ?? 'default');
 
 	useEffect(() => {
@@ -381,6 +423,44 @@ function AppInner({
 		};
 	}, [session.status.cwd]);
 
+	useEffect(() => {
+		let cancelled = false;
+		void discoverShellCommandCandidates().then((commands) => {
+			if (!cancelled) {
+				setShellCommands(commands);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
+
+	useEffect(() => {
+		if (inputMode !== 'shell' || !shellCompletionQuery || shellCompletionQuery.kind !== 'path') {
+			setShellPathHints([]);
+			return;
+		}
+		let cancelled = false;
+		const cwd = String(session.status.cwd ?? process.cwd());
+		void discoverShellPathCandidates(cwd, shellCompletionQuery.query).then((hints) => {
+			if (!cancelled) {
+				setShellPathHints(hints);
+			}
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [inputMode, session.status.cwd, shellCompletionQuery]);
+
+	useEffect(() => {
+		if (!shellCompletionCycle) {
+			return;
+		}
+		if (inputMode !== 'shell' || input !== shellCompletionCycle.value) {
+			setShellCompletionCycleValue(null);
+		}
+	}, [input, inputMode, shellCompletionCycle, setShellCompletionCycleValue]);
+
 	// Handle backend-initiated select requests (e.g. /resume session list)
 	useEffect(() => {
 		if (!session.selectRequest) {
@@ -408,7 +488,7 @@ function AppInner({
 			onSelect: (value) => {
 				const selection = resolveSelectModalChoice(req.command, value);
 				if (selection.kind === 'prefill') {
-					setInput(selection.input);
+					setInputValue(selection.input);
 					setExtraInputLines([]);
 					setHistoryIndex(-1);
 					setCompletionKey((key) => key + 1);
@@ -440,11 +520,11 @@ function AppInner({
 
 	const restoreExpandedDraftToPrompt = useCallback((draft: string) => {
 		const split = splitExpandedDraft(draft);
-		setInput(split.input);
+		setInputValue(split.input);
 		setExtraInputLines(split.extraInputLines);
 		setHistoryIndex(-1);
 		setCompletionKey((key) => key + 1);
-	}, []);
+	}, [setInputValue]);
 
 	const closeExpandedComposer = useCallback((draft?: string) => {
 		if (draft != null) {
@@ -507,12 +587,14 @@ function AppInner({
 		const trimmed = submittedValue.trim();
 		// Bare "!" toggles shell mode on (only meaningful in chat mode).
 		if (inputMode === 'chat' && trimmed === '!') {
-			setInputMode('shell');
+			setInputModeValue('shell');
+			setShellCompletionCycleValue(null);
 			return true;
 		}
 		// "exit"/"quit" inside shell mode returns to chat without sending.
 		if (inputMode === 'shell' && (trimmed === 'exit' || trimmed === 'quit')) {
-			setInputMode('chat');
+			setInputModeValue('chat');
+			setShellCompletionCycleValue(null);
 			return true;
 		}
 		scrollToBottom();
@@ -541,10 +623,65 @@ function AppInner({
 			return;
 		}
 		setExpandedComposer(null);
-		setInput('');
+		setInputValue('');
 		setExtraInputLines([]);
 		setCompletionKey((key) => key + 1);
-	}, [expandedComposer, submitSubmittedValue]);
+	}, [expandedComposer, setInputValue, submitSubmittedValue]);
+
+	const applyShellTabCompletion = useCallback(() => {
+		const currentInput = inputRef.current;
+		const currentCycle = shellCompletionCycleRef.current;
+		if (inputModeRef.current !== 'shell') {
+			return;
+		}
+
+		if (currentCycle && currentCycle.value === currentInput) {
+			const completion = advanceShellCompletionCycle(currentInput, null, [], currentCycle);
+			setShellCompletionCycleValue(completion.nextCycle);
+			if (completion.nextValue != null) {
+				setInputValue(completion.nextValue);
+				setHistoryIndex(-1);
+				setCompletionKey((key) => key + 1);
+			}
+			return;
+		}
+
+		const currentQuery = findShellCompletionQuery(currentInput);
+		if (!currentQuery) {
+			setShellCompletionCycleValue(null);
+			return;
+		}
+
+		void (async () => {
+			let candidates: string[] = [];
+
+			if (currentQuery.kind === 'command') {
+				const commands = shellCommands.length > 0
+					? shellCommands
+					: await discoverShellCommandCandidates(process.env.PATH ?? '', 2000, currentQuery.query);
+				if (commands !== shellCommands) {
+					setShellCommands(commands);
+				}
+				candidates = filterShellCommandCandidates(commands, currentQuery.query);
+			} else {
+				const cwd = String(session.status.cwd ?? process.cwd());
+				candidates = await discoverShellPathCandidates(cwd, currentQuery.query);
+				setShellPathHints(candidates);
+			}
+
+			if (inputModeRef.current !== 'shell' || inputRef.current !== currentInput) {
+				return;
+			}
+
+			const completion = advanceShellCompletionCycle(currentInput, currentQuery, candidates, null);
+			setShellCompletionCycleValue(completion.nextCycle);
+			if (completion.nextValue != null) {
+				setInputValue(completion.nextValue);
+				setHistoryIndex(-1);
+				setCompletionKey((key) => key + 1);
+			}
+		})();
+	}, [session.status.cwd, setInputValue, setShellCompletionCycleValue, shellCommands]);
 	useTerminalMouse(useCallback((event) => {
 		if (event.kind !== 'button' || event.action !== 'release' || event.buttonCode !== 0) {
 			return;
@@ -648,9 +785,10 @@ function AppInner({
 				return;
 			}
 			// First Ctrl+C → clear input and record timestamp
-			setInput('');
+			setInputValue('');
 			setExtraInputLines([]);
 			setHistoryIndex(-1);
+			setShellCompletionCycleValue(null);
 			setLastCtrlCAt(now);
 			return;
 		}
@@ -805,12 +943,13 @@ function AppInner({
 
 		if (key.escape) {
 			if (showPicker && !session.busy) {
-				setInput('');
+				setInputValue('');
 				return;
 			}
 			// Esc in shell mode with empty buffer returns to chat mode.
 			if (inputMode === 'shell' && !session.busy && !input && extraInputLines.length === 0) {
-				setInputMode('chat');
+				setInputModeValue('chat');
+				setShellCompletionCycleValue(null);
 				return;
 			}
 			const now = Date.now();
@@ -831,9 +970,10 @@ function AppInner({
 				return;
 			}
 			if (escapeAction.action === 'clear_input') {
-				setInput('');
+				setInputValue('');
 				setExtraInputLines([]);
 				setHistoryIndex(-1);
+				setShellCompletionCycleValue(null);
 				return;
 			}
 			return;
@@ -843,8 +983,13 @@ function AppInner({
 			return;
 		}
 
-		if (!showPicker && key.tab && input.trim() === '' && extraInputLines.length === 0) {
+		if (inputMode === 'chat' && !showPicker && key.tab && input.trim() === '' && extraInputLines.length === 0) {
 			session.sendRequest({type: 'select_command', command: 'permissions'});
+			return;
+		}
+
+		if (inputMode === 'shell' && key.tab) {
+			applyShellTabCompletion();
 			return;
 		}
 
@@ -886,18 +1031,18 @@ function AppInner({
 					if (!mentionHints.length && pickerSubmenuFocused && pickerSubHints.length > 0) {
 						const selectedSubHint = pickerSubHints[pickerSubIndex];
 						if (selectedSubHint) {
-							setInput(buildSlashCommandSelection(selected, selectedSubHint));
+							setInputValue(buildSlashCommandSelection(selected, selectedSubHint));
 							setHistoryIndex(-1);
 							setCompletionKey((k) => k + 1);
 						}
 						return;
 					}
 					if (mentionQuery && mentionHints.length > 0) {
-						setInput(replaceMentionQuery(input, mentionQuery, selected));
+						setInputValue(replaceMentionQuery(input, mentionQuery, selected));
 						setCompletionKey((k) => k + 1);
 						return;
 					}
-					setInput('');
+					setInputValue('');
 					if (!handleCommand(selected)) {
 						onSubmit(selected);
 					}
@@ -910,24 +1055,24 @@ function AppInner({
 					if (!mentionHints.length && pickerSubmenuFocused && pickerSubHints.length > 0) {
 						const selectedSubHint = pickerSubHints[pickerSubIndex];
 						if (selectedSubHint) {
-							setInput(buildSlashCommandSelection(selected, selectedSubHint));
+							setInputValue(buildSlashCommandSelection(selected, selectedSubHint));
 							setHistoryIndex(-1);
 							setCompletionKey((k) => k + 1);
 						}
 						return;
 					}
 					if (mentionQuery && mentionHints.length > 0) {
-						setInput(replaceMentionQuery(input, mentionQuery, selected));
+						setInputValue(replaceMentionQuery(input, mentionQuery, selected));
 						setCompletionKey((k) => k + 1);
 						return;
 					}
-					setInput(selected);
+					setInputValue(selected);
 					setCompletionKey((k) => k + 1);
 				}
 				return;
 			}
 			if (key.escape) {
-				setInput('');
+				setInputValue('');
 				return;
 			}
 		}
@@ -936,7 +1081,8 @@ function AppInner({
 		if (key.shift && key.return) {
 			shiftEnterHandledRef.current = true;
 			setExtraInputLines((lines) => [...lines, input]);
-			setInput('');
+			setInputValue('');
+			setShellCompletionCycleValue(null);
 			return;
 		}
 
@@ -945,14 +1091,16 @@ function AppInner({
 			const nextIndex = Math.min(history.length - 1, historyIndex + 1);
 			if (nextIndex >= 0) {
 				setHistoryIndex(nextIndex);
-				setInput(history[history.length - 1 - nextIndex] ?? '');
+				setInputValue(history[history.length - 1 - nextIndex] ?? '');
+				setShellCompletionCycleValue(null);
 			}
 			return;
 		}
 		if (!showPicker && key.downArrow) {
 			const nextIndex = Math.max(-1, historyIndex - 1);
 			setHistoryIndex(nextIndex);
-			setInput(nextIndex === -1 ? '' : (history[history.length - 1 - nextIndex] ?? ''));
+			setInputValue(nextIndex === -1 ? '' : (history[history.length - 1 - nextIndex] ?? ''));
+			setShellCompletionCycleValue(null);
 			return;
 		}
 	});
@@ -974,20 +1122,25 @@ function AppInner({
 			}
 			if (!next.includes('\n')) {
 				if (shouldEnterShellModeFromInput(next, inputMode, extraInputLines.length)) {
-					setInputMode('shell');
-					setInput('');
+					setInputModeValue('shell');
+					setInputValue('');
+					setShellCompletionCycleValue(null);
 					setCompletionKey((key) => key + 1);
 					return;
 				}
-				setInput(next);
+				setInputValue(next);
+				if (shellCompletionCycleRef.current?.value !== next) {
+					setShellCompletionCycleValue(null);
+				}
 				return;
 			}
 			const parts = next.split('\n');
 			const lastPart = parts.pop() ?? '';
 			setExtraInputLines((prev) => [...prev, ...parts]);
-			setInput(lastPart);
+			setInputValue(lastPart);
+			setShellCompletionCycleValue(null);
 		},
-		[extraInputLines.length, inputMode],
+		[extraInputLines.length, inputMode, setInputModeValue, setInputValue, setShellCompletionCycleValue],
 	);
 
 	onSubmitRef.current = (value: string): void => {
@@ -1014,8 +1167,9 @@ function AppInner({
 		if (!submitSubmittedValue(submittedValue)) {
 			return;
 		}
-		setInput('');
+		setInputValue('');
 		setExtraInputLines([]);
+		setShellCompletionCycleValue(null);
 		setCompletionKey((key) => key + 1);
 	};
 

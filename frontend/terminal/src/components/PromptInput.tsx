@@ -11,7 +11,6 @@ const noop = (): void => {};
 export const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const SPINNER_STATIC_FRAME = '⠋';
 const IDLE_SHORTCUTS = '/ commands · @ files · ↑↓ history · shift+enter newline';
-const SHELL_SHORTCUTS = 'shell mode · type "exit" or esc to leave';
 const BUSY_SHORTCUTS = 'esc×2 cancel · ctrl+c stop';
 
 export function clipPromptPreviewLine(line: string, availableWidth: number): string {
@@ -150,7 +149,23 @@ function PromptInputInner({
 	const lineColor = theme.colors.muted;
 
 	const placeholder = isShellIdle ? '  Type a shell command (exit to leave)' : '  Type your message or @path/to/file';
-	const footerShortcuts = busy ? BUSY_SHORTCUTS : isShellIdle ? SHELL_SHORTCUTS : IDLE_SHORTCUTS;
+	const renderFooterShortcuts = (): React.JSX.Element => {
+		if (isShellIdle) {
+			return (
+				<Text>
+					<Text color={theme.colors.warning} bold>shell mode</Text>
+					<Text color={theme.colors.muted}> · </Text>
+					<Text color={theme.colors.info}>tab complete</Text>
+					<Text color={theme.colors.muted}> · type </Text>
+					<Text color={theme.colors.accent}>"exit"</Text>
+					<Text color={theme.colors.muted}> or </Text>
+					<Text color={theme.colors.accent}>esc</Text>
+					<Text color={theme.colors.muted}> to leave</Text>
+				</Text>
+			);
+		}
+		return <Text dimColor>{busy ? BUSY_SHORTCUTS : IDLE_SHORTCUTS}</Text>;
+	};
 
 	return (
 		<Box flexDirection="column" marginTop={1} flexShrink={0}>
@@ -193,7 +208,7 @@ function PromptInputInner({
 
 			{/* Footer: shortcuts + expand trigger */}
 			<Box justifyContent="space-between" paddingX={1}>
-				<Text dimColor>{footerShortcuts}</Text>
+				{renderFooterShortcuts()}
 				<Text color={prefixColor} bold>{EXPAND_TRIGGER_SYMBOL}</Text>
 			</Box>
 		</Box>
