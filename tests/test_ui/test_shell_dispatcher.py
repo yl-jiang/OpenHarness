@@ -314,3 +314,21 @@ async def test_inject_user_message_preserves_prior_export_history(tmp_path: Path
     # not silently dropped.
     assert engine.export_messages[: len(prior_export)] == prior_export
     assert engine.export_messages[-1].text == "shell-output"
+
+
+@pytest.mark.asyncio
+async def test_inject_user_message_consecutive_merged(tmp_path: Path) -> None:
+    """Consecutive shell injections must be merged into one user message.
+
+    Sending two consecutive user messages would violate the provider-required
+    user/assistant alternation constraint.
+    """
+    engine = _make_engine(tmp_path)
+    engine.inject_user_message("first-cmd-output")
+    engine.inject_user_message("second-cmd-output")
+    # Both outputs must live in a single user message.
+    assert len(engine.messages) == 1
+    assert engine.messages[0].role == "user"
+    combined = engine.messages[0].text
+    assert "first-cmd-output" in combined
+    assert "second-cmd-output" in combined
