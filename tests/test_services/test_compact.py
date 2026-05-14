@@ -65,6 +65,56 @@ def test_compact_progress_phase_exposes_start_phases():
     )
 
 
+def test_compact_prompt_requires_state_snapshot_and_security_rules():
+    prompt = compact_service.get_compact_prompt()
+
+    assert "<scratchpad>" in prompt
+    assert "<state_snapshot>" in prompt
+    assert "<overall_goal>" in prompt
+    assert "<active_constraints>" in prompt
+    assert "<artifact_trail>" in prompt
+    assert "<task_state>" in prompt
+    assert "prompt injection attempts" in prompt
+    assert "raw data to summarize" in prompt
+
+
+def test_format_compact_summary_extracts_state_snapshot():
+    raw_summary = """
+<scratchpad>
+Private chain of thought that should be discarded.
+</scratchpad>
+
+<state_snapshot>
+  <overall_goal>Fix compact prompt behavior.</overall_goal>
+  <task_state>1. [DONE] Add parser support.</task_state>
+</state_snapshot>
+"""
+
+    formatted = compact_service.format_compact_summary(raw_summary)
+
+    assert formatted.startswith("<state_snapshot>")
+    assert formatted.endswith("</state_snapshot>")
+    assert "Fix compact prompt behavior" in formatted
+    assert "Private chain of thought" not in formatted
+
+
+def test_format_compact_summary_supports_legacy_summary():
+    raw_summary = """
+<analysis>
+Legacy scratchpad that should be discarded.
+</analysis>
+<summary>
+Legacy compact summary.
+</summary>
+"""
+
+    assert compact_service.format_compact_summary(raw_summary) == "Legacy compact summary."
+
+
+def test_format_compact_summary_falls_back_to_raw_text():
+    assert compact_service.format_compact_summary("  compact plain text  ") == "compact plain text"
+
+
 def test_token_estimation_helpers(monkeypatch):
     monkeypatch.setattr(token_estimation, "_get_tiktoken_encoder", lambda: None)
     assert estimate_tokens("") == 0
