@@ -33,6 +33,7 @@ __all__ = [
 
 _SKILL_ARG_REGEX = re.compile(r"""(?:\[Image\s+\d+\]|"[^"]*"|'[^']*'|[^\s"']+)""")
 _PLACEHOLDER_REGEX = re.compile(r"\$(\d+)")
+_INJECTION_TOKEN_REGEX = re.compile(r"!\{|[{}]")
 
 
 class SkillShellInjectionError(Exception):
@@ -61,42 +62,46 @@ class InjectionSegment:
 def extract_injections(content: str) -> list[InjectionSegment]:
     """Split skill ``content`` into text / shell segments.
 
-    Uses brace-counting so ``!{python -c 'print({"a": 1})'}`` parses as a
-    single shell command with the inner braces preserved.  Unterminated
-    ``!{`` raises :class:`SkillShellInjectionError`.
+    Uses regex tokenization plus brace-depth tracking so
+    ``!{python -c 'print({"a": 1})'}`` parses as a single shell command
+    with the inner braces preserved. Unterminated ``!{`` raises
+    :class:`SkillShellInjectionError`.
     """
 
     segments: list[InjectionSegment] = []
-    i = 0
     text_start = 0
-    length = len(content)
-    while i < length:
-        if content[i] == "!" and i + 1 < length and content[i + 1] == "{":
-            if i > text_start:
-                segments.append(InjectionSegment("text", content[text_start:i]))
+    depth = 0
+    shell_start: int | None = None
+
+    for match in _INJECTION_TOKEN_REGEX.finditer(content):
+        token = match.group(0)
+        if depth == 0:
+            if token != "!{":
+                continue
+            if match.start() > text_start:
+                segments.append(InjectionSegment("text", content[text_start : match.start()]))
+            shell_start = match.end()
             depth = 1
-            j = i + 2
-            while j < length and depth > 0:
-                ch = content[j]
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                j += 1
-            if depth != 0:
-                raise SkillShellInjectionError(
-                    "Unterminated shell injection: missing closing '}' for '!{'."
-                )
-            command = content[i + 2 : j]
-            segments.append(InjectionSegment("shell", command))
-            i = j + 1
-            text_start = i
             continue
-        i += 1
-    if text_start < length:
-        segments.append(InjectionSegment("text", content[text_start:length]))
+
+        if token in {"!{", "{"}:
+            depth += 1
+            continue
+
+        depth -= 1
+        if depth == 0:
+            assert shell_start is not None
+            segments.append(InjectionSegment("shell", content[shell_start : match.start()]))
+            text_start = match.end()
+            shell_start = None
+
+    if depth != 0:
+        raise SkillShellInjectionError(
+            "Unterminated shell injection: missing closing '}' for '!{'."
+        )
+
+    if text_start < len(content):
+        segments.append(InjectionSegment("text", content[text_start:]))
     return segments
 
 
@@ -185,10 +190,6 @@ async def render_skill_prompt_with_shell(
     has_injection = any(seg.kind == "shell" for seg in segments)
 
     if not has_injection:
-        # Nothing to inject — caller should normally use the cheap sync path
-        # via ``render_skill_load_prompt``.  Returning the raw content here
-        # keeps the function self-contained for direct callers and avoids a
-        # circular import with ``openharness.commands.skills``.
         return skill.content
 
     if not skill.shell_injection:
