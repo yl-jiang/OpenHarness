@@ -102,12 +102,14 @@ async function renderPromptInput({
 	backgroundTaskCount = 0,
 	animateSpinner,
 	stdoutColumns,
+	notices = [],
 }: {
 	busy?: boolean;
 	toolName?: string;
 	backgroundTaskCount?: number;
 	animateSpinner?: boolean;
 	stdoutColumns?: number;
+	notices?: string[];
 } = {}): Promise<string> {
 	const stdout = createTestStdout(stdoutColumns);
 	const stdin = createTestStdin();
@@ -123,6 +125,7 @@ async function renderPromptInput({
 				input=""
 				setInput={() => {}}
 				onSubmit={() => {}}
+				notices={notices}
 				toolName={toolName}
 				hasBackgroundTasks={backgroundTaskCount > 0}
 				animateSpinner={animateSpinner}
@@ -290,6 +293,14 @@ test('shows a concise idle shortcut footer', async () => {
 	const output = await renderPromptInput();
 
 	assert.match(output, /\/ commands · @ files · ↑↓ history · shift\+enter newline/);
+});
+
+test('renders prompt notices inside the input box when paste staging metadata exists', async () => {
+	const output = await renderPromptInput({
+		notices: ['[Paste #2 - 101 lines] saved to /tmp/openharness-paste-2/demo.txt'],
+	});
+
+	assert.match(output, /\[Paste #2 - 101 lines\] saved to \/tmp\/openharness-paste-2\/demo\.txt/);
 });
 
 test('shows a static busy indicator with the running tool name', async () => {

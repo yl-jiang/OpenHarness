@@ -51,6 +51,17 @@ def test_frontend_request_accepts_shell_input_mode() -> None:
     assert request.input_mode == "shell"
 
 
+def test_frontend_request_accepts_transcript_line_override() -> None:
+    from openharness.ui.protocol import FrontendRequest
+
+    request = FrontendRequest(
+        type="submit_line",
+        line="row-1\nrow-2",
+        transcript_line="[Paste #1 - 2 lines]",
+    )
+    assert request.transcript_line == "[Paste #1 - 2 lines]"
+
+
 def test_transcript_item_supports_user_shell_role() -> None:
     from openharness.ui.protocol import TranscriptItem
 

@@ -88,3 +88,29 @@ class ToolMetadataKey(str, Enum):
             cls.COMPACT_LAST,
             cls.SELF_EVOLUTION_STATE,
         )
+
+    @classmethod
+    def turn_checkpoint_keys(cls) -> tuple["ToolMetadataKey", ...]:
+        """Return metadata keys that should roll back with a cancelled turn.
+
+        These keys carry conversational context or turn-local caches derived from
+        the current request. They should not leak into the next user turn when a
+        running request is cancelled. Runtime handles and externally-managed
+        session objects are intentionally excluded.
+        """
+
+        return (
+            cls.PERMISSION_MODE,
+            cls.READ_FILE_STATE,
+            cls.INVOKED_SKILLS,
+            cls.ASYNC_AGENT_STATE,
+            cls.RECENT_WORK_LOG,
+            cls.RECENT_VERIFIED_WORK,
+            cls.TASK_FOCUS_STATE,
+            cls.COMPACT_CHECKPOINTS,
+            cls.COMPACT_LAST,
+            cls.SELF_EVOLUTION_STATE,
+            cls.FILE_READ_CACHE,
+            cls.TOOL_CALL_HISTORY,
+            cls.TOOL_NAME_REPAIR_NOTICES,
+        )

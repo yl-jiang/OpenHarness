@@ -76,6 +76,7 @@ type PromptInputProps = {
 	setInput: (value: string) => void;
 	onSubmit: (value: string) => void;
 	extraInputLines?: string[];
+	notices?: string[];
 	toolName?: string;
 	suppressSubmit?: boolean;
 	statusLabel?: string;
@@ -91,6 +92,7 @@ function PromptInputInner({
 	setInput,
 	onSubmit,
 	extraInputLines,
+	notices,
 	toolName,
 	suppressSubmit,
 	statusLabel,
@@ -185,9 +187,21 @@ function PromptInputInner({
 							))}
 						</Box>
 					)}
+					{notices && notices.length > 0 && (
+						<Box flexDirection="column">
+							{notices.map((notice, i) => (
+								<Box key={`notice-${i}`}>
+									<Text dimColor>{'  '}</Text>
+									<Box flexGrow={1} flexShrink={1}>
+										<Text dimColor>{clipPromptPreviewLine(notice, previewAvailableWidth) || ' '}</Text>
+									</Box>
+								</Box>
+							))}
+						</Box>
+					)}
 
 					{/* Input row: prefix + text input or status */}
-					<Box>
+					<Box alignItems="flex-start">
 						<Text color={prefixColor} bold>{prefix}</Text>
 						{busy ? (
 							<Text color={theme.colors.warning} dimColor>{statusText}</Text>

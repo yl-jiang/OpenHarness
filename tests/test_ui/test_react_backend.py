@@ -47,6 +47,26 @@ class FailingApiClient:
         raise RuntimeError(self._message)
 
 
+class BlockingThenSuccessApiClient:
+    """First request blocks for cancellation; second request succeeds."""
+
+    def __init__(self, text: str) -> None:
+        self._text = text
+        self.requests = []
+        self.first_request_started = asyncio.Event()
+
+    async def stream_message(self, request):
+        self.requests.append(request)
+        if len(self.requests) == 1:
+            self.first_request_started.set()
+            await asyncio.Future()
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text=self._text)]),
+            usage=UsageSnapshot(input_tokens=2, output_tokens=3),
+            stop_reason=None,
+        )
+
+
 class FakeBinaryStdout:
     """Capture protocol writes through a binary stdout buffer."""
 
@@ -264,6 +284,39 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
         and event.item
         and event.item.role == "assistant"
         and "hello from react backend" in event.item.text
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_backend_host_uses_transcript_line_override_for_user_echo(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("hello from react backend")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("hello from react backend"))
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line(
+            "line-1\nline-2",
+            transcript_line="[Paste #1 - 2 lines]",
+        )
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert any(
+        event.type == "transcript_item"
+        and event.item
+        and event.item.role == "user"
+        and event.item.text == "[Paste #1 - 2 lines]"
         for event in events
     )
 
@@ -916,8 +969,8 @@ async def test_backend_host_process_line_emits_cancelled_reason_when_cancelled(t
     async def _emit(event):
         events.append(event)
 
-    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
-        del bundle, line, print_system, render_event, clear_output
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output, input_mode="chat"):
+        del bundle, line, print_system, render_event, clear_output, input_mode
         started.set()
         await asyncio.Future()
 
@@ -943,3 +996,50 @@ async def test_backend_host_process_line_emits_cancelled_reason_when_cancelled(t
         and "cancelled" in event.item.text.lower()
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_backend_host_cancel_restores_turn_state_before_next_skill_submit(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    skill_dir = tmp_path / "config" / "skills" / "cancel-proof-skill"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: cancel-proof-skill\ndescription: Exercise cancel rollback\n---\n\n# Cancel Proof Skill\nStay isolated from cancelled turns.",
+        encoding="utf-8",
+    )
+
+    client = BlockingThenSuccessApiClient("done")
+    host = ReactBackendHost(BackendHostConfig(api_client=client, cwd=str(tmp_path)))
+    host._bundle = await build_runtime(api_client=client, cwd=str(tmp_path))
+    await start_runtime(host._bundle)
+    try:
+        cancelled = asyncio.create_task(host._process_line("OLD_TASK should not leak"))
+        await asyncio.wait_for(client.first_request_started.wait(), timeout=1.0)
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+
+        await host._process_line("/cancel-proof-skill what shipped this week?")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert len(client.requests) == 2
+    second_request = client.requests[1]
+    second_user_messages = [message for message in second_request.messages if message.role == "user"]
+    assert len(second_user_messages) == 1
+    second_prompt = second_user_messages[0].text
+    assert "OLD_TASK should not leak" not in second_prompt
+    assert "# Cancel Proof Skill\nStay isolated from cancelled turns." in second_prompt
+    assert second_prompt.endswith("\n\nwhat shipped this week?")
+
+    snapshot = load_session_snapshot(tmp_path)
+    assert snapshot is not None
+    prompt_texts = [
+        "".join(block.get("text", "") for block in message.get("content", []) if block.get("type") == "text")
+        for message in snapshot["messages"]
+        if message.get("role") == "user"
+    ]
+    assert all("OLD_TASK should not leak" not in text for text in prompt_texts)

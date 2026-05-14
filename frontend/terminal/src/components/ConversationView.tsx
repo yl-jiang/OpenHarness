@@ -424,14 +424,12 @@ function MessageRow({
 				);
 			}
 			if (!isMultiline) {
-				const prefix = 'you · ';
-				const availableWidth = Math.max(1, cols - stringWidth(prefix));
 				return (
 					<Box marginTop={0} marginBottom={0}>
 						<Text>
 							<Text color={theme.colors.secondary} bold>you</Text>
 							<Text dimColor> · </Text>
-							<Text>{truncateWithEllipsis(item.text, availableWidth)}</Text>
+							<Text>{item.text}</Text>
 						</Text>
 					</Box>
 				);
