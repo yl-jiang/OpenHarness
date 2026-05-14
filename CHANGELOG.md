@@ -13,6 +13,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
   - Type `exit` / `quit` (or press `Esc` on an empty buffer) to leave shell mode.
   - Skill Markdown can opt in to template-time shell substitution by setting `shell-injection: true` (or `shell_injection: true`) in frontmatter. Inside the skill body, `!{cmd}` is replaced with the captured stdout/stderr of `cmd`. All commands are stage-authorized before any execution, and argument placeholders (`$1`, `$ARGUMENTS`, …) are shell-escaped with `shlex.quote` before substitution.
   - A new transcript role `user_shell` renders user-initiated shell commands with a `!` warning-coloured prefix.
+  - React TUI shell mode now supports bash-style inline Tab completion for executable names from `PATH` and for filesystem paths in command arguments, cycling through matches in place without opening a picker.
 - Built-in `qwen` provider profile so `oh setup` offers Qwen (DashScope) as a first-class provider choice, with `dashscope_api_key` auth source, `qwen-plus` as the default model, and the DashScope OpenAI-compatible endpoint.
 - `oh --dry-run` safe preview mode for inspecting resolved runtime settings, auth state, prompt assembly, commands, skills, tools, and configured MCP servers without executing the model or tools.
 - Docker as an alternative sandbox backend (`sandbox.backend = "docker"`) for stronger execution isolation with configurable resource limits, network isolation, and automatic image management.
@@ -54,6 +55,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - React TUI multiline composer now submits buffered text even when the current line is empty after `Shift+Enter`, so users can end a multi-line draft with a blank cursor line and still send the message.
 - React TUI `/skills` picker now supports in-modal keyboard filtering by skill name, so long skill lists can be narrowed down immediately without stepping through the full list with arrow keys.
 - React TUI `/skills` picker now pre-fills the selected skill as `/<skill-name> ` in the composer and waits for the user query, matching the intended skill-invocation flow instead of immediately loading the skill on selection.
+- React TUI `!shell-command` transcript rows no longer wrap command output in a bordered panel; the result body now renders inline with dimmed text to keep shell output lower-contrast than normal conversation text.
 - React TUI slash autocomplete now includes direct `/<skill-name>` aliases alongside slash commands, so users can type a known skill prefix and complete or invoke it without opening the `/skills` picker first.
 - React TUI select menus now window long option lists, show skill descriptions below names with wrapping indentation, and highlight the selected option.
 - React TUI select menus now cycle on arrow-key and wheel navigation, so pickers like `/model` wrap from the last option back to the first (and vice versa).
