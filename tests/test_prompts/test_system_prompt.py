@@ -75,6 +75,18 @@ def test_build_system_prompt_emphasizes_surgical_bug_fixing():
     assert "reproduce it first with a test or a concrete failing case" in prompt
 
 
+def test_build_system_prompt_includes_agent_behavior_quality_rules():
+    env = _make_env()
+    prompt = build_system_prompt(env=env)
+
+    assert "Confirmation protocol" in prompt
+    assert "no negotiating" in prompt
+    assert "3-Strike Reset" in prompt
+    assert "Distinguish between Inquiries and Directives" in prompt
+    assert "Context efficiency" in prompt
+    assert "Efficiency is secondary to correctness" in prompt
+
+
 def test_build_system_prompt_requires_ask_user_question_for_user_input():
     env = _make_env()
     prompt = build_system_prompt(env=env)
