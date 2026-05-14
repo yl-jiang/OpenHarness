@@ -42,6 +42,17 @@ import {
 	findShellCompletionQuery,
 	type ShellCompletionCycle,
 } from './input/shellCompletions.js';
+import {
+	applyPastePlaceholder,
+	buildPastePlaceholder,
+	detectSummarizablePasteInsertion,
+	listPasteStageNotices,
+	prunePasteReferences,
+	resolvePasteSubmission,
+	stagePasteInTempFile,
+	TEMP_FILE_PROMPT_MIN_LINES,
+	type PasteReference,
+} from './input/pastePlaceholders.js';
 import {ThemeProvider, useTheme} from './theme/ThemeContext.js';
 import type {FrontendConfig} from './types.js';
 
@@ -83,6 +94,11 @@ type SelectModalState = {
 	options: SelectOption[];
 	onSelect: (value: string) => void;
 } | null;
+
+type PromptHistoryEntry = {
+	display: string;
+	pasteReferences: Record<string, PasteReference>;
+};
 
 function normalizeSelectModalCommand(command: string): string {
 	return command.trim().replace(/^\/+/, '').toLowerCase();
@@ -222,7 +238,7 @@ function AppInner({
 	const inputModeRef = useRef(inputMode);
 	const [completionKey, setCompletionKey] = useState(0);
 	const [modalInput, setModalInput] = useState('');
-	const [history, setHistory] = useState<string[]>([]);
+	const [history, setHistory] = useState<PromptHistoryEntry[]>([]);
 	const [historyIndex, setHistoryIndex] = useState(-1);
 	const [lastEscapeAt, setLastEscapeAt] = useState(0);
 	const [lastCtrlCAt, setLastCtrlCAt] = useState(0);
@@ -250,6 +266,10 @@ function AppInner({
 	const [shellCompletionCycle, setShellCompletionCycle] = useState<ShellCompletionCycle | null>(null);
 	const shellCompletionCycleRef = useRef<ShellCompletionCycle | null>(null);
 	const [expandedComposer, setExpandedComposer] = useState<ExpandedComposerState | null>(null);
+	const [pasteReferences, setPasteReferences] = useState<Record<string, PasteReference>>({});
+	const pasteReferencesRef = useRef<Record<string, PasteReference>>({});
+	const nextPasteNumberRef = useRef(1);
+	const [pasteStatusNotice, setPasteStatusNotice] = useState<string | null>(null);
 
 	const setInputValue = useCallback((next: string): void => {
 		inputRef.current = next;
@@ -264,6 +284,51 @@ function AppInner({
 	const setShellCompletionCycleValue = useCallback((next: ShellCompletionCycle | null): void => {
 		shellCompletionCycleRef.current = next;
 		setShellCompletionCycle(next);
+	}, []);
+
+	const setPasteReferencesValue = useCallback(
+		(
+			next:
+				| Record<string, PasteReference>
+				| ((current: Record<string, PasteReference>) => Record<string, PasteReference>),
+		): void => {
+			const resolved = typeof next === 'function'
+				? next(pasteReferencesRef.current)
+				: next;
+			pasteReferencesRef.current = resolved;
+			setPasteReferences(resolved);
+		},
+		[],
+	);
+
+	const setPromptDraft = useCallback(
+		(draft: string, references?: Record<string, PasteReference>): void => {
+			const split = splitExpandedDraft(draft);
+			setInputValue(split.input);
+			setExtraInputLines(split.extraInputLines);
+			if (references) {
+				setPasteReferencesValue(prunePasteReferences(draft, references));
+				return;
+			}
+			setPasteReferencesValue((current) => prunePasteReferences(draft, current));
+		},
+		[setInputValue, setPasteReferencesValue],
+	);
+
+	const clearPromptDraft = useCallback((): void => {
+		setPromptDraft('', {});
+		setPasteStatusNotice(null);
+	}, [setPromptDraft]);
+
+	const pushHistoryEntry = useCallback((display: string): void => {
+		setHistory((items) => [
+			...items,
+			{
+				display,
+				pasteReferences: prunePasteReferences(display, pasteReferencesRef.current),
+			},
+		]);
+		setHistoryIndex(-1);
 	}, []);
 
 	const visibleSelectOptions = useMemo(
@@ -394,6 +459,11 @@ function AppInner({
 
 	const showPicker = inputMode === 'chat' && !expandedComposer && pickerHints.length > 0 && !session.busy && !session.modal && !selectModal;
 	const outputStyle = String(session.status.output_style ?? 'default');
+	const pasteNotices = useMemo(() => {
+		const draft = composePromptDraft(input, extraInputLines);
+		const notices = listPasteStageNotices(draft, pasteReferences);
+		return pasteStatusNotice ? [pasteStatusNotice, ...notices] : notices;
+	}, [extraInputLines, input, pasteReferences, pasteStatusNotice]);
 
 	useEffect(() => {
 		setPickerIndex(0);
@@ -488,8 +558,7 @@ function AppInner({
 			onSelect: (value) => {
 				const selection = resolveSelectModalChoice(req.command, value);
 				if (selection.kind === 'prefill') {
-					setInputValue(selection.input);
-					setExtraInputLines([]);
+					setPromptDraft(selection.input, {});
 					setHistoryIndex(-1);
 					setCompletionKey((key) => key + 1);
 					setSelectModal(null);
@@ -501,7 +570,7 @@ function AppInner({
 			},
 		});
 		session.setSelectRequest(null);
-	}, [session.selectRequest]);
+	}, [session.selectRequest, setPromptDraft]);
 
 	useEffect(() => {
 		if (!selectModal) {
@@ -519,12 +588,10 @@ function AppInner({
 	}, [selectIndex, selectModal, visibleSelectOptions.length]);
 
 	const restoreExpandedDraftToPrompt = useCallback((draft: string) => {
-		const split = splitExpandedDraft(draft);
-		setInputValue(split.input);
-		setExtraInputLines(split.extraInputLines);
+		setPromptDraft(draft);
 		setHistoryIndex(-1);
 		setCompletionKey((key) => key + 1);
-	}, [setInputValue]);
+	}, [setPromptDraft]);
 
 	const closeExpandedComposer = useCallback((draft?: string) => {
 		if (draft != null) {
@@ -573,6 +640,77 @@ function AppInner({
 		return false;
 	};
 
+	const insertPasteReference = useCallback(
+		(displayInput: string, reference: PasteReference): void => {
+			const draft = composePromptDraft(displayInput, extraInputLines);
+			setPromptDraft(draft, {
+				...prunePasteReferences(draft, pasteReferencesRef.current),
+				[reference.label]: reference,
+			});
+			setHistoryIndex(-1);
+			setShellCompletionCycleValue(null);
+		},
+		[extraInputLines, setPromptDraft, setShellCompletionCycleValue],
+	);
+
+	const openLargePasteSelectModal = useCallback(
+		(displayInput: string, lineCount: number, pastedText: string, placeholder: string): void => {
+			setSelectIndex(0);
+			setSelectQuery('');
+			setSelectModal({
+				title: `Large paste detected (${lineCount} lines)`,
+				command: 'paste',
+				options: [
+					{
+						value: 'temp_file',
+						label: 'Save to temp file',
+						description: 'Recommended for very large pastes. Keep the prompt compact and stage the text on disk until submit.',
+						badge: 'recommended',
+						badgeTone: 'accent',
+					},
+					{
+						value: 'memory',
+						label: 'Keep placeholder only',
+						description: 'Show the same compact placeholder, but keep the pasted text in memory until submit.',
+					},
+				],
+				onSelect: (value) => {
+					let reference: PasteReference;
+					if (value === 'temp_file') {
+						try {
+							reference = stagePasteInTempFile({
+								label: placeholder,
+								lineCount,
+								content: pastedText,
+							});
+							setPasteStatusNotice(null);
+						} catch (error) {
+							const message = error instanceof Error ? error.message : String(error);
+							setPasteStatusNotice(`Failed to save ${placeholder}: ${message}`);
+							reference = {
+								label: placeholder,
+								lineCount,
+								storage: 'memory',
+								content: pastedText,
+							};
+						}
+					} else {
+						setPasteStatusNotice(null);
+						reference = {
+							label: placeholder,
+							lineCount,
+							storage: 'memory',
+							content: pastedText,
+						};
+					}
+					setSelectModal(null);
+					insertPasteReference(displayInput, reference);
+				},
+			});
+		},
+		[insertPasteReference],
+	);
+
 	const submitSubmittedValue = useCallback((submittedValue: string): boolean => {
 		if (!submittedValue || !session.ready) {
 			return false;
@@ -599,20 +737,29 @@ function AppInner({
 		}
 		scrollToBottom();
 		if (inputMode === 'chat' && handleCommand(submittedValue)) {
-			setHistory((items) => [...items, submittedValue]);
-			setHistoryIndex(-1);
+			pushHistoryEntry(submittedValue);
 			return true;
 		}
-		const payload: Record<string, unknown> = {type: 'submit_line', line: submittedValue};
+		let resolvedSubmission: {line: string; transcriptLine?: string};
+		try {
+			resolvedSubmission = resolvePasteSubmission(submittedValue, pasteReferencesRef.current);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			setPasteStatusNotice(`Failed to read staged paste: ${message}`);
+			return false;
+		}
+		const payload: Record<string, unknown> = {type: 'submit_line', line: resolvedSubmission.line};
+		if (resolvedSubmission.transcriptLine) {
+			payload.transcript_line = resolvedSubmission.transcriptLine;
+		}
 		if (inputMode === 'shell') {
 			payload.input_mode = 'shell';
 		}
 		session.sendRequest(payload);
-		setHistory((items) => [...items, submittedValue]);
-		setHistoryIndex(-1);
+		pushHistoryEntry(submittedValue);
 		session.setBusy(true);
 		return true;
-	}, [handleCommand, inputMode, scrollToBottom, session]);
+	}, [handleCommand, inputMode, pushHistoryEntry, scrollToBottom, session]);
 
 	const submitExpandedComposer = useCallback(() => {
 		if (!expandedComposer) {
@@ -623,10 +770,9 @@ function AppInner({
 			return;
 		}
 		setExpandedComposer(null);
-		setInputValue('');
-		setExtraInputLines([]);
+		clearPromptDraft();
 		setCompletionKey((key) => key + 1);
-	}, [expandedComposer, setInputValue, submitSubmittedValue]);
+	}, [clearPromptDraft, expandedComposer, submitSubmittedValue]);
 
 	const applyShellTabCompletion = useCallback(() => {
 		const currentInput = inputRef.current;
@@ -785,8 +931,7 @@ function AppInner({
 				return;
 			}
 			// First Ctrl+C → clear input and record timestamp
-			setInputValue('');
-			setExtraInputLines([]);
+			clearPromptDraft();
 			setHistoryIndex(-1);
 			setShellCompletionCycleValue(null);
 			setLastCtrlCAt(now);
@@ -943,7 +1088,7 @@ function AppInner({
 
 		if (key.escape) {
 			if (showPicker && !session.busy) {
-				setInputValue('');
+				clearPromptDraft();
 				return;
 			}
 			// Esc in shell mode with empty buffer returns to chat mode.
@@ -970,8 +1115,7 @@ function AppInner({
 				return;
 			}
 			if (escapeAction.action === 'clear_input') {
-				setInputValue('');
-				setExtraInputLines([]);
+				clearPromptDraft();
 				setHistoryIndex(-1);
 				setShellCompletionCycleValue(null);
 				return;
@@ -1031,18 +1175,18 @@ function AppInner({
 					if (!mentionHints.length && pickerSubmenuFocused && pickerSubHints.length > 0) {
 						const selectedSubHint = pickerSubHints[pickerSubIndex];
 						if (selectedSubHint) {
-							setInputValue(buildSlashCommandSelection(selected, selectedSubHint));
+							setPromptDraft(buildSlashCommandSelection(selected, selectedSubHint), {});
 							setHistoryIndex(-1);
 							setCompletionKey((k) => k + 1);
 						}
 						return;
 					}
 					if (mentionQuery && mentionHints.length > 0) {
-						setInputValue(replaceMentionQuery(input, mentionQuery, selected));
+						setPromptDraft(replaceMentionQuery(input, mentionQuery, selected));
 						setCompletionKey((k) => k + 1);
 						return;
 					}
-					setInputValue('');
+					clearPromptDraft();
 					if (!handleCommand(selected)) {
 						onSubmit(selected);
 					}
@@ -1055,24 +1199,24 @@ function AppInner({
 					if (!mentionHints.length && pickerSubmenuFocused && pickerSubHints.length > 0) {
 						const selectedSubHint = pickerSubHints[pickerSubIndex];
 						if (selectedSubHint) {
-							setInputValue(buildSlashCommandSelection(selected, selectedSubHint));
+							setPromptDraft(buildSlashCommandSelection(selected, selectedSubHint), {});
 							setHistoryIndex(-1);
 							setCompletionKey((k) => k + 1);
 						}
 						return;
 					}
 					if (mentionQuery && mentionHints.length > 0) {
-						setInputValue(replaceMentionQuery(input, mentionQuery, selected));
+						setPromptDraft(replaceMentionQuery(input, mentionQuery, selected));
 						setCompletionKey((k) => k + 1);
 						return;
 					}
-					setInputValue(selected);
+					setPromptDraft(selected, {});
 					setCompletionKey((k) => k + 1);
 				}
 				return;
 			}
 			if (key.escape) {
-				setInputValue('');
+				clearPromptDraft();
 				return;
 			}
 		}
@@ -1080,8 +1224,7 @@ function AppInner({
 		// Shift+Enter appends current line to pending lines and starts a new one
 		if (key.shift && key.return) {
 			shiftEnterHandledRef.current = true;
-			setExtraInputLines((lines) => [...lines, input]);
-			setInputValue('');
+			setPromptDraft(composePromptDraft('', [...extraInputLines, input]));
 			setShellCompletionCycleValue(null);
 			return;
 		}
@@ -1090,8 +1233,11 @@ function AppInner({
 		if (!showPicker && key.upArrow) {
 			const nextIndex = Math.min(history.length - 1, historyIndex + 1);
 			if (nextIndex >= 0) {
+				const entry = history[history.length - 1 - nextIndex];
 				setHistoryIndex(nextIndex);
-				setInputValue(history[history.length - 1 - nextIndex] ?? '');
+				if (entry) {
+					setPromptDraft(entry.display, entry.pasteReferences);
+				}
 				setShellCompletionCycleValue(null);
 			}
 			return;
@@ -1099,7 +1245,14 @@ function AppInner({
 		if (!showPicker && key.downArrow) {
 			const nextIndex = Math.max(-1, historyIndex - 1);
 			setHistoryIndex(nextIndex);
-			setInputValue(nextIndex === -1 ? '' : (history[history.length - 1 - nextIndex] ?? ''));
+			if (nextIndex === -1) {
+				clearPromptDraft();
+			} else {
+				const entry = history[history.length - 1 - nextIndex];
+				if (entry) {
+					setPromptDraft(entry.display, entry.pasteReferences);
+				}
+			}
 			setShellCompletionCycleValue(null);
 			return;
 		}
@@ -1111,6 +1264,7 @@ function AppInner({
 		(value: string) => {
 			// Drop the character that ink-text-input inserted in the same tick
 			// as a Ctrl+<letter> shortcut handled by App / TodoPanel.
+			const currentInput = inputRef.current;
 			let next = value;
 			const suppress = suppressNextCharRef.current;
 			if (suppress) {
@@ -1120,15 +1274,41 @@ function AppInner({
 					next = next.slice(0, idx) + next.slice(idx + 1);
 				}
 			}
+			setPasteStatusNotice(null);
+			const detectedPaste = detectSummarizablePasteInsertion(currentInput, next);
+			if (detectedPaste) {
+				const placeholder = buildPastePlaceholder(
+					nextPasteNumberRef.current,
+					detectedPaste.lineCount,
+				);
+				nextPasteNumberRef.current += 1;
+				const displayInput = applyPastePlaceholder(currentInput, detectedPaste, placeholder);
+				if (detectedPaste.lineCount >= TEMP_FILE_PROMPT_MIN_LINES) {
+					openLargePasteSelectModal(
+						displayInput,
+						detectedPaste.lineCount,
+						detectedPaste.pastedText,
+						placeholder,
+					);
+					return;
+				}
+				insertPasteReference(displayInput, {
+					label: placeholder,
+					lineCount: detectedPaste.lineCount,
+					storage: 'memory',
+					content: detectedPaste.pastedText,
+				});
+				return;
+			}
 			if (!next.includes('\n')) {
 				if (shouldEnterShellModeFromInput(next, inputMode, extraInputLines.length)) {
 					setInputModeValue('shell');
-					setInputValue('');
+					clearPromptDraft();
 					setShellCompletionCycleValue(null);
 					setCompletionKey((key) => key + 1);
 					return;
 				}
-				setInputValue(next);
+				setPromptDraft(composePromptDraft(next, extraInputLines));
 				if (shellCompletionCycleRef.current?.value !== next) {
 					setShellCompletionCycleValue(null);
 				}
@@ -1136,11 +1316,19 @@ function AppInner({
 			}
 			const parts = next.split('\n');
 			const lastPart = parts.pop() ?? '';
-			setExtraInputLines((prev) => [...prev, ...parts]);
-			setInputValue(lastPart);
+			setPromptDraft(composePromptDraft(lastPart, [...extraInputLines, ...parts]));
 			setShellCompletionCycleValue(null);
 		},
-		[extraInputLines.length, inputMode, setInputModeValue, setInputValue, setShellCompletionCycleValue],
+		[
+			clearPromptDraft,
+			extraInputLines,
+			inputMode,
+			insertPasteReference,
+			openLargePasteSelectModal,
+			setInputModeValue,
+			setPromptDraft,
+			setShellCompletionCycleValue,
+		],
 	);
 
 	onSubmitRef.current = (value: string): void => {
@@ -1167,8 +1355,7 @@ function AppInner({
 		if (!submitSubmittedValue(submittedValue)) {
 			return;
 		}
-		setInputValue('');
-		setExtraInputLines([]);
+		clearPromptDraft();
 		setShellCompletionCycleValue(null);
 		setCompletionKey((key) => key + 1);
 	};
@@ -1307,6 +1494,7 @@ function AppInner({
 						setInput={handleInputChange}
 						onSubmit={onSubmit}
 						extraInputLines={extraInputLines}
+						notices={pasteNotices}
 						toolName={session.busy ? currentToolName : undefined}
 						statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `Running ${currentToolName}` : 'Running agent loop')) : undefined}
 						hasBackgroundTasks={activeBackgroundTaskCount > 0}

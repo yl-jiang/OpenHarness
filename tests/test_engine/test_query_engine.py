@@ -266,6 +266,61 @@ class _NoopApiClient:
             yield None
 
 
+def test_query_engine_turn_checkpoint_restores_turn_scoped_state(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    live_async_tasks = [{"task_id": "task-1", "description": "existing task"}]
+    engine = QueryEngine(
+        api_client=StaticApiClient("ok"),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+        max_turns=8,
+        tool_metadata={
+            ToolMetadataKey.INVOKED_SKILLS.value: ["review"],
+            ToolMetadataKey.TASK_FOCUS_STATE.value: {"goal": "original", "recent_goals": [], "active_artifacts": [], "verified_state": [], "next_step": ""},
+            ToolMetadataKey.ASYNC_AGENT_TASKS.value: list(live_async_tasks),
+            "_suppress_next_user_goal": True,
+        },
+    )
+    engine.load_messages(
+        [
+            ConversationMessage.from_user_text("before"),
+            ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+        ]
+    )
+
+    checkpoint = engine.capture_turn_checkpoint()
+
+    engine.load_messages([ConversationMessage.from_user_text("after")])
+    engine.set_system_prompt("changed")
+    engine.set_model("changed-model")
+    engine.set_max_turns(32)
+    engine.tool_metadata[ToolMetadataKey.INVOKED_SKILLS.value] = ["git-commit"]
+    engine.tool_metadata[ToolMetadataKey.FILE_READ_CACHE.value] = {"demo": {"mtime_ns": 1}}
+    engine.tool_metadata[ToolMetadataKey.TASK_FOCUS_STATE.value]["goal"] = "mutated"
+    engine.tool_metadata[ToolMetadataKey.ASYNC_AGENT_TASKS.value].append(
+        {"task_id": "task-2", "description": "spawned during cancelled turn"}
+    )
+    engine.tool_metadata["_suppress_next_user_goal"] = False
+
+    engine.restore_turn_checkpoint(checkpoint)
+
+    assert [message.text for message in engine.messages] == ["before", "done"]
+    assert engine.system_prompt == "system"
+    assert engine.model == "claude-test"
+    assert engine.max_turns == 8
+    assert engine.tool_metadata[ToolMetadataKey.INVOKED_SKILLS.value] == ["review"]
+    assert engine.tool_metadata[ToolMetadataKey.TASK_FOCUS_STATE.value]["goal"] == "original"
+    assert ToolMetadataKey.FILE_READ_CACHE.value not in engine.tool_metadata
+    assert engine.tool_metadata["_suppress_next_user_goal"] is True
+    assert engine.tool_metadata[ToolMetadataKey.ASYNC_AGENT_TASKS.value] == [
+        *live_async_tasks,
+        {"task_id": "task-2", "description": "spawned during cancelled turn"},
+    ]
+
+
 def test_query_prompt_too_long_detection_handles_llama_cpp_errors():
     assert _is_prompt_too_long_error(
         RequestFailure("exceed_context_size_error: prompt exceeds the available context size")

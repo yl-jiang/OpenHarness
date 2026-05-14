@@ -32,7 +32,7 @@ from openharness.output_styles import load_output_styles
 from openharness.tasks import get_task_manager
 from openharness.skills import load_skill_registry
 from openharness.ui.protocol import BackendEvent, FrontendRequest, TranscriptItem
-from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
+from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime, sync_app_state
 from openharness.permissions.approvals import ApprovalRequest
 from openharness.services.session_backend import SessionBackend
 from openharness.utils.log import get_logger
@@ -245,7 +245,11 @@ class ReactBackendHost:
                 self._busy = True
                 try:
                     should_continue = await self._run_active_request(
-                        self._process_line(line, input_mode=request.input_mode)
+                        self._process_line(
+                            line,
+                            transcript_line=request.transcript_line,
+                            input_mode=request.input_mode,
+                        )
                     )
                 finally:
                     self._busy = False
@@ -325,6 +329,7 @@ class ReactBackendHost:
             busy=self._busy,
             input_mode=input_mode,
         )
+        turn_checkpoint = self._bundle.engine.capture_turn_checkpoint()
         await self._emit(
             BackendEvent(
                 type="transcript_item",
@@ -512,7 +517,6 @@ class ReactBackendHost:
 
         async def _clear_output() -> None:
             await self._emit(BackendEvent(type="clear_transcript"))
-
         try:
             should_continue = await handle_line(
                 self._bundle,
@@ -523,6 +527,8 @@ class ReactBackendHost:
                 input_mode=input_mode,
             )
         except asyncio.CancelledError:
+            self._bundle.engine.restore_turn_checkpoint(turn_checkpoint)
+            sync_app_state(self._bundle)
             self._save_snapshot()
             await self._emit(
                 BackendEvent(

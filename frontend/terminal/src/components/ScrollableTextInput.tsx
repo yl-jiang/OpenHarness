@@ -1,16 +1,14 @@
 /**
- * A text input component with horizontal scrolling, inline syntax highlighting,
+ * A text input component with line-wrapping, inline syntax highlighting,
  * word-level navigation and line editing operations.
  *
- * Unlike `ink-text-input`, the displayed text never wraps to multiple lines.
- * When the text is wider than `availableWidth`, only a viewport window around
- * the cursor is rendered.  This prevents CJK/wide-character text from causing
- * border misalignment in Ink's output buffer.
+ * When the text is wider than `availableWidth`, it wraps to additional lines
+ * rather than scrolling horizontally.
  *
  * API is intentionally close to `ink-text-input` for drop-in replacement.
  */
 import React, {useEffect, useRef, useState} from 'react';
-import {Text, useInput} from 'ink';
+import {Box, Text, useInput} from 'ink';
 import stringWidth from 'string-width';
 
 /** Regex to detect /commands and @file references for syntax highlighting. */
@@ -88,49 +86,31 @@ function tokenize(text: string): Array<{type: 'text' | 'command' | 'file'; conte
 }
 
 /**
- * Compute which characters are visible in the viewport.
- *
- * Returns [startIdx, endIdx) — the slice of `chars` to render.
- * Strategy: keep the cursor at the RIGHT edge of the viewport so
- * the user always sees recently typed/pasted text.  Then fill any
- * remaining space with characters after the cursor.
+ * Split the characters array into visual lines based on `availableWidth`.
+ * Each line is represented as [startIdx, endIdx) into `chars`.
  */
-function computeViewport(
+function computeWrappedLines(
 	chars: string[],
 	widths: number[],
-	cursorOffset: number,
 	availableWidth: number,
-): {startIdx: number; endIdx: number} {
-	const totalWidth = widths.reduce((a, b) => a + b, 0);
-	const cursorBlockWidth = cursorOffset >= chars.length ? 1 : 0;
-
-	if (totalWidth + cursorBlockWidth <= availableWidth) {
-		return {startIdx: 0, endIdx: chars.length};
+): Array<{startIdx: number; endIdx: number}> {
+	if (chars.length === 0) {
+		return [{startIdx: 0, endIdx: 0}];
 	}
-
-	// Start with the cursor char (or the end-block space)
-	let usedWidth = cursorBlockWidth;
-	if (cursorOffset < chars.length) {
-		usedWidth += widths[cursorOffset]!;
+	const lines: Array<{startIdx: number; endIdx: number}> = [];
+	let lineStart = 0;
+	let lineWidth = 0;
+	for (let i = 0; i < chars.length; i++) {
+		const w = widths[i]!;
+		if (lineWidth + w > availableWidth && lineWidth > 0) {
+			lines.push({startIdx: lineStart, endIdx: i});
+			lineStart = i;
+			lineWidth = 0;
+		}
+		lineWidth += w;
 	}
-
-	// Walk backward from cursor to fill viewport
-	let startIdx = cursorOffset;
-	for (let i = cursorOffset - 1; i >= 0; i--) {
-		if (usedWidth + widths[i]! > availableWidth) break;
-		usedWidth += widths[i]!;
-		startIdx = i;
-	}
-
-	// Walk forward past cursor to fill remaining space
-	let endIdx = Math.min(cursorOffset + 1, chars.length);
-	for (let i = endIdx; i < chars.length; i++) {
-		if (usedWidth + widths[i]! > availableWidth) break;
-		usedWidth += widths[i]!;
-		endIdx = i + 1;
-	}
-
-	return {startIdx, endIdx};
+	lines.push({startIdx: lineStart, endIdx: chars.length});
+	return lines;
 }
 
 /** A render segment with text content and optional styling. */
@@ -343,20 +323,29 @@ export default function ScrollableTextInput({
 
 	const chars = toChars(draftValue);
 	const widths = chars.map((c) => stringWidth(c));
-	const {startIdx, endIdx} = computeViewport(
-		chars,
-		widths,
-		cursorOffset,
-		safeWidth,
-	);
+	const wrappedLines = computeWrappedLines(chars, widths, safeWidth);
 	const tokenized = tokenize(draftValue);
-	const viewportSegments = buildViewportSegments(chars, startIdx, endIdx, cursorOffset, focus, tokenized, accentColor);
 
 	return (
-		<Text>
-			{viewportSegments.map((seg, i) => (
-				<Text key={i} color={seg.color} inverse={seg.inverse}>{seg.text}</Text>
-			))}
-		</Text>
+		<Box flexDirection="column">
+			{wrappedLines.map((line, lineIdx) => {
+				const segments = buildViewportSegments(
+					chars,
+					line.startIdx,
+					line.endIdx,
+					cursorOffset,
+					focus,
+					tokenized,
+					accentColor,
+				);
+				return (
+					<Text key={lineIdx}>
+						{segments.map((seg, i) => (
+							<Text key={i} color={seg.color} inverse={seg.inverse}>{seg.text}</Text>
+						))}
+					</Text>
+				);
+			})}
+		</Box>
 	);
 }

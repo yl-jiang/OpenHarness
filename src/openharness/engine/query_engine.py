@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from openharness.api.client import SupportsStreamingMessages
 from openharness.config.settings import Settings
@@ -55,6 +56,40 @@ _MAX_CONSECUTIVE_SILENT_STOPS = 1
 _MAX_AUTO_CONTINUE_ABSOLUTE = 5
 
 logger = get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class QueryTurnCheckpoint:
+    """Rollback snapshot for one in-flight user turn."""
+
+    messages: list[ConversationMessage]
+    export_messages: list[ConversationMessage]
+    system_prompt: str
+    model: str
+    max_turns: int | None
+    tool_metadata: dict[str, object]
+
+
+def _clone_message_list(messages: list[ConversationMessage]) -> list[ConversationMessage]:
+    return [message.model_copy(deep=True) for message in messages]
+
+
+def _clone_turn_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _clone_turn_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_clone_turn_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_clone_turn_value(item) for item in value)
+    if isinstance(value, set):
+        return {_clone_turn_value(item) for item in value}
+    model_copy = getattr(value, "model_copy", None)
+    if callable(model_copy):
+        try:
+            return model_copy(deep=True)
+        except TypeError:
+            pass
+    return value
 
 
 class QueryEngine:
@@ -180,6 +215,54 @@ class QueryEngine:
     def total_usage(self):
         """Return the total usage across all turns."""
         return self._cost_tracker.total
+
+    def _turn_private_metadata_keys(self) -> set[str]:
+        """Return ephemeral per-turn metadata stored under private ``_...`` keys."""
+
+        return {key for key in self._tool_metadata if key.startswith("_")}
+
+    def _turn_checkpoint_metadata_keys(self) -> set[str]:
+        """Return all metadata keys that should roll back with the current turn."""
+
+        explicit_turn_keys = {key.value for key in ToolMetadataKey.turn_checkpoint_keys()}
+        private_turn_keys = self._turn_private_metadata_keys()
+        return explicit_turn_keys | private_turn_keys
+
+    def capture_turn_checkpoint(self) -> QueryTurnCheckpoint:
+        """Capture the rollback state for the current user turn.
+
+        Cancellation should discard turn-local conversational state without
+        disturbing long-lived runtime handles stored in ``tool_metadata``.
+        """
+
+        metadata_keys = self._turn_checkpoint_metadata_keys()
+        return QueryTurnCheckpoint(
+            messages=_clone_message_list(self._messages),
+            export_messages=_clone_message_list(self._export_messages),
+            system_prompt=self._system_prompt,
+            model=self._model,
+            max_turns=self._max_turns,
+            tool_metadata={
+                key: _clone_turn_value(self._tool_metadata[key])
+                for key in metadata_keys
+                if key in self._tool_metadata
+            },
+        )
+
+    def restore_turn_checkpoint(self, checkpoint: QueryTurnCheckpoint) -> None:
+        """Restore a previously captured turn checkpoint."""
+
+        self._messages = _clone_message_list(checkpoint.messages)
+        self._export_messages = _clone_message_list(checkpoint.export_messages)
+        self._system_prompt = checkpoint.system_prompt
+        self._model = checkpoint.model
+        self._max_turns = checkpoint.max_turns
+
+        turn_scoped_keys = self._turn_checkpoint_metadata_keys()
+        for key in turn_scoped_keys:
+            self._tool_metadata.pop(key, None)
+        for key, value in checkpoint.tool_metadata.items():
+            self._tool_metadata[key] = _clone_turn_value(value)
 
     def clear(self) -> None:
         """Clear the in-memory conversation history."""
