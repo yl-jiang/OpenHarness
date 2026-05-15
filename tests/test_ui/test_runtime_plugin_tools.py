@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
 
 from openharness.engine.types import ToolMetadataKey
+from openharness.swarm.agent_run_context import (
+    AGENT_RUN_CONTEXT_ENV_VAR,
+    AgentRunContext,
+    ORCHESTRATION_TOOL_NAMES,
+)
 from openharness.ui.runtime import _sync_runtime_tool_metadata
 from openharness.ui.runtime import build_runtime, close_runtime
 
@@ -106,6 +112,65 @@ async def test_build_runtime_logs_session_mode_source(tmp_path: Path, monkeypatc
         assert mode_event["session_mode"] == "coordinator"
         assert mode_event["session_mode_source"] == "env"
         assert mode_event["coordinator_env_value"] == "1"
+    finally:
+        await close_runtime(bundle)
+
+
+@pytest.mark.asyncio
+async def test_build_runtime_hides_orchestration_tools_for_leaf_child(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    root = AgentRunContext.root("root-session")
+    _, child = root.spawn_child(agent_profile="worker")
+    monkeypatch.setenv(AGENT_RUN_CONTEXT_ENV_VAR, child.to_env_payload())
+
+    bundle = await build_runtime(cwd=str(tmp_path), api_client=_StaticApiClient())
+    try:
+        for tool_name in ORCHESTRATION_TOOL_NAMES:
+            assert bundle.tool_registry.get(tool_name) is None
+        runtime_context = bundle.engine.tool_metadata[ToolMetadataKey.AGENT_RUN_CONTEXT.value]
+        assert runtime_context["lineage_depth"] == 1
+        assert runtime_context["parent_session_id"] == "root-session"
+        assert runtime_context["root_session_id"] == "root-session"
+        assert runtime_context["orchestration_allowed"] is False
+    finally:
+        await close_runtime(bundle)
+
+
+@pytest.mark.asyncio
+async def test_build_runtime_uses_settings_max_children_for_primary_context(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+
+    from openharness.config.settings import Settings
+
+    monkeypatch.setattr("openharness.ui.runtime.load_settings", lambda: Settings(max_children=1))
+
+    bundle = await build_runtime(cwd=str(tmp_path), api_client=_StaticApiClient())
+    try:
+        runtime_context = bundle.engine.tool_metadata[ToolMetadataKey.AGENT_RUN_CONTEXT.value]
+        assert runtime_context["session_role"] == "primary"
+        assert runtime_context["max_children"] == 1
+        assert runtime_context["orchestration_allowed"] is True
+    finally:
+        await close_runtime(bundle)
+
+
+@pytest.mark.asyncio
+async def test_build_runtime_supports_infinite_max_children_from_settings_file(
+    tmp_path: Path, monkeypatch
+):
+    config_dir = tmp_path / "config"
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(config_dir))
+    config_dir.mkdir(parents=True)
+    (config_dir / "settings.json").write_text(
+        json.dumps({"max_children": "infinity"}),
+        encoding="utf-8",
+    )
+
+    bundle = await build_runtime(cwd=str(tmp_path), api_client=_StaticApiClient())
+    try:
+        runtime_context = bundle.engine.tool_metadata[ToolMetadataKey.AGENT_RUN_CONTEXT.value]
+        assert math.isinf(runtime_context["max_children"])
+        assert runtime_context["orchestration_allowed"] is True
     finally:
         await close_runtime(bundle)
 

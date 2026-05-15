@@ -68,6 +68,8 @@ class SubprocessBackend:
             base_url=config.base_url,
             provider=config.provider,
         )
+        if config.extra_env:
+            extra_env.update(config.extra_env)
         trace_session_id = config.session_id or config.parent_session_id or None
         logger.event(
             "subprocess_backend_spawn_start",
@@ -89,15 +91,12 @@ class SubprocessBackend:
 
         command = config.command
         if command is None:
-            # Build environment export prefix for shell invocation
-            env_prefix = " ".join(f"{k}={v!r}" for k, v in extra_env.items())
-
             teammate_cmd = get_teammate_command()
             if teammate_cmd.endswith("python") or teammate_cmd.endswith("python3") or "/python" in teammate_cmd:
                 cmd_parts = [teammate_cmd, "-m", "openharness", "--task-worker"] + flags
             else:
                 cmd_parts = [teammate_cmd, "--task-worker"] + flags
-            command = f"{env_prefix} {' '.join(cmd_parts)}" if env_prefix else " ".join(cmd_parts)
+            command = " ".join(cmd_parts)
             logger.event(
                 "subprocess_backend_command_built",
                 session_id=trace_session_id,
@@ -116,6 +115,7 @@ class SubprocessBackend:
                 task_type=config.task_type,
                 model=config.model,
                 command=command,
+                env=extra_env,
             )
         except Exception as exc:
             logger.exception(

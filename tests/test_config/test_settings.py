@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from openharness.config.settings import (
     strip_ansi_escape_sequences,
     _apply_env_overrides,
 )
+from openharness.swarm.agent_run_context import DEFAULT_PRIMARY_MAX_CHILDREN
 
 
 class TestSettings:
@@ -28,6 +30,7 @@ class TestSettings:
         assert s.max_tokens == 8192
         assert s.timeout == 300.0
         assert s.max_turns == 200
+        assert s.max_children == DEFAULT_PRIMARY_MAX_CHILDREN
         assert s.fast_mode is False
         assert s.permission.mode == "default"
         assert s.sandbox.enabled is False
@@ -142,12 +145,36 @@ class TestLoadSaveSettings:
         monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
         monkeypatch.delenv("OPENHARNESS_MODEL", raising=False)
         path = tmp_path / "settings.json"
-        path.write_text(json.dumps({"model": "claude-opus-4-20250514", "verbose": True, "fast_mode": True}))
+        path.write_text(
+            json.dumps(
+                {
+                    "model": "claude-opus-4-20250514",
+                    "verbose": True,
+                    "fast_mode": True,
+                    "max_children": 3,
+                }
+            )
+        )
         s = load_settings(path)
         assert s.model == "claude-opus-4-20250514"
         assert s.verbose is True
         assert s.fast_mode is True
+        assert s.max_children == 3
         assert s.api_key == ""  # default preserved
+
+    def test_load_existing_file_supports_infinite_max_children(self, tmp_path: Path, monkeypatch):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+        monkeypatch.delenv("OPENHARNESS_MODEL", raising=False)
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps({"max_children": "infinity"}))
+
+        s = load_settings(path)
+
+        assert math.isinf(s.max_children)
 
     def test_save_and_load_roundtrip(self, tmp_path: Path, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -157,12 +184,36 @@ class TestLoadSaveSettings:
         monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
         monkeypatch.delenv("OPENHARNESS_MODEL", raising=False)
         path = tmp_path / "settings.json"
-        original = Settings(api_key="sk-roundtrip", model="claude-opus-4-20250514", verbose=True)
+        original = Settings(
+            api_key="sk-roundtrip",
+            model="claude-opus-4-20250514",
+            verbose=True,
+            max_children=5,
+        )
         save_settings(original, path)
         loaded = load_settings(path)
         assert loaded.api_key == original.api_key
         assert loaded.model == original.model
         assert loaded.verbose == original.verbose
+        assert loaded.max_children == original.max_children
+
+    def test_save_and_load_roundtrip_preserves_infinite_max_children(
+        self, tmp_path: Path, monkeypatch
+    ):
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("ANTHROPIC_BASE_URL", raising=False)
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+        monkeypatch.delenv("OPENHARNESS_MODEL", raising=False)
+        path = tmp_path / "settings.json"
+        original = Settings(max_children=math.inf)
+
+        save_settings(original, path)
+        loaded = load_settings(path)
+
+        assert '"max_children": "infinity"' in path.read_text(encoding="utf-8")
+        assert math.isinf(loaded.max_children)
 
     def test_load_migrates_flat_provider_settings_to_profile(self, tmp_path: Path):
         path = tmp_path / "settings.json"

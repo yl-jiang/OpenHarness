@@ -9,6 +9,8 @@ from pathlib import Path
 import pytest
 
 from openharness.coordinator.coordinator_mode import get_team_registry
+from openharness.engine.types import ToolMetadataKey
+from openharness.swarm.agent_run_context import AgentRunContext
 from openharness.tasks import get_task_manager
 from openharness.tools.agent_tool import AgentTool, AgentToolInput, _resolve_spawn_model
 from openharness.tools.base import ToolExecutionContext
@@ -61,7 +63,14 @@ async def test_task_create_and_output_tool(tmp_path: Path, monkeypatch):
 @pytest.mark.asyncio
 async def test_task_create_local_agent_uses_compatibility_spawn_path(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
-    context = ToolExecutionContext(cwd=tmp_path)
+    root_context = AgentRunContext.root("root-session")
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={
+            "session_id": "root-session",
+            ToolMetadataKey.AGENT_RUN_CONTEXT.value: root_context.to_metadata(),
+        },
+    )
 
     create_result = await TaskCreateTool().execute(
         TaskCreateToolInput(
@@ -86,6 +95,10 @@ async def test_task_create_local_agent_uses_compatibility_spawn_path(tmp_path: P
     assert task.description == "compat agent"
     assert task.metadata["spawn_entrypoint"] == "task_create"
     assert task.metadata["spawn_api"] == "compatibility"
+    assert task.metadata["agent_parent_session_id"] == "root-session"
+    assert task.metadata["agent_root_session_id"] == "root-session"
+    assert task.metadata["agent_lineage_depth"] == "1"
+    assert context.metadata[ToolMetadataKey.AGENT_RUN_CONTEXT.value]["spawned_children"] == 1
 
     for _ in range(80):
         output_result = await TaskOutputTool().execute(
@@ -222,6 +235,60 @@ async def test_agent_tool_uses_subprocess_backend_and_task_is_pollable(
 
 
 @pytest.mark.asyncio
+async def test_agent_tool_blocks_nested_spawn_when_session_is_leaf(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    root = AgentRunContext.root("root-session")
+    _, child = root.spawn_child(agent_profile="worker")
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={
+            "session_id": "child-session",
+            ToolMetadataKey.AGENT_RUN_CONTEXT.value: child.materialize_for_session("child-session").to_metadata(),
+        },
+    )
+
+    result = await AgentTool().execute(
+        AgentToolInput(
+            description="nested spawn should fail",
+            prompt="hello",
+            subagent_type="worker",
+            command='python -u -c "import sys; print(sys.stdin.readline().strip())"',
+        ),
+        context,
+    )
+
+    assert result.is_error is True
+    assert "leaf worker" in result.output
+
+
+@pytest.mark.asyncio
+async def test_task_create_local_agent_blocks_nested_spawn_when_session_is_leaf(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    root = AgentRunContext.root("root-session")
+    _, child = root.spawn_child(agent_profile="worker")
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={
+            "session_id": "child-session",
+            ToolMetadataKey.AGENT_RUN_CONTEXT.value: child.materialize_for_session("child-session").to_metadata(),
+        },
+    )
+
+    result = await TaskCreateTool().execute(
+        TaskCreateToolInput(
+            type="local_agent",
+            description="compat nested spawn should fail",
+            prompt="hello",
+            command='python -u -c "import sys; print(sys.stdin.readline().strip())"',
+        ),
+        context,
+    )
+
+    assert result.is_error is True
+    assert "leaf worker" in result.output
+
+
+@pytest.mark.asyncio
 async def test_send_message_swarm_path_uses_subprocess_backend(
     tmp_path: Path, monkeypatch
 ):
@@ -264,7 +331,14 @@ async def test_send_message_swarm_path_uses_subprocess_backend(
 async def test_agent_tool_creates_missing_team_when_team_argument_is_provided(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
     get_team_registry()._teams.clear()
-    context = ToolExecutionContext(cwd=tmp_path)
+    root_context = AgentRunContext.root("root-session")
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={
+            "session_id": "root-session",
+            ToolMetadataKey.AGENT_RUN_CONTEXT.value: root_context.to_metadata(),
+        },
+    )
 
     result = await AgentTool().execute(
         AgentToolInput(
@@ -286,7 +360,14 @@ async def test_agent_tool_creates_missing_team_when_team_argument_is_provided(tm
 @pytest.mark.asyncio
 async def test_agent_tool_supports_remote_and_teammate_modes(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
-    context = ToolExecutionContext(cwd=tmp_path)
+    root_context = AgentRunContext.root("root-session")
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={
+            "session_id": "root-session",
+            ToolMetadataKey.AGENT_RUN_CONTEXT.value: root_context.to_metadata(),
+        },
+    )
 
     for i, mode in enumerate(("remote_agent", "in_process_teammate")):
         result = await AgentTool().execute(

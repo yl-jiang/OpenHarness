@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable
+from uuid import uuid4
 
 from openharness.api.client import AnthropicApiClient, SupportsStreamingMessages
 from openharness.api.codex_client import CodexApiClient
@@ -49,6 +50,12 @@ from openharness.skills.loader import apply_skill_path_rules
 from openharness.ui.shell_dispatcher import ShellCommandDispatcher
 from openharness.state import AppState, AppStateStore
 from openharness.services.session_backend import DEFAULT_SESSION_BACKEND, SessionBackend
+from openharness.swarm.agent_run_context import (
+    AgentRunContext,
+    apply_agent_run_context,
+    apply_orchestration_tool_policy,
+    load_agent_run_context_from_env,
+)
 from openharness.tools import ToolRegistry, create_default_tool_registry
 from openharness.tools.todo_tool import TodoStore
 from openharness.keybindings import load_keybindings
@@ -336,6 +343,11 @@ async def build_runtime(
     }
     settings = load_settings().merge_cli_overrides(**settings_overrides)
     cwd = str(Path(cwd).expanduser().resolve()) if cwd else str(Path.cwd())
+    session_id = uuid4().hex[:12]
+    agent_run_context = load_agent_run_context_from_env(session_id=session_id) or AgentRunContext.root(
+        session_id,
+        max_children=settings.max_children,
+    )
     normalized_skill_dirs = tuple(str(Path(path).expanduser().resolve()) for path in (extra_skill_dirs or ()))
     normalized_plugin_roots = tuple(str(Path(path).expanduser().resolve()) for path in (extra_plugin_roots or ()))
     plugins = load_plugins(settings, cwd, extra_roots=normalized_plugin_roots)
@@ -350,6 +362,7 @@ async def build_runtime(
         if plugin.enabled and plugin.tools:
             for tool in plugin.tools:
                 tool_registry.register(tool)
+    apply_orchestration_tool_policy(tool_registry, agent_run_context)
     # Apply whitelist first, then blacklist
     if allowed_tools is not None and allowed_tools != ["*"]:
         allowed_set = set(allowed_tools)
@@ -412,9 +425,6 @@ async def build_runtime(
         extra_plugin_roots=normalized_plugin_roots,
         include_project_memory=include_project_memory,
     )
-    from uuid import uuid4
-
-    session_id = uuid4().hex[:12]
     logger.event(
         "runtime_session_mode_resolved",
         session_id=session_id,
@@ -450,6 +460,7 @@ async def build_runtime(
         settings=settings,
         provider_name=provider.name,
     )
+    apply_agent_run_context(restored_metadata, agent_run_context)
 
     apply_skill_path_rules(
         settings.permission,

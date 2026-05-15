@@ -327,6 +327,9 @@ class TeammateSpawnConfig:
     task_type: Literal["local_agent", "remote_agent", "in_process_teammate"] = "local_agent"
     """Background task type recorded for subprocess-backed teammates."""
 
+    extra_env: dict[str, str] = field(default_factory=dict)
+    """Additional environment variables for the spawned teammate process."""
+
 
 # ---------------------------------------------------------------------------
 # Spawn result & messaging

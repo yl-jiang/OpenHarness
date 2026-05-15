@@ -10,13 +10,14 @@ Settings are resolved with the following precedence (highest first):
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from openharness.hooks.schemas import HookDefinition
 from openharness.mcp.types import McpServerConfig
@@ -27,6 +28,7 @@ from openharness.utils.fs import atomic_write_text
 
 # ANSI escape sequence pattern
 _ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
+_DEFAULT_MAX_CHILDREN = 16
 
 
 def strip_ansi_escape_sequences(text: str) -> str:
@@ -38,6 +40,52 @@ def strip_ansi_escape_sequences(text: str) -> str:
     if not text:
         return text
     return _ANSI_ESCAPE_PATTERN.sub("", text)
+
+
+def _normalize_max_children(value: object) -> int | float:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "infinity":
+            return math.inf
+    if isinstance(value, bool):
+        raise ValueError("max_children must be a non-negative integer or 'infinity'")
+    if isinstance(value, int):
+        if value < 0:
+            raise ValueError("max_children must be a non-negative integer or 'infinity'")
+        return value
+    if isinstance(value, float):
+        if math.isinf(value):
+            if value > 0:
+                return math.inf
+            raise ValueError("max_children must be a non-negative integer or 'infinity'")
+        if not value.is_integer() or value < 0:
+            raise ValueError("max_children must be a non-negative integer or 'infinity'")
+        return int(value)
+    try:
+        normalized_value = int(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("max_children must be a non-negative integer or 'infinity'") from exc
+    if normalized_value < 0:
+        raise ValueError("max_children must be a non-negative integer or 'infinity'")
+    return normalized_value
+
+
+def _normalize_loaded_settings_payload(raw: object) -> object:
+    if not isinstance(raw, dict):
+        return raw
+    normalized = dict(raw)
+    if isinstance(normalized.get("max_children"), str):
+        value = normalized["max_children"].strip().lower()
+        if value == "infinity":
+            normalized["max_children"] = math.inf
+    return normalized
+
+
+def _dump_settings_payload(settings: "Settings") -> dict[str, Any]:
+    payload = settings.model_dump(mode="json")
+    if math.isinf(settings.max_children):
+        payload["max_children"] = "infinity"
+    return payload
 
 
 class PathRuleConfig(BaseModel):
@@ -560,6 +608,7 @@ class Settings(BaseModel):
     active_profile: str = "deepseek"
     profiles: dict[str, ProviderProfile] = Field(default_factory=default_provider_profiles)
     max_turns: int = 200
+    max_children: int | float = Field(default=_DEFAULT_MAX_CHILDREN)
 
     # Behavior
     system_prompt: str | None = None
@@ -591,6 +640,11 @@ class Settings(BaseModel):
 
     # Image generation model configuration
     image_generation: ImageGenerationConfig = Field(default_factory=ImageGenerationConfig)
+
+    @field_validator("max_children", mode="before")
+    @classmethod
+    def _validate_max_children(cls, value: object) -> int | float:
+        return _normalize_max_children(value)
 
     def merged_profiles(self) -> dict[str, ProviderProfile]:
         """Return the saved profiles merged over the built-in catalog."""
@@ -1003,7 +1057,7 @@ def load_settings(config_path: Path | None = None) -> Settings:
         config_path = get_config_file_path()
 
     if config_path.exists():
-        raw = json.loads(config_path.read_text(encoding="utf-8"))
+        raw = _normalize_loaded_settings_payload(json.loads(config_path.read_text(encoding="utf-8")))
         settings = Settings.model_validate(raw)
         env_profile = os.environ.get("OPENHARNESS_PROFILE")
         if env_profile:
@@ -1044,5 +1098,5 @@ def save_settings(settings: Settings, config_path: Path | None = None) -> None:
     with exclusive_file_lock(lock_path):
         atomic_write_text(
             config_path,
-            settings.model_dump_json(indent=2) + "\n",
+            json.dumps(_dump_settings_payload(settings), indent=2) + "\n",
         )
