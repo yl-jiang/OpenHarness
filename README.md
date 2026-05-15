@@ -496,7 +496,7 @@ while True:
 
 The model decides **what** to do. The harness handles **how** — safely, efficiently, with full observability.
 
-For background delegation, prefer the `agent` tool as the managed subagent API. `task_create(local_agent)` remains available as a low-level compatibility path, while `task_create(local_bash)` stays the generic background shell entry point.
+For background delegation, prefer the `agent` tool as the managed subagent API. `task_create(local_agent)` remains available as a low-level compatibility path, while `task_create(local_bash)` stays the generic background shell entry point. Spawned child sessions are leaf workers by default, so nested delegation via `agent` or `task_create(local_agent)` is blocked unless the caller has explicit orchestration budget.
 
 ### Harness Flow
 
