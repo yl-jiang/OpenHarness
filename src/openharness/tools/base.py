@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import warnings
 from abc import ABC, abstractmethod
@@ -25,6 +26,7 @@ class ToolExecutionContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     hook_executor: HookExecutor | None = None
     approval_coordinator: ApprovalCoordinator | None = None
+    spawn_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 @dataclass(frozen=True)

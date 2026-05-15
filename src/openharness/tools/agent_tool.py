@@ -10,6 +10,14 @@ from openharness.coordinator.agent_definitions import get_agent_definition
 from openharness.coordinator.coordinator_mode import get_team_registry
 from openharness.engine.types import ToolMetadataKey
 from openharness.hooks import HookEvent
+from openharness.swarm.agent_run_context import (
+    AGENT_RUN_CONTEXT_ENV_VAR,
+    AgentRunContext,
+    DelegationError,
+    apply_agent_run_context,
+    build_tool_metadata_updates,
+    resolve_agent_run_context,
+)
 from openharness.swarm.registry import get_backend_registry
 from openharness.swarm.types import SpawnResult, TeammateSpawnConfig
 from openharness.tasks import get_task_manager
@@ -54,6 +62,7 @@ async def spawn_background_agent(
     team: str | None = None,
     mode: str = "local_agent",
     model: str | None = None,
+    child_run_context: AgentRunContext | None = None,
 ) -> SpawnResult:
     """Spawn a subprocess-backed agent task using the shared delegation path."""
     if mode not in _ALLOWED_AGENT_MODES:
@@ -76,7 +85,7 @@ async def spawn_background_agent(
         team=team_name,
         prompt=prompt,
         cwd=str(context.cwd),
-        parent_session_id="main",
+        parent_session_id=_context_value(context, "session_id") or "main",
         model=resolved_model,
         api_format=_context_value(context, ToolMetadataKey.CURRENT_API_FORMAT),
         base_url=_context_value(context, ToolMetadataKey.CURRENT_BASE_URL),
@@ -88,6 +97,11 @@ async def spawn_background_agent(
         allowed_tools=agent_def.tools if agent_def else None,
         session_id=_context_value(context, "session_id"),
         task_type=mode,
+        extra_env=(
+            {AGENT_RUN_CONTEXT_ENV_VAR: child_run_context.to_env_payload()}
+            if child_run_context is not None
+            else {}
+        ),
     )
 
     # Use the subprocess backend so spawned agents are registered in
@@ -128,6 +142,32 @@ class AgentTool(BaseTool):
         "Returns the agent_id and task_id immediately; poll with task_get/task_output."
     )
     input_model = AgentToolInput
+
+    @staticmethod
+    def _annotate_spawned_task(
+        task_id: str,
+        *,
+        child_run_context: AgentRunContext,
+        spawn_entrypoint: str,
+        spawn_api: str,
+    ) -> None:
+        task = get_task_manager().get_task(task_id)
+        if task is None:
+            return
+        task.metadata["spawn_entrypoint"] = spawn_entrypoint
+        task.metadata["spawn_api"] = spawn_api
+        task.metadata["agent_run_id"] = child_run_context.run_id
+        task.metadata["agent_root_run_id"] = child_run_context.root_run_id
+        task.metadata["agent_root_session_id"] = child_run_context.root_session_id
+        task.metadata["agent_lineage_depth"] = str(child_run_context.lineage_depth)
+        task.metadata["agent_session_role"] = child_run_context.session_role
+        task.metadata["agent_orchestration_allowed"] = "1" if child_run_context.orchestration_allowed else "0"
+        if child_run_context.parent_run_id:
+            task.metadata["agent_parent_run_id"] = child_run_context.parent_run_id
+        if child_run_context.parent_session_id:
+            task.metadata["agent_parent_session_id"] = child_run_context.parent_session_id
+        if child_run_context.agent_profile:
+            task.metadata["agent_profile"] = child_run_context.agent_profile
 
     def to_api_schema(self) -> dict[str, Any]:
         return {
@@ -205,31 +245,46 @@ class AgentTool(BaseTool):
         team = arguments.team or "default"
         agent_name = arguments.subagent_type or "agent"
 
-        try:
-            result = await spawn_background_agent(
-                context=context,
-                prompt=arguments.prompt,
-                subagent_type=arguments.subagent_type,
-                command=arguments.command,
-                team=arguments.team,
-                mode=arguments.mode,
-            )
-        except Exception as exc:
-            logger.exception(
-                "Failed to spawn agent",
-                agent_name=agent_name,
-                team=team,
-                session_id=session_id,
-            )
-            logger.event(
-                "agent_tool_spawn_failed",
-                session_id=session_id,
-                agent_name=agent_name,
-                team=team,
-                error_type=type(exc).__name__,
-                error=str(exc),
-            )
-            return ToolResult(output=str(exc), is_error=True)
+        async with context.spawn_lock:
+            current_run_context = resolve_agent_run_context(context.metadata, session_id=session_id)
+            try:
+                updated_parent_run, child_run_context = current_run_context.spawn_child(
+                    agent_profile=arguments.subagent_type
+                )
+                result = await spawn_background_agent(
+                    context=context,
+                    prompt=arguments.prompt,
+                    subagent_type=arguments.subagent_type,
+                    command=arguments.command,
+                    team=arguments.team,
+                    mode=arguments.mode,
+                    child_run_context=child_run_context,
+                )
+            except DelegationError as exc:
+                return ToolResult(output=str(exc), is_error=True)
+            except Exception as exc:
+                logger.exception(
+                    "Failed to spawn agent",
+                    agent_name=agent_name,
+                    team=team,
+                    session_id=session_id,
+                )
+                logger.event(
+                    "agent_tool_spawn_failed",
+                    session_id=session_id,
+                    agent_name=agent_name,
+                    team=team,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+                return ToolResult(output=str(exc), is_error=True)
+            apply_agent_run_context(context.metadata, updated_parent_run)
+        self._annotate_spawned_task(
+            result.task_id,
+            child_run_context=child_run_context,
+            spawn_entrypoint="agent",
+            spawn_api="managed",
+        )
 
         if arguments.team:
             registry = get_team_registry()
@@ -285,5 +340,18 @@ class AgentTool(BaseTool):
             output=(
                 f"Spawned agent {result.agent_id} "
                 f"(task_id={result.task_id}, backend={result.backend_type})"
-            )
+            ),
+            metadata={
+                "agent_id": result.agent_id,
+                "task_id": result.task_id,
+                "backend_type": result.backend_type,
+                "lineage_depth": child_run_context.lineage_depth,
+                "parent_session_id": child_run_context.parent_session_id or "",
+                "root_session_id": child_run_context.root_session_id,
+                "run_id": child_run_context.run_id,
+                "root_run_id": child_run_context.root_run_id,
+                "session_role": child_run_context.session_role,
+                "agent_profile": child_run_context.agent_profile or "",
+                **build_tool_metadata_updates(updated_parent_run),
+            },
         )

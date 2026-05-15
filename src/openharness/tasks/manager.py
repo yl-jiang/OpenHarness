@@ -179,6 +179,7 @@ class BackgroundTaskManager:
         model: str | None = None,
         api_key: str | None = None,
         command: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> TaskRecord:
         """Start a local agent task as a subprocess."""
         command_override_supplied = command is not None
@@ -200,6 +201,7 @@ class BackgroundTaskManager:
             description=description,
             cwd=cwd,
             task_type=task_type,
+            env=env,
         )
         logger.event(
             "task_manager_create_agent_task",

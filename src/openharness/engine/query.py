@@ -50,6 +50,7 @@ MAX_TRACKED_USER_GOALS = 5
 MAX_TRACKED_ACTIVE_ARTIFACTS = 8
 MAX_TRACKED_VERIFIED_WORK = 10
 MAX_TRACKED_TOOL_NAME_REPAIRS = 8
+_TOOL_METADATA_UPDATES_KEY = "tool_metadata_updates"
 
 INTERNAL_TOOL_NAME_REPAIR_PROMPT_PREFIX = "<openharness-internal:tool-name-repair>"
 INTERNAL_DONE_REMINDER_PREFIX = "<openharness-internal:done-reminder>"
@@ -382,6 +383,20 @@ def _remember_async_agent_task(
         "notification_sent": False,
         "spawned_at": time.time(),
     }
+    if isinstance(result_metadata, dict):
+        for key in (
+            "backend_type",
+            "lineage_depth",
+            "parent_session_id",
+            "root_session_id",
+            "run_id",
+            "root_run_id",
+            "session_role",
+            "agent_profile",
+        ):
+            value = result_metadata.get(key)
+            if value not in (None, ""):
+                entry[key] = value
     bucket[:] = [
         existing
         for existing in bucket
@@ -430,6 +445,11 @@ def _record_tool_carryover(
 ) -> None:
     if is_error:
         return
+    if isinstance(context.tool_metadata, dict) and isinstance(tool_result_metadata, dict):
+        updates = tool_result_metadata.get(_TOOL_METADATA_UPDATES_KEY)
+        if isinstance(updates, dict):
+            for key, value in updates.items():
+                context.tool_metadata[key] = value
     _remember_async_agent_task(
         context.tool_metadata,
         tool_name=tool_name,

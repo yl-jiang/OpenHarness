@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Added
 
+- `settings.json` now supports `max_children` to configure the primary session's total managed subagent/background-agent child budget instead of always using the built-in default of 16, and accepts `"infinity"` for an unbounded budget.
 - Shell injection support in the React TUI and skills:
   - Pressing **bare `!`** in the chat composer (or typing `!cmd`) opens a one-shot shell prompt. The command is dispatched to the built-in `bash` tool with `origin="user_shell"`, runs under the existing permission model, and its output is injected back into the conversation as a tool result the model can read.
   - Type `exit` / `quit` (or press `Esc` on an empty buffer) to leave shell mode.
@@ -38,6 +39,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- Managed subagents now carry a structured agent-run context with real parent/root session lineage, and child workers are leaf by default: nested `agent` / `task_create(local_agent)` delegation is blocked unless the parent session explicitly has orchestration budget.
 - `write_file` now waits for edit approval before creating missing parent directories, so rejected writes no longer leave empty folders behind.
 - Default app logging now creates a process-stable timestamped file when `OPENHARNESS_LOG_FILE` is unset, avoids redundant startup rotation for those generated files, and still applies retention cleanup across older `openharness*.jsonl` runs.
 - `cron_manager` now keeps create/update/enable operations non-blocking when the scheduler daemon is stopped, while returning an explicit `oh cron start` hint so saved jobs are not mistaken for active scheduling.
