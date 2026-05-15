@@ -554,6 +554,7 @@ async def build_runtime(
             build_runtime_system_prompt(
                 fresh_settings,
                 cwd=cwd,
+                latest_user_prompt=_last_user_text(engine.messages),
                 extra_skill_dirs=normalized_skill_dirs,
                 extra_plugin_roots=normalized_plugin_roots,
                 include_project_memory=include_project_memory,
@@ -748,6 +749,20 @@ def refresh_runtime_client(bundle: RuntimeBundle) -> None:
             default_model=settings.model,
         )
     bundle.engine.set_model(settings.model)
+    refresher = bundle.engine.tool_metadata.get("system_prompt_refresher")
+    if callable(refresher):
+        refresher()
+    else:
+        bundle.engine.set_system_prompt(
+            build_runtime_system_prompt(
+                settings,
+                cwd=bundle.cwd,
+                latest_user_prompt=_last_user_text(bundle.engine.messages),
+                extra_skill_dirs=bundle.extra_skill_dirs,
+                extra_plugin_roots=bundle.extra_plugin_roots,
+                include_project_memory=bundle.include_project_memory,
+            )
+        )
     sync_app_state(bundle)
 
 
