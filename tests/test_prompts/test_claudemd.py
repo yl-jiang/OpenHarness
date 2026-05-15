@@ -68,8 +68,8 @@ def test_build_runtime_system_prompt_caches_identical_inputs(tmp_path: Path, mon
     settings = Settings(memory={"enabled": False})
     calls: list[str | None] = []
 
-    def fake_build_system_prompt(custom_prompt=None, env=None, cwd=None):
-        del env
+    def fake_build_system_prompt(custom_prompt=None, env=None, cwd=None, mode_label=None):
+        del env, mode_label
         calls.append(cwd)
         return f"base prompt for {cwd}"
 
@@ -255,8 +255,8 @@ def test_format_prompt_blocks_debug_aligns_columns() -> None:
         [
             "Runtime prompt blocks:",
             "ID                    CHARS  TOKENS  PRIORITY  SOURCE   CACHEABLE",
-            "tool-use-enforcement     10       2       950  runtime  true",
             "base-system               5       1      1000  system   true",
+            "tool-use-enforcement     10       2       950  runtime  true",
         ]
     )
 
@@ -307,3 +307,64 @@ def test_build_runtime_system_prompt_skips_coordinator_context_when_disabled(tmp
     assert 'subagent_type="worker"' in prompt
     assert "/agents show TASK_ID" in prompt
     assert "Environment" in prompt
+
+
+def test_prompt_block_ordering_system_before_user_content(tmp_path: Path, monkeypatch):
+    """System instructions must appear before user-customizable content (recency bias)."""
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "CLAUDE.md").write_text("my custom rules", encoding="utf-8")
+
+    prompt = build_runtime_system_prompt(
+        Settings(memory={"enabled": False}),
+        cwd=repo,
+        latest_user_prompt="help",
+    )
+
+    # System identity + behavioral rules must come before user project rules.
+    base_pos = prompt.index("OpenHarness")
+    claude_md_pos = prompt.index("my custom rules")
+    assert base_pos < claude_md_pos, "Base system prompt must precede CLAUDE.md content"
+
+    # Conflict-resolution header must be present
+    assert "project-level and personal rules take precedence" in prompt
+
+    # Final Reminder must appear at the very end (after CLAUDE.md)
+    final_pos = prompt.index("Final Reminder")
+    assert final_pos > claude_md_pos, "Final Reminder must come after user project rules"
+
+
+def test_prompt_block_final_reminder_absent_for_compact_profile(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    prompt = build_runtime_system_prompt(
+        Settings(memory={"enabled": False}),
+        cwd=repo,
+        agent_profile="compact",
+    )
+
+    assert "Final Reminder" not in prompt
+
+
+def test_build_runtime_system_prompt_injects_plan_mode_in_preamble(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    plan_prompt = build_runtime_system_prompt(
+        Settings(memory={"enabled": False}, permission={"mode": "plan"}),
+        cwd=repo,
+    )
+    default_prompt = build_runtime_system_prompt(
+        Settings(memory={"enabled": False}),
+        cwd=repo,
+    )
+
+    assert "currently operating in **Plan** mode" in plan_prompt
+    assert "currently operating in **Default** mode" in default_prompt

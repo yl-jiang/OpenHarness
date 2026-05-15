@@ -124,6 +124,7 @@ def build_system_prompt(
     custom_prompt: str | None = None,
     env: EnvironmentInfo | None = None,
     cwd: str | None = None,
+    mode_label: str | None = None,
 ) -> str:
     """Build the complete system prompt.
 
@@ -131,6 +132,8 @@ def build_system_prompt(
         custom_prompt: If provided, replaces the base system prompt entirely.
         env: Pre-built EnvironmentInfo. If None, auto-detects.
         cwd: Working directory override (only used when env is None).
+        mode_label: Optional mode name (e.g. "Plan") injected into the opening
+            sentence for primacy-bias awareness of the current operating mode.
 
     Returns:
         The assembled system prompt string.
@@ -139,6 +142,13 @@ def build_system_prompt(
         env = get_environment_info(cwd=cwd)
 
     base = custom_prompt if custom_prompt is not None else _BASE_SYSTEM_PROMPT
+    if mode_label and custom_prompt is None:
+        # Inject "currently operating in X mode" after the identity sentence.
+        base = base.replace(
+            "You are an interactive agent",
+            f"You are currently operating in **{mode_label}** mode. You are an interactive agent",
+            1,
+        )
     env_section = _format_environment_section(env)
 
     return f"{base}\n\n{env_section}"

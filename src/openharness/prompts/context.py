@@ -25,6 +25,7 @@ from openharness.memory import (
 from openharness.personalization.rules import load_local_rules
 from openharness.prompts.claudemd import discover_claude_md_files, load_claude_md_prompt
 from openharness.services import estimate_tokens
+from openharness.permissions.modes import PermissionMode
 from openharness.prompts.system_prompt import build_system_prompt
 from openharness.skills.loader import discover_project_skill_dirs, get_user_skill_dirs, load_skill_registry
 
@@ -52,6 +53,42 @@ TOOL_USE_ENFORCEMENT_GUIDANCE = (
     "(b) deliver a final result to the user. Responses that only describe intentions "
     "without acting are not acceptable.\n"
 )
+
+# Prepended to user-provided instruction blocks (CLAUDE.md, local rules) to
+# signal the shift from system defaults to user-controlled content and to
+# establish conflict-resolution semantics via recency bias.
+_CONTEXTUAL_INSTRUCTIONS_PREAMBLE = (
+    "---\n"
+    "The following instructions come from the user's project configuration "
+    "and personal rules. In case of conflict with the system defaults above, "
+    "**these project-level and personal rules take precedence**.\n"
+    "---\n\n"
+)
+
+# Repeated at the absolute end of the system prompt (priority 50) so that the
+# most important behavioral constraints benefit from both primacy (base prompt)
+# and recency (final reminder) in the model's attention.
+_FINAL_REMINDER = (
+    "# Final Reminder\n"
+    "Before every response, verify you are following these core rules:\n"
+    "- **Inquiry vs Directive**: if the request is ambiguous, treat as an Inquiry—explain "
+    "and propose, but do NOT modify files or run irreversible commands without explicit confirmation.\n"
+    "- **3-Strike Reset**: if the same fix fails 3 times in a row, stop patching and propose "
+    "a structurally different approach.\n"
+    "- **Confirmation Protocol**: a denied tool call is final for that action—do not re-attempt "
+    "or negotiate.\n"
+    "- **Reversibility check**: before any destructive action (delete files, force-push, drop "
+    "tables), ask the user to confirm.\n"
+    "- **Scope discipline**: fix exactly what was asked. No opportunistic refactors, no "
+    "unsolicited features."
+)
+
+# Maps PermissionMode to the mode label injected into the system prompt preamble.
+_PERMISSION_MODE_LABELS: dict[PermissionMode, str] = {
+    PermissionMode.DEFAULT: "Default",
+    PermissionMode.PLAN: "Plan",
+    PermissionMode.FULL_AUTO: "Auto",
+}
 
 _RUNTIME_SYSTEM_PROMPT_CACHE_SIZE = 32
 _LOCAL_RULES_FILE = Path("~/.openharness/local_rules/rules.md").expanduser()
@@ -262,7 +299,10 @@ def _build_runtime_prompt_blocks_cached(
             PromptBlock(
                 id="base-system",
                 title="Base System Prompt",
-                content=build_system_prompt(cwd=str(cwd)),
+                content=build_system_prompt(
+                    cwd=str(cwd),
+                    mode_label=_PERMISSION_MODE_LABELS.get(settings.permission.mode),
+                ),
                 priority=1000,
                 source="system",
             )
@@ -360,8 +400,8 @@ def _build_runtime_prompt_blocks_cached(
             PromptBlock(
                 id="project-instructions",
                 title="Project Instructions",
-                content=claude_md,
-                priority=800,
+                content=_CONTEXTUAL_INSTRUCTIONS_PREAMBLE + claude_md,
+                priority=200,
                 source="CLAUDE.md",
             )
         )
@@ -372,8 +412,8 @@ def _build_runtime_prompt_blocks_cached(
             PromptBlock(
                 id="local-rules",
                 title="Local Rules",
-                content=local_rules,
-                priority=790,
+                content=_CONTEXTUAL_INSTRUCTIONS_PREAMBLE + local_rules,
+                priority=190,
                 source="local_rules",
             )
         )
@@ -391,7 +431,7 @@ def _build_runtime_prompt_blocks_cached(
                         id=block_id,
                         title=title,
                         content=f"# {title}\n\n```md\n{content[:12000]}\n```",
-                        priority=760,
+                        priority=180,
                         source="project_context",
                     )
                 )
@@ -407,7 +447,7 @@ def _build_runtime_prompt_blocks_cached(
                     id="memory",
                     title="Memory",
                     content=memory_section,
-                    priority=500,
+                    priority=120,
                     source="memory",
                 )
             )
@@ -436,10 +476,21 @@ def _build_runtime_prompt_blocks_cached(
                         id="relevant-memories",
                         title="Relevant Memories",
                         content="\n".join(lines),
-                        priority=480,
+                        priority=110,
                         source="memory",
                     )
                 )
+
+    if profile.include_tool_enforcement and not coordinator_mode:
+        blocks.append(
+            PromptBlock(
+                id="final-reminder",
+                title="Final Reminder",
+                content=_FINAL_REMINDER,
+                priority=50,
+                source="system",
+            )
+        )
 
     return tuple(dedupe_prompt_blocks(blocks))
 
@@ -458,9 +509,14 @@ def dedupe_prompt_blocks(blocks: Iterable[PromptBlock]) -> list[PromptBlock]:
 
 
 def render_prompt_blocks(blocks: Iterable[PromptBlock]) -> str:
-    """Render prompt blocks into the system prompt text sent to the model."""
+    """Render prompt blocks into the system prompt text sent to the model.
 
-    return "\n\n".join(block.content.strip() for block in dedupe_prompt_blocks(blocks))
+    Blocks are sorted by priority (descending) so higher-priority system
+    instructions always appear before lower-priority user-customizable content,
+    regardless of insertion order.
+    """
+    sorted_blocks = sorted(dedupe_prompt_blocks(blocks), key=lambda b: -b.priority)
+    return "\n\n".join(block.content.strip() for block in sorted_blocks)
 
 
 def format_prompt_blocks_debug(blocks: Iterable[PromptBlock]) -> str:
@@ -468,7 +524,7 @@ def format_prompt_blocks_debug(blocks: Iterable[PromptBlock]) -> str:
 
     deduped = sorted(
         dedupe_prompt_blocks(blocks),
-        key=lambda block: (-len(block.content), block.id),
+        key=lambda block: (-block.priority, block.id),
     )
     lines = ["Runtime prompt blocks:"]
     if not deduped:

@@ -95,3 +95,27 @@ def test_build_system_prompt_requires_ask_user_question_for_user_input():
     assert "clarification, confirmation, or a choice" not in prompt
     assert "do not ask in normal assistant text" not in prompt
     assert "decisions needing user input" not in prompt
+
+
+def test_build_system_prompt_injects_mode_label_in_preamble():
+    env = _make_env()
+    default_prompt = build_system_prompt(env=env, mode_label="Default")
+    plan_prompt = build_system_prompt(env=env, mode_label="Plan")
+    no_label_prompt = build_system_prompt(env=env)
+
+    assert "currently operating in **Plan** mode" in plan_prompt
+    assert "currently operating in **Default** mode" in default_prompt
+    assert "You are OpenHarness" in plan_prompt
+    # No mode_label → no injection
+    assert "currently operating in" not in no_label_prompt
+
+
+def test_build_system_prompt_mode_label_ignored_for_custom_prompt():
+    """mode_label must not modify a user-supplied custom prompt."""
+    env = _make_env()
+    prompt = build_system_prompt(
+        custom_prompt="You are a helpful bot. You are an interactive agent.",
+        env=env,
+        mode_label="Plan",
+    )
+    assert "currently operating in" not in prompt
