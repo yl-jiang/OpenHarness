@@ -152,16 +152,22 @@ async function renderInteractivePromptInput({
 	busy = false,
 	initialInput = '',
 	initialExtraInputLines = [],
+	initialTrailingInputLines = [],
 	backgroundTaskCount = 0,
 	animateSpinner,
 	stdoutColumns = 120,
+	vimEnabled = false,
+	initialVimInputMode = 'insert',
 }: {
 	busy?: boolean;
 	initialInput?: string;
 	initialExtraInputLines?: string[];
+	initialTrailingInputLines?: string[];
 	backgroundTaskCount?: number;
 	animateSpinner?: boolean;
 	stdoutColumns?: number;
+	vimEnabled?: boolean;
+	initialVimInputMode?: 'insert' | 'normal';
 } = {}): Promise<{
 	stdin: InkTestStdin;
 	getOutput: () => Promise<string>;
@@ -177,6 +183,8 @@ async function renderInteractivePromptInput({
 	function Host(): React.JSX.Element {
 		const [input, setInput] = useState(initialInput);
 		const [extraInputLines, setExtraInputLines] = useState(initialExtraInputLines);
+		const [trailingInputLines, setTrailingInputLines] = useState(initialTrailingInputLines);
+		const [vimInputMode, setVimInputMode] = useState<'insert' | 'normal'>(initialVimInputMode);
 		const handleInputChange = useCallback((value: string) => {
 			if (!value.includes('\n')) {
 				setInput(value);
@@ -187,6 +195,22 @@ async function renderInteractivePromptInput({
 			setExtraInputLines((prev) => [...prev, ...parts]);
 			setInput(lastPart);
 		}, []);
+		const handleVimOpenLineBelow = useCallback(() => {
+			setExtraInputLines((prev) => [...prev, input]);
+			setInput('');
+		}, [input]);
+		const handleVimOpenLineAbove = useCallback(() => {
+			setTrailingInputLines((prev) => [input, ...prev]);
+			setInput('');
+		}, [input]);
+		const handleBackspaceAtStart = useCallback(() => {
+			if (extraInputLines.length === 0) {
+				return;
+			}
+			const previousLine = extraInputLines[extraInputLines.length - 1] ?? '';
+			setInput(`${previousLine}${input}`);
+			setExtraInputLines(extraInputLines.slice(0, -1));
+		}, [extraInputLines, input]);
 
 		return (
 			<ThemeProvider initialTheme="default">
@@ -196,8 +220,15 @@ async function renderInteractivePromptInput({
 					setInput={handleInputChange}
 					onSubmit={() => {}}
 					extraInputLines={extraInputLines}
+					trailingInputLines={trailingInputLines}
 					hasBackgroundTasks={backgroundTaskCount > 0}
 					animateSpinner={animateSpinner}
+					vimEnabled={vimEnabled}
+					vimInputMode={vimInputMode}
+					onVimInputModeChange={setVimInputMode}
+					onVimOpenLineBelow={handleVimOpenLineBelow}
+					onVimOpenLineAbove={handleVimOpenLineAbove}
+					onBackspaceAtStart={handleBackspaceAtStart}
 				/>
 			</ThemeProvider>
 		);
@@ -462,6 +493,112 @@ test('does not duplicate buffered lines when a paste arrives one char at a time'
 		assert.equal(occurrences(output, 'pre'), 1, `'pre' duplicated:\n${output}`);
 		assert.equal(occurrences(output, 'pasted'), 1, `'pasted' duplicated:\n${output}`);
 		assert.match(output, /> live/);
+	} finally {
+		await prompt.cleanup();
+	}
+});
+
+test('supports vim normal and insert editing in the prompt', async () => {
+	const prompt = await renderInteractivePromptInput({
+		vimEnabled: true,
+		initialVimInputMode: 'normal',
+	});
+	try {
+		prompt.stdin.write('zzz');
+		await nextLoopTurn();
+		let output = extractLastFrame(await prompt.getOutput());
+		assert.doesNotMatch(output, /> z/u);
+		assert.match(output, /vim normal/u);
+
+		prompt.stdin.write('iabc');
+		await nextLoopTurn();
+		output = extractLastFrame(await prompt.getOutput());
+		assert.match(output, /> abc/u);
+		assert.match(output, /vim insert/u);
+
+		prompt.stdin.write('\x1b');
+		await nextLoopTurn();
+		prompt.stdin.write('hx');
+		await nextLoopTurn();
+		output = extractLastFrame(await prompt.getOutput());
+		assert.match(output, /> ab/u);
+		assert.match(output, /vim normal/u);
+	} finally {
+		await prompt.cleanup();
+	}
+});
+
+test('supports vim open-line-below command in the prompt', async () => {
+	const prompt = await renderInteractivePromptInput({
+		vimEnabled: true,
+		initialVimInputMode: 'normal',
+		initialInput: 'tail',
+		initialExtraInputLines: ['head'],
+	});
+	try {
+		prompt.stdin.write('o');
+		await nextLoopTurn();
+		let output = extractLastFrame(await prompt.getOutput());
+		assert.match(output, /head/u);
+		assert.match(output, /> /u);
+		assert.doesNotMatch(output, /> tail/u);
+		assert.match(output, /vim insert/u);
+
+		prompt.stdin.write('body');
+		await nextLoopTurn();
+		output = extractLastFrame(await prompt.getOutput());
+		assert.match(output, /head/u);
+		assert.match(output, /tail/u);
+		assert.match(output, /> body/u);
+	} finally {
+		await prompt.cleanup();
+	}
+});
+
+test('supports vim open-line-above command in the prompt', async () => {
+	const prompt = await renderInteractivePromptInput({
+		vimEnabled: true,
+		initialVimInputMode: 'normal',
+		initialInput: 'tail',
+		initialExtraInputLines: ['head'],
+	});
+	try {
+		prompt.stdin.write('O');
+		await nextLoopTurn();
+		let output = extractLastFrame(await prompt.getOutput());
+		assert.match(output, /head/u);
+		assert.match(output, /tail/u);
+		assert.match(output, /> /u);
+		assert.doesNotMatch(output, /> tail/u);
+		assert.match(output, /vim insert/u);
+
+		prompt.stdin.write('body');
+		await nextLoopTurn();
+		output = extractLastFrame(await prompt.getOutput());
+		assert.match(output, /head/u);
+		assert.match(output, /tail/u);
+		assert.match(output, /> body/u);
+	} finally {
+		await prompt.cleanup();
+	}
+});
+
+test('backspace at the start of the last line pulls the previous multiline content back into the prompt', async () => {
+	const prompt = await renderInteractivePromptInput({
+		initialInput: '',
+		initialExtraInputLines: ['head'],
+	});
+	try {
+		prompt.stdin.write('\b');
+		await nextLoopTurn();
+		let output = extractLastFrame(await prompt.getOutput());
+		assert.match(output, /> head/u);
+		assert.doesNotMatch(output, /\n   head\n/u);
+
+		prompt.stdin.write('\b');
+		await nextLoopTurn();
+		output = extractLastFrame(await prompt.getOutput());
+		assert.match(output, /> hea/u);
 	} finally {
 		await prompt.cleanup();
 	}

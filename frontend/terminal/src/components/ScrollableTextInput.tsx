@@ -10,6 +10,7 @@
 import React, {useEffect, useRef, useState} from 'react';
 import {Box, Text, useInput} from 'ink';
 import stringWidth from 'string-width';
+import {applyVimNormalMode, nextWordBoundary, prevWordBoundary, toChars, type VimInputMode} from '../input/vim.js';
 
 /** Regex to detect /commands and @file references for syntax highlighting. */
 const HIGHLIGHT_REGEX = /^\/[a-zA-Z0-9_-]+|(?<![\\])@[^\s]+/g;
@@ -24,36 +25,12 @@ export interface ScrollableTextInputProps {
 	availableWidth: number;
 	/** Accent color for syntax-highlighted tokens (/commands, @files). */
 	accentColor?: string;
-}
-
-/** Split a string into an array of user-perceived characters (handles surrogate pairs). */
-function toChars(s: string): string[] {
-	return [...s];
-}
-
-/** Check if a character is a word character (alphanumeric or underscore). */
-function isWordChar(c: string): boolean {
-	return /[\w]/.test(c);
-}
-
-/** Find the offset of the previous word boundary. */
-function prevWordBoundary(chars: string[], offset: number): number {
-	let i = offset - 1;
-	// Skip whitespace
-	while (i > 0 && !isWordChar(chars[i]!)) i--;
-	// Skip word characters
-	while (i > 0 && isWordChar(chars[i - 1]!)) i--;
-	return Math.max(0, i);
-}
-
-/** Find the offset of the next word boundary. */
-function nextWordBoundary(chars: string[], offset: number): number {
-	let i = offset;
-	// Skip current word characters
-	while (i < chars.length && isWordChar(chars[i]!)) i++;
-	// Skip whitespace/non-word
-	while (i < chars.length && !isWordChar(chars[i]!)) i++;
-	return i;
+	vimEnabled?: boolean;
+	vimInputMode?: VimInputMode;
+	onVimInputModeChange?: (mode: VimInputMode) => void;
+	onVimOpenLineBelow?: () => void;
+	onVimOpenLineAbove?: () => void;
+	onBackspaceAtStart?: () => void;
 }
 
 /**
@@ -187,6 +164,12 @@ export default function ScrollableTextInput({
 	placeholder = '',
 	availableWidth,
 	accentColor = '#bb9af7',
+	vimEnabled = false,
+	vimInputMode = 'insert',
+	onVimInputModeChange,
+	onVimOpenLineBelow,
+	onVimOpenLineAbove,
+	onBackspaceAtStart,
 }: ScrollableTextInputProps): React.JSX.Element {
 	const [cursorOffset, setCursorOffset] = useState(value.length);
 	const [draftValue, setDraftValue] = useState(value);
@@ -237,6 +220,116 @@ export default function ScrollableTextInput({
 			const chars = toChars(currentValue);
 			let nextOffset = currentOffset;
 			let nextValue = currentValue;
+			const isBackspace = key.backspace || input === '\b';
+			const vimBindings = {
+				moveLeft: (state: {value: string; cursorOffset: number}) => ({
+					...state,
+					cursorOffset: Math.max(0, state.cursorOffset - 1),
+				}),
+				moveRight: (state: {value: string; cursorOffset: number}) => ({
+					...state,
+					cursorOffset: Math.min(state.value.length, state.cursorOffset + 1),
+				}),
+				moveHome: (state: {value: string; cursorOffset: number}) => ({...state, cursorOffset: 0}),
+				moveEnd: (state: {value: string; cursorOffset: number}) => ({...state, cursorOffset: state.value.length}),
+				movePrevWord: (state: {value: string; cursorOffset: number}) => ({
+					...state,
+					cursorOffset: prevWordBoundary(toChars(state.value), state.cursorOffset),
+				}),
+				moveNextWord: (state: {value: string; cursorOffset: number}) => ({
+					...state,
+					cursorOffset: nextWordBoundary(toChars(state.value), state.cursorOffset),
+				}),
+				deleteChar: (state: {value: string; cursorOffset: number}) => ({
+					...state,
+					value: state.value.slice(0, state.cursorOffset) + state.value.slice(state.cursorOffset + 1),
+				}),
+			};
+
+			if (
+				vimEnabled &&
+				input.length > 1 &&
+				!key.ctrl &&
+				!key.meta &&
+				!key.leftArrow &&
+				!key.rightArrow &&
+				!key.backspace &&
+				!key.delete
+			) {
+				let bufferedState = {value: currentValue, cursorOffset: currentOffset};
+				let bufferedMode = vimInputMode;
+				for (const character of toChars(input)) {
+					if (bufferedMode === 'normal') {
+						const result = applyVimNormalMode(bufferedState, character, {}, vimBindings);
+						bufferedState = result.state;
+						bufferedMode = result.mode;
+						continue;
+					}
+					bufferedState = {
+						value: bufferedState.value.slice(0, bufferedState.cursorOffset) +
+							character +
+							bufferedState.value.slice(bufferedState.cursorOffset),
+						cursorOffset: bufferedState.cursorOffset + character.length,
+					};
+				}
+				if (bufferedMode !== vimInputMode) {
+					onVimInputModeChange?.(bufferedMode);
+				}
+				if (bufferedState.value !== currentValue) {
+					updateDraftValue(bufferedState.value);
+					updateCursorOffset(Math.min(bufferedState.cursorOffset, bufferedState.value.length));
+					onChange(bufferedState.value);
+					return;
+				}
+				updateCursorOffset(Math.min(bufferedState.cursorOffset, currentValue.length));
+				return;
+			}
+
+			if (vimEnabled && key.escape && vimInputMode === 'insert') {
+				onVimInputModeChange?.('normal');
+				return;
+			}
+
+			if (vimEnabled && vimInputMode === 'normal' && !key.ctrl && !key.meta) {
+				if (input === 'o' && onVimOpenLineBelow) {
+					onVimOpenLineBelow();
+					onVimInputModeChange?.('insert');
+					updateDraftValue('');
+					updateCursorOffset(0);
+					return;
+				}
+				if (input === 'O' && onVimOpenLineAbove) {
+					onVimOpenLineAbove();
+					onVimInputModeChange?.('insert');
+					updateDraftValue('');
+					updateCursorOffset(0);
+					return;
+				}
+			}
+
+			if (vimEnabled && vimInputMode === 'normal') {
+				const result = applyVimNormalMode(
+					{value: currentValue, cursorOffset: currentOffset},
+					input,
+					key,
+					vimBindings,
+				);
+				if (result.handled) {
+					if (result.mode !== vimInputMode) {
+						onVimInputModeChange?.(result.mode);
+					}
+					if (result.state.value !== currentValue) {
+						nextValue = result.state.value;
+						nextOffset = Math.min(result.state.cursorOffset, nextValue.length);
+						updateDraftValue(nextValue);
+						updateCursorOffset(nextOffset);
+						onChange(nextValue);
+						return;
+					}
+					updateCursorOffset(Math.min(result.state.cursorOffset, currentValue.length));
+					return;
+				}
+			}
 
 			// --- Word-level navigation ---
 			if (key.ctrl && key.leftArrow) {
@@ -268,7 +361,11 @@ export default function ScrollableTextInput({
 				nextOffset = Math.max(0, currentOffset - 1);
 			} else if (key.rightArrow) {
 				nextOffset = Math.min(currentValue.length, currentOffset + 1);
-			} else if (key.backspace || key.delete) {
+			} else if (isBackspace || key.delete) {
+				if (isBackspace && currentOffset === 0) {
+					onBackspaceAtStart?.();
+					return;
+				}
 				if (currentOffset > 0) {
 					nextValue =
 						currentValue.slice(0, currentOffset - 1) + currentValue.slice(currentOffset);

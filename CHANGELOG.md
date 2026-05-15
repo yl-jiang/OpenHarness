@@ -88,6 +88,8 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - Fixed React TUI exit leaving the shell prompt concatenated with the last TUI line. The terminal cleanup handler now writes a trailing newline (`\n`) alongside the cursor-show escape sequence so the shell prompt always starts on a fresh line.
 - Fixed React TUI prompt paste handling so multi-character paste no longer overwrites already typed text, and buffered multiline preview lines now stay clipped to a single terminal row instead of wrapping and breaking prompt box alignment.
 - Fixed React TUI multiline user transcript rendering after pasted code so the `you` label stays attached to the turn header and long pasted lines are clipped instead of wrapping into broken divider/role layouts.
+- Fixed React TUI `/vim` mode so it now drives real modal editing in both the prompt composer and expanded editor, with normal/insert state, core Vim cursor motions, `o`/`O` open-line commands, and visible mode hints instead of being a status-only toggle.
+- Fixed React TUI multiline prompt deletion so pressing Backspace at the start of the last line now pulls the previous buffered line back into the active editor, allowing cross-line deletion again after newline input.
 - Reduced React TUI redraw pressure when `output_style=codex` by avoiding token-level assistant buffer flushes during streaming.
 
 ### Changed

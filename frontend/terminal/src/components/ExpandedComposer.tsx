@@ -2,6 +2,7 @@ import React, {useMemo} from 'react';
 import {Box, Text} from 'ink';
 
 import {useTerminalSize} from '../hooks/useTerminalSize.js';
+import type {VimInputMode} from '../input/vim.js';
 import {CommandPicker} from './CommandPicker.js';
 
 export const EXPAND_TRIGGER_SYMBOL = '⇖⇘';
@@ -87,6 +88,25 @@ export function deleteComposerForward(state: ExpandedComposerState): ExpandedCom
 	return {
 		draft: state.draft.slice(0, state.cursorOffset) + state.draft.slice(state.cursorOffset + 1),
 		cursorOffset: state.cursorOffset,
+		preferredColumn: null,
+	};
+}
+
+export function openComposerLineBelow(state: ExpandedComposerState): ExpandedComposerState {
+	const location = locateCursor(state.draft, state.cursorOffset);
+	const insertionOffset = location.lineEnd < state.draft.length ? location.lineEnd + 1 : location.lineEnd;
+	return {
+		draft: state.draft.slice(0, insertionOffset) + '\n' + state.draft.slice(insertionOffset),
+		cursorOffset: insertionOffset < state.draft.length ? insertionOffset : insertionOffset + 1,
+		preferredColumn: null,
+	};
+}
+
+export function openComposerLineAbove(state: ExpandedComposerState): ExpandedComposerState {
+	const location = locateCursor(state.draft, state.cursorOffset);
+	return {
+		draft: state.draft.slice(0, location.lineStart) + '\n' + state.draft.slice(location.lineStart),
+		cursorOffset: location.lineStart,
 		preferredColumn: null,
 	};
 }
@@ -265,10 +285,14 @@ export function ExpandedComposer({
 	state,
 	commandHints,
 	subHintsByHint = {},
+	vimEnabled = false,
+	vimInputMode = 'insert',
 }: {
 	state: ExpandedComposerState;
 	commandHints: string[];
 	subHintsByHint?: Record<string, string[]>;
+	vimEnabled?: boolean;
+	vimInputMode?: VimInputMode;
 }): React.JSX.Element {
 	const {rows, cols} = useTerminalSize();
 	const availableWidth = cols - BORDER_PADDING_WIDTH;
@@ -305,7 +329,13 @@ export function ExpandedComposer({
 				{view.hiddenBelow > 0 ? <Text dimColor>{`... ${view.hiddenBelow} lines below`}</Text> : null}
 			</Box>
 			<Box justifyContent="space-between" flexShrink={0}>
-				<Text dimColor>enter/alt+enter newline · tab complete · esc close · click send</Text>
+				<Text dimColor>
+					{vimEnabled
+						? vimInputMode === 'normal'
+							? 'vim normal · i/a insert · o/O open line · h/j/k/l move · w/b word · 0/$ edge · x delete · esc close'
+							: 'vim insert · esc normal · enter/alt+enter newline · tab complete · click send'
+						: 'enter/alt+enter newline · tab complete · esc close · click send'}
+				</Text>
 				<Text color="green" bold>{EXPANDED_SEND_SYMBOL}</Text>
 			</Box>
 		</Box>
