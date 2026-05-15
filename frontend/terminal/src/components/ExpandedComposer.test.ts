@@ -10,6 +10,8 @@ import {
 	hitboxContainsPoint,
 	insertComposerText,
 	moveComposerCursor,
+	openComposerLineAbove,
+	openComposerLineBelow,
 	splitExpandedDraft,
 } from './ExpandedComposer.js';
 
@@ -58,6 +60,28 @@ test('splitExpandedDraft keeps trailing empty lines in the prompt buffer model',
 		extraInputLines: ['first line', 'second line'],
 		input: '',
 	});
+});
+
+test('openComposerLineBelow inserts a blank line after the current line and places the cursor there', () => {
+	const start = {
+		...createExpandedComposerState('first\nsecond'),
+		cursorOffset: 1,
+	};
+	const next = openComposerLineBelow(start);
+
+	assert.equal(next.draft, 'first\n\nsecond');
+	assert.equal(next.cursorOffset, 6);
+});
+
+test('openComposerLineAbove inserts a blank line before the current line and places the cursor there', () => {
+	const start = {
+		...createExpandedComposerState('first\nsecond'),
+		cursorOffset: 7,
+	};
+	const next = openComposerLineAbove(start);
+
+	assert.equal(next.draft, 'first\n\nsecond');
+	assert.equal(next.cursorOffset, 6);
 });
 
 test('anchor hitboxes stay pinned to the prompt and fullscreen editor edges', () => {

@@ -8,7 +8,6 @@ import {
 	ExpandedComposer,
 	applyExpandedComposerInput,
 	completeLeadingCommand,
-	composePromptDraft,
 	createExpandedComposerState,
 	deleteComposerBackward,
 	deleteComposerForward,
@@ -17,6 +16,8 @@ import {
 	hitboxContainsPoint,
 	insertComposerText,
 	moveComposerCursor,
+	openComposerLineAbove,
+	openComposerLineBelow,
 	splitExpandedDraft,
 	type ExpandedComposerState,
 } from './components/ExpandedComposer.js';
@@ -33,6 +34,7 @@ import {useElapsedTimer} from './hooks/useElapsedTimer.js';
 import {useMouseWheel} from './hooks/useMouseWheel.js';
 import {useTerminalMouse} from './hooks/useTerminalMouse.js';
 import {useTerminalSize} from './hooks/useTerminalSize.js';
+import {applyVimNormalMode, nextWordBoundary, prevWordBoundary, toChars, type VimInputMode} from './input/vim.js';
 import {discoverMentionFiles, filterMentionCandidates, findMentionQuery, replaceMentionQuery} from './input/mentions.js';
 import {
 	advanceShellCompletionCycle,
@@ -140,10 +142,21 @@ export function resolveSelectModalChoice(
 	return {kind: 'apply', command, value};
 }
 
-export function buildSubmittedValue(value: string, extraInputLines: string[]): string | null {
-	const fullValue =
-		extraInputLines.length > 0 ? [...extraInputLines, value].join('\n') : value;
+export function buildSubmittedValue(
+	value: string,
+	extraInputLines: string[],
+	trailingInputLines: string[] = [],
+): string | null {
+	const fullValue = [...extraInputLines, value, ...trailingInputLines].join('\n');
 	return fullValue.trim() ? fullValue : null;
+}
+
+function buildPromptDraft(
+	value: string,
+	extraInputLines: string[],
+	trailingInputLines: string[] = [],
+): string {
+	return [...extraInputLines, value, ...trailingInputLines].join('\n');
 }
 
 export function shouldEnterShellModeFromInput(
@@ -234,6 +247,8 @@ function AppInner({
 	const {rows, cols} = useTerminalSize();
 	const [input, setInput] = useState('');
 	const [inputMode, setInputMode] = useState<'chat' | 'shell'>('chat');
+	const [vimInputMode, setVimInputMode] = useState<VimInputMode>('insert');
+	const [expandedComposerVimMode, setExpandedComposerVimMode] = useState<VimInputMode>('insert');
 	const inputRef = useRef(input);
 	const inputModeRef = useRef(inputMode);
 	const [completionKey, setCompletionKey] = useState(0);
@@ -243,6 +258,7 @@ function AppInner({
 	const [lastEscapeAt, setLastEscapeAt] = useState(0);
 	const [lastCtrlCAt, setLastCtrlCAt] = useState(0);
 	const [extraInputLines, setExtraInputLines] = useState<string[]>([]);
+	const [trailingInputLines, setTrailingInputLines] = useState<string[]>([]);
 	const [pickerSubIndex, setPickerSubIndex] = useState(0);
 	const [pickerSubmenuFocused, setPickerSubmenuFocused] = useState(false);
 	// Used to skip ink-text-input's onSubmit when Shift+Enter was just handled
@@ -306,6 +322,27 @@ function AppInner({
 			const split = splitExpandedDraft(draft);
 			setInputValue(split.input);
 			setExtraInputLines(split.extraInputLines);
+			setTrailingInputLines([]);
+			if (references) {
+				setPasteReferencesValue(prunePasteReferences(draft, references));
+				return;
+			}
+			setPasteReferencesValue((current) => prunePasteReferences(draft, current));
+		},
+		[setInputValue, setPasteReferencesValue],
+	);
+
+	const setPromptLines = useCallback(
+		(
+			value: string,
+			leadingLines: string[],
+			trailingLines: string[],
+			references?: Record<string, PasteReference>,
+		): void => {
+			setInputValue(value);
+			setExtraInputLines(leadingLines);
+			setTrailingInputLines(trailingLines);
+			const draft = buildPromptDraft(value, leadingLines, trailingLines);
 			if (references) {
 				setPasteReferencesValue(prunePasteReferences(draft, references));
 				return;
@@ -316,9 +353,9 @@ function AppInner({
 	);
 
 	const clearPromptDraft = useCallback((): void => {
-		setPromptDraft('', {});
+		setPromptLines('', [], [], {});
 		setPasteStatusNotice(null);
-	}, [setPromptDraft]);
+	}, [setPromptLines]);
 
 	const pushHistoryEntry = useCallback((display: string): void => {
 		setHistory((items) => [
@@ -347,6 +384,7 @@ function AppInner({
 	const [paused, setPaused] = useState(false);
 
 	const session = useBackendSession(config, () => exit());
+	const vimEnabled = Boolean(session.status.vim_enabled);
 	const deferredTranscript = useDeferredValue(session.transcript);
 	const deferredAssistantBuffer = useDeferredValue(session.assistantBuffer);
 	const deferredStatus = useDeferredValue(session.status);
@@ -361,6 +399,16 @@ function AppInner({
 			setThemeName(nextTheme);
 		}
 	}, [session.status.theme, setThemeName]);
+
+	useEffect(() => {
+		setVimInputMode(vimEnabled ? 'normal' : 'insert');
+	}, [vimEnabled]);
+
+	useEffect(() => {
+		if (expandedComposer) {
+			setExpandedComposerVimMode(vimEnabled ? 'normal' : 'insert');
+		}
+	}, [expandedComposer, vimEnabled]);
 
 	// Scroll helpers — thin wrappers around the ref API.
 	const scrollUp = useCallback((step: number) => {
@@ -460,10 +508,10 @@ function AppInner({
 	const showPicker = inputMode === 'chat' && !expandedComposer && pickerHints.length > 0 && !session.busy && !session.modal && !selectModal;
 	const outputStyle = String(session.status.output_style ?? 'default');
 	const pasteNotices = useMemo(() => {
-		const draft = composePromptDraft(input, extraInputLines);
+		const draft = buildPromptDraft(input, extraInputLines, trailingInputLines);
 		const notices = listPasteStageNotices(draft, pasteReferences);
 		return pasteStatusNotice ? [pasteStatusNotice, ...notices] : notices;
-	}, [extraInputLines, input, pasteReferences, pasteStatusNotice]);
+	}, [extraInputLines, input, pasteReferences, pasteStatusNotice, trailingInputLines]);
 
 	useEffect(() => {
 		setPickerIndex(0);
@@ -604,8 +652,8 @@ function AppInner({
 		if (expandedComposer || !session.ready || session.busy || session.modal || selectModal) {
 			return;
 		}
-		setExpandedComposer(createExpandedComposerState(composePromptDraft(input, extraInputLines)));
-	}, [expandedComposer, extraInputLines, input, selectModal, session.busy, session.modal, session.ready]);
+		setExpandedComposer(createExpandedComposerState(buildPromptDraft(input, extraInputLines, trailingInputLines)));
+	}, [expandedComposer, extraInputLines, input, selectModal, session.busy, session.modal, session.ready, trailingInputLines]);
 
 	// Intercept special commands that need interactive UI
 	const handleCommand = (cmd: string): boolean => {
@@ -642,7 +690,7 @@ function AppInner({
 
 	const insertPasteReference = useCallback(
 		(displayInput: string, reference: PasteReference): void => {
-			const draft = composePromptDraft(displayInput, extraInputLines);
+			const draft = buildPromptDraft(displayInput, extraInputLines, trailingInputLines);
 			setPromptDraft(draft, {
 				...prunePasteReferences(draft, pasteReferencesRef.current),
 				[reference.label]: reference,
@@ -650,7 +698,7 @@ function AppInner({
 			setHistoryIndex(-1);
 			setShellCompletionCycleValue(null);
 		},
-		[extraInputLines, setPromptDraft, setShellCompletionCycleValue],
+		[extraInputLines, setPromptDraft, setShellCompletionCycleValue, trailingInputLines],
 	);
 
 	const openLargePasteSelectModal = useCallback(
@@ -850,6 +898,100 @@ function AppInner({
 		const isPaste = chunk.length > 1 && !key.ctrl && !key.meta;
 
 		if (expandedComposer) {
+			if (
+				vimEnabled &&
+				expandedComposerVimMode === 'normal' &&
+				chunk.length > 1 &&
+				!key.ctrl &&
+				!key.meta &&
+				!key.leftArrow &&
+				!key.rightArrow &&
+				!key.upArrow &&
+				!key.downArrow &&
+				!key.backspace &&
+				!key.delete &&
+				!key.return &&
+				!key.tab
+			) {
+				let bufferedState = expandedComposer;
+				let bufferedMode: VimInputMode = expandedComposerVimMode;
+				for (const character of toChars(chunk)) {
+					if (bufferedMode === 'normal') {
+						const result = applyVimNormalMode(
+							bufferedState,
+							character,
+							{},
+							{
+								moveLeft: (state) => moveComposerCursor(state, 'left'),
+								moveRight: (state) => moveComposerCursor(state, 'right'),
+								moveUp: (state) => moveComposerCursor(state, 'up'),
+								moveDown: (state) => moveComposerCursor(state, 'down'),
+								moveHome: (state) => moveComposerCursor(state, 'home'),
+								moveEnd: (state) => moveComposerCursor(state, 'end'),
+								movePrevWord: (state) => ({
+									...state,
+									cursorOffset: prevWordBoundary(toChars(state.draft), state.cursorOffset),
+									preferredColumn: null,
+								}),
+								moveNextWord: (state) => ({
+									...state,
+									cursorOffset: nextWordBoundary(toChars(state.draft), state.cursorOffset),
+									preferredColumn: null,
+								}),
+								deleteChar: (state) => deleteComposerForward(state),
+								openLineBelow: (state) => openComposerLineBelow(state),
+								openLineAbove: (state) => openComposerLineAbove(state),
+							},
+						);
+						bufferedState = result.state;
+						bufferedMode = result.mode;
+						continue;
+					}
+					bufferedState = insertComposerText(bufferedState, character);
+				}
+				setExpandedComposerVimMode(bufferedMode);
+				setExpandedComposer(bufferedState);
+				return;
+			}
+			if (vimEnabled && expandedComposerVimMode === 'insert' && key.escape) {
+				setExpandedComposerVimMode('normal');
+				return;
+			}
+			if (vimEnabled && expandedComposerVimMode === 'normal') {
+				const result = applyVimNormalMode(
+					expandedComposer,
+					chunk,
+					key,
+					{
+						moveLeft: (state) => moveComposerCursor(state, 'left'),
+						moveRight: (state) => moveComposerCursor(state, 'right'),
+						moveUp: (state) => moveComposerCursor(state, 'up'),
+						moveDown: (state) => moveComposerCursor(state, 'down'),
+						moveHome: (state) => moveComposerCursor(state, 'home'),
+						moveEnd: (state) => moveComposerCursor(state, 'end'),
+						movePrevWord: (state) => ({
+							...state,
+							cursorOffset: prevWordBoundary(toChars(state.draft), state.cursorOffset),
+							preferredColumn: null,
+						}),
+						moveNextWord: (state) => ({
+							...state,
+							cursorOffset: nextWordBoundary(toChars(state.draft), state.cursorOffset),
+							preferredColumn: null,
+						}),
+						deleteChar: (state) => deleteComposerForward(state),
+						openLineBelow: (state) => openComposerLineBelow(state),
+						openLineAbove: (state) => openComposerLineAbove(state),
+					},
+				);
+				if (result.handled) {
+					if (result.mode !== expandedComposerVimMode) {
+						setExpandedComposerVimMode(result.mode);
+					}
+					setExpandedComposer(result.state);
+					return;
+				}
+			}
 			if (key.escape) {
 				closeExpandedComposer(expandedComposer.draft);
 				return;
@@ -1016,7 +1158,7 @@ function AppInner({
 				setModalInput('');
 				return;
 			}
-			if (!session.modal && !session.busy && buildSubmittedValue(input, extraInputLines)) {
+			if (!session.modal && !session.busy && buildSubmittedValue(input, extraInputLines, trailingInputLines)) {
 				onSubmit(input);
 				return;
 			}
@@ -1087,12 +1229,27 @@ function AppInner({
 		}
 
 		if (key.escape) {
+			if (vimEnabled && !session.busy) {
+				if (vimInputMode === 'insert') {
+					return;
+				}
+				if (showPicker) {
+					clearPromptDraft();
+					return;
+				}
+				if (inputMode === 'shell' && !input && extraInputLines.length === 0 && trailingInputLines.length === 0) {
+					setInputModeValue('chat');
+					setShellCompletionCycleValue(null);
+					return;
+				}
+				return;
+			}
 			if (showPicker && !session.busy) {
 				clearPromptDraft();
 				return;
 			}
 			// Esc in shell mode with empty buffer returns to chat mode.
-			if (inputMode === 'shell' && !session.busy && !input && extraInputLines.length === 0) {
+			if (inputMode === 'shell' && !session.busy && !input && extraInputLines.length === 0 && trailingInputLines.length === 0) {
 				setInputModeValue('chat');
 				setShellCompletionCycleValue(null);
 				return;
@@ -1101,7 +1258,7 @@ function AppInner({
 			const escapeAction = resolveEscapeAction({
 				busy: session.busy,
 				paused,
-				hasInput: Boolean(input || extraInputLines.length > 0),
+				hasInput: Boolean(input || extraInputLines.length > 0 || trailingInputLines.length > 0),
 				now,
 				lastEscapeAt,
 			});
@@ -1127,7 +1284,14 @@ function AppInner({
 			return;
 		}
 
-		if (inputMode === 'chat' && !showPicker && key.tab && input.trim() === '' && extraInputLines.length === 0) {
+		if (
+			inputMode === 'chat' &&
+			!showPicker &&
+			key.tab &&
+			input.trim() === '' &&
+			extraInputLines.length === 0 &&
+			trailingInputLines.length === 0
+		) {
 			session.sendRequest({type: 'select_command', command: 'permissions'});
 			return;
 		}
@@ -1224,7 +1388,7 @@ function AppInner({
 		// Shift+Enter appends current line to pending lines and starts a new one
 		if (key.shift && key.return) {
 			shiftEnterHandledRef.current = true;
-			setPromptDraft(composePromptDraft('', [...extraInputLines, input]));
+			setPromptLines('', [...extraInputLines, input], trailingInputLines);
 			setShellCompletionCycleValue(null);
 			return;
 		}
@@ -1301,14 +1465,14 @@ function AppInner({
 				return;
 			}
 			if (!next.includes('\n')) {
-				if (shouldEnterShellModeFromInput(next, inputMode, extraInputLines.length)) {
+				if (shouldEnterShellModeFromInput(next, inputMode, extraInputLines.length + trailingInputLines.length)) {
 					setInputModeValue('shell');
 					clearPromptDraft();
 					setShellCompletionCycleValue(null);
 					setCompletionKey((key) => key + 1);
 					return;
 				}
-				setPromptDraft(composePromptDraft(next, extraInputLines));
+				setPromptLines(next, extraInputLines, trailingInputLines);
 				if (shellCompletionCycleRef.current?.value !== next) {
 					setShellCompletionCycleValue(null);
 				}
@@ -1316,7 +1480,7 @@ function AppInner({
 			}
 			const parts = next.split('\n');
 			const lastPart = parts.pop() ?? '';
-			setPromptDraft(composePromptDraft(lastPart, [...extraInputLines, ...parts]));
+			setPromptLines(lastPart, [...extraInputLines, ...parts], trailingInputLines);
 			setShellCompletionCycleValue(null);
 		},
 		[
@@ -1326,10 +1490,43 @@ function AppInner({
 			insertPasteReference,
 			openLargePasteSelectModal,
 			setInputModeValue,
-			setPromptDraft,
+			setPromptLines,
 			setShellCompletionCycleValue,
+			trailingInputLines,
 		],
 	);
+
+	const handlePromptOpenLineBelow = useCallback((): void => {
+		if (inputMode !== 'chat') {
+			return;
+		}
+		setPromptLines('', [...extraInputLines, input], trailingInputLines);
+		setHistoryIndex(-1);
+		setShellCompletionCycleValue(null);
+	}, [extraInputLines, input, inputMode, setPromptLines, setShellCompletionCycleValue, trailingInputLines]);
+
+	const handlePromptOpenLineAbove = useCallback((): void => {
+		if (inputMode !== 'chat') {
+			return;
+		}
+		setPromptLines('', extraInputLines, [input, ...trailingInputLines]);
+		setHistoryIndex(-1);
+		setShellCompletionCycleValue(null);
+	}, [extraInputLines, input, inputMode, setPromptLines, setShellCompletionCycleValue, trailingInputLines]);
+
+	const handlePromptBackspaceAtStart = useCallback((): void => {
+		if (inputMode !== 'chat' || extraInputLines.length === 0) {
+			return;
+		}
+		const previousLine = extraInputLines[extraInputLines.length - 1] ?? '';
+		setPromptLines(
+			`${previousLine}${input}`,
+			extraInputLines.slice(0, -1),
+			trailingInputLines,
+		);
+		setHistoryIndex(-1);
+		setShellCompletionCycleValue(null);
+	}, [extraInputLines, input, inputMode, setPromptLines, setShellCompletionCycleValue, trailingInputLines]);
 
 	onSubmitRef.current = (value: string): void => {
 		// ink-text-input fires onSubmit for any key.return including shift+return;
@@ -1348,7 +1545,7 @@ function AppInner({
 			setModalInput('');
 			return;
 		}
-		const submittedValue = buildSubmittedValue(value, extraInputLines);
+		const submittedValue = buildSubmittedValue(value, extraInputLines, trailingInputLines);
 		if (!submittedValue) {
 			return;
 		}
@@ -1386,6 +1583,8 @@ function AppInner({
 					state={expandedComposer}
 					commandHints={expandedCommandPickerModel.hints}
 					subHintsByHint={expandedCommandPickerModel.subHintsByHint}
+					vimEnabled={vimEnabled}
+					vimInputMode={expandedComposerVimMode}
 				/>
 			</Box>
 		);
@@ -1494,6 +1693,7 @@ function AppInner({
 						setInput={handleInputChange}
 						onSubmit={onSubmit}
 						extraInputLines={extraInputLines}
+						trailingInputLines={trailingInputLines}
 						notices={pasteNotices}
 						toolName={session.busy ? currentToolName : undefined}
 						statusLabel={session.busy ? (session.busyLabel ?? (currentToolName ? `Running ${currentToolName}` : 'Running agent loop')) : undefined}
@@ -1502,6 +1702,12 @@ function AppInner({
 						inputKey={completionKey}
 						animateSpinner={!inlineActivityEnabled}
 						inputMode={inputMode}
+						vimEnabled={vimEnabled}
+						vimInputMode={vimInputMode}
+						onVimInputModeChange={setVimInputMode}
+						onVimOpenLineBelow={handlePromptOpenLineBelow}
+						onVimOpenLineAbove={handlePromptOpenLineAbove}
+						onBackspaceAtStart={handlePromptBackspaceAtStart}
 					/>
 					<InlineActivityIndicator
 						active={hasActiveWork}

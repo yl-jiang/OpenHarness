@@ -12,6 +12,18 @@ import {shouldAnimateBackgroundCue} from './components/PromptInput.js';
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+const extractLastFrame = (output: string): string => {
+	const bottomSep = output.lastIndexOf('\n─');
+	if (bottomSep >= 0) {
+		const topSep = output.lastIndexOf('\n─', bottomSep - 1);
+		if (topSep >= 0) {
+			return output.slice(topSep + 1);
+		}
+		return output.slice(bottomSep + 1);
+	}
+	const promptBoundary = output.lastIndexOf('\n> ');
+	return promptBoundary >= 0 ? output.slice(promptBoundary + 1) : output;
+};
 
 type InkTestStdout = PassThrough & {
 	isTTY: boolean;
@@ -115,6 +127,10 @@ test('builds a submittable multiline value when the current line is empty but pr
 
 test('does not submit whitespace-only buffered lines', () => {
 	assert.equal(buildSubmittedValue('', ['', '   ']), null);
+});
+
+test('includes trailing prompt lines when building a submittable multiline value', () => {
+	assert.equal(buildSubmittedValue('middle', ['first'], ['last']), 'first\nmiddle\nlast');
 });
 
 test('recognizes a bare bang as shell-mode input only at an empty chat prompt', () => {
@@ -277,6 +293,70 @@ setInterval(() => {}, 1000);
 		const text = stripAnsi(output);
 		assert.match(text, /shell mode · tab complete · type "exit" or esc to leave/u);
 		assert.match(text, /Type a shell command/u);
+	} finally {
+		const exitPromise = instance.waitUntilExit();
+		instance.unmount();
+		await exitPromise;
+		instance.cleanup();
+	}
+});
+
+test('uses backend vim mode to keep the prompt in normal mode until insert is requested', async () => {
+	const stdout = createTestStdout();
+	const stdin = createTestStdin();
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+
+	const backendScript = `
+const emit = (event) => process.stdout.write('OHJSON:' + JSON.stringify(event) + '\\n');
+emit({type: 'ready', state: {model: 'test-model', permission_mode: 'default', cwd: process.cwd(), vim_enabled: true}, tasks: []});
+setInterval(() => {}, 1000);
+`;
+
+	const instance = render(
+		<App config={{backend_command: [process.execPath, '-e', backendScript], theme: 'default'}} />,
+		{
+			stdout: stdout as unknown as NodeJS.WriteStream,
+			stdin: stdin as unknown as NodeJS.ReadStream,
+			exitOnCtrlC: false,
+			patchConsole: false,
+			debug: true,
+		},
+	);
+
+	try {
+		await sleep(160);
+		await nextLoopTurn();
+
+		output = '';
+		stdin.write('zzz');
+		await sleep(120);
+		await nextLoopTurn();
+		let frame = extractLastFrame(stripAnsi(output));
+		assert.doesNotMatch(frame, /> z/u);
+
+		output = '';
+		stdin.write('iabc');
+		await sleep(120);
+		await nextLoopTurn();
+		frame = extractLastFrame(stripAnsi(output));
+		assert.match(frame, /> abc/u);
+
+		output = '';
+		stdin.write('\x1b');
+		await sleep(120);
+		await nextLoopTurn();
+		stdin.write('O');
+		await sleep(120);
+		await nextLoopTurn();
+		stdin.write('body');
+		await sleep(120);
+		await nextLoopTurn();
+		frame = extractLastFrame(stripAnsi(output));
+		assert.match(frame, /abc/u);
+		assert.match(frame, /> body/u);
 	} finally {
 		const exitPromise = instance.waitUntilExit();
 		instance.unmount();

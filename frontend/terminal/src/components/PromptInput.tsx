@@ -5,6 +5,7 @@ import ScrollableTextInput from './ScrollableTextInput.js';
 import {EXPAND_TRIGGER_SYMBOL} from './ExpandedComposer.js';
 import {HalfLinePaddedBox} from './HalfLinePaddedBox.js';
 import {useTerminalSize} from '../hooks/useTerminalSize.js';
+import type {VimInputMode} from '../input/vim.js';
 import {useTheme} from '../theme/ThemeContext.js';
 
 const noop = (): void => {};
@@ -76,6 +77,7 @@ type PromptInputProps = {
 	setInput: (value: string) => void;
 	onSubmit: (value: string) => void;
 	extraInputLines?: string[];
+	trailingInputLines?: string[];
 	notices?: string[];
 	toolName?: string;
 	suppressSubmit?: boolean;
@@ -84,6 +86,12 @@ type PromptInputProps = {
 	hasBackgroundTasks?: boolean;
 	animateSpinner?: boolean;
 	inputMode?: 'chat' | 'shell';
+	vimEnabled?: boolean;
+	vimInputMode?: VimInputMode;
+	onVimInputModeChange?: (mode: VimInputMode) => void;
+	onVimOpenLineBelow?: () => void;
+	onVimOpenLineAbove?: () => void;
+	onBackspaceAtStart?: () => void;
 };
 
 function PromptInputInner({
@@ -92,6 +100,7 @@ function PromptInputInner({
 	setInput,
 	onSubmit,
 	extraInputLines,
+	trailingInputLines,
 	notices,
 	toolName,
 	suppressSubmit,
@@ -100,6 +109,12 @@ function PromptInputInner({
 	hasBackgroundTasks = false,
 	animateSpinner = false,
 	inputMode = 'chat',
+	vimEnabled = false,
+	vimInputMode = 'insert',
+	onVimInputModeChange,
+	onVimOpenLineBelow,
+	onVimOpenLineAbove,
+	onBackspaceAtStart,
 }: PromptInputProps): React.JSX.Element {
 	const [frameIndex, setFrameIndex] = useState(0);
 	const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -128,6 +143,7 @@ function PromptInputInner({
 
 	const {cols} = useTerminalSize();
 	const showBackgroundActivity = !busy && hasBackgroundTasks;
+	const isVimNormal = vimEnabled && vimInputMode === 'normal' && !busy;
 
 	// Prompt prefix: '! ' when in shell mode (idle), '> ' when chat idle, spinner when busy/bg
 	const spinnerFrame = animateSpinner ? SPINNER_FRAMES[frameIndex] : SPINNER_STATIC_FRAME;
@@ -150,8 +166,40 @@ function PromptInputInner({
 	const prefixColor = busy || showBackgroundActivity ? theme.colors.warning : isShellIdle ? theme.colors.warning : accentColor;
 	const lineColor = theme.colors.muted;
 
-	const placeholder = isShellIdle ? '  Type a shell command (exit to leave)' : '  Type your message or @path/to/file';
+	const placeholder = isVimNormal
+		? '  NORMAL — press i to insert'
+		: isShellIdle
+			? '  Type a shell command (exit to leave)'
+			: '  Type your message or @path/to/file';
 	const renderFooterShortcuts = (): React.JSX.Element => {
+		if (vimEnabled && !busy) {
+			if (vimInputMode === 'normal') {
+				return (
+					<Text>
+						<Text color={theme.colors.info} bold>vim normal</Text>
+						<Text color={theme.colors.muted}> · i/a insert · o/O open line · h/l move · w/b word · 0/$ edge · x delete</Text>
+					</Text>
+				);
+			}
+			if (isShellIdle) {
+				return (
+					<Text>
+						<Text color={theme.colors.warning} bold>shell mode</Text>
+						<Text color={theme.colors.muted}> · </Text>
+						<Text color={theme.colors.info} bold>vim insert</Text>
+						<Text color={theme.colors.muted}> · tab complete · esc normal · type </Text>
+						<Text color={theme.colors.accent}>"exit"</Text>
+						<Text color={theme.colors.muted}> to leave</Text>
+					</Text>
+				);
+			}
+			return (
+				<Text>
+					<Text color={theme.colors.info} bold>vim insert</Text>
+					<Text color={theme.colors.muted}> · esc normal · / commands · @ files · ↑↓ history</Text>
+				</Text>
+			);
+		}
 		if (isShellIdle) {
 			return (
 				<Text>
@@ -214,9 +262,27 @@ function PromptInputInner({
 								availableWidth={inputAvailableWidth}
 								placeholder={placeholder}
 								accentColor={accentColor}
+								vimEnabled={vimEnabled}
+								vimInputMode={vimInputMode}
+								onVimInputModeChange={onVimInputModeChange}
+								onVimOpenLineBelow={onVimOpenLineBelow}
+								onVimOpenLineAbove={onVimOpenLineAbove}
+								onBackspaceAtStart={onBackspaceAtStart}
 							/>
 						)}
 					</Box>
+					{trailingInputLines && trailingInputLines.length > 0 && (
+						<Box flexDirection="column">
+							{trailingInputLines.map((line, i) => (
+								<Box key={`trailing-${i}`}>
+									<Text dimColor>{'  '}</Text>
+									<Box flexGrow={1} flexShrink={1}>
+										<Text dimColor>{clipPromptPreviewLine(line, previewAvailableWidth) || ' '}</Text>
+									</Box>
+								</Box>
+							))}
+						</Box>
+					)}
 				</Box>
 			</HalfLinePaddedBox>
 
