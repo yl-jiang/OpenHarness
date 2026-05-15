@@ -852,6 +852,28 @@ async def test_backend_host_apply_provider_select_command_shows_single_segment_t
 
 
 @pytest.mark.asyncio
+async def test_backend_host_permissions_select_refreshes_runtime_system_prompt(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
+
+    await start_runtime(host._bundle)
+    try:
+        assert "currently operating in **Default** mode" in host._bundle.engine.system_prompt
+
+        should_continue = await host._apply_select_command("permissions", "plan")
+
+        assert should_continue is True
+        assert "currently operating in **Plan** mode" in host._bundle.engine.system_prompt
+        assert "currently operating in **Default** mode" not in host._bundle.engine.system_prompt
+    finally:
+        await close_runtime(host._bundle)
+
+
+@pytest.mark.asyncio
 async def test_concurrent_ask_permission_are_serialised():
     """Concurrent approval prompt calls must be serialised by the coordinator so
     the frontend never receives two overlapping modal_request events.
