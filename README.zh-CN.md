@@ -345,7 +345,7 @@ ohmo gateway restart
 - task lifecycle
 - background task execution
 
-默认应优先使用 `agent` 作为受管子代理入口；`task_create(local_agent)` 只保留为低层兼容路径，`task_create(local_bash)` 继续承担通用后台 shell 任务。
+默认应优先使用 `agent` 作为受管子代理入口；`task_create(local_agent)` 只保留为低层兼容路径，`task_create(local_bash)` 继续承担通用后台 shell 任务。被孵化出的 child session 默认是 leaf worker，不能再继续通过 `agent` 或 `task_create(local_agent)` 递归孵化后代，除非调用方显式具备 orchestration budget。
 
 ---
 
