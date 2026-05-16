@@ -20,7 +20,7 @@ from self_log.models import (
 )
 from self_log.processor import SelfLogProcessor
 from self_log.store import SelfLogStore
-from self_log.tools import SelfLogDomainTool, SelfLogToolAgent, SelfLogToolRegistry
+from self_log.tools import SelfLogDomainTool, SelfLogToolRegistry
 
 __all__ = [
     "OpenHarnessSelfLogAgent",
@@ -35,7 +35,6 @@ __all__ = [
     "SelfLogRecord",
     "SelfLogReport",
     "SelfLogStore",
-    "SelfLogToolAgent",
     "SelfLogToolRegistry",
     "extract_self_log_content",
     "format_process_result",
