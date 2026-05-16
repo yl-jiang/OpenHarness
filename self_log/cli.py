@@ -103,6 +103,34 @@ def view_cmd(
         print(f"{record.date} {record.emotion} [{record.source}] [{record.tags}] {record.summary}")
 
 
+@app.command("search")
+def search_cmd(
+    query: str = typer.Argument(None, help="Text search query"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+    tags: str | None = typer.Option(None, "--tags", help="Comma-separated tags"),
+    emotions: str | None = typer.Option(None, "--emotions", help="Comma-separated emotions"),
+    start: str | None = typer.Option(None, "--start", help="Start date (YYYY-MM-DD)"),
+    end: str | None = typer.Option(None, "--end", help="End date (YYYY-MM-DD)"),
+    limit: int = typer.Option(10, "--limit", min=1),
+) -> None:
+    store = SelfLogStore(workspace)
+    tag_list = [t.strip() for t in tags.split(",")] if tags else None
+    emotion_list = [e.strip() for e in emotions.split(",")] if emotions else None
+    records = store.search_records(
+        query=query,
+        tags=tag_list,
+        emotions=emotion_list,
+        start_date=start,
+        end_date=end,
+        limit=limit,
+    )
+    if not records:
+        print("No matching records found.")
+        return
+    for record in records:
+        print(f"{record.date} {record.emotion} [{record.tags}] {record.summary}")
+
+
 @app.command("report")
 def report_cmd(
     report_type: str = typer.Argument(..., help="weekly, monthly, or yearly"),

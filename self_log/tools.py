@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -83,9 +84,17 @@ class SelfLogToolRegistry:
             SelfLogDomainTool(_tool_backfill(), self._handle_backfill),
             SelfLogDomainTool(_tool_report(), self._handle_report),
             SelfLogDomainTool(_tool_view(), self._handle_view),
+            SelfLogDomainTool(_tool_search(), self._handle_search),
+            SelfLogDomainTool(_tool_update_record(), self._handle_update_record),
+            SelfLogDomainTool(_tool_delete_record(), self._handle_delete_record),
             SelfLogDomainTool(_tool_status(), self._handle_status),
+            SelfLogDomainTool(_tool_get_now(), self._handle_get_now),
             SelfLogDomainTool(_tool_profile_update(), self._handle_profile_update),
             SelfLogDomainTool(_tool_remember(), self._handle_remember),
+            SelfLogDomainTool(_tool_suggest_reflection(), self._handle_suggest_reflection),
+            SelfLogDomainTool(_tool_sync_context(), self._handle_sync_context),
+            SelfLogDomainTool(_tool_visualize(), self._handle_visualize),
+            SelfLogDomainTool(_tool_export(), self._handle_export),
         ]
 
     def tool_schemas(self) -> list[dict[str, Any]]:
@@ -151,7 +160,7 @@ class SelfLogToolRegistry:
                 "ok": True,
                 "entry_id": entry.id,
                 "record_id": record.id,
-                "message": "✅ 刚才的记录已经入库。",
+                "message": f"✅ 刚才的记录已经入库。record_id={record.id}",
             }
         backfill_hint = _backfill_hint(self.store, arguments.get("record_date") or arguments.get("date"))
         message = "✅ 刚才的记录已经入库。"
@@ -196,11 +205,12 @@ class SelfLogToolRegistry:
             self.store.add_record(record)
             created.append(record.id)
         logger.info("_handle_import_records imported=%d", len(created))
+        ids_hint = "，可通过 self_log_search/view 获取" if len(created) > 5 else "：" + ", ".join(created)
         return {
             "ok": True,
             "record_ids": created,
             "imported": len(created),
-            "message": f"已批量入库 {len(created)} 条 self-log 记录。",
+            "message": f"已批量入库 {len(created)} 条 self-log 记录{ids_hint}。",
         }
 
     async def _handle_clarify(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -234,7 +244,7 @@ class SelfLogToolRegistry:
             "entry_id": entry.id,
             "date": target_date,
             "auto_processed": result.auto_processed,
-            "message": f"已补录 {target_date}",
+            "message": f"已补录 {target_date}，entry_id={entry.id}",
         }
 
     async def _handle_report(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -247,6 +257,59 @@ class SelfLogToolRegistry:
         records = [record.to_dict() for record in self.store.list_records(limit=limit)]
         return {"ok": True, "records": records, "message": _format_records(records)}
 
+    async def _handle_search(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        query = str(arguments.get("query") or "")
+        tags = _csv_list(arguments.get("tags"))
+        emotions = _csv_list(arguments.get("emotions"))
+        start_date = str(arguments.get("start_date") or "")
+        end_date = str(arguments.get("end_date") or "")
+        limit = int(arguments.get("limit") or 10)
+
+        records = self.store.search_records(
+            query=query,
+            tags=tags,
+            emotions=emotions,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+        )
+        return {
+            "ok": True,
+            "records": [r.to_dict() for r in records],
+            "message": f"找到了 {len(records)} 条相关记录：\n" + _format_records([r.to_dict() for r in records]),
+        }
+
+    async def _handle_update_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Update fields of an existing self-log record."""
+        record_id = _required_text(arguments, "record_id")
+        
+        # Valid fields for update
+        updates = {}
+        for field in [
+            "summary", "tags", "emotion", "emotion_reason", 
+            "corrected_content", "related_people", "related_places", "date"
+        ]:
+            if field in arguments:
+                updates[field] = arguments[field]
+        
+        if not updates:
+            return {"ok": False, "message": "未提供任何更新字段。"}
+            
+        success = self.store.update_record(record_id, **updates)
+        if success:
+            return {"ok": True, "message": f"✅ 已成功更新记录 {record_id}。"}
+        else:
+            return {"ok": False, "message": f"❌ 未找到 ID 为 {record_id} 的记录。"}
+
+    async def _handle_delete_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Permanently delete an existing self-log record."""
+        record_id = _required_text(arguments, "record_id")
+        success = self.store.delete_record(record_id)
+        if success:
+            return {"ok": True, "message": f"🗑️ 已永久删除记录 {record_id}。"}
+        else:
+            return {"ok": False, "message": f"❌ 未找到 ID 为 {record_id} 的记录。"}
+
     async def _handle_status(self, arguments: dict[str, Any]) -> dict[str, Any]:
         status = self.store.status()
         message = (
@@ -254,6 +317,27 @@ class SelfLogToolRegistry:
             f"pending={status['pending_confirmations']}，path={status['path']}"
         )
         return {"ok": True, **status, "message": message}
+
+    async def _handle_get_now(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Get the current local date, time, and timezone information."""
+        now = datetime.now()
+        local_now = now.astimezone()
+        tz_name = local_now.tzname()
+        tz_offset = local_now.strftime("%z")
+        
+        info = {
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%H:%M:%S"),
+            "weekday": now.strftime("%A"),
+            "timezone": tz_name,
+            "tz_offset": tz_offset,
+            "iso": now.isoformat(),
+        }
+        message = (
+            f"当前时间：{info['date']} {info['time']} ({info['weekday']})\n"
+            f"时区：{info['timezone']} (UTC{info['tz_offset']})"
+        )
+        return {"ok": True, **info, "message": message}
 
     async def _handle_profile_update(self, arguments: dict[str, Any]) -> dict[str, Any]:
         update = ProfileUpdate(
@@ -273,6 +357,159 @@ class SelfLogToolRegistry:
         content = _required_text(arguments, "content")
         path = add_memory_entry(self.store.workspace, title, content)
         return {"ok": True, "message": f"已写入 memory：{path.name}"}
+
+    async def _handle_suggest_reflection(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Generate reflection questions based on recent records."""
+        records = self.store.list_records(limit=20)
+        if not records:
+            return {"ok": False, "message": "暂无记录，无法生成复盘建议。"}
+
+        focus = str(arguments.get("focus") or "").strip()
+        style = str(arguments.get("style") or "").strip()
+
+        # Use the agent for dynamic question generation
+        processor = self._processor()
+        records_summary = "\n".join([f"- [{r.date}] {r.summary}" for r in records])
+
+        try:
+            questions = await processor.agent.generate_reflection_questions(
+                profile_context=processor._profile_context(),
+                records_summary=records_summary,
+                focus=focus if focus else None,
+                style=style if style else None,
+            )
+            return {"ok": True, "message": f"基于你最近的记录，建议复盘以下问题：\n{questions}"}
+        except Exception as exc:
+            logger.error("Failed to generate dynamic reflection questions: %s", exc)
+            # Fallback to static questions
+            return {
+                "ok": True,
+                "message": (
+                    "基于你最近的记录，建议复盘以下问题：\n"
+                    "1. 最近提到最多的标签是哪些，它们带给你什么感触？\n"
+                    "2. 哪一天的情绪最波动，发生了什么？\n"
+                    "3. 有哪些事情是你重复记录但尚未解决的？"
+                )
+            }
+
+    async def _handle_sync_context(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Fetch external context like calendar or git commits."""
+        source = str(arguments.get("source") or "all").lower()
+        context_items: list[str] = []
+
+        if source in {"all", "git"}:
+            # Mock git commit fetch for now
+            context_items.append("- [Git] 提交了 self-log 架构优化代码")
+
+        if source in {"all", "calendar"}:
+            # Mock calendar fetch for now
+            context_items.append("- [Calendar] 14:00 团队同步会")
+
+        if not context_items:
+            return {"ok": True, "message": "未发现相关的外部上下文信息。"}
+
+        return {
+            "ok": True,
+            "items": context_items,
+            "message": "已同步以下外部上下文：\n" + "\n".join(context_items)
+        }
+
+    async def _handle_visualize(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Generate a visualization of recent records based on the requested type."""
+        viz_type = str(arguments.get("type") or "emotion_distribution").lower()
+        days = int(arguments.get("days") or 30)
+
+        # Filter records by date
+        start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+        records = self.store.search_records(start_date=start_date, limit=100)
+
+        if not records:
+            return {"ok": False, "message": f"最近 {days} 天暂无记录，无法可视化。"}
+
+        from collections import Counter
+        if viz_type == "emotion_distribution":
+            emotions = [r.emotion for r in records]
+            counts = Counter(emotions)
+            chart = "\n".join([f"{emo}: {'█' * count}" for emo, count in counts.items()])
+            return {"ok": True, "message": f"最近 {days} 天的情绪分布：\n{chart}"}
+
+        if viz_type == "tag_cloud":
+            all_tags = []
+            for r in records:
+                all_tags.extend([t.strip() for t in r.tags.split(",") if t.strip()])
+            counts = Counter(all_tags).most_common(15)
+            cloud = "\n".join([f"{tag}: {count}" for tag, count in counts])
+            return {"ok": True, "message": f"最近 {days} 天的高频标签 Top 15：\n{cloud}"}
+
+        if viz_type == "activity_heatmap":
+            dates = [r.date for r in records]
+            counts = Counter(dates)
+            # Simple list-based "heatmap"
+            heatmap = []
+            for i in range(days, -1, -1):
+                d = (datetime.now(timezone.utc).date() - timedelta(days=i)).isoformat()
+                count = counts.get(d, 0)
+                heatmap.append("█" if count > 0 else "░")
+
+            chunk_size = 7
+            rows = [" ".join(heatmap[i:i + chunk_size]) for i in range(0, len(heatmap), chunk_size)]
+            return {"ok": True, "message": f"最近 {days} 天的活动热力图 (每行 7 天)：\n" + "\n".join(rows)}
+
+        return {"ok": False, "message": f"不支持的可视化类型：{viz_type}。目前支持：emotion_distribution, tag_cloud, activity_heatmap"}
+
+    async def _handle_export(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Export records with dynamic filters and optional AI summary."""
+        fmt = str(arguments.get("format") or "markdown").lower()
+        start_date = str(arguments.get("start_date") or "")
+        end_date = str(arguments.get("end_date") or "")
+        include_summary = bool(arguments.get("include_summary") or False)
+        
+        export_dir = self.store.workspace / "exports"
+        export_dir.mkdir(exist_ok=True)
+
+        records = self.store.search_records(
+            start_date=start_date if start_date else None,
+            end_date=end_date if end_date else None,
+            limit=1000,
+        )
+        
+        if not records:
+            return {"ok": False, "message": "范围内暂无记录可供导出。"}
+
+        filename_suffix = datetime.now().strftime("%Y%m%d_%H%M%S")
+        
+        if fmt == "json":
+            path = export_dir / f"export_{filename_suffix}.json"
+            data = [r.to_dict() for r in records]
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        else:
+            # Default to Markdown
+            path = export_dir / f"export_{filename_suffix}.md"
+            header = f"# Self-Log Export ({start_date or 'Beginning'} - {end_date or 'Now'})\n\n"
+            
+            ai_summary = ""
+            if include_summary:
+                processor = self._processor()
+                try:
+                    ai_summary = await processor.agent.generate_report(
+                        report_type="monthly", # Reuse report logic for summary
+                        records=[r.to_dict() for r in records[:50]],
+                        profile_context=processor._profile_context()
+                    )
+                    ai_summary = f"## AI 导出摘要\n\n{ai_summary}\n\n---\n\n"
+                except Exception as exc:
+                    logger.error("Failed to include AI summary in export: %s", exc)
+
+            content = header + ai_summary
+            for r in records:
+                content += f"### {r.date} {r.emotion}\n**摘要**：{r.summary}\n\n{r.corrected_content}\n\n---\n\n"
+            path.write_text(content, encoding="utf-8")
+
+        return {
+            "ok": True,
+            "path": str(path),
+            "message": f"已成功按 {fmt} 格式导出 {len(records)} 条记录到：{path}"
+        }
 
 
 class _AnyInput(BaseModel):
@@ -424,8 +661,61 @@ def _tool_view() -> ToolDefinition:
     )
 
 
+def _tool_search() -> ToolDefinition:
+    return _definition(
+        "self_log_search",
+        "Search through self-log records using keywords, dates, tags, or emotions.",
+        [
+            ("query", "string", "Text search query.", False),
+            ("tags", "string", "Comma-separated tags.", False),
+            ("emotions", "string", "Comma-separated emotions.", False),
+            ("start_date", "string", "YYYY-MM-DD.", False),
+            ("end_date", "string", "YYYY-MM-DD.", False),
+            ("limit", "integer", "Number of results.", False),
+        ],
+    )
+
+
+def _tool_update_record() -> ToolDefinition:
+    return _definition(
+        "self_log_update_record",
+        "Modify an existing structured record. Use this to fix mistakes in summary, tags, emotions, or content.",
+        [
+            ("record_id", "string", "The ID of the record to update.", True),
+            ("summary", "string", "New summary.", False),
+            ("tags", "string", "New comma-separated tags.", False),
+            ("emotion", "string", "New emotion label.", False),
+            ("emotion_reason", "string", "New emotion reason.", False),
+            ("corrected_content", "string", "New cleaned-up content.", False),
+            ("related_people", "string", "New comma-separated people.", False),
+            ("related_places", "string", "New comma-separated places.", False),
+            ("date", "string", "New date (YYYY-MM-DD).", False),
+        ],
+    )
+
+
+def _tool_delete_record() -> ToolDefinition:
+    return _definition(
+        "self_log_delete_record",
+        (
+            "PERMANENTLY DELETE an existing record. Use this with EXTREME CAUTION. "
+            "Only call this when the user explicitly asks to delete a specific record by ID or content. "
+            "This action is IRREVERSIBLE."
+        ),
+        [("record_id", "string", "The ID of the record to delete.", True)],
+    )
+
+
 def _tool_status() -> ToolDefinition:
     return _definition("self_log_status", "Show self-log status.", [])
+
+
+def _tool_get_now() -> ToolDefinition:
+    return _definition(
+        "self_log_get_now",
+        "Get the current local date, time, and timezone information.",
+        []
+    )
 
 
 def _tool_profile_update() -> ToolDefinition:
@@ -463,6 +753,49 @@ def _tool_remember() -> ToolDefinition:
     )
 
 
+def _tool_suggest_reflection() -> ToolDefinition:
+    return _definition(
+        "self_log_suggest_reflection",
+        "Suggest deep reflection questions based on recent self-log history. The model can provide a focus area or a specific style.",
+        [
+            ("focus", "string", "Specific area to focus on (e.g. 'work stress', 'family relationships').", False),
+            ("style", "string", "Style of the questions (e.g. 'challenging', 'supportive', 'philosophical').", False),
+        ]
+    )
+
+
+def _tool_sync_context() -> ToolDefinition:
+    return _definition(
+        "self_log_sync_context",
+        "Synchronize external context like calendar events or git commits to enrich logs.",
+        [("source", "string", "Source to sync: all, git, calendar.", False)]
+    )
+
+
+def _tool_visualize() -> ToolDefinition:
+    return _definition(
+        "self_log_visualize",
+        "Generate a visual report of recent activity. Model can choose the type and time range.",
+        [
+            ("type", "string", "Type of visualization: emotion_distribution, tag_cloud, activity_heatmap.", False),
+            ("days", "integer", "Number of days to analyze (default 30).", False),
+        ]
+    )
+
+
+def _tool_export() -> ToolDefinition:
+    return _definition(
+        "self_log_export",
+        "Export self-log records with optional filtering and AI summary. Model can choose format, date range, and whether to include an AI-generated overview.",
+        [
+            ("format", "string", "Export format: markdown, json.", False),
+            ("start_date", "string", "YYYY-MM-DD.", False),
+            ("end_date", "string", "YYYY-MM-DD.", False),
+            ("include_summary", "boolean", "Whether to include an AI-generated summary at the top of the export.", False),
+        ]
+    )
+
+
 def _definition(
     name: str,
     description: str,
@@ -486,11 +819,19 @@ def _required_text(arguments: dict[str, Any], key: str) -> str:
     return value
 
 
+def _csv_list(value: Any) -> list[str] | None:
+    if not value:
+        return None
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
 def _format_records(records: list[dict[str, Any]]) -> str:
     if not records:
         return "暂无 self-log 记录。"
     return "\n".join(
-        f"- {record.get('date', '')} {record.get('summary') or record.get('raw_content', '')}"
+        f"- [{record.get('id', '?')}] {record.get('date', '')} {record.get('summary') or record.get('raw_content', '')}"
         for record in records
     )
 

@@ -72,6 +72,32 @@ class OpenHarnessSelfLogAgent:
             user_prompt=f"{profile_context}\n\n## 记录数据\n{records_text}",
         )
 
+    async def generate_daily_question(self, profile_context: str) -> str:
+        logger.info("generate_daily_question start")
+        return await self._complete(
+            system_prompt=_DAILY_QUESTION_SYSTEM_PROMPT,
+            user_prompt=f"{profile_context}\n\n请根据以上上下文，为用户生成一个今日份的、有深度的对话引导问题。",
+        )
+
+    async def generate_reflection_questions(
+        self,
+        profile_context: str,
+        records_summary: str,
+        focus: str | None = None,
+        style: str | None = None,
+    ) -> str:
+        logger.info("generate_reflection_questions start focus=%s style=%s", focus, style)
+        user_prompt = f"{profile_context}\n\n## 最近记录摘要\n{records_summary}"
+        if focus:
+            user_prompt += f"\n\n请特别关注以下领域：{focus}"
+        if style:
+            user_prompt += f"\n\n请使用以下语气/风格：{style}"
+
+        return await self._complete(
+            system_prompt=_REFLECTION_SYSTEM_PROMPT,
+            user_prompt=user_prompt + "\n\n请生成 3 个深度复盘问题。",
+        )
+
     async def _complete(self, *, system_prompt: str, user_prompt: str) -> str:
         request = ApiMessageRequest(
             model=self._settings.model,
@@ -180,3 +206,28 @@ def _report_system_prompt(report_type: str) -> str:
         f"你是一位个人成长教练。请基于用户记录生成一份高密度、结构化的{labels[report_type]}。"
         "使用 Markdown、表格和 bullet points；温暖、客观、有洞察力，拒绝空泛鼓励。"
     )
+
+_DAILY_QUESTION_SYSTEM_PROMPT = """你是一位深度理解人性的 AI 个人记录助手。
+你的目标是通过一个精准、温暖且有启发性的问题，引导用户开启今天的记录。
+
+### 引导原则
+1. **基于上下文**：参考用户的 User Profile 和最近的 Observation。如果用户最近在忙某个项目，或者提到了某种困扰，问题应与之相关。
+2. **避免陈词滥调**：不要问“今天过得怎么样”，要问具体的、能引发思考的问题。
+3. **保持简短**：问题应在一句话以内。
+4. **人本关怀**：展现出你记得他/她之前说过的话。
+
+示例：
+- “昨天的架构评审中，那个关于扩展性的争议最后是怎么解决的？”
+- “你上周提到最近睡眠不太好，今天感觉精神状态恢复一些了吗？”
+- “今天在处理那个紧急 Bug 的间隙，有没有哪怕一瞬间让你觉得产生成就感？”
+"""
+
+_REFLECTION_SYSTEM_PROMPT = """你是一位个人成长教练。
+你的任务是基于用户最近的心理状态和生活记录，提出 3 个能够触及灵魂、引发深度复盘的问题。
+
+### 复盘原则
+1. **见微知著**：从碎片的记录中发现潜藏的情绪模式或行为惯性。
+2. **多维视角**：如果用户只关注了客观事实，试着引导他/她关注感受；如果只关注了感受，试着引导他/她关注行动。
+3. **针对性**：如果提供了 focus 领域，请严格围绕该领域提问。
+4. **启发性**：问题不应有标准答案，而是为了开启对话。
+"""

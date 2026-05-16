@@ -103,6 +103,8 @@ class SelfLogProcessor:
 
         pending_reminder = self._pending_reminder()
         missing_streak, missing_day_reminder = self._missing_day_reminder(process_date)
+        daily_question = await self._generate_daily_question(process_date) if not entries else None
+        
         logger.info(
             "process_pending done auto_processed=%d pending_confirmations=%d missing_streak=%d",
             auto_processed,
@@ -118,7 +120,19 @@ class SelfLogProcessor:
             consecutive_missing_days=missing_streak,
             pending_reminder=pending_reminder,
             missing_day_reminder=missing_day_reminder,
+            daily_question=daily_question,
         )
+
+    async def _generate_daily_question(self, process_date: str | None = None) -> str | None:
+        """Generate a personalized daily question based on the user's profile and context."""
+        today = datetime.fromisoformat(process_date).date() if process_date else datetime.now(timezone.utc).date()
+        if self.store.has_activity_on(today.isoformat()):
+            return None
+
+        logger.info("generating daily question for date=%s", today)
+        context = self._profile_context()
+        question = await self.agent.generate_daily_question(context)
+        return question
 
     async def generate_report(self, report_type: str) -> SelfLogReport:
         records = [record.to_dict() for record in self.store.list_records()]
@@ -221,6 +235,12 @@ class SelfLogProcessor:
 
         sections: list[str] = []
 
+        # 0. Temporal awareness (Crucial for grounding)
+        now = datetime.now()
+        local_time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        weekday_str = now.strftime("%A")
+        sections.append(f"## Current Time\n- Local Time: {local_time_str}\n- Day of Week: {weekday_str}")
+
         # 1. Soul & User profile (The "Static" core)
         soul_path = get_soul_path(self.store.workspace)
         if soul_path.exists():
@@ -253,6 +273,18 @@ class SelfLogProcessor:
             return "## Known Context\nNo prior context available."
 
         return "\n\n".join(sections)
+
+    def _retrieve_relevant_context(self, content: str, limit: int = 5) -> str | None:
+        """Find past records related to the current input to provide context."""
+        records = self.store.search_records(query=content, limit=limit)
+        if not records:
+            return None
+        
+        lines = [
+            f"- [{record.date}] {record.summary} ({record.tags})"
+            for record in records
+        ]
+        return "\n".join(lines)
 
     def _pending_reminder(self) -> str | None:
         pending_count = len(self.store.list_pending_confirmations())

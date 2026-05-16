@@ -102,6 +102,43 @@ class SelfLogStore:
         records = [SelfLogRecord.from_json(line) for line in self._read_jsonl(self.records_path)]
         return records if limit is None else records[-limit:]
 
+    def update_record(self, record_id: str, **updates: Any) -> bool:
+        """Update an existing record by ID with new field values."""
+        records = self.list_records()
+        updated = False
+        new_records: list[SelfLogRecord] = []
+        
+        for r in records:
+            if r.id == record_id:
+                # Apply updates
+                data = r.to_dict()
+                data.update(updates)
+                new_records.append(SelfLogRecord(**data))
+                updated = True
+            else:
+                new_records.append(r)
+        
+        if updated:
+            # Overwrite the file with updated list
+            lines = [r.to_json() for r in new_records]
+            self.records_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            
+        return updated
+
+    def delete_record(self, record_id: str) -> bool:
+        """Permanently delete a record by ID."""
+        records = self.list_records()
+        original_count = len(records)
+        new_records = [r for r in records if r.id != record_id]
+        
+        if len(new_records) < original_count:
+            # Overwrite the file
+            lines = [r.to_json() for r in new_records]
+            self.records_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            return True
+            
+        return False
+
     def add_pending_confirmation(self, pending: PendingConfirmation) -> None:
         self._append_jsonl(self.pending_confirmations_path, pending.to_json())
 
@@ -133,11 +170,11 @@ class SelfLogStore:
         end_date: str | None = None,
         limit: int = 10,
     ) -> list[SelfLogRecord]:
-        """Search records with filters and heuristic text matching."""
+        """Search records with filters and optimized ranking (BM25 + Temporal Decay)."""
         records = self.list_records()
         filtered: list[SelfLogRecord] = []
 
-        # 1. Filter by date/tag/emotion
+        # 1. Hard Filters (Date/Tag/Emotion)
         for record in records:
             if start_date and record.date < start_date:
                 continue
@@ -149,29 +186,70 @@ class SelfLogStore:
                 continue
             filtered.append(record)
 
+        if not filtered:
+            return []
+
         if not query:
             return filtered[-limit:]
 
-        # 2. Heuristic text matching
-        from openharness.memory.search import _tokenize
-
-        query_tokens = _tokenize(query)
+        # 2. Tokenization with Jieba
+        query_tokens = _tokenize_enhanced(query)
         if not query_tokens:
             return filtered[-limit:]
 
-        scored: list[tuple[float, SelfLogRecord]] = []
-        for record in filtered:
-            text = f"{record.summary} {record.corrected_content} {record.tags} {record.related_people} {record.related_places}".lower()
-            # Match tokens
-            hits = sum(1 for t in query_tokens if t in text)
-            if hits > 0:
-                # Boost if query tokens appear in summary or tags
-                summary_hits = sum(1 for t in query_tokens if t in record.summary.lower())
-                tag_hits = sum(1 for t in query_tokens if t in record.tags.lower())
-                score = float(hits) + (summary_hits * 2.0) + (tag_hits * 1.5)
-                scored.append((score, record))
+        # BM25 Scoring using rank_bm25 package
+        from rank_bm25 import BM25Okapi
+        
+        # Prepare corpus
+        corpus_tokens = [
+            _tokenize_enhanced(f"{r.summary} {r.corrected_content} {r.tags}")
+            for r in filtered
+        ]
+        
+        bm25 = BM25Okapi(corpus_tokens)
+        doc_scores = bm25.get_scores(query_tokens)
 
-        scored.sort(key=lambda item: (-item[0], -datetime.fromisoformat(item[1].created_at or item[1].date).timestamp()))
+        scored: list[tuple[float, SelfLogRecord]] = []
+        now_ts = datetime.now(timezone.utc).timestamp()
+        
+        for i, score in enumerate(doc_scores):
+            # rank_bm25 can return 0 or negative for common words in tiny corpus
+            # We only care about positive matches for retrieval context
+            if score <= 0:
+                # If there's an exact match in summary or content even with 0 score (IDF issue),
+                # we give it a tiny epsilon score so boosts can still work.
+                doc_text = f"{filtered[i].summary} {filtered[i].corrected_content}".lower()
+                if any(t in doc_text for t in query_tokens):
+                    score = 0.1
+                else:
+                    continue
+            
+            record = filtered[i]
+            
+            # Boost matches in summary and tags
+            summary_tokens = set(_tokenize_enhanced(record.summary))
+            tag_tokens = set(_tokenize_enhanced(record.tags))
+            for t in query_tokens:
+                if t in summary_tokens:
+                    score *= 1.5
+                if t in tag_tokens:
+                    score *= 1.2
+
+            # 4. Temporal Decay (Recency bias)
+            try:
+                rec_date = datetime.fromisoformat(record.created_at or record.date)
+                if rec_date.tzinfo is None:
+                    rec_date = rec_date.replace(tzinfo=timezone.utc)
+                age_days = (now_ts - rec_date.timestamp()) / 86400
+            except ValueError:
+                age_days = 0
+                
+            decay_factor = 0.5 ** (age_days / 90.0)
+            final_score = score * max(0.2, decay_factor)
+            
+            scored.append((final_score, record))
+
+        scored.sort(key=lambda item: -item[0])
         return [item[1] for item in scored[:limit]]
 
     def status(self) -> dict[str, object]:
@@ -241,6 +319,28 @@ class SelfLogStore:
         with path.open("a", encoding="utf-8") as file:
             file.write(line + "\n")
         path.chmod(0o600)
+
+
+def _tokenize_enhanced(text: str) -> list[str]:
+    """Tokenize text using Jieba for Chinese and regex for English."""
+    if not text:
+        return []
+    
+    import jieba
+    import re
+    
+    # 1. Clean and lower
+    text = text.lower()
+    
+    # 2. Use Jieba for Chinese (standard mode)
+    # This handles both individual characters and multi-character words correctly.
+    jieba_tokens = list(jieba.cut(text))
+    
+    # 3. Use regex for English/Numbers to ensure consistency (length >= 2)
+    ascii_tokens = re.findall(r"[a-z0-9]{2,}", text)
+    
+    # Combine and deduplicate within a document for tf counting later
+    return [t.strip() for t in jieba_tokens + ascii_tokens if t.strip()]
 
 
 def _now() -> str:

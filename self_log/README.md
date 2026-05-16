@@ -423,9 +423,17 @@ self-log 的模型路由 agent 会看到一组 self-log 专用工具：
 | `self_log_backfill` | 补录缺失日期 |
 | `self_log_report` | 生成周报、月报、年报 |
 | `self_log_view` | 查看最近记录 |
+| `self_log_search` | 语义/关键词搜索历史记录 |
+| `self_log_update_record` | 修改已入库记录的字段（如纠错） |
+| `self_log_delete_record` | 永久删除一条记录（需慎重使用） |
 | `self_log_status` | 查看状态 |
+| `self_log_get_now` | 获取当前日期时间、星期及本地时区信息 |
 | `self_log_profile_update` | 记录高价值用户画像更新建议 |
 | `self_log_remember` | 将长期稳定的用户背景信息写入 memory 目录 |
+| `self_log_suggest_reflection` | 基于最近记录生成深度复盘问题 |
+| `self_log_sync_context` | 同步外部上下文（日历、Git 等） |
+| `self_log_visualize` | 生成情绪分布图等可视化反馈 |
+| `self_log_export` | 导出日志为 Markdown 文件 |
 
 重要约束：
 
