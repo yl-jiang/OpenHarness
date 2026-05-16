@@ -38,16 +38,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 class OhmoGatewayService:
     """Foreground/background service wrapper for the personal gateway."""
 
-    def __init__(
-        self,
-        cwd: str | Path | None = None,
-        workspace: str | Path | None = None,
-        *,
-        self_log_default_record: bool = False,
-    ) -> None:
+    def __init__(self, cwd: str | Path | None = None, workspace: str | Path | None = None) -> None:
         self._cwd = str(Path(cwd or Path.cwd()).resolve())
         self._workspace = workspace
-        self._self_log_default_record = self_log_default_record
         os.chdir(self._cwd)
         root = initialize_workspace(self._workspace)
         os.environ["OHMO_WORKSPACE"] = str(root)
@@ -76,7 +69,6 @@ class OhmoGatewayService:
             feishu_group_policy=str(
                 self._config.channel_configs.get("feishu", {}).get("group_policy", "managed_or_mention")
             ),
-            self_log_default_record=self_log_default_record,
         )
 
     @property
@@ -162,8 +154,6 @@ class OhmoGatewayService:
             "--workspace",
             root,
         ]
-        if self._self_log_default_record:
-            argv.append("--self-log-default-record")
         logger.info("ohmo gateway restarting in-place argv=%s", argv)
         os.execv(sys.executable, argv)
 
@@ -241,14 +231,9 @@ class OhmoGatewayService:
         return 0
 
 
-def start_gateway_process(
-    cwd: str | Path | None = None,
-    workspace: str | Path | None = None,
-    *,
-    self_log_default_record: bool = False,
-) -> int:
+def start_gateway_process(cwd: str | Path | None = None, workspace: str | Path | None = None) -> int:
     """Start the gateway as a detached subprocess."""
-    service = OhmoGatewayService(cwd, workspace, self_log_default_record=self_log_default_record)
+    service = OhmoGatewayService(cwd, workspace)
     service.log_file.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
     pythonpath_entries = [str(_REPO_ROOT)]
@@ -270,21 +255,18 @@ def start_gateway_process(
             popen_kwargs["stdin"] = subprocess.DEVNULL
         else:
             popen_kwargs["start_new_session"] = True
-        command = [
-            sys.executable,
-            "-m",
-            "ohmo",
-            "gateway",
-            "run",
-            "--cwd",
-            service._cwd,
-            "--workspace",
-            str(get_workspace_root(workspace)),
-        ]
-        if self_log_default_record:
-            command.append("--self-log-default-record")
         process = subprocess.Popen(
-            command,
+            [
+                sys.executable,
+                "-m",
+                "ohmo",
+                "gateway",
+                "run",
+                "--cwd",
+                service._cwd,
+                "--workspace",
+                str(get_workspace_root(workspace)),
+            ],
             **popen_kwargs,
         )
     return process.pid

@@ -1,0 +1,302 @@
+"""Gateway service lifecycle for the standalone self-log app."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+if sys.platform == "win32":
+    import ctypes
+
+from openharness.channels.bus.queue import MessageBus
+from openharness.channels.impl.manager import ChannelManager
+from openharness.utils.log import get_logger
+
+from self_log.config import build_channel_manager_config, load_config
+from self_log.gateway.bridge import SelfLogGatewayBridge
+from self_log.models import SelfLogState
+from self_log.workspace import (
+    get_logs_dir,
+    get_pid_path,
+    get_state_path,
+    get_workspace_root,
+    initialize_workspace,
+)
+
+logger = get_logger(__name__)
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+class SelfLogGatewayService:
+    """Foreground/background service wrapper for self-log channels."""
+
+    def __init__(
+        self,
+        cwd: str | Path | None = None,
+        workspace: str | Path | None = None,
+    ) -> None:
+        self._cwd = str(Path(cwd or Path.cwd()).resolve())
+        self._workspace = workspace
+        os.chdir(self._cwd)
+        root = initialize_workspace(self._workspace)
+        os.environ["SELF_LOG_WORKSPACE"] = str(root)
+        self._config = load_config(root)
+        self._bus = MessageBus()
+        self._manager = ChannelManager(build_channel_manager_config(self._config), self._bus)
+        self._bridge = SelfLogGatewayBridge(
+            bus=self._bus,
+            workspace=root,
+            provider_profile=self._config.provider_profile,
+        )
+
+    @property
+    def pid_file(self) -> Path:
+        return get_pid_path(self._workspace)
+
+    @property
+    def log_file(self) -> Path:
+        return get_logs_dir(self._workspace) / "gateway.log"
+
+    @property
+    def state_file(self) -> Path:
+        return get_state_path(self._workspace)
+
+    def write_state(self, *, running: bool, last_error: str | None = None) -> None:
+        state = SelfLogState(
+            running=running,
+            pid=os.getpid() if running else None,
+            provider_profile=self._config.provider_profile,
+            enabled_channels=self._config.enabled_channels,
+            last_error=last_error,
+        )
+        self.state_file.write_text(state.model_dump_json(indent=2) + "\n", encoding="utf-8")
+
+    async def run_foreground(self) -> int:
+        self.pid_file.write_text(str(os.getpid()), encoding="utf-8")
+        self.write_state(running=True)
+        channels = self._config.enabled_channels or []
+        _print_gateway_banner(
+            pid=os.getpid(),
+            workspace=self._workspace or get_workspace_root(),
+            profile=self._config.provider_profile,
+            channels=channels,
+            log_file=self.log_file,
+        )
+        logger.info(
+            "self-log gateway starting pid=%d channels=%s profile=%s workspace=%s",
+            os.getpid(),
+            channels,
+            self._config.provider_profile,
+            self._workspace,
+        )
+        bridge_task = asyncio.create_task(self._bridge.run(), name="self-log-gateway-bridge")
+        manager_task = asyncio.create_task(self._manager.start_all(), name="self-log-gateway-channels")
+        stop_event = asyncio.Event()
+
+        def _stop(*_: object) -> None:
+            stop_event.set()
+
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            with contextlib.suppress(NotImplementedError):
+                loop.add_signal_handler(sig, _stop)
+
+        # Yield once so channel tasks can start and emit their first logs before "ready"
+        await asyncio.sleep(0)
+        logger.info("self-log gateway ready — waiting for messages (Ctrl-C to stop)")
+
+        try:
+            await stop_event.wait()
+        finally:
+            logger.info("self-log gateway shutting down pid=%d", os.getpid())
+            self._bridge.stop()
+            bridge_task.cancel()
+            manager_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await bridge_task
+            with contextlib.suppress(asyncio.CancelledError):
+                await manager_task
+            await self._manager.stop_all()
+            self.write_state(running=False)
+            self.pid_file.unlink(missing_ok=True)
+            logger.info("self-log gateway stopped pid=%d", os.getpid())
+        return 0
+
+
+def start_gateway_process(cwd: str | Path | None = None, workspace: str | Path | None = None) -> int:
+    service = SelfLogGatewayService(cwd, workspace)
+    service.log_file.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("start_gateway_process log_file=%s workspace=%s", service.log_file, service._workspace)
+    env = os.environ.copy()
+    pythonpath_entries = [str(_REPO_ROOT)]
+    existing_pythonpath = env.get("PYTHONPATH")
+    if existing_pythonpath:
+        pythonpath_entries.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+    with service.log_file.open("a", encoding="utf-8") as log_file:
+        popen_kwargs: dict[str, object] = {
+            "cwd": service._cwd,
+            "stdout": log_file,
+            "stderr": log_file,
+            "env": env,
+        }
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = (
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            )
+            popen_kwargs["stdin"] = subprocess.DEVNULL
+        else:
+            popen_kwargs["start_new_session"] = True
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "self_log",
+                "gateway",
+                "run",
+                "--cwd",
+                service._cwd,
+                "--workspace",
+                str(get_workspace_root(workspace)),
+            ],
+            **popen_kwargs,
+        )
+    logger.info("start_gateway_process launched pid=%d", process.pid)
+    return process.pid
+
+
+def stop_gateway_process(cwd: str | Path | None = None, workspace: str | Path | None = None) -> bool:
+    service = SelfLogGatewayService(cwd, workspace)
+    pids: list[int] = []
+    if service.pid_file.exists():
+        with contextlib.suppress(ValueError):
+            pids.append(int(service.pid_file.read_text(encoding="utf-8").strip()))
+    pids.extend(_iter_workspace_gateway_pids(workspace))
+    unique = [pid for index, pid in enumerate(pids) if pid not in pids[:index] and _pid_is_running(pid)]
+    if not unique:
+        service.pid_file.unlink(missing_ok=True)
+        logger.info("stop_gateway_process no running gateway found")
+        return False
+    logger.info("stop_gateway_process sending SIGTERM to pids=%s", unique)
+    if sys.platform == "win32":
+        for pid in unique:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, check=False)
+    else:
+        for pid in unique:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGTERM)
+    service.pid_file.unlink(missing_ok=True)
+    service.write_state(running=False)
+    return True
+
+
+def gateway_status(cwd: str | Path | None = None, workspace: str | Path | None = None) -> SelfLogState:
+    service = SelfLogGatewayService(cwd, workspace)
+    live_pid: int | None = None
+    if service.pid_file.exists():
+        with contextlib.suppress(ValueError):
+            pid = int(service.pid_file.read_text(encoding="utf-8").strip())
+            if _pid_is_running(pid):
+                live_pid = pid
+    if live_pid is None:
+        live_pids = _iter_workspace_gateway_pids(workspace)
+        if live_pids:
+            live_pid = live_pids[0]
+            service.pid_file.write_text(str(live_pid), encoding="utf-8")
+        else:
+            service.pid_file.unlink(missing_ok=True)
+    last_error: str | None = None
+    if service.state_file.exists():
+        with contextlib.suppress(Exception):
+            last_error = SelfLogState.model_validate_json(
+                service.state_file.read_text(encoding="utf-8")
+            ).last_error
+    return SelfLogState(
+        running=live_pid is not None,
+        pid=live_pid,
+        provider_profile=service._config.provider_profile,
+        enabled_channels=service._config.enabled_channels,
+        last_error=last_error,
+    )
+
+
+def _pid_is_running(pid: int) -> bool:
+    if sys.platform == "win32":
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        try:
+            exit_code = ctypes.c_ulong()
+            if kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code)):
+                return exit_code.value == 259
+            return False
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _iter_workspace_gateway_pids(workspace: str | Path | None = None) -> list[int]:
+    root = str(get_workspace_root(workspace))
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid=,args="],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except Exception:
+        return []
+    current_pid = os.getpid()
+    pids: list[int] = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            pid_text, args = line.split(None, 1)
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if pid == current_pid:
+            continue
+        if "-m self_log gateway run" not in args:
+            continue
+        if f"--workspace {root}" not in args:
+            continue
+        if _pid_is_running(pid):
+            pids.append(pid)
+    return pids
+
+
+def _print_gateway_banner(
+    *,
+    pid: int,
+    workspace: object,
+    profile: str,
+    channels: list[str],
+    log_file: Path,
+) -> None:
+    """Print a human-readable startup banner to stdout."""
+    channel_str = ", ".join(channels) if channels else "(none)"
+    print(
+        f"\n"
+        f"  ╔══════════════════════════════════════════╗\n"
+        f"  ║          self-log gateway starting       ║\n"
+        f"  ╚══════════════════════════════════════════╝\n"
+        f"  pid       : {pid}\n"
+        f"  workspace : {workspace}\n"
+        f"  profile   : {profile}\n"
+        f"  channels  : {channel_str}\n"
+        f"  log file  : {log_file}\n",
+        flush=True,
+    )
