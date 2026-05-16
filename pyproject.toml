@@ -58,9 +58,10 @@ openharness = "openharness.cli:app"
 oh = "openharness.cli:app"
 openh = "openharness.cli:app"
 ohmo = "ohmo.cli:app"
+self-log = "self_log.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/openharness", "ohmo"]
+packages = ["src/openharness", "ohmo", "self_log"]
 
 [tool.hatch.build]
 exclude = [

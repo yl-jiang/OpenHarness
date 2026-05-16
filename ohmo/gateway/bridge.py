@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date, timedelta
 from pathlib import Path
 from openharness.utils.log import get_logger
 from collections.abc import Awaitable, Callable
@@ -15,16 +14,6 @@ from openharness.channels.bus.queue import MessageBus
 from ohmo.group_registry import load_managed_group_record
 from ohmo.gateway.router import session_key_for_message
 from ohmo.gateway.runtime import OhmoSessionRuntimePool
-from ohmo.self_log import (
-    OpenHarnessSelfLogAgent,
-    SelfLogProcessor,
-    SelfLogStore,
-    SelfLogToolAgent,
-    format_process_result,
-    parse_backfill_argument,
-    parse_self_log_command,
-    self_log_help_text,
-)
 
 logger = get_logger(__name__)
 
@@ -75,14 +64,12 @@ class OhmoGatewayBridge:
         restart_gateway: Callable[[object, str], Awaitable[None] | None] | None = None,
         workspace: str | Path | None = None,
         feishu_group_policy: str = "open",
-        self_log_default_record: bool = False,
     ) -> None:
         self._bus = bus
         self._runtime_pool = runtime_pool
         self._restart_gateway = restart_gateway
         self._workspace = workspace
         self._feishu_group_policy = _normalize_feishu_group_policy(feishu_group_policy)
-        self._self_log_default_record = self_log_default_record
         self._running = False
         self._session_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_cancel_reasons: dict[str, str] = {}
@@ -97,10 +84,6 @@ class OhmoGatewayBridge:
             except asyncio.CancelledError:
                 break
 
-            session_key = session_key_for_message(message)
-            if await self._handle_self_log(message, session_key):
-                continue
-
             if not self._should_process_message(message):
                 logger.info(
                     "ohmo inbound ignored channel=%s chat_id=%s sender_id=%s reason=feishu_group_policy policy=%s content=%r",
@@ -112,6 +95,7 @@ class OhmoGatewayBridge:
                 )
                 continue
 
+            session_key = session_key_for_message(message)
             logger.info(
                 "ohmo inbound received channel=%s chat_id=%s sender_id=%s session_key=%s content=%r",
                 message.channel,
@@ -239,106 +223,6 @@ class OhmoGatewayBridge:
                 content=content,
                 metadata={"_session_key": session_key},
             )
-        )
-
-    async def _handle_self_log(self, message: InboundMessage, session_key: str) -> bool:
-        command = parse_self_log_command(message.content)
-        if command is None:
-            content = message.content.strip()
-            if self._self_log_default_record and content and not content.startswith("/"):
-                try:
-                    reply = await SelfLogToolAgent(SelfLogStore(self._workspace)).run(content)
-                except (Exception, SystemExit) as exc:
-                    logger.exception("self-log semantic tool routing failed session_key=%s", session_key)
-                    await self._publish_command_reply(message, session_key, f"self-log 执行失败：{exc}")
-                    return True
-                await self._publish_command_reply(message, session_key, reply)
-                return True
-            return False
-        if command.action == "help":
-            await self._publish_command_reply(message, session_key, self_log_help_text())
-            return True
-        store = SelfLogStore(self._workspace)
-        try:
-            if command.action == "process":
-                reply = await self._process_self_log(store, command.argument or None)
-                await self._publish_command_reply(message, session_key, reply)
-                return True
-            if command.action == "backfill":
-                reply = await self._backfill_self_log(store, command.argument)
-                await self._publish_command_reply(message, session_key, reply)
-                return True
-            if command.action == "report":
-                reply = await self._report_self_log(store, command.argument or "weekly")
-                await self._publish_command_reply(message, session_key, reply)
-                return True
-            if command.action == "view":
-                await self._publish_command_reply(message, session_key, self._view_self_log(store))
-                return True
-            if command.action == "status":
-                await self._publish_command_reply(message, session_key, self._status_self_log(store))
-                return True
-        except Exception as exc:
-            logger.exception("self-log command failed action=%s session_key=%s", command.action, session_key)
-            await self._publish_command_reply(message, session_key, f"self-log 执行失败：{exc}")
-            return True
-        try:
-            store.record(
-                command.argument,
-                channel=message.channel,
-                sender_id=message.sender_id,
-                chat_id=message.chat_id,
-                message_id=message.metadata.get("message_id"),
-                metadata={
-                    key: value
-                    for key, value in message.metadata.items()
-                    if key in {"chat_type", "thread_id", "root_id", "msg_type", "sender_label"}
-                },
-            )
-        except ValueError as exc:
-            await self._publish_command_reply(message, session_key, f"self-log 记录失败：{exc}")
-            return True
-        await self._publish_command_reply(message, session_key, "✅ 已记录到 self-log。")
-        return True
-
-    async def _process_self_log(self, store: SelfLogStore, process_date: str | None = None) -> str:
-        processor = SelfLogProcessor(store, OpenHarnessSelfLogAgent())
-        result = await processor.process_pending(process_date=process_date)
-        return format_process_result(result)
-
-    async def _backfill_self_log(self, store: SelfLogStore, argument: str) -> str:
-        backfill_date, content = parse_backfill_argument(argument)
-        next_day = (date.fromisoformat(backfill_date) + timedelta(days=1)).isoformat()
-        processor = SelfLogProcessor(store, OpenHarnessSelfLogAgent())
-        result = await processor.process_pending(process_date=next_day, backfill_content=content)
-        return format_process_result(result)
-
-    async def _report_self_log(self, store: SelfLogStore, report_type: str) -> str:
-        processor = SelfLogProcessor(store, OpenHarnessSelfLogAgent())
-        process_result = await processor.process_pending()
-        report = await processor.generate_report(report_type)
-        pending = len(store.list_pending_confirmations())
-        prefix = ""
-        if pending:
-            prefix = f"⚠️ 还有 {pending} 条待确认，报告基于已整理记录生成。\n\n"
-        elif process_result.auto_processed:
-            prefix = f"✅ 已先整理 {process_result.auto_processed} 条新记录。\n\n"
-        return prefix + report.content
-
-    def _view_self_log(self, store: SelfLogStore) -> str:
-        records = store.list_records(limit=10)
-        if not records:
-            return "暂无已整理 self-log 记录。"
-        return "\n".join(
-            f"{record.date} {record.emotion} [{record.source}] [{record.tags}] {record.summary}"
-            for record in records
-        )
-
-    def _status_self_log(self, store: SelfLogStore) -> str:
-        status = store.status()
-        return (
-            f"self-log 状态：entries={status['entries']} "
-            f"records={status['records']} pending={status['pending_confirmations']}"
         )
 
     async def _interrupt_session(

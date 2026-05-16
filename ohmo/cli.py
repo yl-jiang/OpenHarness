@@ -23,7 +23,6 @@ from ohmo.gateway.service import (
 from ohmo.memory import add_memory_entry, list_memory_files, remove_memory_entry
 from ohmo.runtime import launch_ohmo_react_tui, run_ohmo_backend, run_ohmo_print_mode
 from ohmo.session_storage import OhmoSessionBackend
-from ohmo.self_log import OpenHarnessSelfLogAgent, SelfLogProcessor, SelfLogStore, format_process_result
 from ohmo.workspace import (
     get_gateway_config_path,
     get_workspace_root,
@@ -45,13 +44,11 @@ memory_app = typer.Typer(name="memory", help="Manage .ohmo memory")
 soul_app = typer.Typer(name="soul", help="Inspect or edit soul.md")
 user_app = typer.Typer(name="user", help="Inspect or edit user.md")
 gateway_app = typer.Typer(name="gateway", help="Run the ohmo gateway")
-self_log_app = typer.Typer(name="self-log", help="Manage ohmo self-log entries")
 
 app.add_typer(memory_app)
 app.add_typer(soul_app)
 app.add_typer(user_app)
 app.add_typer(gateway_app)
-app.add_typer(self_log_app)
 
 _INTERACTIVE_CHANNELS = ("telegram", "slack", "discord", "feishu")
 _WORKSPACE_HELP = "Path to the ohmo workspace (defaults to ~/.ohmo)"
@@ -585,105 +582,6 @@ def memory_remove_cmd(
     raise typer.Exit(1)
 
 
-@self_log_app.command("init")
-def self_log_init_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
-    root = SelfLogStore(workspace).initialize()
-    print(f"Initialized ohmo self-log at {root}")
-
-
-@self_log_app.command("record")
-def self_log_record_cmd(
-    content: str = typer.Argument(...),
-    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
-) -> None:
-    entry = SelfLogStore(workspace).record(content)
-    print(f"Recorded self-log entry {entry.id}")
-
-
-@self_log_app.command("list")
-def self_log_list_cmd(
-    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
-    limit: int = typer.Option(20, "--limit", min=1, help="Maximum entries to show"),
-) -> None:
-    for entry in SelfLogStore(workspace).list_entries(limit=limit):
-        print(f"{entry.created_at} [{entry.channel}] {entry.content}")
-
-
-@self_log_app.command("process")
-def self_log_process_cmd(
-    process_date: str | None = typer.Argument(None, help="Date to process as YYYY-MM-DD"),
-    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
-    profile: str | None = typer.Option(None, "--profile", help="OpenHarness provider profile"),
-    backfill: str | None = typer.Option(None, "--backfill", help="Backfill content for the previous day"),
-) -> None:
-    store = SelfLogStore(workspace)
-    agent = OpenHarnessSelfLogAgent(profile=profile)
-    result = asyncio.run(
-        SelfLogProcessor(store, agent).process_pending(process_date=process_date, backfill_content=backfill)
-    )
-    print(format_process_result(result))
-
-
-@self_log_app.command("view")
-def self_log_view_cmd(
-    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
-    limit: int = typer.Option(20, "--limit", min=1, help="Maximum records to show"),
-) -> None:
-    for record in SelfLogStore(workspace).list_records(limit=limit):
-        print(f"{record.date} {record.emotion} [{record.source}] [{record.tags}] {record.summary}")
-
-
-@self_log_app.command("report")
-def self_log_report_cmd(
-    report_type: str = typer.Argument(..., help="weekly, monthly, or yearly"),
-    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
-    profile: str | None = typer.Option(None, "--profile", help="OpenHarness provider profile"),
-) -> None:
-    store = SelfLogStore(workspace)
-    agent = OpenHarnessSelfLogAgent(profile=profile)
-    report = asyncio.run(SelfLogProcessor(store, agent).generate_report(report_type))
-    print(report.content)
-
-
-@self_log_app.command("status")
-def self_log_status_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
-    status = SelfLogStore(workspace).status()
-    print(
-        f"ohmo self-log: entries: {status['entries']} | "
-        f"records: {status['records']} | "
-        f"pending: {status['pending_confirmations']} | "
-        f"path: {status['path']}"
-    )
-
-
-@self_log_app.command("listen")
-def self_log_listen_cmd(
-    cwd: str = typer.Option(str(Path.cwd()), "--cwd", help="Project working directory"),
-    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
-) -> None:
-    pid = start_gateway_process(cwd, workspace, self_log_default_record=True)
-    print(f"ohmo self-log is listening through gateway (pid={pid})")
-
-
-@self_log_app.command("stop")
-def self_log_stop_cmd(
-    cwd: str = typer.Option(str(Path.cwd()), "--cwd", help="Project working directory"),
-    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
-) -> None:
-    if stop_gateway_process(cwd, workspace):
-        print("ohmo self-log listener stopped.")
-        return
-    print("ohmo self-log listener is not running.")
-
-
-@self_log_app.command("config")
-def self_log_config_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
-    store = SelfLogStore(workspace)
-    store.initialize()
-    print(f"self-log config: {store.config_path}")
-    print("LLM/provider configuration is reused from OpenHarness profiles.")
-
-
 def _show_or_edit(path: Path, set_text: str | None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if set_text is not None:
@@ -726,15 +624,10 @@ def user_edit_cmd(
 def gateway_run_cmd(
     cwd: str = typer.Option(str(Path.cwd()), "--cwd", help="Project working directory"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
-    self_log_default_record: bool = typer.Option(
-        False,
-        "--self-log-default-record",
-        help="Treat non-slash inbound messages as self-log records.",
-    ),
 ) -> None:
     """Run the ohmo gateway in the foreground."""
     _configure_gateway_logging(workspace)
-    service = OhmoGatewayService(cwd, workspace, self_log_default_record=self_log_default_record)
+    service = OhmoGatewayService(cwd, workspace)
     raise SystemExit(asyncio.run(service.run_foreground()))
 
 
