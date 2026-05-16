@@ -12,7 +12,7 @@ from openharness.api.client import (
     SupportsStreamingMessages,
 )
 from openharness.config import load_settings
-from openharness.engine.messages import ConversationMessage, ToolUseBlock
+from openharness.engine.messages import ConversationMessage
 from openharness.ui.runtime import _resolve_api_client_from_settings
 from openharness.utils.log import get_logger
 
@@ -71,23 +71,6 @@ class OpenHarnessSelfLogAgent:
             system_prompt=_report_system_prompt(report_type),
             user_prompt=f"{profile_context}\n\n## 记录数据\n{records_text}",
         )
-
-    async def choose_self_log_tool(self, user_text: str, tools: list[dict[str, Any]]) -> list[ToolUseBlock]:
-        logger.debug("choose_self_log_tool user_text=%r tools=%s", user_text[:120], [t["name"] for t in tools])
-        request = ApiMessageRequest(
-            model=self._settings.model,
-            messages=[ConversationMessage.from_user_text(user_text)],
-            system_prompt=_SELF_LOG_TOOL_ROUTER_PROMPT,
-            max_tokens=self._settings.max_tokens,
-            tools=tools,
-        )
-        async for event in self._client.stream_message(request):
-            if isinstance(event, ApiMessageCompleteEvent):
-                chosen = event.message.tool_uses
-                logger.debug("choose_self_log_tool selected=%s", [t.name for t in chosen])
-                return chosen
-        logger.warning("choose_self_log_tool no tool selected for text=%r", user_text[:120])
-        return []
 
     async def _complete(self, *, system_prompt: str, user_prompt: str) -> str:
         request = ApiMessageRequest(
@@ -178,26 +161,6 @@ _PROCESS_RECORD_SYSTEM_PROMPT = """你是一位资深心理咨询师兼文字编
   "needs_clarification": false
 }
 """
-
-_SELF_LOG_TOOL_ROUTER_PROMPT = """你是 self-log app 的语义路由 agent。用户会用自然语言表达记录、补录、整理、查看、状态、生成报告等需求。
-
-必须优先调用 self-log 专用工具完成动作，不要只用文字回答。
-
-路由规则：
-- 普通日常记录、情绪、事件流水：调用 self_log_record。
-- 用户粘贴多条日记、旧记录、流水账、混乱文本并要求逐条入库时，先由你理解和拆分为 records 数组，再调用 self_log_import_records；不要依赖用户格式固定。
-- 调用 self_log_record 前，必须先判断人物、事件、人物关系、地点、时间、名词等关键信息是否清楚；不清楚时调用 self_log_clarify，绝不要入库。
-- 调用 self_log_record 时，除了原始 content，也尽量提供 corrected_content、summary、tags、emotion 等高层结构化字段。
-- 处理待整理记录、待确认、提醒、补录检测：调用 self_log_process；不要提供当前日期，工具会自行计算。
-- 明确补昨天，且已经提供了实际记录内容：调用 self_log_backfill；不要提供昨天日期，工具会自行计算。
-- 只有“我想补录/忘记记录/帮我记录一下”等意图，但没有实际记录内容：调用 self_log_clarify 追问具体内容，绝不要把这句话本身记录成日志。
-- 周报/月报/年报/复盘报告：调用 self_log_report。
-- 查看最近记录：调用 self_log_view。
-- 查看数量、路径、状态、待确认数：调用 self_log_status。
-- 沟通澄清或整理后发现值得长期保留的用户相关高价值信息：调用 self_log_profile_update。
-- 问候语、测试消息、闲聊、单字/单词、无实质内容的输入（如"hi"、"你好"、"test"、"?"、"ok"等）：调用 self_log_clarify，告知这是 self-log 记录专用 bot，引导用户发送想要记录的内容；绝不要将此类消息入库。
-"""
-
 
 def _report_system_prompt(report_type: str) -> str:
     labels = {"weekly": "周报", "monthly": "月报", "yearly": "年报"}

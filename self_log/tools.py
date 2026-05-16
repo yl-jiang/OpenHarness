@@ -8,13 +8,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import uuid4
 
+from pydantic import BaseModel, ConfigDict
+
+from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from openharness.utils.log import get_logger
 
-from self_log.agent import OpenHarnessSelfLogAgent
+from self_log.memory import add_memory_entry
 from self_log.models import ProfileUpdate, SelfLogRecord
 from self_log.processor import SelfLogProcessor
 from self_log.store import SelfLogStore
-
 logger = get_logger(__name__)
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -83,6 +85,7 @@ class SelfLogToolRegistry:
             SelfLogDomainTool(_tool_view(), self._handle_view),
             SelfLogDomainTool(_tool_status(), self._handle_status),
             SelfLogDomainTool(_tool_profile_update(), self._handle_profile_update),
+            SelfLogDomainTool(_tool_remember(), self._handle_remember),
         ]
 
     def tool_schemas(self) -> list[dict[str, Any]]:
@@ -107,14 +110,6 @@ class SelfLogToolRegistry:
         return str(result.get("message") or result)
 
     async def _handle_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        if arguments.get("needs_clarification"):
-            question = str(
-                arguments.get("clarification_question")
-                or arguments.get("question")
-                or "这条记录有信息不清楚，能补充一下吗？"
-            )
-            logger.debug("_handle_record needs_clarification question=%r", question[:120])
-            return {"ok": True, "needs_user_reply": True, "message": question}
         content = _required_text(arguments, "content")
         metadata = {
             key: value
@@ -210,7 +205,9 @@ class SelfLogToolRegistry:
 
     async def _handle_clarify(self, arguments: dict[str, Any]) -> dict[str, Any]:
         question = _required_text(arguments, "question")
-        return {"ok": True, "needs_user_reply": True, "question": question, "message": question}
+        context = str(arguments.get("context") or "").strip()
+        message = f"（关于：{context}）\n{question}" if context else question
+        return {"ok": True, "needs_user_reply": True, "question": question, "message": message}
 
     async def _handle_process(self, arguments: dict[str, Any]) -> dict[str, Any]:
         result = await self._processor().process_pending(
@@ -271,55 +268,71 @@ class SelfLogToolRegistry:
         self.store.add_profile_update(update)
         return {"ok": True, "profile_update_id": update.id, "message": "已记录资料更新建议。"}
 
+    async def _handle_remember(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        title = _required_text(arguments, "title")
+        content = _required_text(arguments, "content")
+        path = add_memory_entry(self.store.workspace, title, content)
+        return {"ok": True, "message": f"已写入 memory：{path.name}"}
 
-class SelfLogToolAgent:
-    """Execute model-selected self-log tools."""
 
-    def __init__(
-        self,
-        registry: SelfLogToolRegistry | SelfLogStore,
-        agent: OpenHarnessSelfLogAgent | None = None,
-        *,
-        router: Any | None = None,
-        agent_factory: Callable[[], Any] | None = None,
-    ) -> None:
-        if isinstance(registry, SelfLogStore):
-            self.registry = SelfLogToolRegistry(registry, agent_factory=agent_factory)
-        else:
-            self.registry = registry
-        self.agent = router or agent or OpenHarnessSelfLogAgent()
+class _AnyInput(BaseModel):
+    """Permissive Pydantic model that accepts any tool arguments as extra fields."""
 
-    async def run(self, user_text: str) -> str:
-        tool_uses = await self.agent.choose_self_log_tool(user_text, self.registry.tool_schemas())
-        tools = self.registry.by_name()
-        if not tool_uses:
-            logger.info("SelfLogToolAgent.run no tools selected for text=%r", user_text[:120])
-            return "这里是 self-log 记录专用 bot，请发送想要记录的内容。"
-        results: list[dict[str, Any]] = []
-        for tool_use in tool_uses:
-            tool = tools.get(tool_use.name)
-            if tool is None:
-                logger.warning("SelfLogToolAgent.run unknown tool=%s", tool_use.name)
-                continue
-            logger.debug("SelfLogToolAgent.run executing tool=%s", tool_use.name)
-            results.append(await tool.handler(dict(tool_use.input or {})))
-        return "\n".join(str(result.get("message") or result) for result in results)
+    model_config = ConfigDict(extra="allow")
+
+
+class _SelfLogToolAdapter(BaseTool):
+    """Thin BaseTool wrapper around a SelfLogDomainTool handler."""
+
+    input_model = _AnyInput
+
+    def __init__(self, domain_tool: SelfLogDomainTool) -> None:
+        self.name = domain_tool.definition.name  # type: ignore[misc]
+        self.description = domain_tool.definition.description  # type: ignore[misc]
+        self._domain_tool = domain_tool
+
+    def to_api_schema(self) -> dict[str, Any]:
+        return self._domain_tool.definition.to_api_schema()
+
+    def is_read_only(self, arguments: BaseModel) -> bool:
+        return self.name in {"self_log_view", "self_log_status"}
+
+    async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
+        raw = arguments.model_dump()
+        try:
+            result = await self._domain_tool.handler(raw)
+            return ToolResult(output=str(result.get("message") or result))
+        except Exception as exc:
+            return ToolResult(output=str(exc), is_error=True)
+
+
+def build_oh_registry(registry: SelfLogToolRegistry) -> ToolRegistry:
+    """Build an OpenHarness ToolRegistry from a SelfLogToolRegistry."""
+    oh_registry = ToolRegistry()
+    for domain_tool in registry.tools():
+        oh_registry.register(_SelfLogToolAdapter(domain_tool))
+    return oh_registry
 
 
 def _tool_record() -> ToolDefinition:
     return _definition(
         "self_log_record",
-        "Record a clear self-log entry, optionally with model-structured fields.",
+        (
+            "Record a self-log entry when the intent and core content are clear enough to understand. "
+            "Do NOT call this when the user's intent is ambiguous or the record is unintelligible — "
+            "call self_log_clarify instead. Fill in structured fields (summary, tags, emotion, etc.) "
+            "based on your understanding of the content."
+        ),
         [
-            ("content", "string", "Original self-log content.", True),
-            ("corrected_content", "string", "Model-corrected content.", False),
+            ("content", "string", "Original self-log content as the user wrote it.", True),
+            ("corrected_content", "string", "Lightly corrected / cleaned-up version of the content.", False),
             ("summary", "string", "One-sentence summary.", False),
             ("tags", "string", "Comma-separated tags.", False),
-            ("emotion", "string", "Emotion label.", False),
-            ("emotion_reason", "string", "Emotion reasoning.", False),
-            ("related_people", "string", "Comma-separated people.", False),
-            ("related_places", "string", "Comma-separated places.", False),
-            ("source", "string", "Record source.", False),
+            ("emotion", "string", "Emotion label: 积极/消极/中性/复杂.", False),
+            ("emotion_reason", "string", "Brief reason for the emotion label.", False),
+            ("related_people", "string", "Comma-separated people mentioned.", False),
+            ("related_places", "string", "Comma-separated places mentioned.", False),
+            ("source", "string", "Record source, e.g. 原始/补录.", False),
         ],
     )
 
@@ -361,8 +374,18 @@ def _tool_import_records() -> ToolDefinition:
 def _tool_clarify() -> ToolDefinition:
     return _definition(
         "self_log_clarify",
-        "Ask the user a clarification question instead of guessing.",
-        [("question", "string", "Clarification question.", True)],
+        (
+            "Ask the user ONE targeted clarification question instead of guessing or recording unclear content. "
+            "Use when: (1) intent is ambiguous (greeting/chitchat/test), "
+            "(2) the record's core subject is completely missing and matters, "
+            "(3) user wants to backfill but hasn't said what to backfill. "
+            "Ask only the single most important question. "
+            "Include 'context' to summarize what the user originally said so the question makes sense."
+        ),
+        [
+            ("question", "string", "The single clarification question to ask the user.", True),
+            ("context", "string", "Brief summary of what the user said, to contextualize the question.", False),
+        ],
     )
 
 
@@ -416,6 +439,20 @@ def _tool_profile_update() -> ToolDefinition:
             ("entity_name", "string", "Entity name.", True),
             ("suggested_value", "string", "Suggested value.", True),
             ("confidence", "string", "high/medium/low.", False),
+        ],
+    )
+
+
+def _tool_remember() -> ToolDefinition:
+    return _definition(
+        "self_log_remember",
+        (
+            "将需要跨会话长期记忆的用户背景信息写入 memory 目录（如家庭成员、工作情况、重要习惯、常去地点）。"
+            "每次学到重要、稳定的新事实时调用。内容会被注入到后续会话的 system prompt 中。"
+        ),
+        [
+            ("title", "string", "A short English title for this memory entry (used as filename, ASCII only, e.g. 'family_members', 'work_situation').", True),
+            ("content", "string", "The markdown content to store. Be factual and concise.", True),
         ],
     )
 
