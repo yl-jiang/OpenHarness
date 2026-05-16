@@ -39,6 +39,140 @@ def test_ohmo_init_existing_workspace_points_to_config(tmp_path: Path):
     assert "Use `ohmo config`" in second.output
 
 
+def test_ohmo_self_log_records_workspace_local_entry(tmp_path: Path):
+    runner = CliRunner()
+    workspace = tmp_path / ".ohmo-home"
+
+    init = runner.invoke(app, ["self-log", "init", "--workspace", str(workspace)])
+    assert init.exit_code == 0
+    assert "Initialized ohmo self-log" in init.output
+
+    record = runner.invoke(
+        app,
+        ["self-log", "record", "今天把 self-log 接进 ohmo 了", "--workspace", str(workspace)],
+    )
+    assert record.exit_code == 0
+    assert "Recorded self-log entry" in record.output
+
+    listing = runner.invoke(app, ["self-log", "list", "--workspace", str(workspace)])
+    assert listing.exit_code == 0
+    assert "今天把 self-log 接进 ohmo 了" in listing.output
+
+    status = runner.invoke(app, ["self-log", "status", "--workspace", str(workspace)])
+    assert status.exit_code == 0
+    assert "entries: 1" in status.output
+
+
+def test_ohmo_self_log_process_and_report_use_agent(tmp_path: Path, monkeypatch):
+    runner = CliRunner()
+    workspace = tmp_path / ".ohmo-home"
+
+    class FakeAgent:
+        async def process_record(self, raw_content, profile_context):
+            return {
+                "corrected_content": raw_content,
+                "summary": "完成智能处理",
+                "tags": "工作",
+                "emotion": "积极",
+                "emotion_reason": "有进展",
+                "related_people": "",
+                "related_places": "",
+                "needs_clarification": False,
+                "clarification_reason": "",
+                "clarification_questions": [],
+                "suggested_profile_updates": [],
+            }
+
+        async def generate_report(self, report_type, records, profile_context):
+            return "## 本周概览\n- agent 已接入"
+
+    monkeypatch.setattr("ohmo.cli.OpenHarnessSelfLogAgent", lambda profile=None: FakeAgent())
+
+    runner.invoke(app, ["self-log", "record", "今天补齐 self-log agent", "--workspace", str(workspace)])
+    process = runner.invoke(app, ["self-log", "process", "--workspace", str(workspace)])
+    assert process.exit_code == 0
+    assert "processed: 1" in process.output
+
+    view = runner.invoke(app, ["self-log", "view", "--workspace", str(workspace)])
+    assert view.exit_code == 0
+    assert "完成智能处理" in view.output
+
+    report = runner.invoke(app, ["self-log", "report", "weekly", "--workspace", str(workspace)])
+    assert report.exit_code == 0
+    assert "agent 已接入" in report.output
+
+
+def test_ohmo_self_log_process_supports_backfill_prompt_and_content(tmp_path: Path, monkeypatch):
+    runner = CliRunner()
+    workspace = tmp_path / ".ohmo-home"
+
+    class FakeAgent:
+        async def process_record(self, raw_content, profile_context):
+            return {
+                "corrected_content": raw_content,
+                "summary": "完成补录",
+                "tags": "补录",
+                "emotion": "中性",
+                "emotion_reason": "",
+                "related_people": "",
+                "related_places": "",
+                "needs_clarification": False,
+                "clarification_reason": "",
+                "clarification_questions": [],
+                "suggested_profile_updates": [],
+            }
+
+    monkeypatch.setattr("ohmo.cli.OpenHarnessSelfLogAgent", lambda profile=None: FakeAgent())
+
+    prompt = runner.invoke(app, ["self-log", "process", "2026-05-16", "--workspace", str(workspace)])
+    backfill = runner.invoke(
+        app,
+        [
+            "self-log",
+            "process",
+            "2026-05-16",
+            "--backfill",
+            "昨天补录了进展",
+            "--workspace",
+            str(workspace),
+        ],
+    )
+    view = runner.invoke(app, ["self-log", "view", "--workspace", str(workspace)])
+
+    assert prompt.exit_code == 0
+    assert "2026-05-15" in prompt.output
+    assert backfill.exit_code == 0
+    assert "backfilled: 2026-05-15" in backfill.output
+    assert "2026-05-15" in view.output
+    assert "[补录]" in view.output
+
+
+def test_ohmo_self_log_exposes_full_app_command_surface():
+    runner = CliRunner()
+    result = runner.invoke(app, ["self-log", "--help"])
+    assert result.exit_code == 0
+    for command in ("init", "listen", "stop", "status", "record", "process", "view", "report", "config"):
+        assert command in result.output
+
+
+def test_ohmo_self_log_listen_starts_gateway_in_default_record_mode(tmp_path: Path, monkeypatch):
+    runner = CliRunner()
+    workspace = tmp_path / ".ohmo-home"
+    calls = []
+
+    def fake_start_gateway_process(cwd, workspace, *, self_log_default_record=False):
+        calls.append((cwd, workspace, self_log_default_record))
+        return 4321
+
+    monkeypatch.setattr("ohmo.cli.start_gateway_process", fake_start_gateway_process)
+
+    result = runner.invoke(app, ["self-log", "listen", "--cwd", str(tmp_path), "--workspace", str(workspace)])
+
+    assert result.exit_code == 0
+    assert calls == [(str(tmp_path), str(workspace), True)]
+    assert "ohmo self-log is listening" in result.output
+
+
 def test_ohmo_init_interactive_writes_gateway_config(tmp_path: Path, monkeypatch):
     runner = CliRunner()
     workspace = tmp_path / ".ohmo-home"
