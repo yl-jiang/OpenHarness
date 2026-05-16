@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime
+from html import escape
 from hashlib import sha1
 from pathlib import Path
 from typing import Any
@@ -11,7 +13,14 @@ from uuid import uuid4
 
 from openharness.api.usage import UsageSnapshot
 from openharness.config.paths import get_sessions_dir
-from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
+from openharness.engine.messages import (
+    ConversationMessage,
+    ImageBlock,
+    TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    sanitize_conversation_messages,
+)
 from openharness.engine.types import ToolMetadataKey
 from openharness.utils.fs import atomic_write_text
 
@@ -197,24 +206,191 @@ def load_session_by_id(cwd: str | Path, session_id: str) -> dict[str, Any] | Non
     return None
 
 
+def _safe_filename_part(value: str) -> str:
+    safe = "".join(character.lower() for character in value if character.isalnum() or character in {"-", "_"})
+    return safe.strip("-_") or "session"
+
+
+def _clip_line(value: str, limit: int = 120) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3].rstrip() + "..."
+
+
+def _first_user_topic(messages: list[ConversationMessage]) -> str:
+    for message in messages:
+        if message.role == "user" and not _is_tool_result_only(message) and message.text.strip():
+            return _clip_line(message.text)
+    return "(no user message)"
+
+
+def _is_tool_result_only(message: ConversationMessage) -> bool:
+    return (
+        message.role == "user"
+        and bool(message.content)
+        and all(isinstance(block, ToolResultBlock) for block in message.content)
+    )
+
+
+def _turns(messages: list[ConversationMessage]) -> list[list[ConversationMessage]]:
+    turns: list[list[ConversationMessage]] = []
+    current: list[ConversationMessage] | None = None
+    for message in messages:
+        if message.role == "user" and not _is_tool_result_only(message):
+            current = [message]
+            turns.append(current)
+            continue
+        if current is None:
+            current = [message]
+            turns.append(current)
+        else:
+            current.append(message)
+    return turns
+
+
+def _render_message_body(message: ConversationMessage) -> str:
+    chunks: list[str] = []
+    for block in message.content:
+        if isinstance(block, TextBlock):
+            text = block.text.strip()
+            if text:
+                chunks.append(text)
+        elif isinstance(block, ImageBlock):
+            if block.source_path:
+                chunks.append(f"![Image]({block.source_path})")
+            else:
+                chunks.append(f"_[Image: {block.media_type}]_")
+    return "\n\n".join(chunks)
+
+
+def _append_tool_call(parts: list[str], block: ToolUseBlock) -> None:
+    parts.extend(
+        [
+            f"#### Tool Call: {block.name}",
+            f"<!-- call_id: {block.id} -->",
+            "```json",
+            json.dumps(block.input, indent=2, ensure_ascii=False),
+            "```",
+            "",
+        ]
+    )
+
+
+def _append_tool_result(parts: list[str], block: ToolResultBlock, tool_name: str) -> None:
+    label = f"Tool Result: {tool_name}"
+    if block.is_error:
+        label = f"Tool Result (error): {tool_name}"
+    parts.extend(
+        [
+            f"<details><summary>{escape(label)}</summary>",
+            "",
+            f"<!-- call_id: {block.tool_use_id} -->",
+            "",
+            block.content.strip(),
+            "",
+            "</details>",
+            "",
+        ]
+    )
+
+
+def _unique_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    for index in range(2, 1000):
+        candidate = path.with_name(f"{path.stem}-{index}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+    raise FileExistsError(f"Unable to allocate an export path for {path}")
+
+
+def _render_session_export_markdown(
+    *,
+    cwd: str | Path,
+    messages: list[ConversationMessage],
+    usage: UsageSnapshot | None,
+    session_id: str,
+    exported_at: datetime,
+    app_name: str,
+) -> str:
+    token_count = usage.total_tokens if usage is not None else 0
+    tool_count = sum(len(message.tool_uses) for message in messages)
+    grouped_turns = _turns(messages)
+    title = f"{app_name} Session Export"
+    parts = [
+        "---",
+        f"session_id: {session_id}",
+        f"exported_at: {exported_at.isoformat(timespec='seconds')}",
+        f"work_dir: {Path(cwd).resolve()}",
+        f"message_count: {len(messages)}",
+        f"token_count: {token_count}",
+        "---",
+        "",
+        f"# {title}",
+        "",
+        "## Overview",
+        "",
+        f"- **Topic**: {_first_user_topic(messages)}",
+        f"- **Conversation**: {len(grouped_turns)} turns | {tool_count} tool calls | {token_count:,} tokens",
+        "",
+        "---",
+        "",
+    ]
+
+    tool_names_by_id: dict[str, str] = {}
+    for turn_index, turn in enumerate(grouped_turns, start=1):
+        parts.extend([f"## Turn {turn_index}", ""])
+        for message in turn:
+            if message.role == "user" and not _is_tool_result_only(message):
+                parts.extend(["### User", ""])
+                body = _render_message_body(message)
+                if body:
+                    parts.extend([body, ""])
+                continue
+            if message.role == "assistant":
+                parts.extend(["### Assistant", ""])
+                body = _render_message_body(message)
+                if body:
+                    parts.extend([body, ""])
+                for block in message.tool_uses:
+                    tool_names_by_id[block.id] = block.name
+                    _append_tool_call(parts, block)
+                continue
+            for block in message.content:
+                if isinstance(block, ToolResultBlock):
+                    _append_tool_result(parts, block, tool_names_by_id.get(block.tool_use_id, "unknown"))
+    return "\n".join(parts).strip() + "\n"
+
+
 def export_session_markdown(
     *,
     cwd: str | Path,
     messages: list[ConversationMessage],
+    usage: UsageSnapshot | None = None,
+    session_id: str | None = None,
+    output_dir: str | Path | None = None,
+    app_name: str = "OpenHarness",
 ) -> Path:
     """Export the session transcript as Markdown."""
-    session_dir = get_project_session_dir(cwd)
-    path = session_dir / "transcript.md"
-    parts: list[str] = ["# OpenHarness Session Transcript"]
-    for message in messages:
-        parts.append(f"\n## {message.role.capitalize()}\n")
-        text = message.text.strip()
-        if text:
-            parts.append(text)
-        for block in message.tool_uses:
-            parts.append(f"\n```tool\n{block.name} {json.dumps(block.input, ensure_ascii=True)}\n```")
-        for block in message.content:
-            if getattr(block, "type", "") == "tool_result":
-                parts.append(f"\n```tool-result\n{block.content}\n```")
-    atomic_write_text(path, "\n".join(parts).strip() + "\n")
+    resolved_session_id = session_id or uuid4().hex[:12]
+    exported_at = datetime.now().astimezone()
+    target_dir = Path(output_dir if output_dir is not None else cwd).expanduser().resolve()
+    filename = (
+        f"{_safe_filename_part(app_name)}-export-"
+        f"{_safe_filename_part(resolved_session_id)[:8]}-"
+        f"{exported_at.strftime('%Y%m%d-%H%M%S')}.md"
+    )
+    path = _unique_path(target_dir / filename)
+    atomic_write_text(
+        path,
+        _render_session_export_markdown(
+            cwd=cwd,
+            messages=messages,
+            usage=usage,
+            session_id=resolved_session_id,
+            exported_at=exported_at,
+            app_name=app_name,
+        ),
+    )
     return path

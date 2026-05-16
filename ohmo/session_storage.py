@@ -136,16 +136,20 @@ def export_session_markdown(
     cwd: str | Path,
     workspace: str | Path | None = None,
     messages: list[ConversationMessage],
+    usage: UsageSnapshot | None = None,
+    session_id: str | None = None,
+    output_dir: str | Path | None = None,
 ) -> Path:
-    path = get_session_dir(workspace) / "transcript.md"
-    parts = ["# ohmo Session Transcript"]
-    for message in messages:
-        parts.append(f"\n## {message.role.capitalize()}\n")
-        text = message.text.strip()
-        if text:
-            parts.append(text)
-    atomic_write_text(path, "\n".join(parts).strip() + "\n")
-    return path
+    from openharness.services.session_storage import export_session_markdown as export_openharness_markdown
+
+    return export_openharness_markdown(
+        cwd=cwd,
+        messages=messages,
+        usage=usage,
+        session_id=session_id,
+        output_dir=output_dir if output_dir is not None else get_session_dir(workspace),
+        app_name="ohmo",
+    )
 
 
 class OhmoSessionBackend(SessionBackend):
@@ -198,5 +202,15 @@ class OhmoSessionBackend(SessionBackend):
         *,
         cwd: str | Path,
         messages: list[ConversationMessage],
+        usage: UsageSnapshot | None = None,
+        session_id: str | None = None,
+        output_dir: str | Path | None = None,
     ) -> Path:
-        return export_session_markdown(cwd=cwd, workspace=self._workspace, messages=messages)
+        return export_session_markdown(
+            cwd=cwd,
+            workspace=self._workspace,
+            messages=messages,
+            usage=usage,
+            session_id=session_id,
+            output_dir=output_dir,
+        )

@@ -35,6 +35,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Changed
 
+- `/export` now writes a timestamped Markdown session export into the current working directory by default, using a richer Kimi-style transcript format with frontmatter, overview, turns, tool calls, and tool results.
 - **Approval architecture refactor**: Consolidated three scattered approval entry points into a single `ApprovalCoordinator` subsystem (`src/openharness/permissions/approvals.py`).  `PermissionChecker` is now a pure policy engine (no session memory); all remembered-approval state lives in `ApprovalState` inside `ApprovalCoordinator`.  Preview-capable tools (`edit_file`, `write_file`) defer the soft-confirmation check to the richer diff-preview prompt so users see exactly one approval modal per file write.  Approval state persists correctly across conversation turns via `QueryEngine._approval_coordinator`.
 
 ### Fixed
