@@ -23,7 +23,7 @@ def test_ohmo_session_backend_uses_workspace_sessions(tmp_path: Path):
     )
 
     session_dir = get_session_dir(workspace)
-    assert session_dir == workspace / "sessions"
+    assert session_dir.resolve() == (workspace / "sessions").resolve()
     assert (session_dir / "latest.json").exists()
     assert backend.load_by_id(tmp_path, "abc123") is not None
 

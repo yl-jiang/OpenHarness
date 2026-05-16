@@ -203,8 +203,8 @@ def test_stop_gateway_process_kills_matching_workspace_processes(tmp_path, monke
     def fake_run(*args, **kwargs):
         class Result:
             stdout = (
-                f"123 python -m ohmo gateway run --workspace {workspace}\n"
-                f"456 python -m ohmo gateway run --workspace {workspace}\n"
+                f"123 python -m ohmo gateway run --workspace {workspace.resolve()}\n"
+                f"456 python -m ohmo gateway run --workspace {workspace.resolve()}\n"
             )
 
         return Result()

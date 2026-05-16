@@ -15,7 +15,7 @@ from ohmo.workspace import (
 def test_initialize_workspace_creates_expected_files(tmp_path: Path):
     workspace = tmp_path / ".ohmo-home"
     root = initialize_workspace(workspace)
-    assert root == workspace
+    assert root.resolve() == workspace.resolve()
     assert get_soul_path(workspace).exists()
     assert get_user_path(workspace).exists()
     assert get_identity_path(workspace).exists()
