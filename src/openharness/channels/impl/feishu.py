@@ -352,23 +352,29 @@ def _extract_post_content(content_json: dict) -> tuple[str, list[str]]:
     def _parse_block(block: dict) -> tuple[str | None, list[str]]:
         if not isinstance(block, dict) or not isinstance(block.get("content"), list):
             return None, []
-        texts, images = [], []
+        # Each row is a paragraph; collect per-row text then join rows with newlines
+        # to preserve the multi-line structure of the original message.
+        row_lines: list[str] = []
+        images: list[str] = []
         if title := block.get("title"):
-            texts.append(title)
+            row_lines.append(title)
         for row in block["content"]:
             if not isinstance(row, list):
                 continue
+            row_parts: list[str] = []
             for el in row:
                 if not isinstance(el, dict):
                     continue
                 tag = el.get("tag")
                 if tag in ("text", "a"):
-                    texts.append(el.get("text", ""))
+                    row_parts.append(el.get("text", ""))
                 elif tag == "at":
-                    texts.append(f"@{el.get('user_name', 'user')}")
+                    row_parts.append(f"@{el.get('user_name', 'user')}")
                 elif tag == "img" and (key := el.get("image_key")):
                     images.append(key)
-        return (" ".join(texts).strip() or None), images
+            row_lines.append("".join(row_parts))
+        text = "\n".join(row_lines).strip()
+        return (text or None), images
 
     # Unwrap optional {"post": ...} envelope
     root = content_json
