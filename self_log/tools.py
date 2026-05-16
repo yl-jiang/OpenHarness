@@ -431,11 +431,15 @@ def _tool_status() -> ToolDefinition:
 def _tool_profile_update() -> ToolDefinition:
     return _definition(
         "self_log_profile_update",
-        "Store a suggested durable user profile update.",
+        (
+            "Store a suggested update for transient or evolving user profile info "
+            "(e.g. current preferences, temporary habits, or minor observations). "
+            "Use this for things that might change over months or are not yet established as core life facts."
+        ),
         [
             ("record_id", "string", "Related record id.", False),
-            ("category", "string", "Category.", True),
-            ("entity_type", "string", "Entity type.", True),
+            ("category", "string", "Category (e.g. Habits, Work, Hobbies).", True),
+            ("entity_type", "string", "Entity type (e.g. Preference, Routine, Mood Pattern).", True),
             ("entity_name", "string", "Entity name.", True),
             ("suggested_value", "string", "Suggested value.", True),
             ("confidence", "string", "high/medium/low.", False),
@@ -447,11 +451,13 @@ def _tool_remember() -> ToolDefinition:
     return _definition(
         "self_log_remember",
         (
-            "将需要跨会话长期记忆的用户背景信息写入 memory 目录（如家庭成员、工作情况、重要习惯、常去地点）。"
-            "每次学到重要、稳定的新事实时调用。内容会被注入到后续会话的 system prompt 中。"
+            "Store highly stable, core life facts into the long-term memory directory "
+            "(e.g. family trees, medical history, career milestones, home location). "
+            "These facts serve as the foundation for context in all future sessions. "
+            "Use this ONLY for information expected to remain valid for years."
         ),
         [
-            ("title", "string", "A short English title for this memory entry (used as filename, ASCII only, e.g. 'family_members', 'work_situation').", True),
+            ("title", "string", "A short English title for this memory entry (used as filename, ASCII only, e.g. 'family_members', 'medical_history').", True),
             ("content", "string", "The markdown content to store. Be factual and concise.", True),
         ],
     )
