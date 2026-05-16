@@ -5,6 +5,7 @@ from ohmo.workspace import (
     get_gateway_config_path,
     get_identity_path,
     get_memory_index_path,
+    get_self_log_dir,
     get_soul_path,
     get_user_path,
     initialize_workspace,
@@ -22,6 +23,7 @@ def test_initialize_workspace_creates_expected_files(tmp_path: Path):
     assert get_bootstrap_path(workspace).exists()
     assert get_memory_index_path(workspace).exists()
     assert get_gateway_config_path(workspace).exists()
+    assert get_self_log_dir(workspace).exists()
 
     health = workspace_health(workspace)
     assert all(health.values())

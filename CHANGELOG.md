@@ -32,6 +32,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - Built-in `codex` output style for compact, low-noise transcript rendering in React TUI.
 - React TUI `@` file mentions and `/skills` picker for manually loading a selected skill into the current session.
 - React TUI prompt composer now has a clickable expand affordance that opens a fullscreen editor for long drafts, keeps Enter/Shift+Enter as newline-only inside that view, and preserves leading slash command/skill completion via tab.
+- `ohmo self-log` now provides an ohmo-native self-log app under the ohmo workspace, with gateway interception for explicit `/self-log ...` Feishu messages plus an OpenHarness-backed domain agent for record structuring, zero-guess pending confirmations, profile update suggestions, Markdown reports, remote bot commands such as `/self-log help` and `/self-log report weekly`, bare-text daily records when launched via `ohmo self-log listen`, previous-day backfill prompts, `/self-log backfill`, one-shot reminders for consecutive missing days or every 5 pending confirmations, and self-log-only semantic tools so natural-language requests can route through app-scoped capabilities without touching OpenHarness backend tools; the record tool now refuses unclear entries before persistence, stores raw plus corrected/summary high-level fields when provided, keeps stable dates/defaults inside tool handlers instead of model-visible schemas, and exposes a profile-update tool for durable high-value facts.
 
 ### Changed
 
