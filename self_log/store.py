@@ -123,6 +123,57 @@ class SelfLogStore:
     def list_reports(self) -> list[SelfLogReport]:
         return [SelfLogReport.from_json(line) for line in self._read_jsonl(self.reports_path)]
 
+    def search_records(
+        self,
+        query: str | None = None,
+        *,
+        tags: list[str] | None = None,
+        emotions: list[str] | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        limit: int = 10,
+    ) -> list[SelfLogRecord]:
+        """Search records with filters and heuristic text matching."""
+        records = self.list_records()
+        filtered: list[SelfLogRecord] = []
+
+        # 1. Filter by date/tag/emotion
+        for record in records:
+            if start_date and record.date < start_date:
+                continue
+            if end_date and record.date > end_date:
+                continue
+            if tags and not any(t.strip().lower() in record.tags.lower() for t in tags):
+                continue
+            if emotions and record.emotion not in emotions:
+                continue
+            filtered.append(record)
+
+        if not query:
+            return filtered[-limit:]
+
+        # 2. Heuristic text matching
+        from openharness.memory.search import _tokenize
+
+        query_tokens = _tokenize(query)
+        if not query_tokens:
+            return filtered[-limit:]
+
+        scored: list[tuple[float, SelfLogRecord]] = []
+        for record in filtered:
+            text = f"{record.summary} {record.corrected_content} {record.tags} {record.related_people} {record.related_places}".lower()
+            # Match tokens
+            hits = sum(1 for t in query_tokens if t in text)
+            if hits > 0:
+                # Boost if query tokens appear in summary or tags
+                summary_hits = sum(1 for t in query_tokens if t in record.summary.lower())
+                tag_hits = sum(1 for t in query_tokens if t in record.tags.lower())
+                score = float(hits) + (summary_hits * 2.0) + (tag_hits * 1.5)
+                scored.append((score, record))
+
+        scored.sort(key=lambda item: (-item[0], -datetime.fromisoformat(item[1].created_at or item[1].date).timestamp()))
+        return [item[1] for item in scored[:limit]]
+
     def status(self) -> dict[str, object]:
         entries = self.list_entries()
         records = self.list_records()

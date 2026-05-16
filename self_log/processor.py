@@ -65,7 +65,14 @@ class SelfLogProcessor:
         pending_confirmations = 0
         for entry in entries:
             logger.debug("processing entry id=%s created_at=%s content=%r", entry.id, entry.created_at, entry.content[:80])
-            result = await self.agent.process_record(entry.content, self._profile_context())
+            
+            # Retrieve relevant context from past records (RAG)
+            relevant_context = self._retrieve_relevant_context(entry.content)
+            full_context = self._profile_context()
+            if relevant_context:
+                full_context += "\n\n## Relevant Past Records\n" + relevant_context
+
+            result = await self.agent.process_record(entry.content, full_context)
             if result.get("records"):
                 for item in result["records"]:
                     if not isinstance(item, dict):
@@ -209,19 +216,43 @@ class SelfLogProcessor:
         )
 
     def _profile_context(self) -> str:
+        from self_log.memory import load_memory_prompt
+        from self_log.workspace import get_soul_path, get_user_path
+
+        sections: list[str] = []
+
+        # 1. Soul & User profile (The "Static" core)
+        soul_path = get_soul_path(self.store.workspace)
+        if soul_path.exists():
+            sections.append(f"## Soul\n{soul_path.read_text(encoding='utf-8')}")
+
+        user_path = get_user_path(self.store.workspace)
+        if user_path.exists():
+            sections.append(f"## User Profile\n{user_path.read_text(encoding='utf-8')}")
+
+        # 2. Long-term memory (The "Structured" facts)
+        memory_prompt = load_memory_prompt(self.store.workspace)
+        if memory_prompt:
+            sections.append(memory_prompt)
+
+        # 3. Dynamic profile updates (The "Recent" learnings)
         updates = [
             update
             for update in self.store.list_profile_updates()
             if update.status in {"accepted", "pending"}
         ]
-        if not updates:
-            return "## 已知用户画像\n暂无。"
-        lines = [
-            f"- [{update.status}] {update.category}/{update.entity_type}/{update.entity_name}: "
-            f"{update.suggested_value}（confidence={update.confidence}）"
-            for update in updates[-50:]
-        ]
-        return "## 已知用户画像\n" + "\n".join(lines)
+        if updates:
+            lines = [
+                f"- [{update.status}] {update.category}/{update.entity_type}/{update.entity_name}: "
+                f"{update.suggested_value}（confidence={update.confidence}）"
+                for update in updates[-30:]
+            ]
+            sections.append("## Recent Profile Observations\n" + "\n".join(lines))
+
+        if not sections:
+            return "## Known Context\nNo prior context available."
+
+        return "\n\n".join(sections)
 
     def _pending_reminder(self) -> str | None:
         pending_count = len(self.store.list_pending_confirmations())
