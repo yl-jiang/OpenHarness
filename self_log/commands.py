@@ -92,7 +92,12 @@ def self_log_help_text() -> str:
 
 def format_process_result(result: ProcessResult) -> str:
     lines = [f"已整理 {result.auto_processed} 条，待确认 {result.pending_confirmations} 条。"]
-    for item in (result.pending_reminder, result.missing_day_reminder, result.backfill_prompt):
+    for item in (
+        result.pending_reminder,
+        result.missing_day_reminder,
+        result.backfill_prompt,
+        result.daily_question,
+    ):
         if item:
             lines.append(item)
     return "\n".join(lines)

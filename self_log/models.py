@@ -204,3 +204,4 @@ class ProcessResult:
     consecutive_missing_days: int = 0
     pending_reminder: str | None = None
     missing_day_reminder: str | None = None
+    daily_question: str | None = None
