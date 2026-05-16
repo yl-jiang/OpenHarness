@@ -74,6 +74,8 @@ export SELF_LOG_WORKSPACE=/path/to/workspace
 ~/.self-log/
   config.json
   state.json
+  soul.md
+  user.md
   gateway.pid
   data/
     entries.jsonl
@@ -81,6 +83,9 @@ export SELF_LOG_WORKSPACE=/path/to/workspace
     pending_confirmations.jsonl
     profile_updates.jsonl
     reports.jsonl
+  memory/
+    MEMORY.md
+    *.md
   logs/
     gateway.log
 ```
@@ -91,13 +96,12 @@ export SELF_LOG_WORKSPACE=/path/to/workspace
 | --- | --- |
 | `config.json` | self-log 应用配置，包括模型 profile、启用的消息通道和通道配置 |
 | `state.json` | 运行状态快照 |
+| `soul.md` | 助手的人设、核心原则和行为准则 |
+| `user.md` | 用户个人资料快照（姓名、职业、重要人物等） |
 | `gateway.pid` | 后台 gateway 进程 PID |
-| `data/entries.jsonl` | 原始记录，先保存用户输入 |
-| `data/records.jsonl` | 结构化后的日志记录 |
-| `data/pending_confirmations.jsonl` | 因信息不清楚而等待确认的记录 |
-| `data/profile_updates.jsonl` | 模型建议沉淀的用户画像更新 |
-| `data/reports.jsonl` | 生成过的周报、月报、年报 |
-| `logs/gateway.log` | gateway 运行日志 |
+| `data/` | 存储各类 jsonl 数据文件 |
+| `memory/` | 存储跨会话的长期记忆 markdown 文件 |
+| `logs/` | gateway 运行日志 |
 
 ## 4. 快速开始
 
@@ -421,6 +425,7 @@ self-log 的模型路由 agent 会看到一组 self-log 专用工具：
 | `self_log_view` | 查看最近记录 |
 | `self_log_status` | 查看状态 |
 | `self_log_profile_update` | 记录高价值用户画像更新建议 |
+| `self_log_remember` | 将长期稳定的用户背景信息写入 memory 目录 |
 
 重要约束：
 
@@ -646,9 +651,13 @@ self-log status
 - CLI 放在 `self_log/cli.py`。
 - gateway 相关逻辑放在 `self_log/gateway/`。
 - 模型 prompt 和 OpenHarness client 封装放在 `self_log/agent.py`。
-- 数据模型放在 `self_log/models.py`。
-- 落盘逻辑放在 `self_log/store.py`。
-- 工具定义和工具执行放在 `self_log/tools.py`。
+- 数据模型定义放在 `self_log/models.py`。
+- 业务流程编排（Processor）放在 `self_log/processor.py`。
+- 存储与持久化逻辑放在 `self_log/store.py`。
+- 工具定义与执行逻辑放在 `self_log/tools.py`。
+- 长期记忆（Memory）逻辑放在 `self_log/memory.py`。
+- 目录与路径管理放在 `self_log/workspace.py`。
+- 应用配置管理放在 `self_log/config.py`。
 - 不要把 self-log 重新耦合进 `ohmo/gateway` 或普通 `ohmo` runtime。
 
 建议验证命令：

@@ -59,10 +59,10 @@ async def test_standalone_self_log_gateway_routes_bare_text_to_self_log_tools(
     calls = []
 
     class FakeToolAgent:
-        def __init__(self, registry, agent):
-            self.store = registry.store
+        def __init__(self, store, *, profile=None, **kw):
+            self.store = store
 
-        async def run(self, text):
+        async def run(self, text, session_key=""):
             calls.append(text)
             self.store.record(text)
             return "已由 standalone self-log 入库"
@@ -71,7 +71,7 @@ async def test_standalone_self_log_gateway_routes_bare_text_to_self_log_tools(
         def __init__(self, profile=None):
             self.profile = profile
 
-    monkeypatch.setattr("self_log.gateway.bridge.SelfLogToolAgent", FakeToolAgent)
+    monkeypatch.setattr("self_log.gateway.bridge.SelfLogQueryRunner", FakeToolAgent)
     monkeypatch.setattr("self_log.gateway.bridge.OpenHarnessSelfLogAgent", FakeModelAgent)
     bridge = SelfLogGatewayBridge(bus=bus, workspace=workspace, provider_profile="codex")
     task = asyncio.create_task(bridge.run())
@@ -146,17 +146,17 @@ async def test_standalone_self_log_gateway_logs_inbound_and_outbound(
     bus = MessageBus()
 
     class FakeToolAgent:
-        def __init__(self, registry, agent):
+        def __init__(self, store, *, profile=None, **kw):
             pass
 
-        async def run(self, text):
+        async def run(self, text, session_key=""):
             return "已记录"
 
     class FakeModelAgent:
         def __init__(self, profile=None):
             pass
 
-    monkeypatch.setattr("self_log.gateway.bridge.SelfLogToolAgent", FakeToolAgent)
+    monkeypatch.setattr("self_log.gateway.bridge.SelfLogQueryRunner", FakeToolAgent)
     monkeypatch.setattr("self_log.gateway.bridge.OpenHarnessSelfLogAgent", FakeModelAgent)
     caplog.set_level(logging.INFO, logger="self_log.gateway.bridge")
     bridge = SelfLogGatewayBridge(bus=bus, workspace=workspace, provider_profile="codex")
