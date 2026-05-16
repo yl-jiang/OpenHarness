@@ -124,6 +124,32 @@ async def test_compact_preserves_export_history_for_snapshot_saves(tmp_path: Pat
 
 
 @pytest.mark.asyncio
+async def test_export_writes_markdown_to_current_working_directory(tmp_path: Path):
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+    context.session_id = "abc123def456"
+    context.engine.load_messages(
+        [
+            ConversationMessage(role="user", content=[TextBlock(text="export me")]),
+            ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
+        ]
+    )
+
+    command, args = registry.lookup("/export")
+    assert command is not None
+
+    result = await command.handler(args, context)
+
+    assert result.message is not None
+    path = Path(result.message.removeprefix("Exported transcript to "))
+    assert path.parent == tmp_path.resolve()
+    assert path.name.startswith("openharness-export-abc123de-")
+    content = path.read_text(encoding="utf-8")
+    assert "# OpenHarness Session Export" in content
+    assert "export me" in content
+
+
+@pytest.mark.asyncio
 async def test_permissions_command_persists(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()

@@ -455,11 +455,23 @@ def create_default_command_registry(
         return CommandResult(message="\n".join(lines))
 
     async def _export_handler(_: str, context: CommandContext) -> CommandResult:
-        path = context.session_backend.export_markdown(cwd=context.cwd, messages=context.engine.messages)
+        path = context.session_backend.export_markdown(
+            cwd=context.cwd,
+            messages=context.engine.export_messages,
+            usage=context.engine.total_usage,
+            session_id=context.session_id,
+            output_dir=context.cwd,
+        )
         return CommandResult(message=f"Exported transcript to {path}")
 
     async def _share_handler(_: str, context: CommandContext) -> CommandResult:
-        path = context.session_backend.export_markdown(cwd=context.cwd, messages=context.engine.messages)
+        path = context.session_backend.export_markdown(
+            cwd=context.cwd,
+            messages=context.engine.export_messages,
+            usage=context.engine.total_usage,
+            session_id=context.session_id,
+            output_dir=context.cwd,
+        )
         return CommandResult(message=f"Created shareable transcript snapshot at {path}")
 
     async def _copy_handler(args: str, context: CommandContext) -> CommandResult:
@@ -504,7 +516,13 @@ def create_default_command_registry(
                 messages=context.engine.messages,
                 usage=context.engine.total_usage,
             )
-            export_path = context.session_backend.export_markdown(cwd=context.cwd, messages=context.engine.messages)
+            export_path = context.session_backend.export_markdown(
+                cwd=context.cwd,
+                messages=context.engine.messages,
+                usage=context.engine.total_usage,
+                session_id=context.session_id,
+                output_dir=session_dir,
+            )
             tagged_json = session_dir / f"{safe_name}.json"
             tagged_md = session_dir / f"{safe_name}.md"
             shutil.copy2(snapshot_path, tagged_json)
