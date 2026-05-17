@@ -92,6 +92,8 @@ type PromptInputProps = {
 	onVimOpenLineBelow?: () => void;
 	onVimOpenLineAbove?: () => void;
 	onBackspaceAtStart?: () => void;
+	imageAttachmentLabels?: string[];
+	clipboardStatus?: string | null;
 };
 
 function PromptInputInner({
@@ -115,6 +117,8 @@ function PromptInputInner({
 	onVimOpenLineBelow,
 	onVimOpenLineAbove,
 	onBackspaceAtStart,
+	imageAttachmentLabels = [],
+	clipboardStatus = null,
 }: PromptInputProps): React.JSX.Element {
 	const [frameIndex, setFrameIndex] = useState(0);
 	const intervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -285,6 +289,17 @@ function PromptInputInner({
 					)}
 				</Box>
 			</HalfLinePaddedBox>
+
+			{(imageAttachmentLabels.length > 0 || clipboardStatus) && (
+				<Box flexDirection="column" paddingX={1}>
+					{imageAttachmentLabels.map((label, i) => (
+						<Text key={`img-${i}`} color="cyan">📎 {label}</Text>
+					))}
+					{clipboardStatus && (
+						<Text color="yellow">{clipboardStatus}</Text>
+					)}
+				</Box>
+			)}
 
 			{/* Footer: shortcuts + expand trigger */}
 			<Box justifyContent="space-between" paddingX={1}>

@@ -794,6 +794,7 @@ async def handle_line(
     render_event: StreamRenderer,
     clear_output: ClearHandler,
     input_mode: str = "chat",
+    user_message: ConversationMessage | None = None,
 ) -> bool:
     """Handle one submitted line for either headless or TUI rendering."""
     if not bundle.external_api_client:
@@ -838,12 +839,12 @@ async def handle_line(
             sync_app_state(bundle)
             return True
 
-    parsed = bundle.commands.lookup(line)
+    parsed = None if user_message is not None else bundle.commands.lookup(line)
     result: CommandResult | None = None
     if parsed is not None:
         command, args = parsed
         result = await command.handler(args, context)
-    elif line.startswith("/"):
+    elif user_message is None and line.startswith("/"):
         result = await resolve_skill_alias_command(line, context)
 
     if result is not None:
@@ -941,17 +942,18 @@ async def handle_line(
     settings = bundle.current_settings()
     if bundle.enforce_max_turns:
         bundle.engine.set_max_turns(settings.max_turns)
+    latest_user_prompt = line or (user_message.text if user_message is not None else "")
     system_prompt = build_runtime_system_prompt(
         settings,
         cwd=bundle.cwd,
-        latest_user_prompt=line,
+        latest_user_prompt=latest_user_prompt,
         extra_skill_dirs=bundle.extra_skill_dirs,
         extra_plugin_roots=bundle.extra_plugin_roots,
         include_project_memory=bundle.include_project_memory,
     )
     bundle.engine.set_system_prompt(system_prompt)
     try:
-        async for event in bundle.engine.submit_message(line):
+        async for event in bundle.engine.submit_message(user_message or line):
             await render_event(event)
     except MaxTurnsExceeded as exc:
         await print_system(f"Stopped after {exc.max_turns} turns (max_turns).")

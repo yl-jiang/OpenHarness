@@ -11,11 +11,17 @@ import pytest
 from openharness.api.client import ApiMessageCompleteEvent
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.stream_events import CompactProgressEvent, CompactProgressPhase
-from openharness.engine.messages import ConversationMessage, TextBlock
+from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock
 from openharness.services.session_storage import load_session_snapshot
 from openharness.state import AppState
-from openharness.ui.backend_host import BackendHostConfig, ReactBackendHost, run_backend_host
-from openharness.ui.protocol import BackendEvent
+from openharness.ui.backend_host import (
+    BackendHostConfig,
+    ReactBackendHost,
+    _build_user_message_with_images,
+    _format_transcript_line,
+    run_backend_host,
+)
+from openharness.ui.protocol import BackendEvent, FrontendImageAttachment
 from openharness.ui.runtime import build_runtime, close_runtime, start_runtime
 
 
@@ -1067,3 +1073,100 @@ async def test_backend_host_cancel_restores_turn_state_before_next_skill_submit(
         if message.get("role") == "user"
     ]
     assert all("OLD_TASK should not leak" not in text for text in prompt_texts)
+
+
+# ---------------------------------------------------------------------------
+# Image attachment tests (Group 1 cherry-port from main 330ece7 + 6243793)
+# ---------------------------------------------------------------------------
+
+def test_frontend_request_accepts_image_attachments():
+    """FrontendRequest correctly parses a list of image attachments."""
+    import json
+    from openharness.ui.protocol import FrontendRequest
+
+    raw = json.dumps({
+        "type": "submit_line",
+        "line": "describe this image",
+        "images": [{"media_type": "image/png", "data": "aGVsbG8="}],
+    })
+    req = FrontendRequest.model_validate_json(raw)
+    assert req.images is not None
+    assert len(req.images) == 1
+    assert req.images[0].media_type == "image/png"
+    assert req.images[0].data == "aGVsbG8="
+
+
+def test_frontend_request_rejects_non_image_attachments():
+    """FrontendImageAttachment rejects unsupported media types."""
+    import pytest
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        FrontendImageAttachment(media_type="text/plain", data="aGVsbG8=")
+
+
+def test_build_user_message_with_images():
+    """_build_user_message_with_images returns a ConversationMessage with image and text blocks."""
+    attachments = [
+        FrontendImageAttachment(media_type="image/png", data="aGVsbG8="),
+    ]
+    msg = _build_user_message_with_images("What is this?", attachments)
+    assert isinstance(msg, ConversationMessage)
+    assert msg.role == "user"
+    assert any(isinstance(block, ImageBlock) for block in msg.content)
+    assert any(isinstance(block, TextBlock) and "What is this?" in block.text for block in msg.content)
+
+
+def test_format_transcript_line_mentions_attached_images():
+    """_format_transcript_line notes image count when images are present."""
+    line = "describe this"
+    attachments = [
+        FrontendImageAttachment(media_type="image/png", data="aGVsbG8="),
+        FrontendImageAttachment(media_type="image/jpeg", data="aGVsbG8="),
+    ]
+    result = _format_transcript_line(line, attachments)
+    assert "image" in result.lower() or "2" in result
+
+
+@pytest.mark.asyncio
+async def test_backend_host_processes_image_turn(tmp_path, monkeypatch):
+    """ReactBackendHost passes image attachment through to the API request."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+
+    class TrackingApiClient:
+        def __init__(self) -> None:
+            self.requests: list = []
+
+        async def stream_message(self, request):
+            self.requests.append(request)
+            yield ApiMessageCompleteEvent(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="ok")]),
+                usage=UsageSnapshot(input_tokens=2, output_tokens=3),
+                stop_reason=None,
+            )
+
+    client = TrackingApiClient()
+    host = ReactBackendHost(BackendHostConfig(api_client=client, cwd=str(tmp_path)))
+    host._bundle = await build_runtime(api_client=client, cwd=str(tmp_path))
+    await start_runtime(host._bundle)
+    try:
+        attachments = [FrontendImageAttachment(media_type="image/png", data="aGVsbG8=")]
+        await host._process_line("what is this?", images=attachments)
+    finally:
+        await close_runtime(host._bundle)
+
+    assert len(client.requests) >= 1
+    last_request = client.requests[-1]
+    all_blocks = [
+        block
+        for message in last_request.messages
+        if message.role == "user"
+        for block in (message.content if hasattr(message, "content") else [])
+    ]
+    assert any(
+        hasattr(block, "source") or isinstance(block, ImageBlock)
+        for block in all_blocks
+    ), "Expected an image block in the user message"

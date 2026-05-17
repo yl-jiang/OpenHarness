@@ -9,6 +9,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from openharness.api.client import SupportsStreamingMessages
@@ -16,6 +17,7 @@ from openharness.auth.manager import AuthManager
 from openharness.commands import MemoryCommandBackend
 from openharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, resolve_model_setting
 from openharness.bridge import get_bridge_manager
+from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock
 from openharness.themes import list_themes
 from openharness.engine.stream_events import (
     AssistantTextDelta,
@@ -31,7 +33,7 @@ from openharness.engine.stream_events import (
 from openharness.output_styles import load_output_styles
 from openharness.tasks import get_task_manager
 from openharness.skills import load_skill_registry
-from openharness.ui.protocol import BackendEvent, FrontendRequest, TranscriptItem
+from openharness.ui.protocol import BackendEvent, FrontendImageAttachment, FrontendRequest, TranscriptItem
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime, sync_app_state
 from openharness.permissions.approvals import ApprovalRequest
 from openharness.services.session_backend import SessionBackend
@@ -240,7 +242,7 @@ class ReactBackendHost:
                     await self._emit(BackendEvent(type="error", message="Session is busy"))
                     continue
                 line = (request.line or "").strip()
-                if not line:
+                if not line and not request.images:
                     continue
                 self._busy = True
                 try:
@@ -249,6 +251,7 @@ class ReactBackendHost:
                             line,
                             transcript_line=request.transcript_line,
                             input_mode=request.input_mode,
+                            images=request.images,
                         )
                     )
                 finally:
@@ -312,8 +315,10 @@ class ReactBackendHost:
         *,
         transcript_line: str | None = None,
         input_mode: str = "chat",
+        images: list[FrontendImageAttachment] | None = None,
     ) -> bool:
         assert self._bundle is not None
+        user_message = _build_user_message_with_images(line, images or [])
         # A line is "shell-bound" when the frontend is in shell mode or the
         # user typed a direct ``!cmd`` in chat mode.  These echo as a
         # distinct transcript role so the frontend can render them with a
@@ -335,7 +340,7 @@ class ReactBackendHost:
                 type="transcript_item",
                 item=TranscriptItem(
                     role="user_shell" if is_shell_line else "user",
-                    text=transcript_line or line,
+                    text=transcript_line or _format_transcript_line(line, images or []),
                 ),
             )
         )
@@ -518,14 +523,15 @@ class ReactBackendHost:
         async def _clear_output() -> None:
             await self._emit(BackendEvent(type="clear_transcript"))
         try:
-            should_continue = await handle_line(
-                self._bundle,
-                line,
-                print_system=_print_system,
-                render_event=_render_event,
-                clear_output=_clear_output,
-                input_mode=input_mode,
-            )
+            handle_line_kwargs: dict[str, Any] = {
+                "print_system": _print_system,
+                "render_event": _render_event,
+                "clear_output": _clear_output,
+                "input_mode": input_mode,
+            }
+            if user_message is not None:
+                handle_line_kwargs["user_message"] = user_message
+            should_continue = await handle_line(self._bundle, line, **handle_line_kwargs)
         except asyncio.CancelledError:
             self._bundle.engine.restore_turn_checkpoint(turn_checkpoint)
             sync_app_state(self._bundle)
@@ -1083,6 +1089,32 @@ def _permission_reply_from_request(request: FrontendRequest) -> str:
     if reply in {"once", "always", "reject"}:
         return reply
     return "once" if bool(request.allowed) else "reject"
+
+
+def _build_user_message_with_images(
+    line: str,
+    images: list[FrontendImageAttachment],
+) -> ConversationMessage | None:
+    if not images:
+        return None
+    content = [TextBlock(text=line or "Please analyze the attached image.")]
+    content.extend(
+        ImageBlock(
+            media_type=image.media_type,
+            data=image.data,
+            source_path=image.source_path or "",
+        )
+        for image in images
+    )
+    return ConversationMessage.from_user_content(content)
+
+
+def _format_transcript_line(line: str, images: list[FrontendImageAttachment]) -> str:
+    if not images:
+        return line
+    noun = "image" if len(images) == 1 else "images"
+    attachment_line = f"[{len(images)} {noun} attached]"
+    return f"{line}\n{attachment_line}" if line else attachment_line
 
 
 __all__ = ["run_backend_host", "ReactBackendHost", "BackendHostConfig"]

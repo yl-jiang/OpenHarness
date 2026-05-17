@@ -2,6 +2,7 @@ import React, {useCallback, useDeferredValue, useEffect, useMemo, useRef, useSta
 import {Box, Text, useApp, useInput, useStdin} from 'ink';
 
 import {AlternateScreen} from './components/AlternateScreen.js';
+import {readClipboardImage, type ImageAttachment} from './clipboardImage.js';
 import {CommandPicker, createCommandPickerModel} from './components/CommandPicker.js';
 import {ConversationView, type ConversationViewHandle} from './components/ConversationView.js';
 import {
@@ -56,7 +57,7 @@ import {
 	type PasteReference,
 } from './input/pastePlaceholders.js';
 import {ThemeProvider, useTheme} from './theme/ThemeContext.js';
-import type {FrontendConfig} from './types.js';
+import type {FrontendConfig, ImageAttachmentPayload} from './types.js';
 
 const rawReturnSubmit = process.env.OPENHARNESS_FRONTEND_RAW_RETURN === '1';
 const scriptedSteps = (() => {
@@ -257,6 +258,9 @@ function AppInner({
 	const [historyIndex, setHistoryIndex] = useState(-1);
 	const [lastEscapeAt, setLastEscapeAt] = useState(0);
 	const [lastCtrlCAt, setLastCtrlCAt] = useState(0);
+	const [imageAttachments, setImageAttachments] = useState<ImageAttachment[]>([]);
+	const [clipboardStatus, setClipboardStatus] = useState<string | null>(null);
+	const clipboardStatusTimerRef = useRef<NodeJS.Timeout | null>(null);
 	const [extraInputLines, setExtraInputLines] = useState<string[]>([]);
 	const [trailingInputLines, setTrailingInputLines] = useState<string[]>([]);
 	const [pickerSubIndex, setPickerSubIndex] = useState(0);
@@ -355,6 +359,7 @@ function AppInner({
 	const clearPromptDraft = useCallback((): void => {
 		setPromptLines('', [], [], {});
 		setPasteStatusNotice(null);
+		setImageAttachments([]);
 	}, [setPromptLines]);
 
 	const pushHistoryEntry = useCallback((display: string): void => {
@@ -367,6 +372,47 @@ function AppInner({
 		]);
 		setHistoryIndex(-1);
 	}, []);
+
+	useEffect(() => {
+		return () => {
+			if (clipboardStatusTimerRef.current) {
+				clearTimeout(clipboardStatusTimerRef.current);
+			}
+		};
+	}, []);
+
+	const setTemporaryClipboardStatus = (message: string): void => {
+		setClipboardStatus(message);
+		if (clipboardStatusTimerRef.current) {
+			clearTimeout(clipboardStatusTimerRef.current);
+		}
+		clipboardStatusTimerRef.current = setTimeout(() => {
+			setClipboardStatus(null);
+			clipboardStatusTimerRef.current = null;
+		}, 2500);
+	};
+
+	const attachClipboardImage = (): void => {
+		void (async () => {
+			const image = await readClipboardImage();
+			if (!image) {
+				setTemporaryClipboardStatus('No image found in clipboard');
+				return;
+			}
+			setImageAttachments((items) => [...items, image]);
+			setTemporaryClipboardStatus(`Attached ${image.label}`);
+		})().catch((error: unknown) => {
+			const message = error instanceof Error ? error.message : String(error);
+			setTemporaryClipboardStatus(`Clipboard image unavailable: ${message}`);
+		});
+	};
+
+	const imagePayloads = (): ImageAttachmentPayload[] =>
+		imageAttachments.map((image) => ({
+			media_type: image.media_type,
+			data: image.data,
+			source_path: image.source_path,
+		}));
 
 	const visibleSelectOptions = useMemo(
 		() => (selectModal ? filterSelectModalOptions(selectModal.command, selectModal.options, selectQuery) : []),
@@ -803,6 +849,10 @@ function AppInner({
 		if (inputMode === 'shell') {
 			payload.input_mode = 'shell';
 		}
+		if (imageAttachments.length > 0) {
+			payload.images = imagePayloads();
+			setImageAttachments([]);
+		}
 		session.sendRequest(payload);
 		pushHistoryEntry(submittedValue);
 		session.setBusy(true);
@@ -1086,6 +1136,12 @@ function AppInner({
 		if (key.ctrl && chunk === 'x') {
 			suppressNextCharRef.current = 'x';
 			setMouseTracking((prev) => !prev);
+			return;
+		}
+
+		// Ctrl+V attaches an image from the clipboard.
+		if (key.ctrl && chunk === 'v' && !session.busy) {
+			attachClipboardImage();
 			return;
 		}
 
@@ -1708,6 +1764,8 @@ function AppInner({
 						onVimOpenLineBelow={handlePromptOpenLineBelow}
 						onVimOpenLineAbove={handlePromptOpenLineAbove}
 						onBackspaceAtStart={handlePromptBackspaceAtStart}
+						imageAttachmentLabels={imageAttachments.map((img) => img.label)}
+						clipboardStatus={clipboardStatus}
 					/>
 					<InlineActivityIndicator
 						active={hasActiveWork}
