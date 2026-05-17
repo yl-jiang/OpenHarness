@@ -16,6 +16,7 @@ from openharness.memory.providers import (
     build_memory_context_block,
     sanitize_memory_context,
 )
+from openharness.memory.relevance import format_relevant_memories, select_relevant_memories
 from openharness.memory.scan import scan_memory_files
 from openharness.memory.search import find_relevant_memories
 from openharness.memory.store import MemoryOperationResult, MemoryStore
@@ -26,6 +27,7 @@ __all__ = [
     "BuiltinMemoryProvider",
     "build_memory_context_block",
     "find_relevant_memories",
+    "format_relevant_memories",
     "get_curated_memory_dir",
     "get_memory_entrypoint",
     "get_project_memory_dir",
@@ -40,6 +42,7 @@ __all__ = [
     "remove_memory_entry",
     "sanitize_memory_context",
     "scan_memory_files",
+    "select_relevant_memories",
     "setup_memory_provider_manager",
     "teardown_memory_provider_manager",
 ]

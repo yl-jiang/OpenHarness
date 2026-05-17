@@ -8,6 +8,10 @@ from re import sub
 from openharness.memory.paths import get_memory_entrypoint, get_project_memory_dir
 from openharness.memory.scan import scan_memory_files
 from openharness.memory.schema import (
+    DEFAULT_MEMORY_SCOPE,
+    DEFAULT_MEMORY_TYPE,
+    MemoryScope,
+    MemoryType,
     SCHEMA_VERSION,
     coerce_int,
     compute_memory_signature,
@@ -23,21 +27,33 @@ from openharness.utils.file_lock import exclusive_file_lock
 from openharness.utils.fs import atomic_write_text
 
 
-def _memory_lock_path(cwd: str | Path) -> Path:
-    return get_project_memory_dir(cwd) / ".memory.lock"
-
-
 def list_memory_files(cwd: str | Path) -> list[Path]:
     """List memory markdown files for the project."""
     return sorted(header.path for header in scan_memory_files(cwd, max_files=None))
 
 
-def add_memory_entry(cwd: str | Path, title: str, content: str) -> Path:
+def add_memory_entry(
+    cwd: str | Path,
+    title: str,
+    content: str,
+    *,
+    memory_type: MemoryType = DEFAULT_MEMORY_TYPE,
+    scope: MemoryScope = DEFAULT_MEMORY_SCOPE,
+    description: str = "",
+    tags: tuple[str, ...] = (),
+) -> Path:
     """Create or refresh a memory file and append it to MEMORY.md."""
-    memory_dir = get_project_memory_dir(cwd)
+    if scope == "team":
+        from openharness.memory.team import check_team_memory_secrets, ensure_team_memory_vault
+
+        secret_error = check_team_memory_secrets(content)
+        if secret_error:
+            raise ValueError(secret_error)
+        memory_dir = ensure_team_memory_vault(cwd)
+    else:
+        memory_dir = get_project_memory_dir(cwd)
     slug = sub(r"[^a-zA-Z0-9]+", "_", title.strip().lower()).strip("_") or "memory"
-    with exclusive_file_lock(_memory_lock_path(cwd)):
-        memory_type = "project"
+    with exclusive_file_lock(memory_dir / ".memory.lock"):
         category = "knowledge"
         body = content.strip() + "\n"
         signature = compute_memory_signature(body, memory_type, category)
@@ -46,6 +62,7 @@ def add_memory_entry(cwd: str | Path, title: str, content: str) -> Path:
             max_files=None,
             include_disabled=True,
             include_expired=True,
+            memory_dir=memory_dir,
         )
         duplicate = next(
             (header for header in existing if _effective_signature(header.path, header.signature) == signature),
@@ -75,8 +92,9 @@ def add_memory_entry(cwd: str | Path, title: str, content: str) -> Path:
                 "schema_version": SCHEMA_VERSION,
                 "id": memory_id,
                 "name": title.strip(),
-                "description": first_content_line(body) or title.strip(),
+                "description": description.strip() or first_content_line(body) or title.strip(),
                 "type": str(metadata.get("type") or memory_type),
+                "scope": str(metadata.get("scope") or scope),
                 "category": str(metadata.get("category") or category),
                 "importance": max(coerce_int(metadata.get("importance"), default=0), 1),
                 "source": "manual",
@@ -86,11 +104,12 @@ def add_memory_entry(cwd: str | Path, title: str, content: str) -> Path:
                 "ttl_days": metadata.get("ttl_days"),
                 "disabled": False,
                 "supersedes": metadata.get("supersedes") or [],
+                "tags": list(dict.fromkeys(str(tag).strip() for tag in tags if str(tag).strip())),
             }
         )
         atomic_write_text(path, render_memory_file(metadata, body))
 
-        entrypoint = get_memory_entrypoint(cwd)
+        entrypoint = _entrypoint_for_memory_dir(cwd, memory_dir)
         index_text = entrypoint.read_text(encoding="utf-8") if entrypoint.exists() else "# Memory Index\n"
         if path.name not in index_text:
             index_text = index_text.rstrip() + f"\n- [{title}]({path.name})\n"
@@ -100,23 +119,27 @@ def add_memory_entry(cwd: str | Path, title: str, content: str) -> Path:
 
 def remove_memory_entry(cwd: str | Path, name: str) -> bool:
     """Soft-delete a memory file and remove its index entry."""
-    matches = [
-        header
-        for header in scan_memory_files(
-            cwd,
-            max_files=None,
-            include_disabled=True,
-            include_expired=True,
+    matches = []
+    for memory_dir in _removable_memory_dirs(cwd):
+        matches.extend(
+            header
+            for header in scan_memory_files(
+                cwd,
+                max_files=None,
+                include_disabled=True,
+                include_expired=True,
+                memory_dir=memory_dir,
+            )
+            if name in {header.path.stem, header.path.name, header.title, header.id}
         )
-        if name in {header.path.stem, header.path.name, header.title, header.id}
-    ]
     if not matches:
         return False
     header = matches[0]
     if header.disabled:
         return False
     path = header.path
-    with exclusive_file_lock(_memory_lock_path(cwd)):
+    memory_dir = _memory_dir_for_path(cwd, path)
+    with exclusive_file_lock(memory_dir / ".memory.lock"):
         if path.exists():
             content = path.read_text(encoding="utf-8")
             metadata, body, _, _ = split_memory_file(content)
@@ -125,7 +148,7 @@ def remove_memory_entry(cwd: str | Path, name: str) -> bool:
             metadata["updated_at"] = format_datetime(utc_now())
             atomic_write_text(path, render_memory_file(metadata, body))
 
-        entrypoint = get_memory_entrypoint(cwd)
+        entrypoint = _entrypoint_for_memory_dir(cwd, memory_dir)
         if entrypoint.exists():
             lines = [
                 line
@@ -134,6 +157,33 @@ def remove_memory_entry(cwd: str | Path, name: str) -> bool:
             ]
             atomic_write_text(entrypoint, "\n".join(lines).rstrip() + "\n")
     return True
+
+
+def _removable_memory_dirs(cwd: str | Path) -> list[Path]:
+    memory_dirs = [get_project_memory_dir(cwd)]
+    from openharness.memory.team import get_team_memory_dir
+
+    team_dir = get_team_memory_dir(cwd)
+    if team_dir.exists():
+        memory_dirs.append(team_dir)
+    return memory_dirs
+
+
+def _memory_dir_for_path(cwd: str | Path, path: Path) -> Path:
+    from openharness.memory.team import get_team_memory_dir
+
+    team_dir = get_team_memory_dir(cwd)
+    try:
+        path.resolve().relative_to(team_dir.resolve())
+    except ValueError:
+        return get_project_memory_dir(cwd)
+    return team_dir
+
+
+def _entrypoint_for_memory_dir(cwd: str | Path, memory_dir: Path) -> Path:
+    if memory_dir == get_project_memory_dir(cwd):
+        return get_memory_entrypoint(cwd)
+    return memory_dir / "MEMORY.md"
 
 
 def _next_memory_path(memory_dir: Path, slug: str) -> Path:

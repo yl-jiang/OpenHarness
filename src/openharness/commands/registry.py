@@ -1594,7 +1594,26 @@ def create_default_command_registry(
     registry.register(SlashCommand("usage", "Show usage and token estimates", _usage_handler))
     registry.register(SlashCommand("stats", "Show session statistics", _stats_handler))
     registry.register(SlashCommand("dream", "Consolidate memory", _dream_handler, subcommands=["run", "now", "preview", "status", "diff", "rollback"]))
-    registry.register(SlashCommand("memory", "Inspect and manage project memory", _memory_handler, subcommands=["list", "show", "add", "remove"]))
+    registry.register(
+        SlashCommand(
+            "memory",
+            "Inspect and manage project memory",
+            _memory_handler,
+            subcommands=[
+                "list",
+                "show",
+                "add",
+                "remove",
+                "edit",
+                "validate",
+                "extract",
+                "session",
+                "team",
+                "agent",
+                "migrate",
+            ],
+        )
+    )
     registry.register(SlashCommand("hooks", "Show configured hooks", _hooks_handler))
     registry.register(SlashCommand("resume", "Restore the latest saved session", _resume_handler))
     registry.register(SlashCommand("session", "Inspect the current session storage", _session_handler, subcommands=["show", "ls", "path", "tag", "clear"]))

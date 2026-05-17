@@ -16,12 +16,13 @@ from openharness.config.paths import (
 from openharness.config.settings import Settings
 from openharness.coordinator.coordinator_mode import get_coordinator_system_prompt, is_coordinator_mode
 from openharness.memory import (
-    find_relevant_memories,
+    format_relevant_memories,
     get_curated_memory_dir,
     get_memory_entrypoint,
     get_project_memory_dir,
     load_memory_prompt,
     mark_memory_used,
+    select_relevant_memories,
 )
 from openharness.personalization.rules import load_local_rules
 from openharness.prompts.claudemd import discover_claude_md_files, load_claude_md_prompt
@@ -441,6 +442,7 @@ def _build_runtime_prompt_blocks_cached(
         memory_section = load_memory_prompt(
             cwd,
             max_entrypoint_lines=settings.memory.max_entrypoint_lines,
+            max_entrypoint_bytes=settings.memory.max_entrypoint_bytes,
         )
         if memory_section:
             blocks.append(
@@ -454,33 +456,22 @@ def _build_runtime_prompt_blocks_cached(
             )
 
         if latest_prompt:
-            relevant = find_relevant_memories(
+            relevant = select_relevant_memories(
                 latest_prompt,
                 cwd,
                 max_results=settings.memory.max_files,
             )
             if relevant:
                 try:
-                    mark_memory_used(cwd, relevant, memory_dir=relevant[0].path.parent)
+                    headers = [item.header for item in relevant]
+                    mark_memory_used(cwd, headers, memory_dir=headers[0].path.parent)
                 except OSError:
                     pass
-                lines = ["# Relevant Memories"]
-                for header in relevant:
-                    content = header.path.read_text(encoding="utf-8", errors="replace").strip()
-                    lines.extend(
-                        [
-                            "",
-                            f"## {header.path.name}",
-                            "```md",
-                            content[:8000],
-                            "```",
-                        ]
-                    )
                 blocks.append(
                     PromptBlock(
                         id="relevant-memories",
                         title="Relevant Memories",
-                        content="\n".join(lines),
+                        content=format_relevant_memories(relevant),
                         priority=110,
                         source="memory",
                     )
