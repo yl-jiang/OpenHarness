@@ -164,7 +164,11 @@ def load_memory_prompt(workspace: str | Path | None = None, *, max_files: int = 
     if not memory_dir.exists() and not index_path.exists():
         return None
 
-    lines: list[str] = ["# Personal Memory"]
+    lines: list[str] = [
+        "# Personal Memory",
+        "Each file below may start with a YAML frontmatter block (`---`). "
+        "That block is structural metadata managed automatically — focus on the content below it.",
+    ]
 
     if index_path.exists():
         index_lines = index_path.read_text(encoding="utf-8").splitlines()[:200]

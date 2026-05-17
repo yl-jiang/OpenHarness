@@ -161,6 +161,8 @@ def load_memory_prompt(workspace: str | Path | None = None, *, max_files: int = 
         "# ohmo Memory",
         f"- Personal memory directory: {memory_dir}",
         "- Use this memory for stable user preferences and durable personal context.",
+        "- Each file may start with a YAML frontmatter block (`---`). "
+        "That block is structural metadata managed automatically — focus on the content below it.",
     ]
 
     if index_path.exists():
