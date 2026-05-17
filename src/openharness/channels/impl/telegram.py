@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 
 from openharness.utils.log import get_logger
@@ -19,6 +20,13 @@ from openharness.utils.helpers import split_message
 logger = get_logger(__name__)
 
 TELEGRAM_MAX_MESSAGE_LEN = 4000  # Telegram message character limit
+_TELEGRAM_URL_LOGGERS = ("httpx", "httpcore", "telegram.ext")
+
+
+def silence_telegram_token_url_loggers() -> None:
+    """Prevent Telegram bot tokens from appearing in dependency INFO logs."""
+    for name in _TELEGRAM_URL_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 def _markdown_to_telegram_html(text: str) -> str:
@@ -175,6 +183,7 @@ class TelegramChannel(BaseChannel):
     async def stop(self) -> None:
         """Stop the Telegram bot."""
         self._running = False
+        self.polling_started = False
 
         # Cancel all typing indicators
         for chat_id in list(self._typing_tasks):
@@ -492,6 +501,7 @@ class TelegramChannel(BaseChannel):
 
     async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Log polling / handler errors instead of silently swallowing them."""
+        self.last_error = str(context.error)
         logger.error("Telegram error: %s", context.error)
 
     def _get_extension(self, media_type: str, mime_type: str | None) -> str:
