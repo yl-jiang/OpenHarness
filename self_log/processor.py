@@ -17,6 +17,15 @@ from self_log.models import (
     SelfLogReport,
 )
 from self_log.store import SelfLogStore
+from self_log.utils import (
+    _get_holiday,
+    _get_period,
+    _get_season,
+    _get_weekday,
+    _is_weekend,
+    _now,
+    _previous_day,
+)
 
 logger = get_logger(__name__)
 
@@ -68,7 +77,12 @@ class SelfLogProcessor:
             
             # Retrieve relevant context from past records (RAG)
             relevant_context = self._retrieve_relevant_context(entry.content)
-            full_context = self._profile_context()
+            
+            # Determine target date for context grounding
+            metadata = entry.metadata or {}
+            target_date = str(metadata.get("record_date") or entry.created_at[:10])
+            
+            full_context = self._profile_context(target_date=target_date)
             if relevant_context:
                 full_context += "\n\n## Relevant Past Records\n" + relevant_context
 
@@ -130,7 +144,7 @@ class SelfLogProcessor:
             return None
 
         logger.info("generating daily question for date=%s", today)
-        context = self._profile_context()
+        context = self._profile_context(target_date=today.isoformat())
         question = await self.agent.generate_daily_question(context)
         return question
 
@@ -168,16 +182,29 @@ class SelfLogProcessor:
 
     def _record_from_result(self, entry: SelfLogEntry, result: dict[str, object]) -> SelfLogRecord:
         metadata = entry.metadata or {}
-        date = str(metadata.get("record_date") or entry.created_at[:10])
+        # Priority: result['date'] (semantic) > metadata['record_date'] (explicit) > entry.created_at (fallback)
+        date = str(result.get("date") or metadata.get("record_date") or entry.created_at[:10])
+        raw_content = entry.content
+        events = str(result.get("events") or "")
+        holiday = _get_holiday(date)
+        if holiday and holiday not in events:
+            events = f"{holiday}, {events}" if events else holiday
+
         return SelfLogRecord(
             id=uuid4().hex[:12],
             entry_id=entry.id,
             date=date,
-            raw_content=entry.content,
-            corrected_content=str(result.get("corrected_content") or entry.content),
+            raw_content=raw_content,
+            corrected_content=str(result.get("corrected_content") or raw_content),
             summary=str(result.get("summary") or ""),
             tags=str(result.get("tags") or ""),
             emotion=str(result.get("emotion") or "中性"),
+            weekday=_get_weekday(date),
+            events=events,
+            period=str(result.get("period") or _get_period(entry.created_at)),
+            season=_get_season(date),
+            is_weekend=_is_weekend(date),
+            content_length=len(raw_content),
             emotion_reason=str(result.get("emotion_reason") or ""),
             related_people=str(result.get("related_people") or ""),
             related_places=str(result.get("related_places") or ""),
@@ -189,6 +216,11 @@ class SelfLogProcessor:
         metadata = entry.metadata or {}
         date = str(item.get("date") or metadata.get("record_date") or entry.created_at[:10])
         raw = str(item.get("content") or item.get("raw_content") or item.get("corrected_content") or "")
+        events = str(item.get("events") or "")
+        holiday = _get_holiday(date)
+        if holiday and holiday not in events:
+            events = f"{holiday}, {events}" if events else holiday
+
         return SelfLogRecord(
             id=uuid4().hex[:12],
             entry_id=entry.id,
@@ -198,6 +230,12 @@ class SelfLogProcessor:
             summary=str(item.get("summary") or ""),
             tags=str(item.get("tags") or ""),
             emotion=str(item.get("emotion") or "中性"),
+            weekday=_get_weekday(date),
+            events=events,
+            period=_get_period(entry.created_at),
+            season=_get_season(date),
+            is_weekend=_is_weekend(date),
+            content_length=len(raw or entry.content),
             emotion_reason=str(item.get("emotion_reason") or ""),
             related_people=str(item.get("related_people") or ""),
             related_places=str(item.get("related_places") or ""),
@@ -229,7 +267,7 @@ class SelfLogProcessor:
             confidence=str(update.get("confidence") or "low"),
         )
 
-    def _profile_context(self) -> str:
+    def _profile_context(self, target_date: str | None = None) -> str:
         from self_log.memory import load_memory_prompt
         from self_log.workspace import get_soul_path, get_user_path
 
@@ -238,8 +276,32 @@ class SelfLogProcessor:
         # 0. Temporal awareness (Crucial for grounding)
         now = datetime.now()
         local_time_str = now.strftime("%Y-%m-%d %H:%M:%S")
-        weekday_str = now.strftime("%A")
-        sections.append(f"## Current Time\n- Local Time: {local_time_str}\n- Day of Week: {weekday_str}")
+        
+        if target_date:
+            try:
+                # Handle YYYY-MM-DD
+                if len(target_date) == 10:
+                    dt = datetime.strptime(target_date, "%Y-%m-%d")
+                else:
+                    dt = datetime.fromisoformat(target_date)
+                
+                # Use Chinese weekday names for better LLM understanding in Chinese context
+                weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+                weekday_str = weekdays[dt.weekday()]
+                date_str = dt.strftime("%Y-%m-%d")
+                
+                sections.append(
+                    f"## Temporal Context\n"
+                    f"- Current System Time: {local_time_str}\n"
+                    f"- Record Target Date: {date_str}\n"
+                    f"- Record Day of Week: {weekday_str}"
+                )
+            except Exception as e:
+                logger.warning("failed to parse target_date=%r: %s", target_date, e)
+                sections.append(f"## Current Time\n- Local Time: {local_time_str}\n- Day of Week: {now.strftime('%A')}")
+        else:
+            weekday_str = now.strftime("%A")
+            sections.append(f"## Current Time\n- Local Time: {local_time_str}\n- Day of Week: {weekday_str}")
 
         # 1. Soul & User profile (The "Static" core)
         soul_path = get_soul_path(self.store.workspace)
@@ -310,13 +372,3 @@ class SelfLogProcessor:
             reminder = f"你已经连续 {streak} 天没有 self-log 记录，要不要补一下？"
         self.store.update_reminder_state(missing_streak=streak)
         return streak, reminder
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _previous_day(process_date: str | None) -> str:
-    if process_date:
-        return (datetime.fromisoformat(process_date).date() - timedelta(days=1)).isoformat()
-    return (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()

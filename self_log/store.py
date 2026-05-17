@@ -17,6 +17,7 @@ from self_log.models import (
     SelfLogReport,
 )
 from self_log.workspace import get_data_dir, initialize_workspace
+from self_log.utils import _now
 
 ENTRIES_FILENAME = "entries.jsonl"
 RECORDS_FILENAME = "records.jsonl"
@@ -202,7 +203,10 @@ class SelfLogStore:
         
         # Prepare corpus
         corpus_tokens = [
-            _tokenize_enhanced(f"{r.summary} {r.corrected_content} {r.tags}")
+            _tokenize_enhanced(
+                f"{r.summary} {r.corrected_content} {r.tags} {r.weekday} {r.events} {r.period} {r.season} "
+                f"{'周末' if r.is_weekend else '工作日'}"
+            )
             for r in filtered
         ]
         
@@ -218,7 +222,11 @@ class SelfLogStore:
             if score <= 0:
                 # If there's an exact match in summary or content even with 0 score (IDF issue),
                 # we give it a tiny epsilon score so boosts can still work.
-                doc_text = f"{filtered[i].summary} {filtered[i].corrected_content}".lower()
+                doc_text = (
+                    f"{filtered[i].summary} {filtered[i].corrected_content} {filtered[i].weekday} "
+                    f"{filtered[i].events} {filtered[i].period} {filtered[i].season} "
+                    f"{'周末' if filtered[i].is_weekend else '工作日'}"
+                ).lower()
                 if any(t in doc_text for t in query_tokens):
                     score = 0.1
                 else:
@@ -341,7 +349,3 @@ def _tokenize_enhanced(text: str) -> list[str]:
     
     # Combine and deduplicate within a document for tf counting later
     return [t.strip() for t in jieba_tokens + ascii_tokens if t.strip()]
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()

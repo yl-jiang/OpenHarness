@@ -18,6 +18,15 @@ from self_log.memory import add_memory_entry
 from self_log.models import ProfileUpdate, SelfLogRecord
 from self_log.processor import SelfLogProcessor
 from self_log.store import SelfLogStore
+from self_log.utils import (
+    _get_holiday,
+    _get_period,
+    _get_season,
+    _get_weekday,
+    _is_weekend,
+    _now,
+)
+
 logger = get_logger(__name__)
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -136,19 +145,34 @@ class SelfLogToolRegistry:
                 "summary",
                 "tags",
                 "emotion",
+                "events",
+                "date",
+                "period",
                 "related_people",
                 "related_places",
             )
         ):
+            date = str(arguments.get("date") or metadata.get("record_date") or entry.created_at[:10])
+            events = str(arguments.get("events") or "")
+            holiday = _get_holiday(date)
+            if holiday and holiday not in events:
+                events = f"{holiday}, {events}" if events else holiday
+
             record = SelfLogRecord(
                 id=uuid4().hex[:12],
                 entry_id=entry.id,
-                date=str(metadata.get("record_date") or entry.created_at[:10]),
+                date=date,
                 raw_content=content,
                 corrected_content=str(arguments.get("corrected_content") or content),
                 summary=str(arguments.get("summary") or ""),
                 tags=str(arguments.get("tags") or ""),
                 emotion=str(arguments.get("emotion") or "中性"),
+                weekday=_get_weekday(date),
+                events=events,
+                period=str(arguments.get("period") or _get_period(entry.created_at)),
+                season=_get_season(date),
+                is_weekend=_is_weekend(date),
+                content_length=len(content),
                 emotion_reason=str(arguments.get("emotion_reason") or ""),
                 related_people=str(arguments.get("related_people") or ""),
                 related_places=str(arguments.get("related_places") or ""),
@@ -187,15 +211,27 @@ class SelfLogToolRegistry:
                     "source": item.get("source") or arguments.get("source") or "补录",
                 },
             )
+            date = str(item.get("date") or datetime.now(timezone.utc).date().isoformat())
+            events = str(item.get("events") or "")
+            holiday = _get_holiday(date)
+            if holiday and holiday not in events:
+                events = f"{holiday}, {events}" if events else holiday
+
             record = SelfLogRecord(
                 id=uuid4().hex[:12],
                 entry_id=entry.id,
-                date=str(item.get("date") or datetime.now(timezone.utc).date().isoformat()),
+                date=date,
                 raw_content=raw,
                 corrected_content=str(item.get("corrected_content") or raw),
                 summary=str(item.get("summary") or ""),
                 tags=str(item.get("tags") or ""),
                 emotion=str(item.get("emotion") or "中性"),
+                weekday=_get_weekday(date),
+                events=events,
+                period=str(item.get("period") or _get_period(entry.created_at)),
+                season=_get_season(date),
+                is_weekend=_is_weekend(date),
+                content_length=len(raw),
                 emotion_reason=str(item.get("emotion_reason") or ""),
                 related_people=str(item.get("related_people") or ""),
                 related_places=str(item.get("related_places") or ""),
@@ -286,11 +322,20 @@ class SelfLogToolRegistry:
         # Valid fields for update
         updates = {}
         for field in [
-            "summary", "tags", "emotion", "emotion_reason", 
+            "summary", "tags", "emotion", "emotion_reason", "events", "period",
             "corrected_content", "related_people", "related_places", "date"
         ]:
             if field in arguments:
                 updates[field] = arguments[field]
+        
+        if "date" in updates:
+            date_val = str(updates["date"])
+            updates["weekday"] = _get_weekday(date_val)
+            updates["season"] = _get_season(date_val)
+            updates["is_weekend"] = _is_weekend(date_val)
+        
+        if "corrected_content" in updates:
+            updates["content_length"] = len(str(updates["corrected_content"]))
         
         if not updates:
             return {"ok": False, "message": "未提供任何更新字段。"}
@@ -502,7 +547,12 @@ class SelfLogToolRegistry:
 
             content = header + ai_summary
             for r in records:
-                content += f"### {r.date} {r.emotion}\n**摘要**：{r.summary}\n\n{r.corrected_content}\n\n---\n\n"
+                weekday_info = f" ({r.weekday})" if r.weekday else ""
+                event_info = f" 【{r.events}】" if r.events else ""
+                period_info = f" [{r.period}]" if r.period else ""
+                meta_info = f" ({r.season}, {'周末' if r.is_weekend else '工作日'}, {r.content_length}字)"
+                content += f"### {r.date}{weekday_info}{period_info} {r.emotion}{event_info}\n"
+                content += f"**摘要**：{r.summary} {meta_info}\n\n{r.corrected_content}\n\n---\n\n"
             path.write_text(content, encoding="utf-8")
 
         return {
@@ -566,6 +616,9 @@ def _tool_record() -> ToolDefinition:
             ("summary", "string", "One-sentence summary.", False),
             ("tags", "string", "Comma-separated tags.", False),
             ("emotion", "string", "Emotion label: 积极/消极/中性/复杂.", False),
+            ("date", "string", "Semantic date extracted from content (YYYY-MM-DD).", False),
+            ("period", "string", "Semantic time period extracted from content (e.g. 凌晨, 上午).", False),
+            ("events", "string", "Holidays, anniversaries, or birthdays.", False),
             ("emotion_reason", "string", "Brief reason for the emotion label.", False),
             ("related_people", "string", "Comma-separated people mentioned.", False),
             ("related_places", "string", "Comma-separated places mentioned.", False),
@@ -594,6 +647,8 @@ def _tool_import_records() -> ToolDefinition:
                             "summary": {"type": "string"},
                             "tags": {"type": "string"},
                             "emotion": {"type": "string"},
+                            "period": {"type": "string"},
+                            "events": {"type": "string"},
                             "emotion_reason": {"type": "string"},
                             "related_people": {"type": "string"},
                             "related_places": {"type": "string"},
@@ -686,6 +741,8 @@ def _tool_update_record() -> ToolDefinition:
             ("tags", "string", "New comma-separated tags.", False),
             ("emotion", "string", "New emotion label.", False),
             ("emotion_reason", "string", "New emotion reason.", False),
+            ("period", "string", "New time period.", False),
+            ("events", "string", "New events.", False),
             ("corrected_content", "string", "New cleaned-up content.", False),
             ("related_people", "string", "New comma-separated people.", False),
             ("related_places", "string", "New comma-separated places.", False),
@@ -834,10 +891,6 @@ def _format_records(records: list[dict[str, Any]]) -> str:
         f"- [{record.get('id', '?')}] {record.get('date', '')} {record.get('summary') or record.get('raw_content', '')}"
         for record in records
     )
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _backfill_hint(store: SelfLogStore, record_date: object) -> str | None:

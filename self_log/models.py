@@ -86,6 +86,12 @@ class SelfLogRecord:
     summary: str
     tags: str
     emotion: str
+    weekday: str = ""
+    events: str = ""
+    period: str = ""
+    season: str = ""
+    is_weekend: bool = False
+    content_length: int = 0
     emotion_reason: str = ""
     related_people: str = ""
     related_places: str = ""
@@ -106,6 +112,12 @@ class SelfLogRecord:
             "summary": self.summary,
             "tags": self.tags,
             "emotion": self.emotion,
+            "weekday": self.weekday,
+            "events": self.events,
+            "period": self.period,
+            "season": self.season,
+            "is_weekend": self.is_weekend,
+            "content_length": self.content_length,
             "emotion_reason": self.emotion_reason,
             "related_people": self.related_people,
             "related_places": self.related_places,
