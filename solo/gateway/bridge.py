@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import time
 from pathlib import Path
 
 from openharness.channels.bus.events import InboundMessage, OutboundMessage
@@ -21,6 +23,13 @@ from solo.runner import SoloQueryRunner
 from solo.store import SoloStore
 
 logger = get_logger(__name__)
+
+_CONTENT_DEDUP_WINDOW = 300  # seconds: ignore identical messages within this window
+
+
+def _hash_content(text: str) -> str:
+    normalized = " ".join(text.split())
+    return hashlib.sha256(normalized.encode()).hexdigest()
 
 
 def _content_snippet(text: str, *, limit: int = 160) -> str:
@@ -61,6 +70,8 @@ class SoloGatewayBridge:
         self._running = False
         self._session_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_cancel_reasons: dict[str, str] = {}
+        self._session_content_hashes: dict[str, str] = {}  # session_key -> hash of in-flight content
+        self._recent_success_hashes: dict[str, tuple[str, float]] = {}  # session_key -> (hash, monotonic_ts)
 
     async def run(self) -> None:
         self._running = True
@@ -90,6 +101,47 @@ class SoloGatewayBridge:
                 continue
 
             session_key = message.session_key
+            content_hash = _hash_content(content)
+
+            # Dedup: same content is still running in this session
+            running_task = self._session_tasks.get(session_key)
+            if running_task is not None and not running_task.done():
+                if self._session_content_hashes.get(session_key) == content_hash:
+                    logger.info(
+                        "solo content dedup (running) channel=%s session_key=%s",
+                        message.channel,
+                        session_key,
+                    )
+                    await self._bus.publish_outbound(
+                        OutboundMessage(
+                            channel=message.channel,
+                            chat_id=message.chat_id,
+                            content="⏳ 这条消息正在处理中，请稍候。",
+                            metadata={"_session_key": session_key},
+                        )
+                    )
+                    continue
+
+            # Dedup: same content was successfully processed within the window
+            entry = self._recent_success_hashes.get(session_key)
+            if entry is not None:
+                stored_hash, stored_ts = entry
+                if stored_hash == content_hash and time.monotonic() - stored_ts < _CONTENT_DEDUP_WINDOW:
+                    logger.info(
+                        "solo content dedup (recent) channel=%s session_key=%s",
+                        message.channel,
+                        session_key,
+                    )
+                    await self._bus.publish_outbound(
+                        OutboundMessage(
+                            channel=message.channel,
+                            chat_id=message.chat_id,
+                            content="✅ 这条消息刚才已经处理完成了，无需重复提交。",
+                            metadata={"_session_key": session_key},
+                        )
+                    )
+                    continue
+
             await self._interrupt_session(
                 session_key,
                 reason="replaced by a newer user message",
@@ -100,6 +152,7 @@ class SoloGatewayBridge:
                     metadata={"_progress": True, "_session_key": session_key},
                 ),
             )
+            self._session_content_hashes[session_key] = content_hash
             task = asyncio.create_task(
                 self._process_message(message),
                 name=f"solo-session:{session_key}",
@@ -154,8 +207,10 @@ class SoloGatewayBridge:
 
     async def _process_message(self, message: InboundMessage) -> None:
         content = message.content.strip()
+        content_hash = _hash_content(content)
         command = parse_solo_command(content)
         store = SoloStore(self._workspace)
+        _succeeded = False
         try:
             if command is None:
                 reply = await self._handle_record(message, store, content)
@@ -188,6 +243,7 @@ class SoloGatewayBridge:
                 reply = await self._handle_backfill(store, command.content, command.backfill_date)
             else:
                 reply = await self._handle_record(message, store, content)
+            _succeeded = True
         except asyncio.CancelledError:
             logger.info(
                 "solo session interrupted channel=%s chat_id=%s session_key=%s reason=%s",
@@ -202,6 +258,10 @@ class SoloGatewayBridge:
                 "solo gateway failed channel=%s chat_id=%s", message.channel, message.chat_id
             )
             reply = _format_gateway_error(exc)
+        finally:
+            self._session_content_hashes.pop(message.session_key, None)
+        if _succeeded:
+            self._recent_success_hashes[message.session_key] = (content_hash, time.monotonic())
         await self._publish_reply(message, reply)
 
     async def _handle_record(self, message: InboundMessage, store: SoloStore, content: str) -> str:

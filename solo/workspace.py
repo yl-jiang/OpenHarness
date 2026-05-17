@@ -66,6 +66,16 @@ Learn the person whose life you are helping to record. Keep this useful, respect
 - Health notes (if user has shared):
 - Common locations: (home city, office, etc.)
 
+## Important dates
+
+Recurring dates (birthdays, anniversaries, etc.) — format: `Label: MM-DD`
+One-time events — format: `Label: YYYY-MM-DD`
+
+*(Examples)*
+*(- Partner's birthday: 03-15)*
+*(- Wedding anniversary: 06-20)*
+*(- Mom's birthday: 07-08)*
+
 ## Preferences
 
 - Preferred tone for replies:

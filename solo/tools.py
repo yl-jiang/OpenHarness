@@ -21,6 +21,7 @@ from solo.store import SoloStore
 from solo.utils import (
     _get_holiday,
     _get_period,
+    _get_personal_events,
     _get_season,
     _get_weekday,
     _is_weekend,
@@ -157,6 +158,9 @@ class SoloToolRegistry:
             holiday = _get_holiday(date)
             if holiday and holiday not in events:
                 events = f"{holiday}, {events}" if events else holiday
+            personal = _get_personal_events(self.store.workspace, date)
+            if personal and personal not in events:
+                events = f"{personal}, {events}" if events else personal
 
             record = SoloRecord(
                 id=uuid4().hex[:12],

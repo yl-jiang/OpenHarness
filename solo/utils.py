@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 
 def _now() -> str:
@@ -108,6 +110,57 @@ def _get_holiday(date_str: str) -> str | None:
         return ", ".join(dict.fromkeys(all_events))
     except Exception:
         return None
+
+
+def _get_personal_events(workspace: str | Path | None, date_str: str) -> str | None:
+    """Return personal important-date labels that match *date_str* (YYYY-MM-DD).
+
+    Reads ``user.md`` from the workspace and looks for lines inside an
+    ``## Important dates`` section of the form::
+
+        Label: MM-DD
+        Label: YYYY-MM-DD
+
+    Recurring dates (``MM-DD``) match any year; full dates (``YYYY-MM-DD``)
+    also match every year on that month-day.
+    """
+    try:
+        if len(date_str) == 10:
+            target_md = date_str[5:]  # MM-DD
+        else:
+            target_md = datetime.fromisoformat(date_str).strftime("%m-%d")
+    except Exception:
+        return None
+
+    from solo.workspace import get_user_path
+
+    user_path = get_user_path(workspace)
+    if not user_path.exists():
+        return None
+
+    text = user_path.read_text(encoding="utf-8", errors="replace")
+
+    # Find the ## Important dates section
+    section_match = re.search(r"^##\s+Important dates\b", text, re.MULTILINE)
+    if not section_match:
+        return None
+    section_text = text[section_match.end():]
+    # Truncate at the next heading
+    next_heading = re.search(r"^##", section_text, re.MULTILINE)
+    if next_heading:
+        section_text = section_text[: next_heading.start()]
+
+    # Pattern: `- Label: MM-DD` or `- Label: YYYY-MM-DD`
+    pattern = re.compile(
+        r"^\s*-\s+(.+?):\s+(?:\d{4}-)?(\d{2}-\d{2})\s*$", re.MULTILINE
+    )
+    hits: list[str] = []
+    for m in pattern.finditer(section_text):
+        label = m.group(1).strip()
+        if m.group(2) == target_md:
+            hits.append(label)
+
+    return ", ".join(hits) if hits else None
 
 
 def _previous_day(process_date: str | None) -> str:
