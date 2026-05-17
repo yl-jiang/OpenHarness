@@ -394,6 +394,27 @@ def _maybe_restart_gateway(*, cwd: str | Path, workspace: str | Path) -> None:
     print(f"ohmo gateway restarted (pid={pid})")
 
 
+def _maybe_install_service(workspace: str | Path) -> None:
+    """Prompt to install the system-level background service."""
+    from openharness.utils.platform_service import is_service_installed
+
+    label = "ai.ohmo.gateway"
+    if is_service_installed(label):
+        return
+
+    print("\n🔧 系统集成 (Optional)")
+    print("是否希望在开机登录时自动启动 ohmo 后台网关？")
+    print("这可以让你的个人助理始终在线，随时响应远程频道（如飞书/Slack）的消息。")
+    if _confirm_prompt("安装系统级自启动服务？", default=False):
+        from openharness.utils.platform_service import install_service
+        root = Path(workspace).resolve()
+        args = ["-m", "ohmo", "gateway", "run", "--workspace", str(root)]
+        if install_service(label, args, root, description="ohmo Personal Agent Gateway"):
+            print(f"✅ ohmo gateway 服务已安装并启动 (标签: {label})")
+        else:
+            print("❌ 安装失败，请尝试手动运行 `ohmo gateway install-service`。")
+
+
 def _configure_gateway_logging(workspace: str | Path | None = None) -> None:
     """Configure foreground gateway logging."""
     config = load_gateway_config(workspace)
@@ -512,6 +533,7 @@ def init_cmd(
         config = _run_gateway_config_wizard(root)
         _print_gateway_config_summary(config)
         print(f"Saved gateway config to {get_gateway_config_path(root)}")
+        _maybe_install_service(root)
 
 
 @app.command("config")
@@ -525,6 +547,7 @@ def config_cmd(
     config = _run_gateway_config_wizard(workspace_root)
     _print_gateway_config_summary(config)
     print(f"Saved gateway config to {get_gateway_config_path(workspace_root)}")
+    _maybe_install_service(workspace_root)
     _maybe_restart_gateway(cwd=cwd_path, workspace=workspace_root)
 
 
@@ -629,6 +652,35 @@ def gateway_run_cmd(
     _configure_gateway_logging(workspace)
     service = OhmoGatewayService(cwd, workspace)
     raise SystemExit(asyncio.run(service.run_foreground()))
+
+
+@gateway_app.command("install-service")
+def gateway_install_service_cmd(
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Install the ohmo gateway as a system-level background service (LaunchAgent/systemd)."""
+    from openharness.utils.platform_service import install_service
+    from ohmo.workspace import get_workspace_root
+
+    root = get_workspace_root(workspace)
+    args = ["-m", "ohmo", "gateway", "run", "--workspace", str(root)]
+    if install_service("ai.ohmo.gateway", args, root, description="ohmo Personal Agent Gateway"):
+        print(f"✅ ohmo gateway service installed and started (label: ai.ohmo.gateway)")
+    else:
+        print("❌ Failed to install ohmo gateway service.", file=sys.stderr)
+        raise typer.Exit(1)
+
+
+@gateway_app.command("uninstall-service")
+def gateway_uninstall_service_cmd(
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Uninstall the ohmo gateway background service."""
+    from openharness.utils.platform_service import uninstall_service
+    if uninstall_service("ai.ohmo.gateway"):
+        print("✅ ohmo gateway service uninstalled.")
+    else:
+        print("❌ Failed to uninstall ohmo gateway service (or not found).", file=sys.stderr)
 
 
 @gateway_app.command("start")
