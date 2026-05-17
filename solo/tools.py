@@ -130,10 +130,12 @@ class SoloToolRegistry:
 
     async def _handle_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
         content = _required_text(arguments, "content")
+        # Fall back to local date when the model does not provide an explicit date
+        local_today = datetime.now().strftime("%Y-%m-%d")
         metadata = {
             key: value
             for key, value in {
-                "record_date": arguments.get("record_date") or arguments.get("date"),
+                "record_date": arguments.get("record_date") or arguments.get("date") or local_today,
                 "source": arguments.get("source") or "原始",
             }.items()
             if value
@@ -620,7 +622,7 @@ def _tool_record() -> ToolDefinition:
             ("summary", "string", "One-sentence summary.", False),
             ("tags", "string", "Comma-separated tags.", False),
             ("emotion", "string", "Emotion label: 积极/消极/中性/复杂.", False),
-            ("date", "string", "Semantic date extracted from content (YYYY-MM-DD).", False),
+            ("date", "string", "YYYY-MM-DD. Only provide this if the user explicitly mentions a specific date (e.g. '昨天', '5月18日', '上周三'). If no date is mentioned, leave this empty and the system will default to today's local date.", False),
             ("period", "string", "Semantic time period extracted from content (e.g. 凌晨, 上午).", False),
             ("events", "string", "Holidays, anniversaries, or birthdays.", False),
             ("emotion_reason", "string", "Brief reason for the emotion label.", False),

@@ -88,6 +88,20 @@ def _build_system_prompt(workspace: Path) -> str:
     """Build the system prompt by combining routing rules with persona files and memory."""
     sections = [_SOLO_TOOL_ROUTER_PROMPT.strip()]
 
+    # Inject current local time so the model always knows "today" in the user's timezone
+    from datetime import datetime
+    local_now = datetime.now().astimezone()
+    sections.append(
+        f"## Current Local Time\n"
+        f"- Date: {local_now.strftime('%Y-%m-%d')}\n"
+        f"- Time: {local_now.strftime('%H:%M:%S')}\n"
+        f"- Timezone: {local_now.tzname()} (UTC{local_now.strftime('%z')})\n"
+        f"- Weekday: {local_now.strftime('%A')}\n"
+        f"\n"
+        f"When the user mentions time without an explicit date (e.g. '7:22起床', '昨晚加班'), "
+        f"assume it refers to TODAY in the above local timezone, not UTC."
+    )
+
     soul = _read_file(get_soul_path(workspace))
     if soul:
         sections.append(soul)
