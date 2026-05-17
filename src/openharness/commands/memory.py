@@ -12,8 +12,10 @@ from openharness.memory import (
     get_memory_entrypoint,
     get_project_memory_dir,
     list_memory_files,
+    migrate_memory,
     remove_memory_entry,
 )
+from openharness.memory.schema import is_disabled_metadata, is_memory_expired, split_memory_file
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,8 @@ class MemoryCommandBackend:
     """Storage backend used by the generic ``/memory`` slash command."""
 
     label: str
+    default_type: str
+    default_category: str
     get_memory_dir: Callable[[], Path]
     get_entrypoint: Callable[[], Path]
     list_files: Callable[[], list[Path]]
@@ -60,6 +64,8 @@ def memory_backend_for_context(context: Any) -> MemoryCommandBackend:
     cwd = context.cwd
     return MemoryCommandBackend(
         label="OpenHarness project memory",
+        default_type="project",
+        default_category="knowledge",
         get_memory_dir=lambda: get_project_memory_dir(cwd),
         get_entrypoint=lambda: get_memory_entrypoint(cwd),
         list_files=lambda: list_memory_files(cwd),
@@ -88,6 +94,37 @@ async def handle_memory_command(args: str, context: Any) -> Any:
         if not memory_files:
             return CommandResult(message="No memory files.")
         return CommandResult(message="\n".join(path.name for path in memory_files))
+    if action == "migrate":
+        if rest not in {"--dry-run", "--apply"}:
+            return CommandResult(
+                message=(
+                    "Usage: /memory "
+                    "[list|show NAME|add TITLE :: CONTENT|remove NAME|"
+                    "migrate --dry-run|migrate --apply]"
+                )
+            )
+        summary = migrate_memory(
+            context.cwd if hasattr(context, "cwd") else ".",
+            memory_dir=backend.get_memory_dir(),
+            default_type=backend.default_type,
+            default_category=backend.default_category,
+            apply=rest == "--apply",
+        )
+        mode = "dry run" if summary.dry_run else "applied"
+        lines = [
+            f"Memory migration {mode}.",
+            f"Scanned: {summary.scanned}",
+            f"Changed: {summary.changed}",
+            f"Unchanged: {summary.unchanged}",
+            f"Failed: {summary.failed}",
+        ]
+        if summary.backup_dir:
+            lines.append(f"Backup: {summary.backup_dir}")
+        if summary.changed_files:
+            lines.append("Changed files: " + ", ".join(summary.changed_files))
+        if summary.failed_files:
+            lines.append("Failed files: " + ", ".join(summary.failed_files))
+        return CommandResult(message="\n".join(lines))
     if action == "show" and rest:
         memory_dir = backend.get_memory_dir()
         path, invalid = resolve_memory_entry_path(memory_dir, rest)
@@ -97,7 +134,11 @@ async def handle_memory_command(args: str, context: Any) -> Any:
             return CommandResult(message=f"Memory entry not found: {rest}")
         if not path.exists():
             return CommandResult(message=f"Memory entry not found: {rest}")
-        return CommandResult(message=path.read_text(encoding="utf-8"))
+        content = path.read_text(encoding="utf-8")
+        metadata, _, _, _ = split_memory_file(content)
+        if is_disabled_metadata(metadata) or is_memory_expired(metadata):
+            return CommandResult(message=f"Memory entry not found: {rest}")
+        return CommandResult(message=content)
     if action == "add" and rest:
         title, separator, content = rest.partition("::")
         if not separator or not title.strip() or not content.strip():
@@ -108,7 +149,13 @@ async def handle_memory_command(args: str, context: Any) -> Any:
         if backend.remove_entry(rest.strip()):
             return CommandResult(message=f"Removed memory entry {rest.strip()}")
         return CommandResult(message=f"Memory entry not found: {rest.strip()}")
-    return CommandResult(message="Usage: /memory [list|show NAME|add TITLE :: CONTENT|remove NAME]")
+    return CommandResult(
+        message=(
+            "Usage: /memory "
+            "[list|show NAME|add TITLE :: CONTENT|remove NAME|"
+            "migrate --dry-run|migrate --apply]"
+        )
+    )
 
 
 def _resolve_memory_candidate(memory_dir: Path, candidate: str) -> tuple[Path | None, bool]:

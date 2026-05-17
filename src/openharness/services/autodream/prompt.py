@@ -61,6 +61,14 @@ Use these categories:
 - If a topic is transient, prefer `recent_work.md` or an existing status file over a new topic file.
 - Do not move personal/business context into project memory; keep sensitive personal context in personal memory only.
 
+### Memory file schema
+
+- Every top-level memory file must include schema-v1 frontmatter with:
+  `schema_version`, `id`, `name`, `description`, `type`, `category`, `importance`, `source`,
+  `signature`, `created_at`, `updated_at`, `ttl_days`, `disabled`, and `supersedes`.
+- For stale, wrong, or superseded memory files, set `disabled: true`; do not delete files.
+- Treat usage-based stale candidates as review candidates, not automatic deletion instructions.
+
 ---
 
 ## Phase 1 — Orient

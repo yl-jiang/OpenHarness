@@ -21,6 +21,7 @@ from openharness.memory import (
     get_memory_entrypoint,
     get_project_memory_dir,
     load_memory_prompt,
+    mark_memory_used,
 )
 from openharness.personalization.rules import load_local_rules
 from openharness.prompts.claudemd import discover_claude_md_files, load_claude_md_prompt
@@ -459,6 +460,10 @@ def _build_runtime_prompt_blocks_cached(
                 max_results=settings.memory.max_files,
             )
             if relevant:
+                try:
+                    mark_memory_used(cwd, relevant, memory_dir=relevant[0].path.parent)
+                except OSError:
+                    pass
                 lines = ["# Relevant Memories"]
                 for header in relevant:
                     content = header.path.read_text(encoding="utf-8", errors="replace").strip()

@@ -3,6 +3,7 @@
 from openharness.memory.lifecycle import setup_memory_provider_manager, teardown_memory_provider_manager
 from openharness.memory.memdir import load_memory_prompt
 from openharness.memory.manager import add_memory_entry, list_memory_files, remove_memory_entry
+from openharness.memory.migrate import migrate_memory
 from openharness.memory.paths import (
     get_curated_memory_dir,
     get_memory_entrypoint,
@@ -18,6 +19,7 @@ from openharness.memory.providers import (
 from openharness.memory.scan import scan_memory_files
 from openharness.memory.search import find_relevant_memories
 from openharness.memory.store import MemoryOperationResult, MemoryStore
+from openharness.memory.usage import mark_memory_used
 
 __all__ = [
     "add_memory_entry",
@@ -29,10 +31,12 @@ __all__ = [
     "get_project_memory_dir",
     "list_memory_files",
     "load_memory_prompt",
+    "mark_memory_used",
     "MemoryOperationResult",
     "MemoryProvider",
     "MemoryProviderManager",
     "MemoryStore",
+    "migrate_memory",
     "remove_memory_entry",
     "sanitize_memory_context",
     "scan_memory_files",

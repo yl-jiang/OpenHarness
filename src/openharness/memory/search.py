@@ -7,11 +7,14 @@ import math
 import re
 import time
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from openharness.memory.scan import scan_memory_files
+from openharness.memory.schema import parse_datetime, utc_now
 from openharness.memory.types import MemoryHeader
+from openharness.memory.usage import get_memory_usage
 
 try:
     import jieba  # type: ignore
@@ -282,7 +285,10 @@ def find_relevant_memories(
     for i in range(n):
         # We only consider memories that had at least some non-zero base score
         if bm25_combined[i] > 0 or heuristic_combined[i] > 0:
-            scored.append((final_scores[i], headers[i]))
+            usage = get_memory_usage(cwd, headers[i].id, memory_dir=headers[i].path.parent)
+            importance_boost = headers[i].importance * 0.4
+            usage_boost = min(int(usage["use_count"]), 5) * 0.1
+            scored.append((final_scores[i] + importance_boost + usage_boost, headers[i]))
 
     # Sort primarily by fused decayed score, tie-break by recent modified_at
     scored.sort(key=lambda item: (-item[0], -item[1].modified_at))
