@@ -7,17 +7,17 @@ from uuid import uuid4
 
 from openharness.utils.log import get_logger
 
-from self_log.agent import OpenHarnessSelfLogAgent
-from self_log.models import (
+from solo.agent import OpenHarnessSoloAgent
+from solo.models import (
     PendingConfirmation,
     ProcessResult,
     ProfileUpdate,
-    SelfLogEntry,
-    SelfLogRecord,
-    SelfLogReport,
+    SoloEntry,
+    SoloRecord,
+    SoloReport,
 )
-from self_log.store import SelfLogStore
-from self_log.utils import (
+from solo.store import SoloStore
+from solo.utils import (
     _get_holiday,
     _get_period,
     _get_season,
@@ -30,16 +30,16 @@ from self_log.utils import (
 logger = get_logger(__name__)
 
 
-class SelfLogProcessor:
+class SoloProcessor:
     """Process raw entries into structured records."""
 
     def __init__(
         self,
-        store: SelfLogStore,
-        agent: OpenHarnessSelfLogAgent | None = None,
+        store: SoloStore,
+        agent: OpenHarnessSoloAgent | None = None,
     ) -> None:
         self.store = store
-        self.agent = agent or OpenHarnessSelfLogAgent()
+        self.agent = agent or OpenHarnessSoloAgent()
 
     async def process_pending(
         self,
@@ -112,7 +112,7 @@ class SelfLogProcessor:
             if not self.store.has_activity_on(yesterday):
                 backfilled = True
                 backfill_date = yesterday
-                backfill_prompt = f"发现昨天（{yesterday}）没有记录。可以回复 `/self-log backfill {yesterday} 具体内容` 补录。"
+                backfill_prompt = f"发现昨天（{yesterday}）没有记录。可以回复 `/solo backfill {yesterday} 具体内容` 补录。"
                 logger.info("missing yesterday activity detected date=%s", yesterday)
 
         pending_reminder = self._pending_reminder()
@@ -148,11 +148,11 @@ class SelfLogProcessor:
         question = await self.agent.generate_daily_question(context)
         return question
 
-    async def generate_report(self, report_type: str) -> SelfLogReport:
+    async def generate_report(self, report_type: str) -> SoloReport:
         records = [record.to_dict() for record in self.store.list_records()]
         logger.info("generate_report start type=%s records=%d", report_type, len(records))
         content = await self.agent.generate_report(report_type, records, self._profile_context())
-        report = SelfLogReport(
+        report = SoloReport(
             id=uuid4().hex[:12],
             report_type=report_type,
             content=content,
@@ -180,7 +180,7 @@ class SelfLogProcessor:
             missing_day_reminder=missing_day_reminder,
         )
 
-    def _record_from_result(self, entry: SelfLogEntry, result: dict[str, object]) -> SelfLogRecord:
+    def _record_from_result(self, entry: SoloEntry, result: dict[str, object]) -> SoloRecord:
         metadata = entry.metadata or {}
         # Priority: result['date'] (semantic) > metadata['record_date'] (explicit) > entry.created_at (fallback)
         date = str(result.get("date") or metadata.get("record_date") or entry.created_at[:10])
@@ -190,7 +190,7 @@ class SelfLogProcessor:
         if holiday and holiday not in events:
             events = f"{holiday}, {events}" if events else holiday
 
-        return SelfLogRecord(
+        return SoloRecord(
             id=uuid4().hex[:12],
             entry_id=entry.id,
             date=date,
@@ -212,7 +212,7 @@ class SelfLogProcessor:
             created_at=_now(),
         )
 
-    def _record_from_import(self, entry: SelfLogEntry, item: dict[str, object]) -> SelfLogRecord:
+    def _record_from_import(self, entry: SoloEntry, item: dict[str, object]) -> SoloRecord:
         metadata = entry.metadata or {}
         date = str(item.get("date") or metadata.get("record_date") or entry.created_at[:10])
         raw = str(item.get("content") or item.get("raw_content") or item.get("corrected_content") or "")
@@ -221,7 +221,7 @@ class SelfLogProcessor:
         if holiday and holiday not in events:
             events = f"{holiday}, {events}" if events else holiday
 
-        return SelfLogRecord(
+        return SoloRecord(
             id=uuid4().hex[:12],
             entry_id=entry.id,
             date=date,
@@ -243,7 +243,7 @@ class SelfLogProcessor:
             created_at=_now(),
         )
 
-    def _pending_from_result(self, entry: SelfLogEntry, result: dict[str, object]) -> PendingConfirmation:
+    def _pending_from_result(self, entry: SoloEntry, result: dict[str, object]) -> PendingConfirmation:
         questions = result.get("clarification_questions")
         if not isinstance(questions, list):
             questions = []
@@ -268,8 +268,8 @@ class SelfLogProcessor:
         )
 
     def _profile_context(self, target_date: str | None = None) -> str:
-        from self_log.memory import load_memory_prompt
-        from self_log.workspace import get_soul_path, get_user_path
+        from solo.memory import load_memory_prompt
+        from solo.workspace import get_soul_path, get_user_path
 
         sections: list[str] = []
 
@@ -353,7 +353,7 @@ class SelfLogProcessor:
         state = self.store.reminder_state()
         if pending_count >= 5 and pending_count > state["last_pending_count"]:
             self.store.update_reminder_state(pending_count=pending_count)
-            return f"还有 {pending_count} 条待确认 self-log 需要你确认。"
+            return f"还有 {pending_count} 条待确认 solo 需要你确认。"
         self.store.update_reminder_state(pending_count=pending_count)
         return None
 
@@ -369,6 +369,6 @@ class SelfLogProcessor:
         state = self.store.reminder_state()
         reminder = None
         if streak >= 3 and streak > state["last_missing_streak"]:
-            reminder = f"你已经连续 {streak} 天没有 self-log 记录，要不要补一下？"
+            reminder = f"你已经连续 {streak} 天没有 solo 记录，要不要补一下？"
         self.store.update_reminder_state(missing_streak=streak)
         return streak, reminder

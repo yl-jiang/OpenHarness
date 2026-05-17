@@ -14,11 +14,11 @@ from pydantic import BaseModel, ConfigDict
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from openharness.utils.log import get_logger
 
-from self_log.memory import add_memory_entry
-from self_log.models import ProfileUpdate, SelfLogRecord
-from self_log.processor import SelfLogProcessor
-from self_log.store import SelfLogStore
-from self_log.utils import (
+from solo.memory import add_memory_entry
+from solo.models import ProfileUpdate, SoloRecord
+from solo.processor import SoloProcessor
+from solo.store import SoloStore
+from solo.utils import (
     _get_holiday,
     _get_period,
     _get_season,
@@ -58,52 +58,52 @@ class ToolDefinition:
 
 
 @dataclass(frozen=True)
-class SelfLogDomainTool:
+class SoloDomainTool:
     definition: ToolDefinition
     handler: ToolHandler
 
 
-class SelfLogToolRegistry:
-    """Tool registry for the self-log domain."""
+class SoloToolRegistry:
+    """Tool registry for the solo domain."""
 
     def __init__(
         self,
-        store: SelfLogStore,
-        processor: SelfLogProcessor | None = None,
+        store: SoloStore,
+        processor: SoloProcessor | None = None,
         agent_factory: Callable[[], Any] | None = None,
     ) -> None:
         self.store = store
         self.processor = processor
         self._agent_factory = agent_factory
 
-    def _processor(self) -> SelfLogProcessor:
+    def _processor(self) -> SoloProcessor:
         if self.processor is None:
-            self.processor = SelfLogProcessor(
+            self.processor = SoloProcessor(
                 self.store,
                 self._agent_factory() if self._agent_factory is not None else None,
             )
         return self.processor
 
-    def tools(self) -> list[SelfLogDomainTool]:
+    def tools(self) -> list[SoloDomainTool]:
         return [
-            SelfLogDomainTool(_tool_record(), self._handle_record),
-            SelfLogDomainTool(_tool_import_records(), self._handle_import_records),
-            SelfLogDomainTool(_tool_clarify(), self._handle_clarify),
-            SelfLogDomainTool(_tool_process(), self._handle_process),
-            SelfLogDomainTool(_tool_backfill(), self._handle_backfill),
-            SelfLogDomainTool(_tool_report(), self._handle_report),
-            SelfLogDomainTool(_tool_view(), self._handle_view),
-            SelfLogDomainTool(_tool_search(), self._handle_search),
-            SelfLogDomainTool(_tool_update_record(), self._handle_update_record),
-            SelfLogDomainTool(_tool_delete_record(), self._handle_delete_record),
-            SelfLogDomainTool(_tool_status(), self._handle_status),
-            SelfLogDomainTool(_tool_get_now(), self._handle_get_now),
-            SelfLogDomainTool(_tool_profile_update(), self._handle_profile_update),
-            SelfLogDomainTool(_tool_remember(), self._handle_remember),
-            SelfLogDomainTool(_tool_suggest_reflection(), self._handle_suggest_reflection),
-            SelfLogDomainTool(_tool_sync_context(), self._handle_sync_context),
-            SelfLogDomainTool(_tool_visualize(), self._handle_visualize),
-            SelfLogDomainTool(_tool_export(), self._handle_export),
+            SoloDomainTool(_tool_record(), self._handle_record),
+            SoloDomainTool(_tool_import_records(), self._handle_import_records),
+            SoloDomainTool(_tool_clarify(), self._handle_clarify),
+            SoloDomainTool(_tool_process(), self._handle_process),
+            SoloDomainTool(_tool_backfill(), self._handle_backfill),
+            SoloDomainTool(_tool_report(), self._handle_report),
+            SoloDomainTool(_tool_view(), self._handle_view),
+            SoloDomainTool(_tool_search(), self._handle_search),
+            SoloDomainTool(_tool_update_record(), self._handle_update_record),
+            SoloDomainTool(_tool_delete_record(), self._handle_delete_record),
+            SoloDomainTool(_tool_status(), self._handle_status),
+            SoloDomainTool(_tool_get_now(), self._handle_get_now),
+            SoloDomainTool(_tool_profile_update(), self._handle_profile_update),
+            SoloDomainTool(_tool_remember(), self._handle_remember),
+            SoloDomainTool(_tool_suggest_reflection(), self._handle_suggest_reflection),
+            SoloDomainTool(_tool_sync_context(), self._handle_sync_context),
+            SoloDomainTool(_tool_visualize(), self._handle_visualize),
+            SoloDomainTool(_tool_export(), self._handle_export),
         ]
 
     def tool_schemas(self) -> list[dict[str, Any]]:
@@ -112,17 +112,17 @@ class SelfLogToolRegistry:
     def to_api_schema(self) -> list[dict[str, Any]]:
         return self.tool_schemas()
 
-    def list_tools(self) -> list[SelfLogDomainTool]:
+    def list_tools(self) -> list[SoloDomainTool]:
         return self.tools()
 
-    def by_name(self) -> dict[str, SelfLogDomainTool]:
+    def by_name(self) -> dict[str, SoloDomainTool]:
         return {tool.definition.name: tool for tool in self.tools()}
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> str:
         tool = self.by_name().get(name)
         if tool is None:
             logger.error("execute unknown tool name=%s", name)
-            raise ValueError(f"Unknown self-log tool: {name}")
+            raise ValueError(f"Unknown solo tool: {name}")
         logger.debug("execute tool=%s arguments=%r", name, {k: v for k, v in arguments.items() if k != "content"})
         result = await tool.handler(arguments)
         return str(result.get("message") or result)
@@ -158,7 +158,7 @@ class SelfLogToolRegistry:
             if holiday and holiday not in events:
                 events = f"{holiday}, {events}" if events else holiday
 
-            record = SelfLogRecord(
+            record = SoloRecord(
                 id=uuid4().hex[:12],
                 entry_id=entry.id,
                 date=date,
@@ -217,7 +217,7 @@ class SelfLogToolRegistry:
             if holiday and holiday not in events:
                 events = f"{holiday}, {events}" if events else holiday
 
-            record = SelfLogRecord(
+            record = SoloRecord(
                 id=uuid4().hex[:12],
                 entry_id=entry.id,
                 date=date,
@@ -241,12 +241,12 @@ class SelfLogToolRegistry:
             self.store.add_record(record)
             created.append(record.id)
         logger.info("_handle_import_records imported=%d", len(created))
-        ids_hint = "，可通过 self_log_search/view 获取" if len(created) > 5 else "：" + ", ".join(created)
+        ids_hint = "，可通过 solo_search/view 获取" if len(created) > 5 else "：" + ", ".join(created)
         return {
             "ok": True,
             "record_ids": created,
             "imported": len(created),
-            "message": f"已批量入库 {len(created)} 条 self-log 记录{ids_hint}。",
+            "message": f"已批量入库 {len(created)} 条 solo 记录{ids_hint}。",
         }
 
     async def _handle_clarify(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -316,7 +316,7 @@ class SelfLogToolRegistry:
         }
 
     async def _handle_update_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Update fields of an existing self-log record."""
+        """Update fields of an existing solo record."""
         record_id = _required_text(arguments, "record_id")
         
         # Valid fields for update
@@ -347,7 +347,7 @@ class SelfLogToolRegistry:
             return {"ok": False, "message": f"❌ 未找到 ID 为 {record_id} 的记录。"}
 
     async def _handle_delete_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Permanently delete an existing self-log record."""
+        """Permanently delete an existing solo record."""
         record_id = _required_text(arguments, "record_id")
         success = self.store.delete_record(record_id)
         if success:
@@ -358,7 +358,7 @@ class SelfLogToolRegistry:
     async def _handle_status(self, arguments: dict[str, Any]) -> dict[str, Any]:
         status = self.store.status()
         message = (
-            f"self-log 状态：entries={status['entries']}，records={status['records']}，"
+            f"solo 状态：entries={status['entries']}，records={status['records']}，"
             f"pending={status['pending_confirmations']}，path={status['path']}"
         )
         return {"ok": True, **status, "message": message}
@@ -444,7 +444,7 @@ class SelfLogToolRegistry:
 
         if source in {"all", "git"}:
             # Mock git commit fetch for now
-            context_items.append("- [Git] 提交了 self-log 架构优化代码")
+            context_items.append("- [Git] 提交了 solo 架构优化代码")
 
         if source in {"all", "calendar"}:
             # Mock calendar fetch for now
@@ -568,12 +568,12 @@ class _AnyInput(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 
-class _SelfLogToolAdapter(BaseTool):
-    """Thin BaseTool wrapper around a SelfLogDomainTool handler."""
+class _SoloToolAdapter(BaseTool):
+    """Thin BaseTool wrapper around a SoloDomainTool handler."""
 
     input_model = _AnyInput
 
-    def __init__(self, domain_tool: SelfLogDomainTool) -> None:
+    def __init__(self, domain_tool: SoloDomainTool) -> None:
         self.name = domain_tool.definition.name  # type: ignore[misc]
         self.description = domain_tool.definition.description  # type: ignore[misc]
         self._domain_tool = domain_tool
@@ -582,7 +582,7 @@ class _SelfLogToolAdapter(BaseTool):
         return self._domain_tool.definition.to_api_schema()
 
     def is_read_only(self, arguments: BaseModel) -> bool:
-        return self.name in {"self_log_view", "self_log_status"}
+        return self.name in {"solo_view", "solo_status"}
 
     async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
         raw = arguments.model_dump()
@@ -593,25 +593,25 @@ class _SelfLogToolAdapter(BaseTool):
             return ToolResult(output=str(exc), is_error=True)
 
 
-def build_oh_registry(registry: SelfLogToolRegistry) -> ToolRegistry:
-    """Build an OpenHarness ToolRegistry from a SelfLogToolRegistry."""
+def build_oh_registry(registry: SoloToolRegistry) -> ToolRegistry:
+    """Build an OpenHarness ToolRegistry from a SoloToolRegistry."""
     oh_registry = ToolRegistry()
     for domain_tool in registry.tools():
-        oh_registry.register(_SelfLogToolAdapter(domain_tool))
+        oh_registry.register(_SoloToolAdapter(domain_tool))
     return oh_registry
 
 
 def _tool_record() -> ToolDefinition:
     return _definition(
-        "self_log_record",
+        "solo_record",
         (
-            "Record a self-log entry when the intent and core content are clear enough to understand. "
+            "Record a solo entry when the intent and core content are clear enough to understand. "
             "Do NOT call this when the user's intent is ambiguous or the record is unintelligible — "
-            "call self_log_clarify instead. Fill in structured fields (summary, tags, emotion, etc.) "
+            "call solo_clarify instead. Fill in structured fields (summary, tags, emotion, etc.) "
             "based on your understanding of the content."
         ),
         [
-            ("content", "string", "Original self-log content as the user wrote it.", True),
+            ("content", "string", "Original solo content as the user wrote it.", True),
             ("corrected_content", "string", "Lightly corrected / cleaned-up version of the content.", False),
             ("summary", "string", "One-sentence summary.", False),
             ("tags", "string", "Comma-separated tags.", False),
@@ -629,7 +629,7 @@ def _tool_record() -> ToolDefinition:
 
 def _tool_import_records() -> ToolDefinition:
     return ToolDefinition(
-        name="self_log_import_records",
+        name="solo_import_records",
         description="Import multiple structured records parsed by the model from messy human input.",
         input_schema=ToolParameterSchema(
             type="object",
@@ -665,7 +665,7 @@ def _tool_import_records() -> ToolDefinition:
 
 def _tool_clarify() -> ToolDefinition:
     return _definition(
-        "self_log_clarify",
+        "solo_clarify",
         (
             "Ask the user ONE targeted clarification question instead of guessing or recording unclear content. "
             "Use when: (1) intent is ambiguous (greeting/chitchat/test), "
@@ -683,8 +683,8 @@ def _tool_clarify() -> ToolDefinition:
 
 def _tool_process() -> ToolDefinition:
     return _definition(
-        "self_log_process",
-        "Process pending self-log entries and reminders.",
+        "solo_process",
+        "Process pending solo entries and reminders.",
         [
             ("limit", "integer", "Maximum pending entries to process.", False),
             ("backfill_missing_yesterday", "boolean", "Whether to check yesterday.", False),
@@ -694,32 +694,32 @@ def _tool_process() -> ToolDefinition:
 
 def _tool_backfill() -> ToolDefinition:
     return _definition(
-        "self_log_backfill",
-        "Backfill a missing self-log entry.",
+        "solo_backfill",
+        "Backfill a missing solo entry.",
         [("content", "string", "Backfill content.", True)],
     )
 
 
 def _tool_report() -> ToolDefinition:
     return _definition(
-        "self_log_report",
-        "Generate weekly, monthly, or yearly self-log report.",
+        "solo_report",
+        "Generate weekly, monthly, or yearly solo report.",
         [("type", "string", "weekly/monthly/yearly.", True)],
     )
 
 
 def _tool_view() -> ToolDefinition:
     return _definition(
-        "self_log_view",
-        "View recent self-log records.",
+        "solo_view",
+        "View recent solo records.",
         [("limit", "integer", "Number of records.", False)],
     )
 
 
 def _tool_search() -> ToolDefinition:
     return _definition(
-        "self_log_search",
-        "Search through self-log records using keywords, dates, tags, or emotions.",
+        "solo_search",
+        "Search through solo records using keywords, dates, tags, or emotions.",
         [
             ("query", "string", "Text search query.", False),
             ("tags", "string", "Comma-separated tags.", False),
@@ -733,7 +733,7 @@ def _tool_search() -> ToolDefinition:
 
 def _tool_update_record() -> ToolDefinition:
     return _definition(
-        "self_log_update_record",
+        "solo_update_record",
         "Modify an existing structured record. Use this to fix mistakes in summary, tags, emotions, or content.",
         [
             ("record_id", "string", "The ID of the record to update.", True),
@@ -753,7 +753,7 @@ def _tool_update_record() -> ToolDefinition:
 
 def _tool_delete_record() -> ToolDefinition:
     return _definition(
-        "self_log_delete_record",
+        "solo_delete_record",
         (
             "PERMANENTLY DELETE an existing record. Use this with EXTREME CAUTION. "
             "Only call this when the user explicitly asks to delete a specific record by ID or content. "
@@ -764,12 +764,12 @@ def _tool_delete_record() -> ToolDefinition:
 
 
 def _tool_status() -> ToolDefinition:
-    return _definition("self_log_status", "Show self-log status.", [])
+    return _definition("solo_status", "Show solo status.", [])
 
 
 def _tool_get_now() -> ToolDefinition:
     return _definition(
-        "self_log_get_now",
+        "solo_get_now",
         "Get the current local date, time, and timezone information.",
         []
     )
@@ -777,7 +777,7 @@ def _tool_get_now() -> ToolDefinition:
 
 def _tool_profile_update() -> ToolDefinition:
     return _definition(
-        "self_log_profile_update",
+        "solo_profile_update",
         (
             "Store a suggested update for transient or evolving user profile info "
             "(e.g. current preferences, temporary habits, or minor observations). "
@@ -796,7 +796,7 @@ def _tool_profile_update() -> ToolDefinition:
 
 def _tool_remember() -> ToolDefinition:
     return _definition(
-        "self_log_remember",
+        "solo_remember",
         (
             "Store highly stable, core life facts into the long-term memory directory "
             "(e.g. family trees, medical history, career milestones, home location). "
@@ -812,8 +812,8 @@ def _tool_remember() -> ToolDefinition:
 
 def _tool_suggest_reflection() -> ToolDefinition:
     return _definition(
-        "self_log_suggest_reflection",
-        "Suggest deep reflection questions based on recent self-log history. The model can provide a focus area or a specific style.",
+        "solo_suggest_reflection",
+        "Suggest deep reflection questions based on recent solo history. The model can provide a focus area or a specific style.",
         [
             ("focus", "string", "Specific area to focus on (e.g. 'work stress', 'family relationships').", False),
             ("style", "string", "Style of the questions (e.g. 'challenging', 'supportive', 'philosophical').", False),
@@ -823,7 +823,7 @@ def _tool_suggest_reflection() -> ToolDefinition:
 
 def _tool_sync_context() -> ToolDefinition:
     return _definition(
-        "self_log_sync_context",
+        "solo_sync_context",
         "Synchronize external context like calendar events or git commits to enrich logs.",
         [("source", "string", "Source to sync: all, git, calendar.", False)]
     )
@@ -831,7 +831,7 @@ def _tool_sync_context() -> ToolDefinition:
 
 def _tool_visualize() -> ToolDefinition:
     return _definition(
-        "self_log_visualize",
+        "solo_visualize",
         "Generate a visual report of recent activity. Model can choose the type and time range.",
         [
             ("type", "string", "Type of visualization: emotion_distribution, tag_cloud, activity_heatmap.", False),
@@ -842,8 +842,8 @@ def _tool_visualize() -> ToolDefinition:
 
 def _tool_export() -> ToolDefinition:
     return _definition(
-        "self_log_export",
-        "Export self-log records with optional filtering and AI summary. Model can choose format, date range, and whether to include an AI-generated overview.",
+        "solo_export",
+        "Export solo records with optional filtering and AI summary. Model can choose format, date range, and whether to include an AI-generated overview.",
         [
             ("format", "string", "Export format: markdown, json.", False),
             ("start_date", "string", "YYYY-MM-DD.", False),
@@ -886,14 +886,14 @@ def _csv_list(value: Any) -> list[str] | None:
 
 def _format_records(records: list[dict[str, Any]]) -> str:
     if not records:
-        return "暂无 self-log 记录。"
+        return "暂无 solo 记录。"
     return "\n".join(
         f"- [{record.get('id', '?')}] {record.get('date', '')} {record.get('summary') or record.get('raw_content', '')}"
         for record in records
     )
 
 
-def _backfill_hint(store: SelfLogStore, record_date: object) -> str | None:
+def _backfill_hint(store: SoloStore, record_date: object) -> str | None:
     if not record_date:
         return None
     try:
@@ -903,4 +903,4 @@ def _backfill_hint(store: SelfLogStore, record_date: object) -> str | None:
     yesterday = (day - timedelta(days=1)).isoformat()
     if store.has_activity_on(yesterday):
         return None
-    return f"发现昨天（{yesterday}）没有记录。可以回复 `/self-log backfill {yesterday} 具体内容` 补录。"
+    return f"发现昨天（{yesterday}）没有记录。可以回复 `/solo backfill {yesterday} 具体内容` 补录。"

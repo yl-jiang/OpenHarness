@@ -1,10 +1,10 @@
-# self-log 使用说明书
+# solo 使用说明书
 
-`self-log` 是一个独立的个人日志应用，运行在 OpenHarness 的模型、鉴权、消息通道和工具执行能力之上。它不依赖 `ohmo` gateway，也不会把日志能力注册进普通 `ohmo` 会话；`ohmo` 和 `self-log` 的工作目录、配置、进程状态是分开的。
+`solo` 是一个独立的个人日志应用，运行在 OpenHarness 的模型、鉴权、消息通道和工具执行能力之上。它不依赖 `ohmo` gateway，也不会把日志能力注册进普通 `ohmo` 会话；`ohmo` 和 `solo` 的工作目录、配置、进程状态是分开的。
 
 ## 1. 它解决什么问题
 
-`self-log` 面向“现实世界里不规整的输入”：
+`solo` 面向“现实世界里不规整的输入”：
 
 - 你可以直接发送一句日常记录。
 - 你可以粘贴一大段旧日记、流水账或多日期内容。
@@ -23,55 +23,55 @@
 
 ```bash
 uv sync --extra dev
-uv run self-log --help
+uv run solo --help
 ```
 
-如果想直接输入 `self-log`，需要先让虚拟环境脚本进入 `PATH`：
+如果想直接输入 `solo`，需要先让虚拟环境脚本进入 `PATH`：
 
 ```bash
 source .venv/bin/activate
-self-log --help
+solo --help
 ```
 
 也可以安装为可执行工具后直接使用：
 
 ```bash
 uv tool install -e .
-self-log --help
+solo --help
 ```
 
 也可以用 Python 模块方式启动：
 
 ```bash
-python -m self_log --help
+python -m solo --help
 ```
 
-下文命令示例为了简洁都写成 `self-log ...`。如果你没有激活 `.venv` 或全局安装，请把示例中的 `self-log` 替换成 `uv run self-log`。
+下文命令示例为了简洁都写成 `solo ...`。如果你没有激活 `.venv` 或全局安装，请把示例中的 `solo` 替换成 `uv run solo`。
 
 ## 3. 工作目录
 
 默认工作目录：
 
 ```text
-~/.self-log
+~/.solo
 ```
 
 可以通过两种方式覆盖：
 
 ```bash
-self-log --workspace /path/to/workspace ...
+solo --workspace /path/to/workspace ...
 ```
 
 或设置环境变量：
 
 ```bash
-export SELF_LOG_WORKSPACE=/path/to/workspace
+export SOLO_WORKSPACE=/path/to/workspace
 ```
 
 目录结构：
 
 ```text
-~/.self-log/
+~/.solo/
   config.json
   state.json
   soul.md
@@ -94,7 +94,7 @@ export SELF_LOG_WORKSPACE=/path/to/workspace
 
 | 文件 | 说明 |
 | --- | --- |
-| `config.json` | self-log 应用配置，包括模型 profile、启用的消息通道和通道配置 |
+| `config.json` | solo 应用配置，包括模型 profile、启用的消息通道和通道配置 |
 | `state.json` | 运行状态快照 |
 | `soul.md` | 助手的人设、核心原则和行为准则 |
 | `user.md` | 用户个人资料快照（姓名、职业、重要人物等） |
@@ -108,44 +108,44 @@ export SELF_LOG_WORKSPACE=/path/to/workspace
 初始化工作目录：
 
 ```bash
-self-log init
+solo init
 ```
 
 记录一条原始日志：
 
 ```bash
-self-log record "今天完成了 self-log 独立化，心情不错"
+solo record "今天完成了 solo 独立化，心情不错"
 ```
 
 让模型整理待处理记录：
 
 ```bash
-self-log process
+solo process
 ```
 
 查看结构化记录：
 
 ```bash
-self-log view
-self-log view --limit 50
+solo view
+solo view --limit 50
 ```
 
 生成周报：
 
 ```bash
-self-log report weekly
+solo report weekly
 ```
 
 查看状态：
 
 ```bash
-self-log status
+solo status
 ```
 
 检查工作目录：
 
 ```bash
-self-log doctor
+solo doctor
 ```
 
 ## 5. CLI 命令详解
@@ -155,14 +155,14 @@ self-log doctor
 创建工作目录、配置文件和数据目录。
 
 ```bash
-self-log init
-self-log init --workspace /tmp/my-self-log
+solo init
+solo init --workspace /tmp/my-solo
 ```
 
 输出示例：
 
 ```text
-Initialized self-log at /Users/yulin/.self-log
+Initialized solo at /Users/yulin/.solo
 ```
 
 ### 5.2 `config`
@@ -170,7 +170,7 @@ Initialized self-log at /Users/yulin/.self-log
 交互式配置模型 profile 和消息通道。
 
 ```bash
-self-log config
+solo config
 ```
 
 会依次配置：
@@ -192,7 +192,7 @@ oh setup
 写入一条原始记录到 `entries.jsonl`。
 
 ```bash
-self-log record "今天看完了一篇 agent framework 的文章"
+solo record "今天看完了一篇 agent framework 的文章"
 ```
 
 这一步只保存原始输入，不一定立刻生成结构化记录。后续用 `process` 让模型整理。
@@ -202,8 +202,8 @@ self-log record "今天看完了一篇 agent framework 的文章"
 查看原始记录。
 
 ```bash
-self-log list
-self-log list --limit 100
+solo list
+solo list --limit 100
 ```
 
 输出格式：
@@ -217,7 +217,7 @@ self-log list --limit 100
 处理待整理的原始记录：
 
 ```bash
-self-log process
+solo process
 ```
 
 处理逻辑：
@@ -244,14 +244,14 @@ self-log process
 查看结构化日志。
 
 ```bash
-self-log view
-self-log view --limit 20
+solo view
+solo view --limit 20
 ```
 
 输出格式：
 
 ```text
-2026-05-16 积极 [原始] [工作,成长] 完成 self-log 独立化
+2026-05-16 积极 [原始] [工作,成长] 完成 solo 独立化
 ```
 
 ### 5.7 `report`
@@ -259,9 +259,9 @@ self-log view --limit 20
 生成报告。
 
 ```bash
-self-log report weekly
-self-log report monthly
-self-log report yearly
+solo report weekly
+solo report monthly
+solo report yearly
 ```
 
 报告会基于 `records.jsonl` 中已经结构化的记录生成，并写入 `reports.jsonl`。
@@ -271,13 +271,13 @@ self-log report yearly
 查看记录数量和 gateway 状态。
 
 ```bash
-self-log status
+solo status
 ```
 
 输出示例：
 
 ```text
-self-log: entries=12 | records=10 | pending=2 | gateway=stopped | path=/Users/yulin/.self-log/data
+solo: entries=12 | records=10 | pending=2 | gateway=stopped | path=/Users/yulin/.solo/data
 ```
 
 ### 5.9 `doctor`
@@ -285,7 +285,7 @@ self-log: entries=12 | records=10 | pending=2 | gateway=stopped | path=/Users/yu
 检查工作目录是否完整。
 
 ```bash
-self-log doctor
+solo doctor
 ```
 
 输出示例：
@@ -303,31 +303,31 @@ state: ok
 启动或停止后台 gateway。
 
 ```bash
-self-log start
-self-log stop
+solo start
+solo stop
 ```
 
 指定运行目录和工作目录：
 
 ```bash
-self-log start --cwd /Users/yulin/Github/OpenHarness --workspace ~/.self-log
-self-log stop --workspace ~/.self-log
+solo start --cwd /Users/yulin/Github/OpenHarness --workspace ~/.solo
+solo stop --workspace ~/.solo
 ```
 
-`--cwd` 是 gateway 进程的项目工作目录；`--workspace` 是 self-log 数据和配置目录。
+`--cwd` 是 gateway 进程的项目工作目录；`--workspace` 是 solo 数据和配置目录。
 
 ### 5.11 `gateway run`
 
 前台运行 gateway，适合调试：
 
 ```bash
-self-log gateway run
+solo gateway run
 ```
 
 后台运行请优先使用：
 
 ```bash
-self-log start
+solo start
 ```
 
 ## 6. 飞书接入
@@ -337,7 +337,7 @@ self-log start
 运行：
 
 ```bash
-self-log config
+solo config
 ```
 
 启用 `feishu` 后会要求输入：
@@ -351,26 +351,26 @@ self-log config
 | `verification_token` | 飞书事件订阅 token，可为空 |
 | `react_emoji` | 收到消息后的反应表情，默认 `OK` |
 | `bot_open_id` | bot open id，可留空自动检测 |
-| `bot_names` | bot 名称关键字，默认包含 `self-log,openharness` |
+| `bot_names` | bot 名称关键字，默认包含 `solo,openharness` |
 
-当前 self-log 的飞书 `group_policy` 固定为 `open`，因为 self-log 是单用途记录应用，启动后该 channel 中收到的消息都会进入 self-log 语义路由。
+当前 solo 的飞书 `group_policy` 固定为 `open`，因为 solo 是单用途记录应用，启动后该 channel 中收到的消息都会进入 solo 语义路由。
 
 ### 6.2 启动
 
 ```bash
-self-log start
+solo start
 ```
 
 查看状态：
 
 ```bash
-self-log status
+solo status
 ```
 
 查看日志：
 
 ```bash
-tail -f ~/.self-log/logs/gateway.log
+tail -f ~/.solo/logs/gateway.log
 ```
 
 ### 6.3 在飞书里怎么用
@@ -378,18 +378,18 @@ tail -f ~/.self-log/logs/gateway.log
 直接发送日常记录：
 
 ```text
-今天把 self-log 拆成独立 app 了，感觉方向更清晰
+今天把 solo 拆成独立 app 了，感觉方向更清晰
 ```
 
 发送命令：
 
 ```text
-/self-log help
-/self-log process
-/self-log view 10
-/self-log report weekly
-/self-log status
-/self-log backfill 2026-05-15 昨天补录一个关键进展
+/solo help
+/solo process
+/solo view 10
+/solo report weekly
+/solo status
+/solo backfill 2026-05-15 昨天补录一个关键进展
 ```
 
 粘贴复杂旧日记：
@@ -407,33 +407,33 @@ tail -f ~/.self-log/logs/gateway.log
 
 1. 模型理解这是批量导入。
 2. 模型拆分为多条 records。
-3. 工具调用 `self_log_import_records` 批量写入。
+3. 工具调用 `solo_import_records` 批量写入。
 4. 每条记录写入 `records.jsonl`。
 
 ## 7. 模型与工具如何协作
 
-self-log 的模型路由 agent 会看到一组 self-log 专用工具：
+solo 的模型路由 agent 会看到一组 solo 专用工具：
 
 | 工具 | 用途 |
 | --- | --- |
-| `self_log_record` | 记录一条清楚的日志 |
-| `self_log_import_records` | 批量导入模型拆分好的多条日志 |
-| `self_log_clarify` | 信息不清楚时追问用户 |
-| `self_log_process` | 整理待处理记录 |
-| `self_log_backfill` | 补录缺失日期 |
-| `self_log_report` | 生成周报、月报、年报 |
-| `self_log_view` | 查看最近记录 |
-| `self_log_search` | 语义/关键词搜索历史记录 |
-| `self_log_update_record` | 修改已入库记录的字段（如纠错） |
-| `self_log_delete_record` | 永久删除一条记录（需慎重使用） |
-| `self_log_status` | 查看状态 |
-| `self_log_get_now` | 获取当前日期时间、星期及本地时区信息 |
-| `self_log_profile_update` | 记录高价值用户画像更新建议 |
-| `self_log_remember` | 将长期稳定的用户背景信息写入 memory 目录 |
-| `self_log_suggest_reflection` | 基于最近记录生成深度复盘问题 |
-| `self_log_sync_context` | 同步外部上下文（日历、Git 等） |
-| `self_log_visualize` | 生成情绪分布图等可视化反馈 |
-| `self_log_export` | 导出日志为 Markdown 文件 |
+| `solo_record` | 记录一条清楚的日志 |
+| `solo_import_records` | 批量导入模型拆分好的多条日志 |
+| `solo_clarify` | 信息不清楚时追问用户 |
+| `solo_process` | 整理待处理记录 |
+| `solo_backfill` | 补录缺失日期 |
+| `solo_report` | 生成周报、月报、年报 |
+| `solo_view` | 查看最近记录 |
+| `solo_search` | 语义/关键词搜索历史记录 |
+| `solo_update_record` | 修改已入库记录的字段（如纠错） |
+| `solo_delete_record` | 永久删除一条记录（需慎重使用） |
+| `solo_status` | 查看状态 |
+| `solo_get_now` | 获取当前日期时间、星期及本地时区信息 |
+| `solo_profile_update` | 记录高价值用户画像更新建议 |
+| `solo_remember` | 将长期稳定的用户背景信息写入 memory 目录 |
+| `solo_suggest_reflection` | 基于最近记录生成深度复盘问题 |
+| `solo_sync_context` | 同步外部上下文（日历、Git 等） |
+| `solo_visualize` | 生成情绪分布图等可视化反馈 |
+| `solo_export` | 导出日志为 Markdown 文件 |
 
 重要约束：
 
@@ -444,7 +444,7 @@ self-log 的模型路由 agent 会看到一组 self-log 专用工具：
 
 ## 8. 配置文件示例
 
-`~/.self-log/config.json` 示例：
+`~/.solo/config.json` 示例：
 
 ```json
 {
@@ -461,7 +461,7 @@ self-log 的模型路由 agent 会看到一组 self-log 专用工具：
       "react_emoji": "OK",
       "group_policy": "open",
       "bot_open_id": "",
-      "bot_names": "self-log,openharness"
+      "bot_names": "solo,openharness"
     }
   },
   "send_progress": true,
@@ -470,7 +470,7 @@ self-log 的模型路由 agent 会看到一组 self-log 专用工具：
 }
 ```
 
-不建议手写密钥类字段到仓库文件中。`~/.self-log/config.json` 是本地运行配置，不应提交。
+不建议手写密钥类字段到仓库文件中。`~/.solo/config.json` 是本地运行配置，不应提交。
 
 ## 9. 数据格式说明
 
@@ -481,7 +481,7 @@ self-log 的模型路由 agent 会看到一组 self-log 专用工具：
 ```json
 {
   "id": "abc123",
-  "content": "今天完成了 self-log 独立化",
+  "content": "今天完成了 solo 独立化",
   "created_at": "2026-05-16T10:00:00+00:00",
   "channel": "feishu",
   "sender_id": "ou_xxx",
@@ -498,9 +498,9 @@ self-log 的模型路由 agent 会看到一组 self-log 专用工具：
   "id": "rec123",
   "entry_id": "abc123",
   "date": "2026-05-16",
-  "raw_content": "今天完成了 self-log 独立化",
-  "corrected_content": "今天完成了 self-log 独立化。",
-  "summary": "完成 self-log 独立化",
+  "raw_content": "今天完成了 solo 独立化",
+  "corrected_content": "今天完成了 solo 独立化。",
+  "summary": "完成 solo 独立化",
   "tags": "工作,成长",
   "emotion": "积极",
   "emotion_reason": "完成了重要拆分",
@@ -531,17 +531,17 @@ self-log 的模型路由 agent 会看到一组 self-log 专用工具：
 ### 10.1 本地命令行日记
 
 ```bash
-self-log init
-self-log record "今天把 README 写完了"
-self-log process
-self-log view
+solo init
+solo record "今天把 README 写完了"
+solo process
+solo view
 ```
 
 ### 10.2 飞书手机记录
 
 ```bash
-self-log config
-self-log start
+solo config
+solo start
 ```
 
 然后在飞书里直接发：
@@ -552,36 +552,36 @@ self-log start
 
 ### 10.3 批量导入旧日记
 
-把旧日记粘贴到飞书 self-log bot 或本地通过工具入口处理。关键是让模型使用 `self_log_import_records`，不要人为要求固定格式。
+把旧日记粘贴到飞书 solo bot 或本地通过工具入口处理。关键是让模型使用 `solo_import_records`，不要人为要求固定格式。
 
 ### 10.4 周期复盘
 
 ```bash
-self-log process
-self-log report weekly
-self-log report monthly
+solo process
+solo report weekly
+solo report monthly
 ```
 
 ## 11. 和 ohmo 的关系
 
-self-log 是独立应用：
+solo 是独立应用：
 
-- 独立 package：`self_log`
-- 独立 CLI：`self-log`
-- 独立工作目录：`~/.self-log`
-- 独立 gateway：`self-log start`
+- 独立 package：`solo`
+- 独立 CLI：`solo`
+- 独立工作目录：`~/.solo`
+- 独立 gateway：`solo start`
 
 它不应该：
 
 - 注册到普通 `ohmo` runtime。
 - 写入 `~/.ohmo/gateway.json`。
-- 依赖 `ohmo gateway` 拦截 `/self-log`。
-- 把 self-log 逻辑塞进 `ohmo/self_log/__init__.py`。
+- 依赖 `ohmo gateway` 拦截 `/solo`。
+- 把 solo 逻辑塞进 `ohmo/solo/__init__.py`。
 
-如果需要在飞书中使用 self-log，请启动：
+如果需要在飞书中使用 solo，请启动：
 
 ```bash
-self-log start
+solo start
 ```
 
 而不是：
@@ -592,7 +592,7 @@ ohmo gateway start
 
 ## 12. 排障
 
-### 12.1 `self-log process` 提示没有鉴权
+### 12.1 `solo process` 提示没有鉴权
 
 检查 OpenHarness profile：
 
@@ -604,7 +604,7 @@ oh setup
 或显式指定 profile：
 
 ```bash
-self-log process --profile codex
+solo process --profile codex
 ```
 
 ### 12.2 飞书没有响应
@@ -612,13 +612,13 @@ self-log process --profile codex
 检查：
 
 ```bash
-self-log status
-tail -f ~/.self-log/logs/gateway.log
+solo status
+tail -f ~/.solo/logs/gateway.log
 ```
 
 确认：
 
-- `self-log start` 已启动。
+- `solo start` 已启动。
 - `config.json` 中 `enabled_channels` 包含 `feishu`。
 - 飞书 app 的 `app_id`、`app_secret`、事件订阅配置正确。
 - `allow_from` 包含当前用户或会话，或临时设置为 `["*"]` 验证链路。
@@ -628,25 +628,25 @@ tail -f ~/.self-log/logs/gateway.log
 原始记录会先进入 `entries.jsonl`。运行：
 
 ```bash
-self-log process
-self-log view
+solo process
+solo view
 ```
 
 ### 12.4 批量日记没有逐条入库
 
-理想路径是模型调用 `self_log_import_records`。如果没有逐条入库，优先检查模型调用日志或 gateway 日志，确认是否走了 self-log app，而不是普通聊天 bot。
+理想路径是模型调用 `solo_import_records`。如果没有逐条入库，优先检查模型调用日志或 gateway 日志，确认是否走了 solo app，而不是普通聊天 bot。
 
 ### 12.5 停止 gateway
 
 ```bash
-self-log stop
+solo stop
 ```
 
 如果 PID 文件残留，可先查看：
 
 ```bash
-cat ~/.self-log/gateway.pid
-self-log status
+cat ~/.solo/gateway.pid
+solo status
 ```
 
 不要用模糊的进程名批量杀进程，避免误伤其他服务。
@@ -655,23 +655,23 @@ self-log status
 
 开发时请保持以下边界：
 
-- self-log 领域逻辑放在 `self_log/`。
-- CLI 放在 `self_log/cli.py`。
-- gateway 相关逻辑放在 `self_log/gateway/`。
-- 模型 prompt 和 OpenHarness client 封装放在 `self_log/agent.py`。
-- 数据模型定义放在 `self_log/models.py`。
-- 业务流程编排（Processor）放在 `self_log/processor.py`。
-- 存储与持久化逻辑放在 `self_log/store.py`。
-- 工具定义与执行逻辑放在 `self_log/tools.py`。
-- 长期记忆（Memory）逻辑放在 `self_log/memory.py`。
-- 目录与路径管理放在 `self_log/workspace.py`。
-- 应用配置管理放在 `self_log/config.py`。
-- 不要把 self-log 重新耦合进 `ohmo/gateway` 或普通 `ohmo` runtime。
+- solo 领域逻辑放在 `solo/`。
+- CLI 放在 `solo/cli.py`。
+- gateway 相关逻辑放在 `solo/gateway/`。
+- 模型 prompt 和 OpenHarness client 封装放在 `solo/agent.py`。
+- 数据模型定义放在 `solo/models.py`。
+- 业务流程编排（Processor）放在 `solo/processor.py`。
+- 存储与持久化逻辑放在 `solo/store.py`。
+- 工具定义与执行逻辑放在 `solo/tools.py`。
+- 长期记忆（Memory）逻辑放在 `solo/memory.py`。
+- 目录与路径管理放在 `solo/workspace.py`。
+- 应用配置管理放在 `solo/config.py`。
+- 不要把 solo 重新耦合进 `ohmo/gateway` 或普通 `ohmo` runtime。
 
 建议验证命令：
 
 ```bash
-uv run ruff check self_log tests/test_self_log
-uv run pytest -q tests/test_self_log
-uv run self-log --help
+uv run ruff check solo tests/test_solo
+uv run pytest -q tests/test_solo
+uv run solo --help
 ```

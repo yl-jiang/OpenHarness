@@ -1,4 +1,4 @@
-"""Utility functions for self-log."""
+"""Utility functions for solo."""
 
 from __future__ import annotations
 

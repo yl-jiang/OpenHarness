@@ -1,4 +1,4 @@
-"""Gateway bridge connecting channel bus traffic to the self-log agent."""
+"""Gateway bridge connecting channel bus traffic to the solo agent."""
 
 from __future__ import annotations
 
@@ -9,16 +9,16 @@ from openharness.channels.bus.events import InboundMessage, OutboundMessage
 from openharness.channels.bus.queue import MessageBus
 from openharness.utils.log import get_logger
 
-from self_log.agent import OpenHarnessSelfLogAgent
-from self_log.commands import (
+from solo.agent import OpenHarnessSoloAgent
+from solo.commands import (
     format_process_result,
     parse_backfill_argument,
-    parse_self_log_command,
-    self_log_help_text,
+    parse_solo_command,
+    solo_help_text,
 )
-from self_log.processor import SelfLogProcessor
-from self_log.runner import SelfLogQueryRunner
-from self_log.store import SelfLogStore
+from solo.processor import SoloProcessor
+from solo.runner import SoloQueryRunner
+from solo.store import SoloStore
 
 logger = get_logger(__name__)
 
@@ -39,14 +39,14 @@ def _format_gateway_error(exc: Exception) -> str:
     if "claude oauth refresh token is invalid or expired" in lowered:
         return "Claude 订阅 token 已过期，请运行 `claude auth login` 后重新执行 `oh auth claude-login`。"
     if "auth source not found" in lowered or "access token" in lowered:
-        return "认证未配置，请运行 `self-log config` 设置 provider。"
+        return "认证未配置，请运行 `solo config` 设置 provider。"
     if "api key" in lowered or "credential" in lowered or "auth" in lowered:
-        return "认证失败，请检查 `oh auth status` 和 `self-log config`。"
-    return f"self-log 执行失败：{message}"
+        return "认证失败，请检查 `oh auth status` 和 `solo config`。"
+    return f"solo 执行失败：{message}"
 
 
-class SelfLogGatewayBridge:
-    """Consume inbound channel messages and execute self-log actions."""
+class SoloGatewayBridge:
+    """Consume inbound channel messages and execute solo actions."""
 
     def __init__(
         self,
@@ -77,7 +77,7 @@ class SelfLogGatewayBridge:
                 continue
 
             logger.info(
-                "self-log inbound received channel=%s chat_id=%s sender_id=%s session_key=%s content=%r",
+                "solo inbound received channel=%s chat_id=%s sender_id=%s session_key=%s content=%r",
                 message.channel,
                 message.chat_id,
                 message.sender_id,
@@ -102,7 +102,7 @@ class SelfLogGatewayBridge:
             )
             task = asyncio.create_task(
                 self._process_message(message),
-                name=f"self-log-session:{session_key}",
+                name=f"solo-session:{session_key}",
             )
             self._session_tasks[session_key] = task
             task.add_done_callback(lambda t, key=session_key: self._cleanup_task(key, t))
@@ -154,27 +154,27 @@ class SelfLogGatewayBridge:
 
     async def _process_message(self, message: InboundMessage) -> None:
         content = message.content.strip()
-        command = parse_self_log_command(content)
-        store = SelfLogStore(self._workspace)
+        command = parse_solo_command(content)
+        store = SoloStore(self._workspace)
         try:
             if command is None:
                 reply = await self._handle_record(message, store, content)
             elif command.action == "help":
-                reply = self_log_help_text()
+                reply = solo_help_text()
             elif command.action == "process":
-                result = await SelfLogProcessor(
+                result = await SoloProcessor(
                     store,
-                    OpenHarnessSelfLogAgent(profile=self._provider_profile),
+                    OpenHarnessSoloAgent(profile=self._provider_profile),
                 ).process_pending(backfill_missing_yesterday=True)
                 reply = format_process_result(result)
             elif command.action == "status":
-                reply = _status_self_log(store)
+                reply = _status_solo(store)
             elif command.action == "view":
-                reply = _view_self_log(store, command.limit)
+                reply = _view_solo(store, command.limit)
             elif command.action == "report":
-                processor = SelfLogProcessor(
+                processor = SoloProcessor(
                     store,
-                    OpenHarnessSelfLogAgent(profile=self._provider_profile),
+                    OpenHarnessSoloAgent(profile=self._provider_profile),
                 )
                 process_result = await processor.process_pending()
                 report = await processor.generate_report(command.report_type)
@@ -190,7 +190,7 @@ class SelfLogGatewayBridge:
                 reply = await self._handle_record(message, store, content)
         except asyncio.CancelledError:
             logger.info(
-                "self-log session interrupted channel=%s chat_id=%s session_key=%s reason=%s",
+                "solo session interrupted channel=%s chat_id=%s session_key=%s reason=%s",
                 message.channel,
                 message.chat_id,
                 message.session_key,
@@ -199,18 +199,34 @@ class SelfLogGatewayBridge:
             raise
         except Exception as exc:
             logger.exception(
-                "self-log gateway failed channel=%s chat_id=%s", message.channel, message.chat_id
+                "solo gateway failed channel=%s chat_id=%s", message.channel, message.chat_id
             )
             reply = _format_gateway_error(exc)
         await self._publish_reply(message, reply)
 
-    async def _handle_record(self, message: InboundMessage, store: SelfLogStore, content: str) -> str:
-        runner = SelfLogQueryRunner(store, profile=self._provider_profile)
-        return await runner.run(content, session_key=message.session_key)
+    async def _handle_record(self, message: InboundMessage, store: SoloStore, content: str) -> str:
+        runner = SoloQueryRunner(store, profile=self._provider_profile)
+        async for kind, text in runner.stream_run(content, session_key=message.session_key):
+            if kind == "final":
+                return text
+            if text:
+                await self._bus.publish_outbound(
+                    OutboundMessage(
+                        channel=message.channel,
+                        chat_id=message.chat_id,
+                        content=text,
+                        metadata={
+                            "_progress": True,
+                            "_tool_hint": kind == "tool_hint",
+                            "_session_key": message.session_key,
+                        },
+                    )
+                )
+        return ""
 
     async def _handle_backfill(
         self,
-        store: SelfLogStore,
+        store: SoloStore,
         content: str,
         date: str | None,
     ) -> str:
@@ -218,15 +234,15 @@ class SelfLogGatewayBridge:
             return "请提供要补录的内容。"
         backfill_date = date or parse_backfill_argument(content)[0]
         entry = store.record(content, metadata={"record_date": backfill_date, "source": "补录"})
-        result = await SelfLogProcessor(
+        result = await SoloProcessor(
             store,
-            OpenHarnessSelfLogAgent(profile=self._provider_profile),
+            OpenHarnessSoloAgent(profile=self._provider_profile),
         ).process_pending(limit=20)
         return f"已补录 {backfill_date}。entry_id={entry.id}\n{format_process_result(result)}"
 
     async def _publish_reply(self, message: InboundMessage, content: str) -> None:
         logger.info(
-            "self-log outbound final channel=%s chat_id=%s session_key=%s content=%r",
+            "solo outbound final channel=%s chat_id=%s session_key=%s content=%r",
             message.channel,
             message.chat_id,
             message.session_key,
@@ -242,20 +258,20 @@ class SelfLogGatewayBridge:
         )
 
 
-def _view_self_log(store: SelfLogStore, limit: int) -> str:
+def _view_solo(store: SoloStore, limit: int) -> str:
     records = store.list_records(limit=limit)
     if not records:
-        return "暂无已整理 self-log 记录。"
+        return "暂无已整理 solo 记录。"
     return "\n".join(
         f"{record.date} {record.emotion} [{record.source}] [{record.tags}] {record.summary}"
         for record in records
     )
 
 
-def _status_self_log(store: SelfLogStore) -> str:
+def _status_solo(store: SoloStore) -> str:
     status = store.status()
     return (
-        f"self-log 状态：entries={status['entries']} "
+        f"solo 状态：entries={status['entries']} "
         f"records={status['records']} pending={status['pending_confirmations']} "
         f"path={status['path']}"
     )

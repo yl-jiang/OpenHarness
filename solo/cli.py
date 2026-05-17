@@ -1,4 +1,4 @@
-"""CLI entry point for the standalone self-log app."""
+"""CLI entry point for the standalone solo app."""
 
 from __future__ import annotations
 
@@ -12,36 +12,58 @@ import typer
 from openharness.auth.manager import AuthManager
 from openharness.config import load_settings
 
-from self_log.agent import OpenHarnessSelfLogAgent
-from self_log.config import load_config, save_config
-from self_log.gateway.service import (
-    SelfLogGatewayService,
+from solo.agent import OpenHarnessSoloAgent
+from solo.config import load_config, save_config
+from solo.gateway.service import (
+    SoloGatewayService,
     gateway_status,
     start_gateway_process,
     stop_gateway_process,
 )
-from self_log.models import SelfLogConfig
-from self_log.processor import SelfLogProcessor
-from self_log.store import SelfLogStore
-from self_log.workspace import get_config_path, get_workspace_root, initialize_workspace, workspace_health
+from solo.models import SoloConfig
+from solo.processor import SoloProcessor
+from solo.store import SoloStore
+from solo.workspace import get_config_path, get_workspace_root, initialize_workspace, workspace_health
 
 app = typer.Typer(
-    name="self-log",
-    help="self-log: a standalone personal logging app built on OpenHarness.",
+    name="solo",
+    help="solo: a standalone personal logging app built on OpenHarness.",
     add_completion=False,
 )
-gateway_app = typer.Typer(name="gateway", help="Run the self-log gateway")
+gateway_app = typer.Typer(name="gateway", help="Run the solo gateway")
 app.add_typer(gateway_app)
 
 _INTERACTIVE_CHANNELS = ("telegram", "slack", "discord", "feishu")
-_WORKSPACE_HELP = "Path to the self-log workspace (defaults to ~/.self-log)"
+_WORKSPACE_HELP = "Path to the solo workspace (defaults to ~/.solo)"
 
 
 @app.command("init")
 def init_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
     root = initialize_workspace(workspace)
-    SelfLogStore(root).initialize()
-    print(f"Initialized self-log at {root}")
+    SoloStore(root).initialize()
+    print(f"Initialized solo at {root}")
+    _maybe_install_service(root)
+
+
+def _maybe_install_service(workspace: str | Path) -> None:
+    """Prompt to install the system-level background service."""
+    from openharness.utils.platform_service import is_service_installed
+
+    label = "ai.solo.gateway"
+    if is_service_installed(label):
+        return
+
+    print("\n🔧 系统集成 (Optional)")
+    print("是否希望在开机登录时自动启动 solo 后台网关？")
+    print("这可以确保你的日志记录服务始终在线，随时响应远程频道（如飞书/Slack）的记录请求。")
+    if _confirm_prompt("安装系统级自启动服务？", default=False):
+        from openharness.utils.platform_service import install_service
+        root = Path(workspace).resolve()
+        args = ["-m", "solo", "gateway", "run", "--workspace", str(root)]
+        if install_service(label, args, root, description="solo Personal Logging Gateway"):
+            print(f"✅ solo gateway 服务已安装并启动 (标签: {label})")
+        else:
+            print("❌ 安装失败，请尝试手动运行 `solo gateway install-service`。")
 
 
 @app.command("config")
@@ -49,7 +71,7 @@ def config_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
     root = initialize_workspace(workspace)
     existing = load_config(root)
     provider_profile = _prompt_provider_profile(existing.provider_profile)
-    enabled_channels, channel_configs = _prompt_channels(existing, target="self-log")
+    enabled_channels, channel_configs = _prompt_channels(existing, target="solo")
     send_progress = _confirm_prompt("Send progress updates to channels?", default=existing.send_progress)
     send_tool_hints = _confirm_prompt("Send tool hints to channels?", default=existing.send_tool_hints)
     config = existing.model_copy(
@@ -62,7 +84,7 @@ def config_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
         }
     )
     save_config(config, root)
-    print(f"Saved self-log config to {get_config_path(root)}")
+    print(f"Saved solo config to {get_config_path(root)}")
 
 
 @app.command("record")
@@ -70,8 +92,8 @@ def record_cmd(
     content: str = typer.Argument(...),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
 ) -> None:
-    entry = SelfLogStore(workspace).record(content)
-    print(f"Recorded self-log entry {entry.id}")
+    entry = SoloStore(workspace).record(content)
+    print(f"Recorded solo entry {entry.id}")
 
 
 @app.command("list")
@@ -79,7 +101,7 @@ def list_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     limit: int = typer.Option(20, "--limit", min=1, help="Maximum entries to show"),
 ) -> None:
-    for entry in SelfLogStore(workspace).list_entries(limit=limit):
+    for entry in SoloStore(workspace).list_entries(limit=limit):
         print(f"{entry.created_at} [{entry.channel}] {entry.content}")
 
 
@@ -88,9 +110,9 @@ def process_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     profile: str | None = typer.Option(None, "--profile", help="OpenHarness provider profile"),
 ) -> None:
-    store = SelfLogStore(workspace)
-    agent = OpenHarnessSelfLogAgent(profile=profile or load_config(workspace).provider_profile)
-    result = asyncio.run(SelfLogProcessor(store, agent).process_pending(backfill_missing_yesterday=True))
+    store = SoloStore(workspace)
+    agent = OpenHarnessSoloAgent(profile=profile or load_config(workspace).provider_profile)
+    result = asyncio.run(SoloProcessor(store, agent).process_pending(backfill_missing_yesterday=True))
     print(f"Processed {result.auto_processed} record(s), pending {result.pending_confirmations}.")
 
 
@@ -99,7 +121,7 @@ def view_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     limit: int = typer.Option(20, "--limit", min=1, help="Maximum records to show"),
 ) -> None:
-    for record in SelfLogStore(workspace).list_records(limit=limit):
+    for record in SoloStore(workspace).list_records(limit=limit):
         print(f"{record.date} {record.emotion} [{record.source}] [{record.tags}] {record.summary}")
 
 
@@ -113,7 +135,7 @@ def search_cmd(
     end: str | None = typer.Option(None, "--end", help="End date (YYYY-MM-DD)"),
     limit: int = typer.Option(10, "--limit", min=1),
 ) -> None:
-    store = SelfLogStore(workspace)
+    store = SoloStore(workspace)
     tag_list = [t.strip() for t in tags.split(",")] if tags else None
     emotion_list = [e.strip() for e in emotions.split(",")] if emotions else None
     records = store.search_records(
@@ -137,18 +159,18 @@ def report_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     profile: str | None = typer.Option(None, "--profile", help="OpenHarness provider profile"),
 ) -> None:
-    store = SelfLogStore(workspace)
-    agent = OpenHarnessSelfLogAgent(profile=profile or load_config(workspace).provider_profile)
-    report = asyncio.run(SelfLogProcessor(store, agent).generate_report(report_type))
+    store = SoloStore(workspace)
+    agent = OpenHarnessSoloAgent(profile=profile or load_config(workspace).provider_profile)
+    report = asyncio.run(SoloProcessor(store, agent).generate_report(report_type))
     print(report.content)
 
 
 @app.command("status")
 def status_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
-    status = SelfLogStore(workspace).status()
+    status = SoloStore(workspace).status()
     gateway = gateway_status(workspace=workspace)
     print(
-        f"self-log: entries={status['entries']} | records={status['records']} | "
+        f"solo: entries={status['entries']} | records={status['records']} | "
         f"pending={status['pending_confirmations']} | gateway={'running' if gateway.running else 'stopped'} | "
         f"path={status['path']}"
     )
@@ -160,7 +182,7 @@ def start_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
 ) -> None:
     pid = start_gateway_process(cwd, workspace)
-    print(f"self-log gateway started (pid={pid})")
+    print(f"solo gateway started (pid={pid})")
 
 
 @app.command("stop")
@@ -169,9 +191,9 @@ def stop_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
 ) -> None:
     if stop_gateway_process(cwd, workspace):
-        print("self-log gateway stopped.")
+        print("solo gateway stopped.")
         return
-    print("self-log gateway is not running.")
+    print("solo gateway is not running.")
 
 
 @app.command("doctor")
@@ -187,7 +209,36 @@ def gateway_run_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
 ) -> None:
     _configure_gateway_logging(workspace)
-    raise typer.Exit(asyncio.run(SelfLogGatewayService(cwd, workspace).run_foreground()))
+    raise typer.Exit(asyncio.run(SoloGatewayService(cwd, workspace).run_foreground()))
+
+
+@gateway_app.command("install-service")
+def gateway_install_service_cmd(
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Install the solo gateway as a system-level background service (LaunchAgent/systemd)."""
+    from openharness.utils.platform_service import install_service
+    from solo.workspace import get_workspace_root
+
+    root = get_workspace_root(workspace)
+    args = ["-m", "solo", "gateway", "run", "--workspace", str(root)]
+    if install_service("ai.solo.gateway", args, root, description="solo Personal Logging Gateway"):
+        print(f"✅ solo gateway service installed and started (label: ai.solo.gateway)")
+    else:
+        print("❌ Failed to install solo gateway service.", file=sys.stderr)
+        raise typer.Exit(1)
+
+
+@gateway_app.command("uninstall-service")
+def gateway_uninstall_service_cmd(
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Uninstall the solo gateway background service."""
+    from openharness.utils.platform_service import uninstall_service
+    if uninstall_service("ai.solo.gateway"):
+        print("✅ solo gateway service uninstalled.")
+    else:
+        print("❌ Failed to uninstall solo gateway service (or not found).", file=sys.stderr)
 
 
 def _configure_gateway_logging(workspace: str | Path | None = None) -> None:
@@ -196,7 +247,7 @@ def _configure_gateway_logging(workspace: str | Path | None = None) -> None:
     level_name = str(config.log_level or "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
 
-    formatter = _SelfLogFormatter("%(asctime)s %(levelname)-5s [%(name)s] %(message)s")
+    formatter = _SoloFormatter("%(asctime)s %(levelname)-5s [%(name)s] %(message)s")
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(formatter)
 
@@ -210,13 +261,13 @@ def _configure_gateway_logging(workspace: str | Path | None = None) -> None:
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 
-class _SelfLogFormatter(logging.Formatter):
+class _SoloFormatter(logging.Formatter):
     """Formatter that shortens logger names for cleaner terminal output."""
 
     # Maps known verbose prefix → short label
     _PREFIX_MAP = {
-        "self_log.gateway.": "gateway.",
-        "self_log.": "self_log.",
+        "solo.gateway.": "gateway.",
+        "solo.": "solo.",
         "openharness.channels.impl.": "channel.",
         "openharness.channels.": "channels.",
         "openharness.": "oh.",
@@ -306,7 +357,7 @@ def _prompt_provider_profile(default_value: str) -> str:
 
 
 def _prompt_channels(
-    existing: SelfLogConfig,
+    existing: SoloConfig,
     *,
     target: str,
 ) -> tuple[list[str], dict[str, dict]]:
@@ -368,7 +419,7 @@ def _prompt_channels(
             )
             config["bot_names"] = _text_prompt(
                 "Bot name keywords (comma separated)",
-                default=str(prior.get("bot_names", "self-log,openharness")),
+                default=str(prior.get("bot_names", "solo,openharness")),
             )
         configs[channel] = config
     return enabled, configs

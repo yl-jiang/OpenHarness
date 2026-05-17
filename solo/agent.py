@@ -1,4 +1,4 @@
-"""OpenHarness-backed model agents for self-log."""
+"""OpenHarness-backed model agents for solo."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from openharness.utils.log import get_logger
 logger = get_logger(__name__)
 
 
-class OpenHarnessSelfLogAgent:
+class OpenHarnessSoloAgent:
     """Self-log domain agent backed by OpenHarness provider/auth/client plumbing."""
 
     def __init__(

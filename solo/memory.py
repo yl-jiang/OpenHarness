@@ -1,4 +1,4 @@
-"""Personal memory helpers for ~/.self-log."""
+"""Personal memory helpers for ~/.solo."""
 
 from __future__ import annotations
 
@@ -6,11 +6,11 @@ from hashlib import md5
 from pathlib import Path
 from re import sub
 
-from self_log.workspace import get_memory_dir, get_memory_index_path
+from solo.workspace import get_memory_dir, get_memory_index_path
 
 
 def list_memory_files(workspace: str | Path | None = None) -> list[Path]:
-    """List self-log memory markdown files."""
+    """List solo memory markdown files."""
     memory_dir = get_memory_dir(workspace)
     if not memory_dir.exists():
         return []

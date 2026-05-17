@@ -3,14 +3,14 @@ from pathlib import Path
 from datetime import datetime
 from uuid import uuid4
 
-from self_log.store import SelfLogStore
-from self_log.models import SelfLogRecord
-from self_log.processor import SelfLogProcessor
+from solo.store import SoloStore
+from solo.models import SoloRecord
+from solo.processor import SoloProcessor
 
 @pytest.mark.asyncio
 async def test_weekday_and_events_processing(tmp_path: Path):
-    workspace = tmp_path / ".self-log"
-    store = SelfLogStore(workspace)
+    workspace = tmp_path / ".solo"
+    store = SoloStore(workspace)
     store.initialize()
 
     # Mock Agent
@@ -33,7 +33,7 @@ async def test_weekday_and_events_processing(tmp_path: Path):
             return "Mock question"
 
     fake_agent = FakeAgent()
-    processor = SelfLogProcessor(store, agent=fake_agent)
+    processor = SoloProcessor(store, agent=fake_agent)
 
     # 1. Record an entry on real Mother's Day (May 10, 2026)
     store.record("今天天气很好", metadata={"record_date": "2026-05-10"})
@@ -54,12 +54,12 @@ async def test_weekday_and_events_processing(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_search_by_weekday_and_events(tmp_path: Path):
-    workspace = tmp_path / ".self-log"
-    store = SelfLogStore(workspace)
+    workspace = tmp_path / ".solo"
+    store = SoloStore(workspace)
     store.initialize()
 
     # Create records with weekday and events
-    r1 = SelfLogRecord(
+    r1 = SoloRecord(
         id=uuid4().hex[:12],
         entry_id=uuid4().hex[:12],
         date="2026-05-17",
@@ -73,7 +73,7 @@ async def test_search_by_weekday_and_events(tmp_path: Path):
     )
     store.add_record(r1)
 
-    r2 = SelfLogRecord(
+    r2 = SoloRecord(
         id=uuid4().hex[:12],
         entry_id=uuid4().hex[:12],
         date="2026-05-18",
@@ -99,8 +99,8 @@ async def test_search_by_weekday_and_events(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_metadata_auto_calculation(tmp_path: Path):
-    workspace = tmp_path / ".self-log"
-    store = SelfLogStore(workspace)
+    workspace = tmp_path / ".solo"
+    store = SoloStore(workspace)
     store.initialize()
 
     class FakeAgent:
@@ -114,7 +114,7 @@ async def test_metadata_auto_calculation(tmp_path: Path):
             }
         async def generate_daily_question(self, context): return ""
 
-    processor = SelfLogProcessor(store, agent=FakeAgent())
+    processor = SoloProcessor(store, agent=FakeAgent())
 
     # Test record on a holiday weekend in spring
     # 2026-05-01 is Friday (Labor Day)
@@ -151,8 +151,8 @@ async def test_metadata_auto_calculation(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_semantic_time_extraction(tmp_path: Path):
-    workspace = tmp_path / ".self-log"
-    store = SelfLogStore(workspace)
+    workspace = tmp_path / ".solo"
+    store = SoloStore(workspace)
     store.initialize()
 
     class FakeAgent:
@@ -173,7 +173,7 @@ async def test_semantic_time_extraction(tmp_path: Path):
             }
         async def generate_daily_question(self, context): return ""
 
-    processor = SelfLogProcessor(store, agent=FakeAgent())
+    processor = SoloProcessor(store, agent=FakeAgent())
 
     # Recorded at 11:00 AM (中午), but content says 8:00 AM (清晨)
     store.record("今天早上我8点左右起床的", created_at="2026-05-17T11:00:00+00:00")

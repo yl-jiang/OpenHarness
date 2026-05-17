@@ -1,4 +1,4 @@
-"""Append-only storage for the standalone self-log app."""
+"""Append-only storage for the standalone solo app."""
 
 from __future__ import annotations
 
@@ -8,16 +8,16 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from self_log.models import (
+from solo.models import (
     PendingConfirmation,
     ProfileUpdate,
-    SelfLogConfig,
-    SelfLogEntry,
-    SelfLogRecord,
-    SelfLogReport,
+    SoloConfig,
+    SoloEntry,
+    SoloRecord,
+    SoloReport,
 )
-from self_log.workspace import get_data_dir, initialize_workspace
-from self_log.utils import _now
+from solo.workspace import get_data_dir, initialize_workspace
+from solo.utils import _now
 
 ENTRIES_FILENAME = "entries.jsonl"
 RECORDS_FILENAME = "records.jsonl"
@@ -26,8 +26,8 @@ PROFILE_UPDATES_FILENAME = "profile_updates.jsonl"
 REPORTS_FILENAME = "reports.jsonl"
 
 
-class SelfLogStore:
-    """Append-only self-log store rooted in the self-log workspace."""
+class SoloStore:
+    """Append-only solo store rooted in the solo workspace."""
 
     def __init__(self, workspace: str | Path | None = None) -> None:
         self.workspace = initialize_workspace(workspace)
@@ -52,13 +52,13 @@ class SelfLogStore:
                 path.write_text("", encoding="utf-8")
         return self.root
 
-    def load_config(self) -> SelfLogConfig:
-        from self_log.config import load_config
+    def load_config(self) -> SoloConfig:
+        from solo.config import load_config
 
         return load_config(self.workspace)
 
-    def save_config(self, config: SelfLogConfig) -> Path:
-        from self_log.config import save_config
+    def save_config(self, config: SoloConfig) -> Path:
+        from solo.config import save_config
 
         return save_config(config, self.workspace)
 
@@ -72,12 +72,12 @@ class SelfLogStore:
         message_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         created_at: str | None = None,
-    ) -> SelfLogEntry:
+    ) -> SoloEntry:
         text = content.strip()
         if not text:
-            raise ValueError("self-log content cannot be empty")
+            raise ValueError("solo content cannot be empty")
         self.initialize()
-        entry = SelfLogEntry(
+        entry = SoloEntry(
             id=uuid4().hex[:12],
             content=text,
             created_at=created_at or _now(),
@@ -92,29 +92,29 @@ class SelfLogStore:
         self.entries_path.chmod(0o600)
         return entry
 
-    def list_entries(self, *, limit: int | None = None) -> list[SelfLogEntry]:
-        entries = [SelfLogEntry.from_json(line) for line in self._read_jsonl(self.entries_path)]
+    def list_entries(self, *, limit: int | None = None) -> list[SoloEntry]:
+        entries = [SoloEntry.from_json(line) for line in self._read_jsonl(self.entries_path)]
         return entries if limit is None else entries[-limit:]
 
-    def add_record(self, record: SelfLogRecord) -> None:
+    def add_record(self, record: SoloRecord) -> None:
         self._append_jsonl(self.records_path, record.to_json())
 
-    def list_records(self, *, limit: int | None = None) -> list[SelfLogRecord]:
-        records = [SelfLogRecord.from_json(line) for line in self._read_jsonl(self.records_path)]
+    def list_records(self, *, limit: int | None = None) -> list[SoloRecord]:
+        records = [SoloRecord.from_json(line) for line in self._read_jsonl(self.records_path)]
         return records if limit is None else records[-limit:]
 
     def update_record(self, record_id: str, **updates: Any) -> bool:
         """Update an existing record by ID with new field values."""
         records = self.list_records()
         updated = False
-        new_records: list[SelfLogRecord] = []
+        new_records: list[SoloRecord] = []
         
         for r in records:
             if r.id == record_id:
                 # Apply updates
                 data = r.to_dict()
                 data.update(updates)
-                new_records.append(SelfLogRecord(**data))
+                new_records.append(SoloRecord(**data))
                 updated = True
             else:
                 new_records.append(r)
@@ -155,11 +155,11 @@ class SelfLogStore:
     def list_profile_updates(self) -> list[ProfileUpdate]:
         return [ProfileUpdate.from_json(line) for line in self._read_jsonl(self.profile_updates_path)]
 
-    def add_report(self, report: SelfLogReport) -> None:
+    def add_report(self, report: SoloReport) -> None:
         self._append_jsonl(self.reports_path, report.to_json())
 
-    def list_reports(self) -> list[SelfLogReport]:
-        return [SelfLogReport.from_json(line) for line in self._read_jsonl(self.reports_path)]
+    def list_reports(self) -> list[SoloReport]:
+        return [SoloReport.from_json(line) for line in self._read_jsonl(self.reports_path)]
 
     def search_records(
         self,
@@ -170,10 +170,10 @@ class SelfLogStore:
         start_date: str | None = None,
         end_date: str | None = None,
         limit: int = 10,
-    ) -> list[SelfLogRecord]:
+    ) -> list[SoloRecord]:
         """Search records with filters and optimized ranking (BM25 + Temporal Decay)."""
         records = self.list_records()
-        filtered: list[SelfLogRecord] = []
+        filtered: list[SoloRecord] = []
 
         # 1. Hard Filters (Date/Tag/Emotion)
         for record in records:
@@ -213,7 +213,7 @@ class SelfLogStore:
         bm25 = BM25Okapi(corpus_tokens)
         doc_scores = bm25.get_scores(query_tokens)
 
-        scored: list[tuple[float, SelfLogRecord]] = []
+        scored: list[tuple[float, SoloRecord]] = []
         now_ts = datetime.now(timezone.utc).timestamp()
         
         for i, score in enumerate(doc_scores):
@@ -301,19 +301,19 @@ class SelfLogStore:
         if missing_streak is not None:
             reminders["last_missing_streak"] = missing_streak
         data["reminders"] = reminders
-        from self_log.workspace import get_config_path
+        from solo.workspace import get_config_path
 
         get_config_path(self.workspace).write_text(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
 
-    def _entry_date(self, entry: SelfLogEntry) -> str:
+    def _entry_date(self, entry: SoloEntry) -> str:
         metadata = entry.metadata or {}
         return str(metadata.get("record_date") or entry.created_at[:10])
 
     def _read_config(self) -> dict[str, Any]:
-        from self_log.workspace import get_config_path
+        from solo.workspace import get_config_path
 
         initialize_workspace(self.workspace)
         return dict(json.loads(get_config_path(self.workspace).read_text(encoding="utf-8")))

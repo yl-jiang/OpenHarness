@@ -1,4 +1,4 @@
-"""Per-session conversation history persistence for self-log."""
+"""Per-session conversation history persistence for solo."""
 
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ def save_conversation(
     }
     path = _snapshot_path(workspace, session_key)
     atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
-    logger.debug("self-log session saved session_key=%s messages=%d path=%s", session_key, len(clean), path)
+    logger.debug("solo session saved session_key=%s messages=%d path=%s", session_key, len(clean), path)
 
 
 def load_conversation(
@@ -65,12 +65,12 @@ def load_conversation(
         )
         session_id: str | None = data.get("session_id") or None
         logger.debug(
-            "self-log session loaded session_key=%s messages=%d session_id=%s",
+            "solo session loaded session_key=%s messages=%d session_id=%s",
             session_key,
             len(messages),
             session_id,
         )
         return messages, session_id
     except Exception:
-        logger.warning("self-log session load failed for session_key=%s, starting fresh", session_key, exc_info=True)
+        logger.warning("solo session load failed for session_key=%s, starting fresh", session_key, exc_info=True)
         return [], None

@@ -1,4 +1,4 @@
-"""Gateway service lifecycle for the standalone self-log app."""
+"""Gateway service lifecycle for the standalone solo app."""
 
 from __future__ import annotations
 
@@ -17,10 +17,10 @@ from openharness.channels.bus.queue import MessageBus
 from openharness.channels.impl.manager import ChannelManager
 from openharness.utils.log import get_logger
 
-from self_log.config import build_channel_manager_config, load_config
-from self_log.gateway.bridge import SelfLogGatewayBridge
-from self_log.models import SelfLogState
-from self_log.workspace import (
+from solo.config import build_channel_manager_config, load_config
+from solo.gateway.bridge import SoloGatewayBridge
+from solo.models import SoloState
+from solo.workspace import (
     get_logs_dir,
     get_pid_path,
     get_state_path,
@@ -32,8 +32,8 @@ logger = get_logger(__name__)
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-class SelfLogGatewayService:
-    """Foreground/background service wrapper for self-log channels."""
+class SoloGatewayService:
+    """Foreground/background service wrapper for solo channels."""
 
     def __init__(
         self,
@@ -44,11 +44,11 @@ class SelfLogGatewayService:
         self._workspace = workspace
         os.chdir(self._cwd)
         root = initialize_workspace(self._workspace)
-        os.environ["SELF_LOG_WORKSPACE"] = str(root)
+        os.environ["SOLO_WORKSPACE"] = str(root)
         self._config = load_config(root)
         self._bus = MessageBus()
         self._manager = ChannelManager(build_channel_manager_config(self._config), self._bus)
-        self._bridge = SelfLogGatewayBridge(
+        self._bridge = SoloGatewayBridge(
             bus=self._bus,
             workspace=root,
             provider_profile=self._config.provider_profile,
@@ -67,7 +67,7 @@ class SelfLogGatewayService:
         return get_state_path(self._workspace)
 
     def write_state(self, *, running: bool, last_error: str | None = None) -> None:
-        state = SelfLogState(
+        state = SoloState(
             running=running,
             pid=os.getpid() if running else None,
             provider_profile=self._config.provider_profile,
@@ -88,14 +88,14 @@ class SelfLogGatewayService:
             log_file=self.log_file,
         )
         logger.info(
-            "self-log gateway starting pid=%d channels=%s profile=%s workspace=%s",
+            "solo gateway starting pid=%d channels=%s profile=%s workspace=%s",
             os.getpid(),
             channels,
             self._config.provider_profile,
             self._workspace,
         )
-        bridge_task = asyncio.create_task(self._bridge.run(), name="self-log-gateway-bridge")
-        manager_task = asyncio.create_task(self._manager.start_all(), name="self-log-gateway-channels")
+        bridge_task = asyncio.create_task(self._bridge.run(), name="solo-gateway-bridge")
+        manager_task = asyncio.create_task(self._manager.start_all(), name="solo-gateway-channels")
         stop_event = asyncio.Event()
 
         def _stop(*_: object) -> None:
@@ -108,12 +108,12 @@ class SelfLogGatewayService:
 
         # Yield once so channel tasks can start and emit their first logs before "ready"
         await asyncio.sleep(0)
-        logger.info("self-log gateway ready — waiting for messages (Ctrl-C to stop)")
+        logger.info("solo gateway ready — waiting for messages (Ctrl-C to stop)")
 
         try:
             await stop_event.wait()
         finally:
-            logger.info("self-log gateway shutting down pid=%d", os.getpid())
+            logger.info("solo gateway shutting down pid=%d", os.getpid())
             self._bridge.stop()
             bridge_task.cancel()
             manager_task.cancel()
@@ -124,12 +124,12 @@ class SelfLogGatewayService:
             await self._manager.stop_all()
             self.write_state(running=False)
             self.pid_file.unlink(missing_ok=True)
-            logger.info("self-log gateway stopped pid=%d", os.getpid())
+            logger.info("solo gateway stopped pid=%d", os.getpid())
         return 0
 
 
 def start_gateway_process(cwd: str | Path | None = None, workspace: str | Path | None = None) -> int:
-    service = SelfLogGatewayService(cwd, workspace)
+    service = SoloGatewayService(cwd, workspace)
     service.log_file.parent.mkdir(parents=True, exist_ok=True)
     logger.info("start_gateway_process log_file=%s workspace=%s", service.log_file, service._workspace)
     env = os.environ.copy()
@@ -156,7 +156,7 @@ def start_gateway_process(cwd: str | Path | None = None, workspace: str | Path |
             [
                 sys.executable,
                 "-m",
-                "self_log",
+                "solo",
                 "gateway",
                 "run",
                 "--cwd",
@@ -171,7 +171,7 @@ def start_gateway_process(cwd: str | Path | None = None, workspace: str | Path |
 
 
 def stop_gateway_process(cwd: str | Path | None = None, workspace: str | Path | None = None) -> bool:
-    service = SelfLogGatewayService(cwd, workspace)
+    service = SoloGatewayService(cwd, workspace)
     pids: list[int] = []
     if service.pid_file.exists():
         with contextlib.suppress(ValueError):
@@ -195,8 +195,8 @@ def stop_gateway_process(cwd: str | Path | None = None, workspace: str | Path | 
     return True
 
 
-def gateway_status(cwd: str | Path | None = None, workspace: str | Path | None = None) -> SelfLogState:
-    service = SelfLogGatewayService(cwd, workspace)
+def gateway_status(cwd: str | Path | None = None, workspace: str | Path | None = None) -> SoloState:
+    service = SoloGatewayService(cwd, workspace)
     live_pid: int | None = None
     if service.pid_file.exists():
         with contextlib.suppress(ValueError):
@@ -213,10 +213,10 @@ def gateway_status(cwd: str | Path | None = None, workspace: str | Path | None =
     last_error: str | None = None
     if service.state_file.exists():
         with contextlib.suppress(Exception):
-            last_error = SelfLogState.model_validate_json(
+            last_error = SoloState.model_validate_json(
                 service.state_file.read_text(encoding="utf-8")
             ).last_error
-    return SelfLogState(
+    return SoloState(
         running=live_pid is not None,
         pid=live_pid,
         provider_profile=service._config.provider_profile,
@@ -269,7 +269,7 @@ def _iter_workspace_gateway_pids(workspace: str | Path | None = None) -> list[in
             continue
         if pid == current_pid:
             continue
-        if "-m self_log gateway run" not in args:
+        if "-m solo gateway run" not in args:
             continue
         if f"--workspace {root}" not in args:
             continue
@@ -291,7 +291,7 @@ def _print_gateway_banner(
     print(
         f"\n"
         f"  ╔══════════════════════════════════════════╗\n"
-        f"  ║          self-log gateway starting       ║\n"
+        f"  ║          solo gateway starting       ║\n"
         f"  ╚══════════════════════════════════════════╝\n"
         f"  pid       : {pid}\n"
         f"  workspace : {workspace}\n"

@@ -1,4 +1,4 @@
-"""Data models for the standalone self-log app."""
+"""Data models for the standalone solo app."""
 
 from __future__ import annotations
 
@@ -9,8 +9,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
-class SelfLogConfig(BaseModel):
-    """Persistent self-log app configuration."""
+class SoloConfig(BaseModel):
+    """Persistent solo app configuration."""
 
     version: int = 1
     provider_profile: str = "codex"
@@ -21,8 +21,8 @@ class SelfLogConfig(BaseModel):
     log_level: str = "INFO"
 
 
-class SelfLogState(BaseModel):
-    """Runtime status snapshot for the self-log app."""
+class SoloState(BaseModel):
+    """Runtime status snapshot for the solo app."""
 
     running: bool = False
     pid: int | None = None
@@ -32,8 +32,8 @@ class SelfLogState(BaseModel):
 
 
 @dataclass(frozen=True)
-class SelfLogEntry:
-    """One raw self-log entry captured before model structuring."""
+class SoloEntry:
+    """One raw solo entry captured before model structuring."""
 
     id: str
     content: str
@@ -45,7 +45,7 @@ class SelfLogEntry:
     metadata: dict[str, Any] | None = None
 
     @classmethod
-    def from_json(cls, line: str) -> "SelfLogEntry":
+    def from_json(cls, line: str) -> "SoloEntry":
         data = json.loads(line)
         return cls(
             id=str(data["id"]),
@@ -75,8 +75,8 @@ class SelfLogEntry:
 
 
 @dataclass(frozen=True)
-class SelfLogRecord:
-    """One structured self-log record."""
+class SoloRecord:
+    """One structured solo record."""
 
     id: str
     entry_id: str
@@ -99,7 +99,7 @@ class SelfLogRecord:
     created_at: str = ""
 
     @classmethod
-    def from_json(cls, line: str) -> "SelfLogRecord":
+    def from_json(cls, line: str) -> "SoloRecord":
         return cls(**json.loads(line))
 
     def to_dict(self) -> dict[str, Any]:
@@ -131,7 +131,7 @@ class SelfLogRecord:
 
 @dataclass(frozen=True)
 class PendingConfirmation:
-    """A self-log entry the agent refused to guess."""
+    """A solo entry the agent refused to guess."""
 
     id: str
     entry_id: str
@@ -168,7 +168,7 @@ class PendingConfirmation:
 
 @dataclass(frozen=True)
 class ProfileUpdate:
-    """A profile update suggested by the self-log agent."""
+    """A profile update suggested by the solo agent."""
 
     id: str
     record_id: str
@@ -188,8 +188,8 @@ class ProfileUpdate:
 
 
 @dataclass(frozen=True)
-class SelfLogReport:
-    """A generated self-log report."""
+class SoloReport:
+    """A generated solo report."""
 
     id: str
     report_type: str
@@ -197,7 +197,7 @@ class SelfLogReport:
     created_at: str
 
     @classmethod
-    def from_json(cls, line: str) -> "SelfLogReport":
+    def from_json(cls, line: str) -> "SoloReport":
         return cls(**json.loads(line))
 
     def to_json(self) -> str:
@@ -206,7 +206,7 @@ class SelfLogReport:
 
 @dataclass(frozen=True)
 class ProcessResult:
-    """Summary of one self-log processing run."""
+    """Summary of one solo processing run."""
 
     auto_processed: int
     pending_confirmations: int

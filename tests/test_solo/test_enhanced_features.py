@@ -3,12 +3,12 @@ from pathlib import Path
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from self_log.store import SelfLogStore
-from self_log.models import SelfLogRecord
-from self_log.processor import SelfLogProcessor
+from solo.store import SoloStore
+from solo.models import SoloRecord
+from solo.processor import SoloProcessor
 
 def _create_record(store, content, summary, tags, date=None, emotion="积极"):
-    record = SelfLogRecord(
+    record = SoloRecord(
         id=uuid4().hex[:12],
         entry_id=uuid4().hex[:12],
         date=date or datetime.now(timezone.utc).date().isoformat(),
@@ -23,8 +23,8 @@ def _create_record(store, content, summary, tags, date=None, emotion="积极"):
     return record
 
 def test_search_records_heuristic(tmp_path: Path):
-    workspace = tmp_path / ".self-log"
-    store = SelfLogStore(workspace)
+    workspace = tmp_path / ".solo"
+    store = SoloStore(workspace)
     store.initialize()
 
     _create_record(store, "今天天气不错，去公园跑了步", "公园跑步", "运动,健康", date="2026-05-10")
@@ -56,8 +56,8 @@ def test_search_records_heuristic(tmp_path: Path):
     assert "工作" in results[0].tags
 
 def test_search_records_temporal_decay(tmp_path: Path):
-    workspace = tmp_path / ".self-log"
-    store = SelfLogStore(workspace)
+    workspace = tmp_path / ".solo"
+    store = SoloStore(workspace)
     store.initialize()
 
     # Old record
@@ -72,8 +72,8 @@ def test_search_records_temporal_decay(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_processor_rag_and_daily_question(tmp_path: Path, monkeypatch):
-    workspace = tmp_path / ".self-log"
-    store = SelfLogStore(workspace)
+    workspace = tmp_path / ".solo"
+    store = SoloStore(workspace)
     store.initialize()
 
     # Create a past record for RAG context
@@ -97,7 +97,7 @@ async def test_processor_rag_and_daily_question(tmp_path: Path, monkeypatch):
             return "今天还在学 Rust 吗？"
 
     fake_agent = FakeAgent()
-    processor = SelfLogProcessor(store, agent=fake_agent)
+    processor = SoloProcessor(store, agent=fake_agent)
 
     # 1. Test RAG context injection
     # Use content that will definitely match the past record via jieba tokens
@@ -121,33 +121,33 @@ async def test_processor_rag_and_daily_question(tmp_path: Path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_tool_visualize_and_export(tmp_path: Path):
-    from self_log.tools import SelfLogToolRegistry
-    workspace = tmp_path / ".self-log"
-    store = SelfLogStore(workspace)
+    from solo.tools import SoloToolRegistry
+    workspace = tmp_path / ".solo"
+    store = SoloStore(workspace)
     store.initialize()
 
     _create_record(store, "心情不错", "心情好", "心情", emotion="积极")
     _create_record(store, "有点累", "累", "心情", emotion="消极")
 
-    registry = SelfLogToolRegistry(store)
+    registry = SoloToolRegistry(store)
 
     # 1. Test Visualize (emotion distribution)
-    res = await registry.execute("self_log_visualize", {"type": "emotion_distribution"})
+    res = await registry.execute("solo_visualize", {"type": "emotion_distribution"})
     assert "积极: █" in res
     assert "消极: █" in res
 
     # 2. Test Search
-    res = await registry.execute("self_log_search", {"query": "不错"})
+    res = await registry.execute("solo_search", {"query": "不错"})
     assert "找到了 1 条相关记录" in res
     assert "心情好" in res
 
     # 3. Test Export
-    res = await registry.execute("self_log_export", {"format": "markdown"})
+    res = await registry.execute("solo_export", {"format": "markdown"})
     assert "已成功按 markdown 格式导出" in res
     
     # 4. Test Update Record
     record_id = store.list_records()[0].id
-    res = await registry.execute("self_log_update_record", {
+    res = await registry.execute("solo_update_record", {
         "record_id": record_id,
         "summary": "更新后的摘要",
         "tags": "新标签"
@@ -159,7 +159,7 @@ async def test_tool_visualize_and_export(tmp_path: Path):
     assert updated_record.tags == "新标签"
 
     # 5. Test Delete Record
-    res = await registry.execute("self_log_delete_record", {"record_id": record_id})
+    res = await registry.execute("solo_delete_record", {"record_id": record_id})
     assert "已永久删除记录" in res
     assert len(store.list_records()) == 1 # One remaining from test_tool_visualize_and_export setup
 

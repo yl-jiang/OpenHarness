@@ -1,4 +1,4 @@
-"""Command parsing and formatting for self-log messages."""
+"""Command parsing and formatting for solo messages."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from self_log.models import ProcessResult
+from solo.models import ProcessResult
 
-SelfLogAction = Literal["record", "process", "status", "view", "report", "backfill", "help"]
+SoloAction = Literal["record", "process", "status", "view", "report", "backfill", "help"]
 
 
 @dataclass(frozen=True)
-class SelfLogCommand:
-    action: SelfLogAction
+class SoloCommand:
+    action: SoloAction
     content: str = ""
     report_type: str = "weekly"
     limit: int = 10
@@ -31,41 +31,41 @@ class SelfLogCommand:
         return self.content
 
 
-def extract_self_log_content(text: str) -> str | None:
+def extract_solo_content(text: str) -> str | None:
     stripped = text.strip()
-    if stripped == "/self-log":
+    if stripped == "/solo":
         return ""
-    if stripped.startswith("/self-log "):
-        content = stripped.removeprefix("/self-log").strip()
+    if stripped.startswith("/solo "):
+        content = stripped.removeprefix("/solo").strip()
         if content.startswith("record "):
             return content.removeprefix("record ").strip()
         return content
     return None
 
 
-def parse_self_log_command(text: str, *, default_record: bool = False) -> SelfLogCommand | None:
-    content = extract_self_log_content(text)
+def parse_solo_command(text: str, *, default_record: bool = False) -> SoloCommand | None:
+    content = extract_solo_content(text)
     if content is None:
-        return SelfLogCommand(action="record", content=text.strip()) if default_record else None
+        return SoloCommand(action="record", content=text.strip()) if default_record else None
     if content == "":
-        return SelfLogCommand(action="help")
+        return SoloCommand(action="help")
     parts = content.split(maxsplit=1)
     first = parts[0].lower()
     rest = parts[1].strip() if len(parts) > 1 else ""
     if first in {"help", "-h", "--help", "帮助"}:
-        return SelfLogCommand(action="help")
+        return SoloCommand(action="help")
     if first in {"process", "整理"}:
-        return SelfLogCommand(action="process", backfill_missing_yesterday=True)
+        return SoloCommand(action="process", backfill_missing_yesterday=True)
     if first in {"status", "状态"}:
-        return SelfLogCommand(action="status")
+        return SoloCommand(action="status")
     if first in {"view", "list", "recent", "查看", "最近"}:
-        return SelfLogCommand(action="view", limit=_parse_int(rest, default=10))
+        return SoloCommand(action="view", limit=_parse_int(rest, default=10))
     if first in {"report", "周报", "月报", "年报"}:
-        return SelfLogCommand(action="report", report_type=_parse_report_type(first, rest))
+        return SoloCommand(action="report", report_type=_parse_report_type(first, rest))
     if first in {"backfill", "补录"}:
         date, body = parse_backfill_argument(rest)
-        return SelfLogCommand(action="backfill", content=body, backfill_date=date)
-    return SelfLogCommand(action="record", content=content)
+        return SoloCommand(action="backfill", content=body, backfill_date=date)
+    return SoloCommand(action="record", content=content)
 
 
 def parse_backfill_argument(text: str) -> tuple[str, str]:
@@ -78,15 +78,15 @@ def parse_backfill_argument(text: str) -> tuple[str, str]:
     return (_yesterday(), stripped)
 
 
-def self_log_help_text() -> str:
+def solo_help_text() -> str:
     return (
-        "self-log 用法：\n"
+        "solo 用法：\n"
         "- 直接发送日常记录：自动入库并由模型整理\n"
-        "- /self-log process：整理待处理记录\n"
-        "- /self-log view [数量]：查看最近记录\n"
-        "- /self-log report weekly|monthly|yearly：生成报告\n"
-        "- /self-log status：查看状态\n"
-        "- /self-log backfill [YYYY-MM-DD] 内容：补录"
+        "- /solo process：整理待处理记录\n"
+        "- /solo view [数量]：查看最近记录\n"
+        "- /solo report weekly|monthly|yearly：生成报告\n"
+        "- /solo status：查看状态\n"
+        "- /solo backfill [YYYY-MM-DD] 内容：补录"
     )
 
 

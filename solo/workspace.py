@@ -1,4 +1,4 @@
-"""Workspace helpers for the standalone self-log app."""
+"""Workspace helpers for the standalone solo app."""
 
 from __future__ import annotations
 
@@ -6,14 +6,14 @@ import json
 import os
 from pathlib import Path
 
-from self_log.models import SelfLogConfig
+from solo.models import SoloConfig
 
-WORKSPACE_DIRNAME = ".self-log"
+WORKSPACE_DIRNAME = ".solo"
 CONFIG_FILENAME = "config.json"
 
 SOUL_TEMPLATE = """# soul.md — Who You Are
 
-You are self-log, a personal growth journal assistant built on OpenHarness.
+You are solo, a personal growth journal assistant built on OpenHarness.
 Your purpose is to help the user faithfully record, reflect on, and grow from their daily experiences.
 
 ## Core truths
@@ -78,7 +78,7 @@ Learn the person whose life you are helping to record. Keep this useful, respect
 
 
 def get_workspace_root(workspace: str | Path | None = None) -> Path:
-    explicit = workspace or os.environ.get("SELF_LOG_WORKSPACE")
+    explicit = workspace or os.environ.get("SOLO_WORKSPACE")
     if explicit:
         return Path(explicit).expanduser().resolve()
     return (Path.home() / WORKSPACE_DIRNAME).resolve()
@@ -133,11 +133,11 @@ def initialize_workspace(workspace: str | Path | None = None) -> Path:
     root = ensure_workspace(workspace)
     config_path = get_config_path(root)
     if not config_path.exists():
-        config_path.write_text(SelfLogConfig().model_dump_json(indent=2) + "\n", encoding="utf-8")
+        config_path.write_text(SoloConfig().model_dump_json(indent=2) + "\n", encoding="utf-8")
     state_path = get_state_path(root)
     if not state_path.exists():
         state_path.write_text(
-            json.dumps({"app": "self-log", "workspace": str(root)}, indent=2) + "\n",
+            json.dumps({"app": "solo", "workspace": str(root)}, indent=2) + "\n",
             encoding="utf-8",
         )
     soul_path = get_soul_path(root)
