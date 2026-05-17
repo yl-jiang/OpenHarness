@@ -29,8 +29,8 @@ def test_discover_claude_md_files(tmp_path: Path):
 
     files = discover_claude_md_files(nested)
 
-    assert repo / "CLAUDE.md" in files
-    assert rules_dir / "python.md" in files
+    assert (repo / "CLAUDE.md").resolve() in [f.resolve() for f in files]
+    assert (rules_dir / "python.md").resolve() in [f.resolve() for f in files]
 
 
 def test_load_claude_md_prompt(tmp_path: Path):
@@ -84,7 +84,7 @@ def test_build_runtime_system_prompt_caches_identical_inputs(tmp_path: Path, mon
 
     assert first == second
     assert "Fast mode is enabled" in changed
-    assert calls == [str(repo), str(repo)]
+    assert calls == [str(repo.resolve()), str(repo.resolve())]
 
 
 def test_runtime_prompt_blocks_expose_metadata_and_render_default_prompt(tmp_path: Path, monkeypatch):

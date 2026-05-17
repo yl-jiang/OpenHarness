@@ -73,8 +73,10 @@ class TestSettings:
 
     def test_resolve_auth_prefers_env_over_flat_api_key_for_openai(self, monkeypatch):
         """Current deepseek-backed openai settings still fall back to flat api_key."""
+        monkeypatch.setattr("openharness.auth.storage.load_credential", lambda *args, **kwargs: None)
         monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-correct")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         s = Settings(api_key="sk-ant-wrong-provider", api_format="openai")
         s = s.sync_active_profile_from_flat_fields()
         auth = s.resolve_auth()
@@ -84,8 +86,10 @@ class TestSettings:
     def test_resolve_auth_falls_back_to_flat_api_key(self, monkeypatch):
         """When no provider-specific env var is set, resolve_auth() should
         still fall back to the flat api_key field."""
+        monkeypatch.setattr("openharness.auth.storage.load_credential", lambda *args, **kwargs: None)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
         s = Settings(api_key="sk-fallback-key")
         s = s.sync_active_profile_from_flat_fields()
         auth = s.resolve_auth()

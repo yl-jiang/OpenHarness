@@ -209,7 +209,7 @@ def test_load_skill_registry_ignores_sibling_resource_files(tmp_path: Path, monk
     review = registry.get("Review")
 
     assert review is not None
-    assert review.path == str(review_dir / "SKILL.md")
+    assert Path(review.path).resolve() == (review_dir / "SKILL.md").resolve()
     assert "Read sibling resources on demand." in review.content
     assert "This file should not be loaded during discovery." not in review.content
 

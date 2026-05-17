@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -78,13 +79,12 @@ async def test_task_create_local_agent_uses_compatibility_spawn_path(tmp_path: P
             description="compat agent",
             prompt="ready",
             command=(
-                'python -u -c "import json,sys; '
+                f"{sys.executable} -u -c \"import json,sys; "
                 "line=sys.stdin.readline().strip(); "
                 "payload=json.loads(line) if line.startswith('{') else {'text': line}; "
                 "print('TASK_AGENT:' + payload['text'])\""
             ),
-        ),
-        context,
+        ),        context,
     )
     assert create_result.is_error is False
     task_id = create_result.output.split()[2]

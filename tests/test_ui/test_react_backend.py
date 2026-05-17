@@ -335,8 +335,8 @@ async def test_backend_host_emits_compact_progress_event(tmp_path, monkeypatch):
     async def _emit(event):
         events.append(event)
 
-    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output):
-        del bundle, line, print_system, clear_output
+    async def _fake_handle_line(bundle, line, print_system, render_event, clear_output, **kwargs):
+        del bundle, line, print_system, clear_output, kwargs
         await render_event(
             CompactProgressEvent(
                 phase=CompactProgressPhase.COMPACT_START,
@@ -856,6 +856,7 @@ async def test_backend_host_permissions_select_refreshes_runtime_system_prompt(t
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
 
     host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
     host._bundle = await build_runtime(api_client=StaticApiClient("unused"))
@@ -1025,6 +1026,7 @@ async def test_backend_host_cancel_restores_turn_state_before_next_skill_submit(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
 
     skill_dir = tmp_path / "config" / "skills" / "cancel-proof-skill"
     skill_dir.mkdir(parents=True)

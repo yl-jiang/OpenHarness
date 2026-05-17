@@ -11,7 +11,7 @@ def test_resolve_channel_media_dir_uses_ohmo_workspace(monkeypatch, tmp_path):
 
     media_dir = resolve_channel_media_dir("feishu")
 
-    assert media_dir == workspace / "attachments" / "feishu"
+    assert media_dir.resolve() == (workspace / "attachments" / "feishu").resolve()
     assert media_dir.is_dir()
 
 
@@ -23,5 +23,5 @@ def test_resolve_channel_media_dir_uses_openharness_data_dir(monkeypatch, tmp_pa
 
     media_dir = resolve_channel_media_dir("telegram")
 
-    assert media_dir == data_dir / "media" / "telegram"
+    assert media_dir.resolve() == (data_dir / "media" / "telegram").resolve()
     assert media_dir.is_dir()

@@ -665,7 +665,7 @@ def create_default_command_registry(
             relative.parent.mkdir(parents=True, exist_ok=True)
             if not relative.exists():
                 relative.write_text(content, encoding="utf-8")
-                created.append(str(relative.relative_to(Path(context.cwd))))
+                created.append(str(relative.relative_to(Path(context.cwd).resolve())))
 
         if not created:
             return CommandResult(message="Project already initialized for OpenHarness.")

@@ -699,9 +699,9 @@ async def test_load_skill_includes_base_directory_and_sampled_files(tmp_path: Pa
     assert '<skill_content name="research">' in load_result.output
     assert f"Base directory for this skill: {expected_base}" in load_result.output
     assert "Relative paths in this skill" in load_result.output
-    assert "<skill_files>" in load_result.output
-    assert f"<file>{skill_dir / 'references' / 'guide.md'}</file>" in load_result.output
-    assert f"<file>{skill_dir / 'scripts' / 'demo.sh'}</file>" in load_result.output
+    assert '<skill_files>' in load_result.output
+    assert f"<file>{(skill_dir / 'references' / 'guide.md').resolve()}</file>" in load_result.output
+    assert f"<file>{(skill_dir / 'scripts' / 'demo.sh').resolve()}</file>" in load_result.output
     assert f"<file>{skill_dir / 'SKILL.md'}</file>" not in load_result.output
     assert "This text must stay lazy-loaded." not in load_result.output
     assert load_result.metadata == {

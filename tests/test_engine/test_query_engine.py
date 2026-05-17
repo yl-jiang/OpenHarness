@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -1276,7 +1277,7 @@ async def test_execute_tool_call_applies_path_rules_to_directory_roots(tmp_path:
             registry,
             PermissionSettings(
                 mode=PermissionMode.DEFAULT,
-                path_rules=[{"pattern": str(blocked_dir) + "/*", "allow": False}],
+                path_rules=[{"pattern": str((blocked_dir / "*").resolve()), "allow": False}],
             ),
         ),
         "glob",
@@ -2196,12 +2197,11 @@ async def test_subagent_stop_hook_fires_when_spawned_agent_finishes(tmp_path: Pa
                                     "prompt": "ready",
                                     "subagent_type": "worker",
                                     "mode": "local_agent",
-                                    "command": 'python -u -c "import sys; print(sys.stdin.readline().strip())"',
-                                },
-                            )
-                        ],
-                    ),
-                    usage=UsageSnapshot(input_tokens=2, output_tokens=2),
+                                    "command": f'{sys.executable} -u -c "import sys; print(sys.stdin.readline().strip())"',
+                                    },
+                                    )
+                                    ],
+                                    ),                    usage=UsageSnapshot(input_tokens=2, output_tokens=2),
                 ),
                 _FakeResponse(
                     message=ConversationMessage(

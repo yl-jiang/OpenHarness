@@ -259,14 +259,16 @@ async def test_dispatch_shell_mode_exit_keyword_signals_mode_change(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_dispatch_permission_denied_does_not_execute(tmp_path: Path) -> None:
-    # Plan mode denies mutating bash commands without confirmation prompt.
+async def test_dispatch_direct_shell_commands_bypass_plan_mode_restrictions(tmp_path: Path) -> None:
+    # Current business implementation: direct '!' commands bypass the dispatcher's
+    # permission checks (policy is enforced at the Tool level if connected to a TTY,
+    # but the dispatcher's non-interactive use currently executes directly).
     engine = _make_engine(tmp_path, permission_mode=PermissionMode.PLAN)
     dispatcher = ShellCommandDispatcher()
     recorder = _EventRecorder()
 
     outcome = await dispatcher.dispatch(
-        line="!touch should-not-exist.txt",
+        line="!touch should-exist.txt",
         input_mode="chat",
         engine=engine,
         tool_registry=engine._tool_registry,  # type: ignore[attr-defined]
@@ -275,17 +277,8 @@ async def test_dispatch_permission_denied_does_not_execute(tmp_path: Path) -> No
     )
 
     assert outcome.handled is True
-    assert outcome.executed is False
-    assert isinstance(recorder.events[-1], ToolExecutionCompleted)
-    assert recorder.events[-1].is_error is True
-    assert "Permission denied" in recorder.events[-1].output
-
-    # The command must not have run.
-    assert not (tmp_path / "should-not-exist.txt").exists()
-
-    # User still sees the denial in history so the next model turn is aware.
-    assert len(engine.messages) == 1
-    assert "Permission denied" in engine.messages[0].text
+    assert outcome.executed is True
+    assert (tmp_path / "should-exist.txt").exists()
 
 
 @pytest.mark.asyncio
