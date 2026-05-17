@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
 from openharness.utils.log import get_logger
 
