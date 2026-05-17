@@ -581,7 +581,15 @@ async def tool_execution_stage(state: TurnState) -> AsyncIterator[tuple[StreamEv
     if len(tool_calls) == 1:
         tc = tool_calls[0]
         yield ToolExecutionStarted(tool_name=tc.name, tool_input=tc.input), None
-        result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
+        try:
+            result = await _execute_tool_call(context, tc.name, tc.id, tc.input)
+        except Exception as exc:
+            logger.exception("tool execution raised: name=%s id=%s", tc.name, tc.id, exc_info=exc)
+            result = ToolResultBlock(
+                tool_use_id=tc.id,
+                content=f"Tool {tc.name} failed: {type(exc).__name__}: {exc}",
+                is_error=True,
+            )
         yield ToolExecutionCompleted(
             tool_name=tc.name,
             output=result.content,
