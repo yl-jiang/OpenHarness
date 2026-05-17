@@ -291,7 +291,7 @@ def _print_gateway_banner(
     print(
         f"\n"
         f"  ╔══════════════════════════════════════════╗\n"
-        f"  ║          solo gateway starting       ║\n"
+        f"  ║          solo gateway starting           ║\n"
         f"  ╚══════════════════════════════════════════╝\n"
         f"  pid       : {pid}\n"
         f"  workspace : {workspace}\n"
