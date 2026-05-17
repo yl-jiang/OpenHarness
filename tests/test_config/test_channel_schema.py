@@ -8,3 +8,9 @@ from openharness.config.schema import TelegramConfig
 def test_telegram_config_exposes_proxy_field():
     assert "proxy" in TelegramConfig.model_fields
     assert TelegramConfig().proxy is None
+
+
+def test_bot_name_defaults_to_ohmo():
+    config = TelegramConfig()
+
+    assert config.bot_name == "ohmo"

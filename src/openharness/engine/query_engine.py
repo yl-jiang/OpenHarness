@@ -691,6 +691,7 @@ class QueryEngine:
 
     async def continue_pending(self, *, max_turns: int | None = None) -> AsyncIterator[StreamEvent]:
         """Continue an interrupted tool loop without appending a new user message."""
+        self._messages = sanitize_conversation_messages(self._messages)
         logger.event(
             "continue_pending_start",
             session_id=self._tool_metadata.get("session_id"),
