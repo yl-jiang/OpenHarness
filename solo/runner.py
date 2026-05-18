@@ -84,23 +84,31 @@ def _read_file(path: Path) -> str | None:
     return content or None
 
 
-def _build_system_prompt(workspace: Path) -> str:
-    """Build the system prompt by combining routing rules with persona files and memory."""
-    sections = [_SOLO_TOOL_ROUTER_PROMPT.strip()]
+def _build_time_context() -> str:
+    """Build a short time-context prefix for the user message.
 
-    # Inject current local time so the model always knows "today" in the user's timezone
+    Kept out of the system prompt so the static system prompt can benefit from
+    KV-Cache prefix sharing across turns.
+    """
     from datetime import datetime
+
     local_now = datetime.now().astimezone()
-    sections.append(
+    return (
         f"## Current Local Time\n"
         f"- Date: {local_now.strftime('%Y-%m-%d')}\n"
         f"- Time: {local_now.strftime('%H:%M:%S')}\n"
         f"- Timezone: {local_now.tzname()} (UTC{local_now.strftime('%z')})\n"
         f"- Weekday: {local_now.strftime('%A')}\n"
         f"\n"
-        f"When the user mentions time without an explicit date (e.g. '7:22起床', '昨晚加班'), "
-        f"assume it refers to TODAY in the above local timezone, not UTC."
+        f"When the user mentions time without an explicit date (e.g. '7:22起床', '加班到很晚'), "
+        f"assume it refers to TODAY in the above local timezone, not UTC.\n"
+        f"\n---\n\n"
     )
+
+
+def _build_system_prompt(workspace: Path) -> str:
+    """Build the system prompt by combining routing rules with persona files and memory."""
+    sections = [_SOLO_TOOL_ROUTER_PROMPT.strip()]
 
     soul = _read_file(get_soul_path(workspace))
     if soul:
@@ -162,6 +170,10 @@ class SoloQueryRunner:
         )
         if prior_messages:
             engine.load_messages(sanitize_conversation_messages(prior_messages))
+
+        # Prefix the user message with a volatile time context so the *system prompt*
+        # remains static and can be fully KV-Cache shared across turns.
+        user_text = _build_time_context() + user_text
 
         yield ("progress", "🤔 正在思考...")
         last_text = ""

@@ -77,6 +77,16 @@ class SoloGatewayService:
         self.state_file.write_text(state.model_dump_json(indent=2) + "\n", encoding="utf-8")
 
     async def run_foreground(self) -> int:
+        existing_pid = _check_pid_file(self.pid_file)
+        if existing_pid is not None:
+            logger.error(
+                "solo gateway already running pid=%d workspace=%s",
+                existing_pid,
+                self._workspace,
+            )
+            print(f"Error: solo gateway is already running (pid {existing_pid})")
+            return 1
+
         self.pid_file.write_text(str(os.getpid()), encoding="utf-8")
         self.write_state(running=True)
         channels = self._config.enabled_channels or []
@@ -243,6 +253,22 @@ def _pid_is_running(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def _check_pid_file(pid_file: Path) -> int | None:
+    """Check whether *pid_file* points to a live process.
+
+    Returns the existing PID if the process is still running,
+    otherwise removes the stale file and returns ``None``.
+    """
+    if not pid_file.exists():
+        return None
+    with contextlib.suppress(ValueError):
+        existing_pid = int(pid_file.read_text(encoding="utf-8").strip())
+        if _pid_is_running(existing_pid):
+            return existing_pid
+    pid_file.unlink(missing_ok=True)
+    return None
 
 
 def _iter_workspace_gateway_pids(workspace: str | Path | None = None) -> list[int]:

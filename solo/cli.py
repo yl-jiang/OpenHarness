@@ -223,7 +223,7 @@ def gateway_install_service_cmd(
     root = get_workspace_root(workspace)
     args = ["-m", "solo", "gateway", "run", "--workspace", str(root)]
     if install_service("ai.solo.gateway", args, root, description="solo Personal Logging Gateway"):
-        print(f"✅ solo gateway service installed and started (label: ai.solo.gateway)")
+        print("✅ solo gateway service installed and started (label: ai.solo.gateway)")
     else:
         print("❌ Failed to install solo gateway service.", file=sys.stderr)
         raise typer.Exit(1)
