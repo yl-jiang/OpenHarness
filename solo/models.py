@@ -13,7 +13,7 @@ class SoloConfig(BaseModel):
     """Persistent solo app configuration."""
 
     version: int = 1
-    provider_profile: str = "codex"
+    provider_profile: str = "deepseek"
     enabled_channels: list[str] = Field(default_factory=list)
     channel_configs: dict[str, dict[str, Any]] = Field(default_factory=dict)
     send_progress: bool = True
@@ -26,7 +26,7 @@ class SoloState(BaseModel):
 
     running: bool = False
     pid: int | None = None
-    provider_profile: str = "codex"
+    provider_profile: str = "deepseek"
     enabled_channels: list[str] = Field(default_factory=list)
     last_error: str | None = None
 
