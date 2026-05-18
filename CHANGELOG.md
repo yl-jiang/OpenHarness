@@ -9,6 +9,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 ### Added
 
 - `solo` is now a standalone app/package with its own `~/.solo` workspace, config, CLI, gateway bridge/service, OpenHarness-backed domain agent, model-structured bulk import, zero-guess pending confirmations, reports, reminders, and solo-only tools.
+- `wolo` is now a standalone work-log app/package with its own `~/.wolo` workspace, CLI, gateway bridge/service, OpenHarness-backed domain agent, work-focused prompts, reports, reminders, and wolo-only tools.
 - `settings.json` now supports `max_children` to configure the primary session's total managed subagent/background-agent child budget instead of always using the built-in default of 16, and accepts `"infinity"` for an unbounded budget.
 - Shell injection support in the React TUI and skills:
   - Pressing **bare `!`** in the chat composer (or typing `!cmd`) opens a one-shot shell prompt. The command is dispatched to the built-in `bash` tool with `origin="user_shell"`, runs under the existing permission model, and its output is injected back into the conversation as a tool result the model can read.
@@ -36,6 +37,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Changed
 
+- `wolo` now separates main record structuring from work artifact extraction and retries malformed JSON responses, so long-running apps keep the primary log even when artifact extraction fails transiently.
 - `/export` now writes a timestamped Markdown session export into the current working directory by default, using a richer Kimi-style transcript format with frontmatter, overview, turns, tool calls, and tool results.
 - **Approval architecture refactor**: Consolidated three scattered approval entry points into a single `ApprovalCoordinator` subsystem (`src/openharness/permissions/approvals.py`).  `PermissionChecker` is now a pure policy engine (no session memory); all remembered-approval state lives in `ApprovalState` inside `ApprovalCoordinator`.  Preview-capable tools (`edit_file`, `write_file`) defer the soft-confirmation check to the richer diff-preview prompt so users see exactly one approval modal per file write.  Approval state persists correctly across conversation turns via `QueryEngine._approval_coordinator`.
 
