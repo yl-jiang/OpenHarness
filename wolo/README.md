@@ -93,6 +93,9 @@ export WOLO_WORKSPACE=/path/to/workspace
     entries/
       <entry_id>/
         <copied source files>
+  sessions/
+    latest-<session_key_hash>.json
+    session-<session_id>.json
   memory/
     MEMORY.md
     *.md
@@ -118,7 +121,10 @@ export WOLO_WORKSPACE=/path/to/workspace
 | `data/profile_updates.jsonl` | 待沉淀的工作上下文更新建议 |
 | `data/reports.jsonl` | 生成过的周报、月报、年报 |
 | `attachments/` | 远程通道发来的图片/文件会复制到这里，供后续按工作记录追溯原始材料；模型通过 `wolo_view` / `wolo_search` / `wolo_show` 也能拿到这些路径 |
+| `sessions/` | 会话快照；用于恢复远程频道上下文，也作为 auto-dream 的 session 输入 |
 | `memory/` | 长期工作记忆，例如项目背景、工具链、prompt 模式 |
+
+开启 OpenHarness `memory.auto_dream_enabled` 后，wolo 会基于自己 workspace 下的 `memory/` 和 `sessions/` 参与 auto-dream。
 
 ## 4. 快速开始
 

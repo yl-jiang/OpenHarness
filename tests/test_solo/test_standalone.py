@@ -1,20 +1,28 @@
 import asyncio
 import contextlib
 import logging
+import hashlib
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
+from openharness.api.usage import UsageSnapshot
 from openharness.channels.bus.events import InboundMessage
 from openharness.channels.bus.queue import MessageBus
+from openharness.engine.messages import ConversationMessage, TextBlock
+from openharness.engine.stream_events import AssistantTurnComplete
+from openharness.tools.base import ToolExecutionContext
+from openharness.tools.skill_manager_tool import SkillManagerToolInput
 
 from solo.config import build_channel_manager_config, load_config, save_config
 from solo.gateway.bridge import SoloGatewayBridge
 from solo.gateway.service import SoloGatewayService
 from solo.models import SoloConfig
+from solo.runner import SoloQueryRunner
+from solo.session import save_conversation
 from solo.store import SoloStore
-from solo.workspace import get_config_path, get_data_dir, initialize_workspace, workspace_health
+from solo.workspace import get_config_path, get_data_dir, get_sessions_dir, get_skills_dir, initialize_workspace, workspace_health
 
 
 def test_standalone_solo_workspace_and_config_are_independent(tmp_path: Path):
@@ -28,6 +36,8 @@ def test_standalone_solo_workspace_and_config_are_independent(tmp_path: Path):
     assert get_data_dir(workspace) == workspace.resolve() / "data"
     assert workspace_health(workspace)["config"] is True
     assert workspace_health(workspace)["attachments_dir"] is True
+    assert workspace_health(workspace)["skills_dir"] is True
+    assert get_skills_dir(workspace) == workspace.resolve() / "skills"
     assert store.root == workspace.resolve() / "data"
 
 
@@ -150,6 +160,30 @@ def test_standalone_solo_gateway_run_configures_foreground_logging(tmp_path: Pat
     assert stdlib_logging.getLogger("httpcore").level == stdlib_logging.WARNING
 
 
+def test_standalone_solo_gateway_logging_writes_workspace_log_file(tmp_path: Path):
+    import logging as stdlib_logging
+
+    from openharness.utils.log import get_logger, reset_logging
+    from solo.cli import _configure_gateway_logging
+    from solo.workspace import get_logs_dir
+
+    workspace = tmp_path / ".solo"
+    save_config(SoloConfig(log_level="INFO"), workspace)
+
+    reset_logging()
+    try:
+        _configure_gateway_logging(workspace)
+        get_logger("solo.gateway.bridge").info("workspace log test", channel="feishu")
+        stdlib_logging.shutdown()
+        log_path = get_logs_dir(workspace) / "gateway.log"
+        assert log_path.exists()
+        content = log_path.read_text(encoding="utf-8")
+        assert "workspace log test" in content
+    finally:
+        reset_logging()
+        stdlib_logging.getLogger().handlers.clear()
+
+
 @pytest.mark.asyncio
 async def test_standalone_solo_gateway_logs_inbound_and_outbound(
     tmp_path: Path,
@@ -261,5 +295,113 @@ async def test_standalone_solo_record_tool_persists_traceable_attachments(tmp_pa
     assert "camera.png" in show.output
     assert str(stored_path) in show.output
     assert "solo_show" in tool_names
+    assert "bash" in tool_names
     assert "read_file" in tool_names
     assert "image_to_text" in tool_names
+    assert "skill_manager" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_solo_query_runner_passes_settings_and_autodream_context(tmp_path: Path, monkeypatch):
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    skill_dir = get_skills_dir(workspace) / "nightly-reflection"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: nightly-reflection\ndescription: Review the day's emotional patterns.\n---\n\n# Nightly Reflection\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+
+    class FakeQueryEngine:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+            self.messages: list[ConversationMessage] = []
+            self.tool_metadata = kwargs["tool_metadata"]
+
+        def set_system_prompt(self, prompt: str):
+            captured["refreshed_system_prompt"] = prompt
+
+        def load_messages(self, messages):
+            self.messages = list(messages)
+
+        async def submit_message(self, prompt):
+            self.messages.append(
+                prompt if isinstance(prompt, ConversationMessage) else ConversationMessage.from_user_text(prompt)
+            )
+            yield AssistantTurnComplete(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="已记录")]),
+                usage=UsageSnapshot(),
+            )
+
+    monkeypatch.setattr("solo.runner.QueryEngine", FakeQueryEngine)
+    runner = SoloQueryRunner(store, api_client=object())
+
+    result = await runner.run("今天状态不错", session_key="feishu:chat-1")
+
+    assert result == "已记录"
+    assert captured["settings"] is not None
+    assert "nightly-reflection" in captured["system_prompt"]
+    assert "Review the day's emotional patterns." in captured["system_prompt"]
+    tool_metadata = captured["tool_metadata"]
+    assert tool_metadata["extra_skill_dirs"] == (str(workspace / "skills"),)
+    assert tool_metadata["user_skills_dir"] == str(workspace / "skills")
+    assert tool_metadata["skill_registry_cwd"] is None
+    assert callable(tool_metadata["system_prompt_refresher"])
+    assert tool_metadata["autodream_context"] == {
+        "memory_dir": str(workspace / "memory"),
+        "session_dir": str(workspace / "sessions"),
+        "app_label": "solo personal memory",
+        "runner_module": "ohmo",
+    }
+
+
+@pytest.mark.asyncio
+async def test_solo_skill_manager_writes_workspace_local_skills(tmp_path: Path):
+    from solo.tools import SoloToolRegistry, build_oh_registry
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    registry = build_oh_registry(SoloToolRegistry(SoloStore(workspace)))
+    skill_tool = registry.get("skill_manager")
+    assert skill_tool is not None
+
+    context = ToolExecutionContext(
+        cwd=tmp_path,
+        metadata={
+            "extra_skill_dirs": (str(workspace / "skills"),),
+            "user_skills_dir": str(workspace / "skills"),
+            "skill_registry_cwd": None,
+        },
+    )
+    content = "---\nname: evening-wrap\ndescription: Close the day cleanly.\n---\n\n# Evening Wrap\nCapture loose ends.\n"
+
+    result = await skill_tool.execute(
+        SkillManagerToolInput(action="write", name="evening-wrap", content=content),
+        context,
+    )
+
+    assert result.is_error is False
+    skill_path = workspace / "skills" / "evening-wrap" / "SKILL.md"
+    assert skill_path.exists()
+    assert skill_path.read_text(encoding="utf-8") == content
+
+
+def test_solo_save_conversation_writes_session_snapshot_for_autodream(tmp_path: Path):
+    workspace = initialize_workspace(tmp_path / ".solo")
+    session_key = "feishu:chat-1"
+    session_id = "solo-session-1"
+
+    save_conversation(
+        workspace,
+        session_key,
+        [ConversationMessage.from_user_text("hello solo")],
+        session_id=session_id,
+    )
+
+    token = hashlib.sha1(session_key.encode("utf-8")).hexdigest()[:12]
+    latest_path = get_sessions_dir(workspace) / f"latest-{token}.json"
+    session_path = get_sessions_dir(workspace) / f"session-{session_id}.json"
+
+    assert latest_path.exists()
+    assert session_path.exists()
+    assert '"session_id": "solo-session-1"' in session_path.read_text(encoding="utf-8")

@@ -298,8 +298,10 @@ async def test_wolo_record_tool_persists_traceable_attachments(tmp_path: Path):
     assert "design.pdf" in show.output
     assert str(stored_path) in show.output
     assert "wolo_show" in tool_names
+    assert "bash" in tool_names
     assert "read_file" in tool_names
     assert "image_to_text" in tool_names
+    assert "skill_manager" in tool_names
 
 
 def test_cli_queries_work_artifacts(tmp_path: Path):

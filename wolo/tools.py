@@ -13,8 +13,10 @@ from pydantic import BaseModel, ConfigDict
 
 from openharness.attachments import StoredAttachment
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
+from openharness.tools.bash_tool import BashTool
 from openharness.tools.file_read_tool import FileReadTool
 from openharness.tools.image_to_text_tool import ImageToTextTool
+from openharness.tools.skill_manager_tool import SkillManagerTool
 from openharness.utils.log import get_logger
 
 from wolo.artifacts import persist_work_artifacts
@@ -739,8 +741,10 @@ def build_oh_registry(registry: WoloToolRegistry) -> ToolRegistry:
     oh_registry = ToolRegistry()
     for domain_tool in registry.tools():
         oh_registry.register(_WoloToolAdapter(domain_tool))
+    oh_registry.register(BashTool())
     oh_registry.register(FileReadTool())
     oh_registry.register(ImageToTextTool())
+    oh_registry.register(SkillManagerTool())
     return oh_registry
 
 

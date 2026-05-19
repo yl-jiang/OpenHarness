@@ -81,19 +81,37 @@ fi
 
 success "Found $("$PYTHON_CMD" --version 2>&1) (${PYTHON_CMD})"
 
+USE_UV=false
+if command -v uv >/dev/null 2>&1; then
+    USE_UV=true
+fi
+
 step "Preparing developer virtual environment"
 
 if [ ! -d "$VENV_DIR" ]; then
     info "Creating virtual environment at ${VENV_DIR}"
-    "$PYTHON_CMD" -m venv "$VENV_DIR"
+    if [ "$USE_UV" = true ]; then
+        uv venv "$VENV_DIR" --python "$PYTHON_CMD"
+    else
+        "$PYTHON_CMD" -m venv "$VENV_DIR"
+    fi
 fi
 
 source "$VENV_DIR/bin/activate"
-python -m pip install --upgrade pip setuptools wheel --quiet
-success "Virtual environment ready: ${VENV_DIR}"
+
+if [ "$USE_UV" = true ]; then
+    success "Virtual environment ready: ${VENV_DIR} (uv)"
+else
+    python -m pip install --upgrade pip setuptools wheel --quiet
+    success "Virtual environment ready: ${VENV_DIR}"
+fi
 
 step "Installing current checkout in editable mode"
-python -m pip install -e "$REPO_ROOT" --quiet
+if [ "$USE_UV" = true ]; then
+    uv pip install -e "$REPO_ROOT"
+else
+    python -m pip install -e "$REPO_ROOT" --quiet
+fi
 success "Installed OpenHarness from ${REPO_ROOT}"
 
 if [ "$WITH_CHANNELS" = true ]; then

@@ -16,6 +16,7 @@ from openharness.engine.stream_events import AssistantTurnComplete, ToolExecutio
 from openharness.engine.types import ToolMetadataKey
 from openharness.permissions.checker import PermissionChecker
 from openharness.permissions.modes import PermissionMode
+from openharness.skills import load_skill_registry
 from openharness.ui.runtime import _resolve_api_client_from_settings, _resolve_vision_config
 from openharness.utils.log import get_logger
 
@@ -23,7 +24,7 @@ from solo.memory import load_memory_prompt
 from solo.session import load_conversation, save_conversation
 from solo.store import SoloStore
 from solo.tools import SoloToolRegistry, build_oh_registry
-from solo.workspace import get_soul_path, get_user_path, get_workspace_root
+from solo.workspace import get_memory_dir, get_sessions_dir, get_skills_dir, get_soul_path, get_user_path, get_workspace_root
 
 logger = get_logger(__name__)
 
@@ -142,6 +143,9 @@ def _build_user_message(text: str, media: list[str] | None) -> str | Conversatio
 def _build_system_prompt(workspace: Path) -> str:
     """Build the system prompt by combining routing rules with persona files and memory."""
     sections = [_SOLO_TOOL_ROUTER_PROMPT.strip()]
+    skills_prompt = _build_skills_prompt(workspace)
+    if skills_prompt:
+        sections.append(skills_prompt)
 
     soul = _read_file(get_soul_path(workspace))
     if soul:
@@ -156,6 +160,32 @@ def _build_system_prompt(workspace: Path) -> str:
         sections.append(memory)
 
     return "\n\n".join(sections)
+
+
+def _build_skills_prompt(workspace: Path) -> str | None:
+    registry = load_skill_registry(None, extra_skill_dirs=[get_skills_dir(workspace)])
+    skills = [skill for skill in registry.list_skills() if not skill.disable_model_invocation]
+    if not skills:
+        return None
+    lines = [
+        "# Available Skills",
+        "",
+        "The following skills are available via the `skill_manager` tool.",
+        'When a user\'s request matches a skill, call `skill_manager(action="load", name="<skill_name>")` before proceeding.',
+        "",
+    ]
+    for skill in skills:
+        lines.append(f"- **{skill.name}**: {skill.description}")
+    return "\n".join(lines)
+
+
+def _autodream_context(workspace: Path) -> dict[str, str]:
+    return {
+        "memory_dir": str(get_memory_dir(workspace)),
+        "session_dir": str(get_sessions_dir(workspace)),
+        "app_label": "solo personal memory",
+        "runner_module": "ohmo",
+    }
 
 
 class SoloQueryRunner:
@@ -193,6 +223,7 @@ class SoloQueryRunner:
         oh_registry = build_oh_registry(registry)
 
         workspace = get_workspace_root(self._store.workspace)
+        skill_dirs = (str(get_skills_dir(workspace)),)
         prior_messages, session_id = load_conversation(workspace, session_key) if session_key else ([], None)
         if not session_id:
             session_id = uuid4().hex[:12]
@@ -206,11 +237,17 @@ class SoloQueryRunner:
             system_prompt=_build_system_prompt(workspace),
             max_tokens=self._settings.max_tokens,
             max_turns=_MAX_TURNS,
+            settings=self._settings,
             tool_metadata={
                 "session_id": session_id,
+                "extra_skill_dirs": skill_dirs,
+                "user_skills_dir": str(get_skills_dir(workspace)),
+                "skill_registry_cwd": None,
                 ToolMetadataKey.VISION_MODEL_CONFIG.value: _resolve_vision_config(self._settings),
+                "autodream_context": _autodream_context(workspace),
             },
         )
+        engine.tool_metadata["system_prompt_refresher"] = lambda: engine.set_system_prompt(_build_system_prompt(workspace))
         if prior_messages:
             engine.load_messages(sanitize_conversation_messages(prior_messages))
 

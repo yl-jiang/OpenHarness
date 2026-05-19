@@ -11,13 +11,13 @@ from uuid import uuid4
 from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
 from openharness.utils.fs import atomic_write_text
 
-logger = logging.getLogger(__name__)
+from wolo.workspace import get_sessions_dir
 
-_SESSIONS_SUBDIR = "sessions"
+logger = logging.getLogger(__name__)
 
 
 def _sessions_dir(workspace: Path) -> Path:
-    d = workspace / _SESSIONS_SUBDIR
+    d = get_sessions_dir(workspace)
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -25,6 +25,10 @@ def _sessions_dir(workspace: Path) -> Path:
 def _snapshot_path(workspace: Path, session_key: str) -> Path:
     token = hashlib.sha1(session_key.encode("utf-8")).hexdigest()[:12]
     return _sessions_dir(workspace) / f"latest-{token}.json"
+
+
+def _session_path(workspace: Path, session_id: str) -> Path:
+    return _sessions_dir(workspace) / f"session-{session_id}.json"
 
 
 def save_conversation(
@@ -42,7 +46,9 @@ def save_conversation(
         "message_count": len(clean),
     }
     path = _snapshot_path(workspace, session_key)
-    atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2) + "\n")
+    data = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    atomic_write_text(path, data)
+    atomic_write_text(_session_path(workspace, payload["session_id"]), data)
     logger.debug("wolo session saved session_key=%s messages=%d path=%s", session_key, len(clean), path)
 
 

@@ -24,7 +24,7 @@ from wolo.gateway.service import (
 from wolo.models import WoloConfig, WoloEntry, WoloRecord
 from wolo.processor import WoloProcessor
 from wolo.store import WoloStore
-from wolo.workspace import get_config_path, get_workspace_root, initialize_workspace, workspace_health
+from wolo.workspace import get_config_path, get_logs_dir, get_workspace_root, initialize_workspace, workspace_health
 
 app = typer.Typer(
     name="wolo",
@@ -357,15 +357,26 @@ def _configure_gateway_logging(workspace: str | Path | None = None) -> None:
     config = load_config(workspace)
     level_name = str(config.log_level or "INFO").upper()
     level = getattr(logging, level_name, logging.INFO)
+    log_path = get_logs_dir(workspace) / "gateway.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
 
     formatter = _WoloFormatter("%(asctime)s %(levelname)-5s [%(name)s] %(message)s")
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(formatter)
+    handlers: list[logging.Handler] = []
+
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    handlers.append(file_handler)
+
+    if sys.stderr.isatty():
+        stream_handler = logging.StreamHandler(sys.stderr)
+        stream_handler.setFormatter(formatter)
+        handlers.append(stream_handler)
 
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
     root_logger.handlers.clear()
-    root_logger.addHandler(handler)
+    for handler in handlers:
+        root_logger.addHandler(handler)
 
     # Silence noisy third-party loggers that pollute gateway output
     for noisy in ("httpx", "httpcore", "urllib3", "asyncio", "aiohttp"):

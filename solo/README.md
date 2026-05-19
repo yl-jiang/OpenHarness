@@ -87,6 +87,9 @@ export SOLO_WORKSPACE=/path/to/workspace
     entries/
       <entry_id>/
         <copied source files>
+  sessions/
+    latest-<session_key_hash>.json
+    session-<session_id>.json
   memory/
     MEMORY.md
     *.md
@@ -105,8 +108,11 @@ export SOLO_WORKSPACE=/path/to/workspace
 | `gateway.pid` | 后台 gateway 进程 PID |
 | `data/` | 存储各类 jsonl 数据文件 |
 | `attachments/` | 远程通道发来的图片/文件会复制到这里，供后续按 record 追溯原始材料；模型通过 `solo_view` / `solo_search` / `solo_show` 也能拿到这些路径 |
+| `sessions/` | 会话快照；用于恢复远程频道上下文，也作为 auto-dream 的 session 输入 |
 | `memory/` | 存储跨会话的长期记忆 markdown 文件 |
 | `logs/` | gateway 运行日志 |
+
+开启 OpenHarness `memory.auto_dream_enabled` 后，solo 会基于自己 workspace 下的 `memory/` 和 `sessions/` 参与 auto-dream。
 
 ## 4. 快速开始
 

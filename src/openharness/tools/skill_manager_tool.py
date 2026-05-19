@@ -368,11 +368,11 @@ class SkillManagerTool(BaseTool):
             return self._load(arguments, context)
 
         if arguments.action == "write":
-            result = self._write(arguments)
+            result = self._write(arguments, context)
         elif arguments.action == "patch":
-            result = self._patch(arguments)
+            result = self._patch(arguments, context)
         elif arguments.action == "delete":
-            result = self._delete(arguments)
+            result = self._delete(arguments, context)
         else:
             return ToolResult(
                 output=f"Unknown action '{arguments.action}'. Valid actions: list, load, write, patch, delete.",
@@ -392,7 +392,7 @@ class SkillManagerTool(BaseTool):
 
     def _list(self, context: ToolExecutionContext) -> ToolResult:
         registry = load_skill_registry(
-            context.cwd,
+            context.metadata.get("skill_registry_cwd", context.cwd),
             extra_skill_dirs=context.metadata.get("extra_skill_dirs"),
             extra_plugin_roots=context.metadata.get("extra_plugin_roots"),
         )
@@ -415,7 +415,7 @@ class SkillManagerTool(BaseTool):
                 is_error=True,
             )
         registry = load_skill_registry(
-            context.cwd,
+            context.metadata.get("skill_registry_cwd", context.cwd),
             extra_skill_dirs=context.metadata.get("extra_skill_dirs"),
             extra_plugin_roots=context.metadata.get("extra_plugin_roots"),
         )
@@ -440,7 +440,7 @@ class SkillManagerTool(BaseTool):
 
     # ── write ────────────────────────────────────────────────────────────────
 
-    def _write(self, arguments: SkillManagerToolInput) -> ToolResult:
+    def _write(self, arguments: SkillManagerToolInput, context: ToolExecutionContext) -> ToolResult:
         if not arguments.name:
             return ToolResult(output="name is required for action='write'.", is_error=True)
         if not arguments.content:
@@ -467,7 +467,7 @@ class SkillManagerTool(BaseTool):
                 is_error=True,
             )
 
-        skill_dir = get_user_skills_dir() / normalised
+        skill_dir = _resolve_user_skills_dir(context) / normalised
         skill_path = skill_dir / "SKILL.md"
         existed = skill_path.exists()
 
@@ -493,7 +493,7 @@ class SkillManagerTool(BaseTool):
 
     # ── patch ────────────────────────────────────────────────────────────────
 
-    def _patch(self, arguments: SkillManagerToolInput) -> ToolResult:
+    def _patch(self, arguments: SkillManagerToolInput, context: ToolExecutionContext) -> ToolResult:
         if not arguments.name:
             return ToolResult(output="name is required for action='patch'.", is_error=True)
         if not arguments.old_string:
@@ -508,7 +508,7 @@ class SkillManagerTool(BaseTool):
             )
 
         normalised = arguments.name.lower().strip()
-        skill_path = get_user_skills_dir() / normalised / "SKILL.md"
+        skill_path = _resolve_user_skills_dir(context) / normalised / "SKILL.md"
 
         if not skill_path.exists():
             return ToolResult(
@@ -554,12 +554,12 @@ class SkillManagerTool(BaseTool):
 
     # ── delete ───────────────────────────────────────────────────────────────
 
-    def _delete(self, arguments: SkillManagerToolInput) -> ToolResult:
+    def _delete(self, arguments: SkillManagerToolInput, context: ToolExecutionContext) -> ToolResult:
         if not arguments.name:
             return ToolResult(output="name is required for action='delete'.", is_error=True)
 
         normalised = arguments.name.lower().strip()
-        skill_dir = get_user_skills_dir() / normalised
+        skill_dir = _resolve_user_skills_dir(context) / normalised
 
         if not skill_dir.exists() or not (skill_dir / "SKILL.md").exists():
             return ToolResult(
@@ -572,3 +572,10 @@ class SkillManagerTool(BaseTool):
 
         shutil.rmtree(skill_dir)
         return ToolResult(output=f"Skill '{normalised}' deleted.")
+
+
+def _resolve_user_skills_dir(context: ToolExecutionContext) -> Path:
+    override = context.metadata.get("user_skills_dir")
+    if override:
+        return Path(override).expanduser().resolve()
+    return get_user_skills_dir()
