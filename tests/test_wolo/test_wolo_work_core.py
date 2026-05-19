@@ -16,7 +16,7 @@ from wolo.agent import (
 from wolo.models import WoloDecision, WoloHighlight, WoloTodo
 from wolo.processor import WoloProcessor
 from wolo.store import WoloStore
-from wolo.tools import WoloToolRegistry
+from wolo.tools import WoloToolRegistry, build_oh_registry
 
 
 class _WorkAgent:
@@ -230,6 +230,76 @@ async def test_report_context_includes_work_artifact_evidence(tmp_path: Path):
     assert "补齐 wolo 周报证据链" in agent.report_context
     assert "派生 artifact 不塞进主 record" in agent.report_context
     assert "先列边界再 patch" in agent.report_context
+
+
+@pytest.mark.asyncio
+async def test_wolo_record_tool_persists_traceable_attachments(tmp_path: Path):
+    from wolo.cli import app
+
+    workspace = tmp_path / ".wolo"
+    source_file = tmp_path / "design.pdf"
+    source_file.write_bytes(b"%PDF-1.4 traceable")
+
+    store = WoloStore(workspace)
+    registry = WoloToolRegistry(
+        store,
+        source_context={
+            "channel": "feishu",
+            "sender_id": "ou_user",
+            "chat_id": "chat_1",
+            "message_id": "msg-wolo-1",
+            "session_key": "feishu:chat_1",
+            "received_at": "2026-05-19T17:35:00+08:00",
+            "message_metadata": {
+                "message_id": "msg-wolo-1",
+                "thread_id": "topic-1",
+                "chat_type": "group",
+            },
+            "media": [str(source_file)],
+        },
+    )
+
+    result = await registry.execute(
+        "wolo_record",
+        {
+            "content": "今天评审了设计文档并沉淀结论",
+            "summary": "设计评审结论入库",
+            "tags": "design,review",
+            "emotion": "完成",
+        },
+    )
+
+    entry = store.list_entries()[0]
+    record = store.list_records()[0]
+    attachment = record.attachments[0]
+    stored_path = store.resolve_attachment_path(attachment)
+    search = await registry.execute("wolo_search", {"query": "设计"})
+    detail = await registry.execute("wolo_show", {"record_id": record.id})
+    tool_names = {tool.name for tool in build_oh_registry(registry).list_tools()}
+    show = CliRunner().invoke(app, ["show", record.id, "--workspace", str(workspace)])
+
+    assert "record_id=" in result
+    assert entry.channel == "feishu"
+    assert entry.sender_id == "ou_user"
+    assert entry.chat_id == "chat_1"
+    assert entry.message_id == "msg-wolo-1"
+    assert entry.metadata["source_message"]["metadata"]["thread_id"] == "topic-1"
+    assert len(entry.attachments) == 1
+    assert record.attachments == entry.attachments
+    assert stored_path.read_bytes() == source_file.read_bytes()
+    assert "attachments=1" in search
+    assert "design.pdf" in search
+    assert str(stored_path) in search
+    assert f"record_id={record.id}" in detail
+    assert "source_message=" in detail
+    assert str(stored_path) in detail
+    assert show.exit_code == 0
+    assert "attachments=1" in show.output
+    assert "design.pdf" in show.output
+    assert str(stored_path) in show.output
+    assert "wolo_show" in tool_names
+    assert "read_file" in tool_names
+    assert "image_to_text" in tool_names
 
 
 def test_cli_queries_work_artifacts(tmp_path: Path):

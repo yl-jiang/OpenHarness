@@ -11,12 +11,15 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
+from openharness.attachments import StoredAttachment
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
+from openharness.tools.file_read_tool import FileReadTool
+from openharness.tools.image_to_text_tool import ImageToTextTool
 from openharness.utils.log import get_logger
 
 from wolo.artifacts import persist_work_artifacts
 from wolo.memory import add_memory_entry
-from wolo.models import ProfileUpdate, WoloRecord
+from wolo.models import ProfileUpdate, WoloEntry, WoloRecord
 from wolo.processor import WoloProcessor
 from wolo.store import WoloStore
 from wolo.utils import (
@@ -73,10 +76,12 @@ class WoloToolRegistry:
         store: WoloStore,
         processor: WoloProcessor | None = None,
         agent_factory: Callable[[], Any] | None = None,
+        source_context: dict[str, Any] | None = None,
     ) -> None:
         self.store = store
         self.processor = processor
         self._agent_factory = agent_factory
+        self._source_context = dict(source_context or {})
 
     def _processor(self) -> WoloProcessor:
         if self.processor is None:
@@ -96,6 +101,7 @@ class WoloToolRegistry:
             WoloDomainTool(_tool_report(), self._handle_report),
             WoloDomainTool(_tool_view(), self._handle_view),
             WoloDomainTool(_tool_search(), self._handle_search),
+            WoloDomainTool(_tool_show(), self._handle_show),
             WoloDomainTool(_tool_todos(), self._handle_todos),
             WoloDomainTool(_tool_done(), self._handle_done),
             WoloDomainTool(_tool_blockers(), self._handle_blockers),
@@ -147,7 +153,7 @@ class WoloToolRegistry:
             }.items()
             if value
         }
-        entry = self.store.record(content, metadata=metadata)
+        entry = self.store.record(content, metadata=metadata, source_context=self._source_context)
         if any(
             arguments.get(key)
             for key in (
@@ -194,6 +200,7 @@ class WoloToolRegistry:
                 related_places=str(arguments.get("related_places") or ""),
                 source=str(metadata.get("source") or "原始"),
                 created_at=_now(),
+                attachments=list(entry.attachments),
             )
             self.store.add_record(record)
             persist_work_artifacts(self.store, record, arguments)
@@ -227,6 +234,7 @@ class WoloToolRegistry:
                     "record_date": item.get("date"),
                     "source": item.get("source") or arguments.get("source") or "补录",
                 },
+                source_context=self._source_context,
             )
             date = str(item.get("date") or datetime.now(timezone.utc).date().isoformat())
             events = str(item.get("events") or "")
@@ -254,6 +262,7 @@ class WoloToolRegistry:
                 related_places=str(item.get("related_places") or ""),
                 source=str(item.get("source") or arguments.get("source") or "补录"),
                 created_at=_now(),
+                attachments=list(entry.attachments),
             )
             self.store.add_record(record)
             persist_work_artifacts(self.store, record, item)
@@ -291,7 +300,11 @@ class WoloToolRegistry:
         content = _required_text(arguments, "content")
         target_date = arguments.get("date") or (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
         logger.info("_handle_backfill date=%s content=%r", target_date, content[:80])
-        entry = self.store.record(content, metadata={"record_date": target_date, "source": "补录"})
+        entry = self.store.record(
+            content,
+            metadata={"record_date": target_date, "source": "补录"},
+            source_context=self._source_context,
+        )
         result = await self._processor().process_pending(limit=20)
         return {
             "ok": True,
@@ -308,8 +321,12 @@ class WoloToolRegistry:
 
     async def _handle_view(self, arguments: dict[str, Any]) -> dict[str, Any]:
         limit = int(arguments.get("limit") or 10)
-        records = [record.to_dict() for record in self.store.list_records(limit=limit)]
-        return {"ok": True, "records": records, "message": _format_records(records)}
+        records = self.store.list_records(limit=limit)
+        return {
+            "ok": True,
+            "records": [record.to_dict() for record in records],
+            "message": _format_records(self.store, records),
+        }
 
     async def _handle_search(self, arguments: dict[str, Any]) -> dict[str, Any]:
         query = str(arguments.get("query") or "")
@@ -330,7 +347,20 @@ class WoloToolRegistry:
         return {
             "ok": True,
             "records": [r.to_dict() for r in records],
-            "message": f"找到了 {len(records)} 条相关记录：\n" + _format_records([r.to_dict() for r in records]),
+            "message": f"找到了 {len(records)} 条相关记录：\n" + _format_records(self.store, records),
+        }
+
+    async def _handle_show(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        record_id = _required_text(arguments, "record_id")
+        record = self.store.get_record(record_id)
+        if record is None:
+            return {"ok": False, "message": f"❌ 未找到 ID 为 {record_id} 的记录。"}
+        entry = self.store.get_entry(record.entry_id)
+        return {
+            "ok": True,
+            "record": record.to_dict(),
+            "entry": json.loads(entry.to_json()) if entry is not None else None,
+            "message": _format_record_trace(self.store, record, entry),
         }
 
     async def _handle_todos(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -402,7 +432,7 @@ class WoloToolRegistry:
         decisions = self.store.list_decisions(project=project, query=query, limit=limit)
         highlights = self.store.list_highlights(project=project, query=query, limit=limit)
         sections = [
-            "## Records\n" + _format_records([record.to_dict() for record in records]),
+            "## Records\n" + _format_records(self.store, records),
             "## Decisions\n" + _format_decisions(decisions),
             "## Highlights\n" + _format_highlights(highlights, empty="暂无重要事项。"),
         ]
@@ -685,6 +715,8 @@ class _WoloToolAdapter(BaseTool):
     def is_read_only(self, arguments: BaseModel) -> bool:
         return self.name in {
             "wolo_view",
+            "wolo_search",
+            "wolo_show",
             "wolo_status",
             "wolo_todos",
             "wolo_blockers",
@@ -707,6 +739,8 @@ def build_oh_registry(registry: WoloToolRegistry) -> ToolRegistry:
     oh_registry = ToolRegistry()
     for domain_tool in registry.tools():
         oh_registry.register(_WoloToolAdapter(domain_tool))
+    oh_registry.register(FileReadTool())
+    oh_registry.register(ImageToTextTool())
     return oh_registry
 
 
@@ -841,6 +875,14 @@ def _tool_search() -> ToolDefinition:
             ("end_date", "string", "YYYY-MM-DD.", False),
             ("limit", "integer", "Number of results.", False),
         ],
+    )
+
+
+def _tool_show() -> ToolDefinition:
+    return _definition(
+        "wolo_show",
+        "Show one wolo record with linked attachment paths and source-message trace data.",
+        [("record_id", "string", "The ID of the record to inspect.", True)],
     )
 
 
@@ -1071,13 +1113,73 @@ def _csv_list(value: Any) -> list[str] | None:
     return [item.strip() for item in str(value).split(",") if item.strip()]
 
 
-def _format_records(records: list[dict[str, Any]]) -> str:
+def _format_records(store: WoloStore, records: list[WoloRecord]) -> str:
     if not records:
         return "暂无 wolo 记录。"
-    return "\n".join(
-        f"- [{record.get('id', '?')}] {record.get('date', '')} {record.get('summary') or record.get('raw_content', '')}"
-        for record in records
-    )
+    lines: list[str] = []
+    for record in records:
+        lines.append(f"- [{record.id}] {record.date} {record.summary or record.raw_content}")
+        lines.extend(_format_attachment_refs(store, record))
+    return "\n".join(lines)
+
+
+def _format_record_trace(store: WoloStore, record: WoloRecord, entry: WoloEntry | None) -> str:
+    lines = [
+        f"record_id={record.id}",
+        f"entry_id={record.entry_id}",
+        f"date={record.date}",
+        f"created_at={record.created_at}",
+        f"source={record.source}",
+        f"summary={record.summary or record.raw_content}",
+    ]
+    if entry is not None:
+        if entry.channel:
+            lines.append(f"channel={entry.channel}")
+        if entry.sender_id:
+            lines.append(f"sender_id={entry.sender_id}")
+        if entry.chat_id:
+            lines.append(f"chat_id={entry.chat_id}")
+        if entry.message_id:
+            lines.append(f"message_id={entry.message_id}")
+        source_message = entry.metadata.get("source_message")
+        if source_message is not None:
+            lines.append(f"source_message={json.dumps(source_message, ensure_ascii=False, sort_keys=True)}")
+    lines.append(f"attachments={len(record.attachments)}")
+    for attachment in record.attachments:
+        lines.append("- " + _format_attachment_line(store, attachment, include_source=True))
+    return "\n".join(lines)
+
+
+def _format_attachment_refs(store: WoloStore, record: WoloRecord) -> list[str]:
+    if not record.attachments:
+        return []
+    lines = [f"  attachments={len(record.attachments)}"]
+    for attachment in record.attachments:
+        lines.append(f"  - {_format_attachment_line(store, attachment)}")
+    return lines
+
+
+def _format_attachment_line(
+    store: WoloStore,
+    attachment: StoredAttachment,
+    *,
+    include_source: bool = False,
+) -> str:
+    parts = [
+        f"kind={attachment.kind}",
+        f"name={attachment.original_name or '(unnamed)'}",
+    ]
+    if attachment.media_type:
+        parts.append(f"mime={attachment.media_type}")
+    if attachment.size_bytes is not None:
+        parts.append(f"size={attachment.size_bytes}")
+    parts.append(f"path={store.resolve_attachment_path(attachment)}")
+    if include_source:
+        parts.append(f"stored_path={attachment.stored_path}")
+        parts.append(f"source_path={attachment.source_path}")
+    if attachment.sha256:
+        parts.append(f"sha256={attachment.sha256}")
+    return " ".join(parts)
 
 
 def _format_todos(todos: list[Any]) -> str:

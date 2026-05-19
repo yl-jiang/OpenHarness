@@ -132,12 +132,17 @@ def get_memory_index_path(workspace: str | Path | None = None) -> Path:
     return get_memory_dir(workspace) / "MEMORY.md"
 
 
+def get_attachments_dir(workspace: str | Path | None = None) -> Path:
+    return get_workspace_root(workspace) / "attachments"
+
+
 def ensure_workspace(workspace: str | Path | None = None) -> Path:
     root = get_workspace_root(workspace)
     root.mkdir(parents=True, exist_ok=True)
     get_data_dir(root).mkdir(parents=True, exist_ok=True)
     get_logs_dir(root).mkdir(parents=True, exist_ok=True)
     get_memory_dir(root).mkdir(parents=True, exist_ok=True)
+    get_attachments_dir(root).mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -168,6 +173,7 @@ def workspace_health(workspace: str | Path | None = None) -> dict[str, bool]:
         "data_dir": get_data_dir(root).exists(),
         "logs_dir": get_logs_dir(root).exists(),
         "memory_dir": get_memory_dir(root).exists(),
+        "attachments_dir": get_attachments_dir(root).exists(),
         "soul": get_soul_path(root).exists(),
         "user": get_user_path(root).exists(),
         "config": get_config_path(root).exists(),

@@ -24,6 +24,7 @@ def test_wolo_workspace_and_config_are_independent(tmp_path: Path, monkeypatch):
     assert get_config_path() == workspace.resolve() / "config.json"
     assert get_data_dir() == workspace.resolve() / "data"
     assert workspace_health()["config"] is True
+    assert workspace_health()["attachments_dir"] is True
     assert store.root == workspace.resolve() / "data"
     assert WoloConfig().provider_profile == "deepseek"
     assert "work log assistant" in get_soul_path().read_text(encoding="utf-8")

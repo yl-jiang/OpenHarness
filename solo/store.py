@@ -5,9 +5,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import shutil
 from typing import Any
 from uuid import uuid4
 
+from openharness.attachments import (
+    StoredAttachment,
+    persist_attachment_paths,
+    resolve_stored_attachment_path,
+)
 from solo.models import (
     PendingConfirmation,
     ProfileUpdate,
@@ -16,7 +22,7 @@ from solo.models import (
     SoloRecord,
     SoloReport,
 )
-from solo.workspace import get_data_dir, initialize_workspace
+from solo.workspace import get_attachments_dir, get_data_dir, initialize_workspace
 from solo.utils import _now
 
 ENTRIES_FILENAME = "entries.jsonl"
@@ -32,6 +38,7 @@ class SoloStore:
     def __init__(self, workspace: str | Path | None = None) -> None:
         self.workspace = initialize_workspace(workspace)
         self.root = get_data_dir(self.workspace)
+        self.attachments_root = get_attachments_dir(self.workspace)
         self.entries_path = self.root / ENTRIES_FILENAME
         self.records_path = self.root / RECORDS_FILENAME
         self.pending_confirmations_path = self.root / PENDING_CONFIRMATIONS_FILENAME
@@ -72,20 +79,28 @@ class SoloStore:
         message_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         created_at: str | None = None,
+        media: list[str] | None = None,
+        source_context: dict[str, Any] | None = None,
     ) -> SoloEntry:
         text = content.strip()
         if not text:
             raise ValueError("solo content cannot be empty")
         self.initialize()
+        context = dict(source_context or {})
+        created_text = created_at or _now()
+        entry_id = uuid4().hex[:12]
+        entry_media = [str(item) for item in (context.get("media") or media or []) if str(item).strip()]
+        attachments = self._persist_entry_attachments(entry_id, entry_media, created_text)
         entry = SoloEntry(
-            id=uuid4().hex[:12],
+            id=entry_id,
             content=text,
-            created_at=created_at or _now(),
-            channel=channel,
-            sender_id=sender_id,
-            chat_id=chat_id,
-            message_id=message_id,
-            metadata=metadata or {},
+            created_at=created_text,
+            channel=str(context.get("channel") or channel),
+            sender_id=str(context.get("sender_id") or sender_id),
+            chat_id=str(context.get("chat_id") or chat_id),
+            message_id=self._optional_text(context.get("message_id") or message_id),
+            metadata=self._merge_entry_metadata(metadata, context),
+            attachments=attachments,
         )
         with self.entries_path.open("a", encoding="utf-8") as file:
             file.write(entry.to_json() + "\n")
@@ -96,12 +111,21 @@ class SoloStore:
         entries = [SoloEntry.from_json(line) for line in self._read_jsonl(self.entries_path)]
         return entries if limit is None else entries[-limit:]
 
+    def get_entry(self, entry_id: str) -> SoloEntry | None:
+        return next((entry for entry in self.list_entries() if entry.id == entry_id), None)
+
     def add_record(self, record: SoloRecord) -> None:
         self._append_jsonl(self.records_path, record.to_json())
 
     def list_records(self, *, limit: int | None = None) -> list[SoloRecord]:
         records = [SoloRecord.from_json(line) for line in self._read_jsonl(self.records_path)]
         return records if limit is None else records[-limit:]
+
+    def get_record(self, record_id: str) -> SoloRecord | None:
+        return next((record for record in self.list_records() if record.id == record_id), None)
+
+    def resolve_attachment_path(self, attachment: StoredAttachment) -> Path:
+        return resolve_stored_attachment_path(self.workspace, attachment)
 
     def update_record(self, record_id: str, **updates: Any) -> bool:
         """Update an existing record by ID with new field values."""
@@ -113,6 +137,7 @@ class SoloStore:
             if r.id == record_id:
                 # Apply updates
                 data = r.to_dict()
+                data["attachments"] = list(r.attachments)
                 data.update(updates)
                 new_records.append(SoloRecord(**data))
                 updated = True
@@ -267,6 +292,7 @@ class SoloStore:
         return {
             "entries": len(entries),
             "records": len(records),
+            "attachments": sum(len(entry.attachments) for entry in entries),
             "pending_confirmations": len(pending),
             "last_entry_at": entries[-1].created_at if entries else None,
             "path": str(self.root),
@@ -327,6 +353,51 @@ class SoloStore:
         with path.open("a", encoding="utf-8") as file:
             file.write(line + "\n")
         path.chmod(0o600)
+
+    def _persist_entry_attachments(
+        self,
+        entry_id: str,
+        media: list[str],
+        captured_at: str,
+    ) -> list[StoredAttachment]:
+        if not media:
+            return []
+        try:
+            return persist_attachment_paths(
+                media,
+                workspace_root=Path(self.workspace),
+                attachments_root=self.attachments_root,
+                entry_id=entry_id,
+                captured_at=captured_at,
+            )
+        except Exception:
+            shutil.rmtree(self.attachments_root / "entries" / entry_id, ignore_errors=True)
+            raise
+
+    def _merge_entry_metadata(
+        self,
+        metadata: dict[str, Any] | None,
+        source_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        merged = dict(metadata or {})
+        if not source_context:
+            return merged
+
+        source_message = dict(merged.get("source_message") or {})
+        if session_key := self._optional_text(source_context.get("session_key")):
+            source_message["session_key"] = session_key
+        if received_at := self._optional_text(source_context.get("received_at")):
+            source_message["received_at"] = received_at
+        message_metadata = source_context.get("message_metadata")
+        if isinstance(message_metadata, dict) and message_metadata:
+            source_message["metadata"] = dict(message_metadata)
+        if source_message:
+            merged["source_message"] = source_message
+        return merged
+
+    def _optional_text(self, value: object) -> str | None:
+        text = str(value).strip() if value is not None else ""
+        return text or None
 
 
 def _tokenize_enhanced(text: str) -> list[str]:

@@ -210,6 +210,7 @@ class SoloProcessor:
             related_places=str(result.get("related_places") or ""),
             source=str(metadata.get("source") or "原始"),
             created_at=_now(),
+            attachments=list(entry.attachments),
         )
 
     def _record_from_import(self, entry: SoloEntry, item: dict[str, object]) -> SoloRecord:
@@ -241,6 +242,7 @@ class SoloProcessor:
             related_places=str(item.get("related_places") or ""),
             source=str(item.get("source") or metadata.get("source") or "补录"),
             created_at=_now(),
+            attachments=list(entry.attachments),
         )
 
     def _pending_from_result(self, entry: SoloEntry, result: dict[str, object]) -> PendingConfirmation:

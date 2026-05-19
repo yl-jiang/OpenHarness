@@ -39,6 +39,28 @@ def _content_snippet(text: str, *, limit: int = 160) -> str:
     return normalized[: limit - 3] + "..."
 
 
+def _source_message_id(message: InboundMessage) -> str | None:
+    metadata = message.metadata or {}
+    for key in ("message_id", "event_id"):
+        value = metadata.get(key)
+        if value:
+            return str(value)
+    return None
+
+
+def _build_source_context(message: InboundMessage) -> dict[str, object]:
+    return {
+        "channel": message.channel,
+        "sender_id": message.sender_id,
+        "chat_id": message.chat_id,
+        "message_id": _source_message_id(message),
+        "message_metadata": dict(message.metadata or {}),
+        "media": list(message.media),
+        "session_key": message.session_key,
+        "received_at": message.timestamp.isoformat(),
+    }
+
+
 def _format_gateway_error(exc: Exception) -> str:
     """Return a short, user-facing error message."""
     message = str(exc).strip() or exc.__class__.__name__
@@ -266,7 +288,12 @@ class WoloGatewayBridge:
 
     async def _handle_record(self, message: InboundMessage, store: WoloStore, content: str) -> str:
         runner = WoloQueryRunner(store, profile=self._provider_profile)
-        async for kind, text in runner.stream_run(content, session_key=message.session_key):
+        async for kind, text in runner.stream_run(
+            content,
+            session_key=message.session_key,
+            media=message.media,
+            source_context=_build_source_context(message),
+        ):
             if kind == "final":
                 return text
             if text:

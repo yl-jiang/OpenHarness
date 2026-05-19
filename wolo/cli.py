@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 import sys
@@ -20,7 +21,7 @@ from wolo.gateway.service import (
     start_gateway_process,
     stop_gateway_process,
 )
-from wolo.models import WoloConfig
+from wolo.models import WoloConfig, WoloEntry, WoloRecord
 from wolo.processor import WoloProcessor
 from wolo.store import WoloStore
 from wolo.workspace import get_config_path, get_workspace_root, initialize_workspace, workspace_health
@@ -102,7 +103,8 @@ def list_cmd(
     limit: int = typer.Option(20, "--limit", min=1, help="Maximum entries to show"),
 ) -> None:
     for entry in WoloStore(workspace).list_entries(limit=limit):
-        print(f"{entry.created_at} [{entry.channel}] {entry.content}")
+        attachment_hint = f" [attachments={len(entry.attachments)}]" if entry.attachments else ""
+        print(f"{entry.created_at} [{entry.channel}]{attachment_hint} {entry.content}")
 
 
 @app.command("process")
@@ -122,7 +124,22 @@ def view_cmd(
     limit: int = typer.Option(20, "--limit", min=1, help="Maximum records to show"),
 ) -> None:
     for record in WoloStore(workspace).list_records(limit=limit):
-        print(f"{record.date} {record.emotion} [{record.source}] [{record.tags}] {record.summary}")
+        attachment_hint = f" [attachments={len(record.attachments)}]" if record.attachments else ""
+        print(f"{record.date} {record.emotion} [{record.source}] [{record.tags}]{attachment_hint} {record.summary}")
+
+
+@app.command("show")
+def show_cmd(
+    record_id: str = typer.Argument(..., help="Record ID to inspect"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    record = store.get_record(record_id)
+    if record is None:
+        print(f"Record not found: {record_id}")
+        raise typer.Exit(1)
+    entry = store.get_entry(record.entry_id)
+    print(_format_record_trace(store, record, entry))
 
 
 @app.command("search")
@@ -263,7 +280,7 @@ def status_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
     gateway = gateway_status(workspace=workspace)
     print(
         f"wolo: entries={status['entries']} | records={status['records']} | "
-        f"todos={status['todos']} | decisions={status['decisions']} | "
+        f"attachments={status['attachments']} | todos={status['todos']} | decisions={status['decisions']} | "
         f"highlights={status['highlights']} | pending={status['pending_confirmations']} | "
         f"gateway={'running' if gateway.running else 'stopped'} | "
         f"path={status['path']}"
@@ -353,6 +370,46 @@ def _configure_gateway_logging(workspace: str | Path | None = None) -> None:
     # Silence noisy third-party loggers that pollute gateway output
     for noisy in ("httpx", "httpcore", "urllib3", "asyncio", "aiohttp"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+
+def _format_record_trace(
+    store: WoloStore,
+    record: WoloRecord,
+    entry: WoloEntry | None,
+) -> str:
+    lines = [
+        f"record_id={record.id}",
+        f"entry_id={record.entry_id}",
+        f"date={record.date}",
+        f"created_at={record.created_at}",
+        f"source={record.source}",
+        f"summary={record.summary}",
+    ]
+    if entry is not None:
+        lines.extend(
+            [
+                f"channel={entry.channel}",
+                f"sender_id={entry.sender_id}",
+                f"chat_id={entry.chat_id}",
+                f"message_id={entry.message_id or ''}",
+            ]
+        )
+        source_message = dict((entry.metadata or {}).get("source_message") or {})
+        if source_message:
+            lines.append(
+                "source_message="
+                + json.dumps(source_message, ensure_ascii=False, sort_keys=True)
+            )
+    attachments = record.attachments or (entry.attachments if entry is not None else [])
+    lines.append(f"attachments={len(attachments)}")
+    for index, attachment in enumerate(attachments, start=1):
+        lines.append(
+            f"{index}. [{attachment.kind}] {attachment.original_name} | "
+            f"mime={attachment.media_type} | size={attachment.size_bytes} | sha256={attachment.sha256}"
+        )
+        lines.append(f"   stored_path={store.resolve_attachment_path(attachment)}")
+        lines.append(f"   source_path={attachment.source_path}")
+    return "\n".join(lines)
 
 
 class _WoloFormatter(logging.Formatter):

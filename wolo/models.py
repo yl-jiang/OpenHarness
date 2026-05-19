@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from typing import Any
 
+from openharness.attachments import StoredAttachment
 from pydantic import BaseModel, Field
 
 
@@ -43,6 +44,7 @@ class WoloEntry:
     chat_id: str
     message_id: str | None = None
     metadata: dict[str, Any] | None = None
+    attachments: list[StoredAttachment] = field(default_factory=list)
 
     @classmethod
     def from_json(cls, line: str) -> "WoloEntry":
@@ -56,6 +58,11 @@ class WoloEntry:
             chat_id=str(data.get("chat_id", "")),
             message_id=data.get("message_id"),
             metadata=dict(data.get("metadata") or {}),
+            attachments=[
+                StoredAttachment.from_dict(item)
+                for item in data.get("attachments") or []
+                if isinstance(item, dict)
+            ],
         )
 
     def to_json(self) -> str:
@@ -69,6 +76,7 @@ class WoloEntry:
                 "chat_id": self.chat_id,
                 "message_id": self.message_id,
                 "metadata": self.metadata or {},
+                "attachments": [item.to_dict() for item in self.attachments],
             },
             ensure_ascii=False,
         )
@@ -97,10 +105,17 @@ class WoloRecord:
     related_places: str = ""
     source: str = "原始"
     created_at: str = ""
+    attachments: list[StoredAttachment] = field(default_factory=list)
 
     @classmethod
     def from_json(cls, line: str) -> "WoloRecord":
-        return cls(**json.loads(line))
+        data = json.loads(line)
+        data["attachments"] = [
+            StoredAttachment.from_dict(item)
+            for item in data.get("attachments") or []
+            if isinstance(item, dict)
+        ]
+        return cls(**data)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -123,6 +138,7 @@ class WoloRecord:
             "related_places": self.related_places,
             "source": self.source,
             "created_at": self.created_at,
+            "attachments": [item.to_dict() for item in self.attachments],
         }
 
     def to_json(self) -> str:

@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import mimetypes
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from openharness.api.client import SupportsStreamingMessages
 from openharness.config import load_settings
 from openharness.config.settings import PermissionSettings
-from openharness.engine.messages import sanitize_conversation_messages
+from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, sanitize_conversation_messages
 from openharness.engine.query_engine import QueryEngine
 from openharness.engine.stream_events import AssistantTurnComplete, ToolExecutionCompleted, ToolExecutionStarted
+from openharness.engine.types import ToolMetadataKey
 from openharness.permissions.checker import PermissionChecker
 from openharness.permissions.modes import PermissionMode
-from openharness.ui.runtime import _resolve_api_client_from_settings
+from openharness.ui.runtime import _resolve_api_client_from_settings, _resolve_vision_config
 from openharness.utils.log import get_logger
 
 from solo.memory import load_memory_prompt
@@ -39,6 +42,7 @@ _SOLO_TOOL_ROUTER_PROMPT = """你是 solo app 的语义路由 agent。用户通�
 | 明确要记录 / 日常流水 / 情绪事件 | → solo_record 或 solo_import_records |
 | 补录多天旧日记、粘贴流水账 | → solo_import_records（由你拆分，不要要求用户整理） |
 | 查看最近记录 | → solo_view |
+| 查某条记录对应的原图 / 原文件 / 来源消息 | → solo_show |
 | 查状态/数量/路径 | → solo_status |
 | 要报告/复盘 | → solo_report |
 | 处理/整理待确认记录 | → solo_process |
@@ -69,6 +73,7 @@ _SOLO_TOOL_ROUTER_PROMPT = """你是 solo app 的语义路由 agent。用户通�
 ## 其他规则
 
 - 调用 solo_record 时尽量填写 corrected_content、summary、tags、emotion 等结构化字段
+- `solo_view` / `solo_search` 会显示已绑定的 attachments；如果需要继续读取历史附件：图片用 `image_to_text`，UTF-8 文本附件用 `read_file`，其他二进制文件先返回路径
 - 发现对话中涉及值得长期保留的用户背景信息（家人/工作/常去地点）→ 调用 solo_remember 写入 memory（直接持久化）
 - 对于需要审核的结构化资料更新建议 → 使用 solo_profile_update
 - 工具参数中不要填写当前日期，工具会自行计算
@@ -106,6 +111,34 @@ def _build_time_context() -> str:
     )
 
 
+def _is_image_file(path: str) -> bool:
+    """Check if a file path refers to an image based on MIME type."""
+    mime, _ = mimetypes.guess_type(path)
+    return bool(mime and mime.startswith("image/"))
+
+
+def _build_user_message(text: str, media: list[str] | None) -> str | ConversationMessage:
+    """Build a user message, optionally embedding image blocks from media paths.
+
+    Returns a plain string if no image media is present (preserving existing behavior),
+    or a ConversationMessage with TextBlock + ImageBlock content when images are provided.
+    """
+    if not media:
+        return text
+
+    image_paths = [p for p in media if _is_image_file(p)]
+    if not image_paths:
+        return text
+
+    content: list[TextBlock | ImageBlock] = [TextBlock(text=text)]
+    for img_path in image_paths:
+        try:
+            content.append(ImageBlock.from_path(img_path))
+        except Exception:
+            logger.warning("Failed to encode image attachment: %s", img_path)
+    return ConversationMessage.from_user_content(content)
+
+
 def _build_system_prompt(workspace: Path) -> str:
     """Build the system prompt by combining routing rules with persona files and memory."""
     sections = [_SOLO_TOOL_ROUTER_PROMPT.strip()]
@@ -141,7 +174,14 @@ class SoloQueryRunner:
         self._client = api_client or _resolve_api_client_from_settings(settings)
         self._store = store
 
-    async def stream_run(self, user_text: str, session_key: str = ""):
+    async def stream_run(
+        self,
+        user_text: str,
+        session_key: str = "",
+        *,
+        media: list[str] | None = None,
+        source_context: dict[str, Any] | None = None,
+    ):
         """Async generator yielding ``(kind, text)`` tuples during execution.
 
         Yields:
@@ -149,7 +189,7 @@ class SoloQueryRunner:
             ``("tool_hint", text)`` — tool-use notification
             ``("final", text)``    — the final reply (always last)
         """
-        registry = SoloToolRegistry(self._store)
+        registry = SoloToolRegistry(self._store, source_context=source_context)
         oh_registry = build_oh_registry(registry)
 
         workspace = get_workspace_root(self._store.workspace)
@@ -166,20 +206,23 @@ class SoloQueryRunner:
             system_prompt=_build_system_prompt(workspace),
             max_tokens=self._settings.max_tokens,
             max_turns=_MAX_TURNS,
-            tool_metadata={"session_id": session_id},
+            tool_metadata={
+                "session_id": session_id,
+                ToolMetadataKey.VISION_MODEL_CONFIG.value: _resolve_vision_config(self._settings),
+            },
         )
         if prior_messages:
             engine.load_messages(sanitize_conversation_messages(prior_messages))
 
         # Prefix the user message with a volatile time context so the *system prompt*
         # remains static and can be fully KV-Cache shared across turns.
-        user_text = _build_time_context() + user_text
+        user_message = _build_user_message(_build_time_context() + user_text, media)
 
         yield ("progress", "🤔 正在思考...")
         last_text = ""
         tool_outputs: list[str] = []
         try:
-            async for event in engine.submit_message(user_text):
+            async for event in engine.submit_message(user_message):
                 if isinstance(event, ToolExecutionStarted):
                     yield ("tool_hint", f"🛠️ 正在调用 {event.tool_name}")
                 elif isinstance(event, AssistantTurnComplete):
@@ -197,8 +240,20 @@ class SoloQueryRunner:
 
         yield ("final", last_text or "\n".join(tool_outputs) or "这里是 solo 记录专用 bot，请发送想要记录的内容。")
 
-    async def run(self, user_text: str, session_key: str = "") -> str:
-        async for kind, text in self.stream_run(user_text, session_key):
+    async def run(
+        self,
+        user_text: str,
+        session_key: str = "",
+        *,
+        media: list[str] | None = None,
+        source_context: dict[str, Any] | None = None,
+    ) -> str:
+        async for kind, text in self.stream_run(
+            user_text,
+            session_key,
+            media=media,
+            source_context=source_context,
+        ):
             if kind == "final":
                 return text
         return "这里是 solo 记录专用 bot，请发送想要记录的内容。"

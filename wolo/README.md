@@ -89,6 +89,10 @@ export WOLO_WORKSPACE=/path/to/workspace
     pending_confirmations.jsonl
     profile_updates.jsonl
     reports.jsonl
+  attachments/
+    entries/
+      <entry_id>/
+        <copied source files>
   memory/
     MEMORY.md
     *.md
@@ -113,6 +117,7 @@ export WOLO_WORKSPACE=/path/to/workspace
 | `data/pending_confirmations.jsonl` | 需要确认的模糊记录 |
 | `data/profile_updates.jsonl` | 待沉淀的工作上下文更新建议 |
 | `data/reports.jsonl` | 生成过的周报、月报、年报 |
+| `attachments/` | 远程通道发来的图片/文件会复制到这里，供后续按工作记录追溯原始材料；模型通过 `wolo_view` / `wolo_search` / `wolo_show` 也能拿到这些路径 |
 | `memory/` | 长期工作记忆，例如项目背景、工具链、prompt 模式 |
 
 ## 4. 快速开始
@@ -140,7 +145,10 @@ wolo process
 ```bash
 wolo view
 wolo view --limit 50
+wolo show <record_id>
 ```
+
+如果记录绑定了图片或文件，`wolo view` / `wolo search` / `wolo_work_query` 会显示附件摘要，`wolo show <record_id>` 会给出可追溯的绝对存储路径；模型可继续对图片调用 `image_to_text`，对 UTF-8 文本附件调用 `read_file`。
 
 搜索 prompt 或 tool 相关记录：
 
@@ -268,6 +276,12 @@ wolo view --limit 20
 
 ```text
 2026-05-18 完成 [原始] [项目,代码,tool] 修复 gateway 去重逻辑
+```
+
+如果要查看某条工作记录绑定的原始图片/文件、来源消息元数据和落盘路径，可以用：
+
+```bash
+wolo show <record_id>
 ```
 
 ### 5.7 `search`

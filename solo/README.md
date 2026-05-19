@@ -83,6 +83,10 @@ export SOLO_WORKSPACE=/path/to/workspace
     pending_confirmations.jsonl
     profile_updates.jsonl
     reports.jsonl
+  attachments/
+    entries/
+      <entry_id>/
+        <copied source files>
   memory/
     MEMORY.md
     *.md
@@ -100,6 +104,7 @@ export SOLO_WORKSPACE=/path/to/workspace
 | `user.md` | 用户个人资料快照（姓名、职业、重要人物等） |
 | `gateway.pid` | 后台 gateway 进程 PID |
 | `data/` | 存储各类 jsonl 数据文件 |
+| `attachments/` | 远程通道发来的图片/文件会复制到这里，供后续按 record 追溯原始材料；模型通过 `solo_view` / `solo_search` / `solo_show` 也能拿到这些路径 |
 | `memory/` | 存储跨会话的长期记忆 markdown 文件 |
 | `logs/` | gateway 运行日志 |
 
@@ -128,7 +133,10 @@ solo process
 ```bash
 solo view
 solo view --limit 50
+solo show <record_id>
 ```
+
+如果记录绑定了图片或文件，`solo view` / `solo search` 会显示附件摘要，`solo show <record_id>` 会给出可追溯的绝对存储路径；模型可继续对图片调用 `image_to_text`，对 UTF-8 文本附件调用 `read_file`。
 
 生成周报：
 
@@ -252,6 +260,12 @@ solo view --limit 20
 
 ```text
 2026-05-16 积极 [原始] [工作,成长] 完成 solo 独立化
+```
+
+如果要查看某条结构化记录绑定的原始图片/文件、来源消息元数据和落盘路径，可以用：
+
+```bash
+solo show <record_id>
 ```
 
 ### 5.7 `report`
