@@ -36,7 +36,7 @@ for arg in "$@"; do
             echo "Usage: $0 [--with-channels] [--global-venv]"
             echo ""
             echo "Installs the current checkout in editable mode and"
-            echo "registers oh/ohmo in ~/.local/bin."
+            echo "registers CLI commands in ~/.local/bin."
             echo ""
             echo "  default         use ./ .openharness-venv inside the current repo"
             echo "  --global-venv   use ~/.openharness-venv but still install the current repo"
@@ -119,10 +119,11 @@ fi
 step "Registering global commands"
 
 mkdir -p "$BIN_DIR"
-ln -snf "$VENV_DIR/bin/oh" "$BIN_DIR/oh"
-ln -snf "$VENV_DIR/bin/ohmo" "$BIN_DIR/ohmo"
-ln -snf "$VENV_DIR/bin/openharness" "$BIN_DIR/openharness"
-success "Linked oh/ohmo into ${BIN_DIR}"
+GLOBAL_COMMANDS=(oh ohmo openharness solo wolo)
+for cmd in "${GLOBAL_COMMANDS[@]}"; do
+    ln -snf "$VENV_DIR/bin/$cmd" "$BIN_DIR/$cmd"
+done
+success "Linked ${GLOBAL_COMMANDS[*]} into ${BIN_DIR}"
 
 ensure_path_in_file() {
     local rc_file="$1"
@@ -168,7 +169,7 @@ echo -e "${BOLD}${GREEN}Developer install complete.${RESET}"
 echo ""
 echo "  Repo root:           $REPO_ROOT"
 echo "  Virtual environment: $VENV_DIR"
-echo "  Command links:       $BIN_DIR/oh , $BIN_DIR/ohmo"
+echo "  Command links:       $BIN_DIR/oh , $BIN_DIR/ohmo , $BIN_DIR/openharness , $BIN_DIR/solo , $BIN_DIR/wolo"
 echo ""
 echo "  If this shell does not see the commands yet, run one of:"
 echo "    bash: source ~/.bashrc"
