@@ -82,9 +82,9 @@ def test_get_user_skill_dirs_includes_openharness_claude_and_agents(tmp_path: Pa
 
     dirs = get_user_skill_dirs()
 
-    assert tmp_path / "config" / "skills" in dirs
-    assert tmp_path / "home" / ".claude" / "skills" in dirs
-    assert tmp_path / "home" / ".agents" / "skills" in dirs
+    assert (tmp_path / "config" / "skills").resolve() in dirs
+    assert (tmp_path / "home" / ".claude" / "skills").resolve() in dirs
+    assert (tmp_path / "home" / ".agents" / "skills").resolve() in dirs
 
 
 def test_load_skill_registry_uses_configured_user_skill_dirs(tmp_path: Path, monkeypatch):
