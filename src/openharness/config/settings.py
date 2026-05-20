@@ -31,6 +31,16 @@ _ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-9;]*m")
 _DEFAULT_MAX_CHILDREN = 16
 
 
+def _default_user_skill_dirs() -> list[str]:
+    config_root = Path(os.environ.get("OPENHARNESS_CONFIG_DIR") or (Path.home() / ".openharness"))
+    home = Path.home()
+    return [
+        str(config_root / "skills"),
+        str(home / ".claude" / "skills"),
+        str(home / ".agents" / "skills"),
+    ]
+
+
 def strip_ansi_escape_sequences(text: str) -> str:
     """Remove ANSI escape sequences from text.
 
@@ -623,6 +633,7 @@ class Settings(BaseModel):
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     enabled_plugins: dict[str, bool] = Field(default_factory=dict)
     allow_project_plugins: bool = False
+    user_skill_dirs: list[str] = Field(default_factory=_default_user_skill_dirs)
     allow_project_skills: bool = True
     project_skill_dirs: list[str] = Field(
         default_factory=lambda: [".openharness/skills", ".agents/skills", ".claude/skills"]

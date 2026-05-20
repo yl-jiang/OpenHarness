@@ -696,7 +696,7 @@ def _runtime_prompt_dependency_fingerprint(
         _LOCAL_RULES_FILE,
     ]
     if not coordinator_mode:
-        for directory in get_user_skill_dirs():
+        for directory in get_user_skill_dirs(settings, create_missing=True):
             paths.extend(_iter_prompt_dependency_files(directory))
         if settings.allow_project_skills:
             for directory in discover_project_skill_dirs(root, settings.project_skill_dirs):

@@ -24,6 +24,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - `oh --dry-run` safe preview mode for inspecting resolved runtime settings, auth state, prompt assembly, commands, skills, tools, and configured MCP servers without executing the model or tools.
 - Docker as an alternative sandbox backend (`sandbox.backend = "docker"`) for stronger execution isolation with configurable resource limits, network isolation, and automatic image management.
 - Built-in `gemini` provider profile so `oh setup` offers Google Gemini as a first-class provider choice, with `gemini_api_key` auth source and `gemini-2.5-flash` as the default model.
+- `settings.json` now supports `user_skill_dirs` for overriding the user-level skill discovery roots used by `load_skill_registry`; when omitted, OpenHarness still falls back to `~/.openharness/skills`, `~/.claude/skills`, and `~/.agents/skills`.
 - `diagnose` skill: trace agent run failures and regressions using structured evidence from run artifacts.
 - Skill frontmatter now supports `disable-model-invocation` for hiding a skill from model auto-discovery and `user-invocable` for hiding it from user-facing `/skills` entry points.
 - OpenAI-compatible API client (`--api-format openai`) supporting any provider that implements the OpenAI `/v1/chat/completions` format, including Alibaba DashScope, DeepSeek, GitHub Models, Groq, Together AI, Ollama, and more.

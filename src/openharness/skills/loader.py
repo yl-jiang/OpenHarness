@@ -3,22 +3,21 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from openharness.config.paths import get_config_dir
-from openharness.config.settings import PathRuleConfig, load_settings
+from openharness.config.settings import PathRuleConfig, _default_user_skill_dirs, load_settings
 from openharness.skills.bundled import get_bundled_skills
 from openharness.skills.metadata import load_skill_definition
 from openharness.skills.registry import SkillRegistry
 from openharness.skills.types import SkillDefinition
 from openharness.utils.log import get_logger
 
+if TYPE_CHECKING:
+    from openharness.config.settings import Settings
+
 logger = get_logger(__name__)
 
-_USER_COMPAT_SKILL_DIRS = (
-    (".claude", "skills"),
-    (".agents", "skills"),
-)
 _DEFAULT_PROJECT_SKILL_DIRS = (".openharness/skills", ".agents/skills", ".claude/skills")
 
 
@@ -29,9 +28,14 @@ def get_user_skills_dir() -> Path:
     return path
 
 
-def get_user_skill_dirs() -> list[Path]:
-    """Return user-level skill directories loaded by default."""
-    return [get_user_skills_dir(), *(Path.home().joinpath(*parts) for parts in _USER_COMPAT_SKILL_DIRS)]
+def get_user_skill_dirs(settings: Settings | None = None, *, create_missing: bool = False) -> list[Path]:
+    """Return user-level skill directories, using settings overrides when provided."""
+    raw_dirs: list[str] = getattr(settings, "user_skill_dirs", None) or _default_user_skill_dirs()
+    directories = [Path(path).expanduser().resolve() for path in raw_dirs if str(path).strip()]
+    if create_missing:
+        for directory in directories:
+            directory.mkdir(parents=True, exist_ok=True)
+    return directories
 
 
 def get_project_skills_dir(cwd: str | Path) -> Path:
@@ -48,14 +52,14 @@ def load_skill_registry(
 ) -> SkillRegistry:
     """Load bundled, user-defined, project, and plugin skills."""
     registry = SkillRegistry()
+    resolved_settings = settings or load_settings()
     for skill in get_bundled_skills():
         registry.register(skill)
-    for skill in load_user_skills():
+    for skill in load_user_skills(resolved_settings):
         registry.register(skill)
     for skill in load_skills_from_dirs(extra_skill_dirs, source="user"):
         registry.register(skill)
 
-    resolved_settings = settings or load_settings()
     if cwd is not None and getattr(resolved_settings, "allow_project_skills", True):
         project_dirs = discover_project_skill_dirs(
             cwd,
@@ -101,9 +105,9 @@ def apply_skill_path_rules(
         existing_patterns.add(pattern)
 
 
-def load_user_skills() -> list[SkillDefinition]:
-    """Load markdown skills from user-level OpenHarness and compatibility directories."""
-    return load_skills_from_dirs(get_user_skill_dirs(), source="user")
+def load_user_skills(settings: Settings | None = None) -> list[SkillDefinition]:
+    """Load markdown skills from configured user-level skill directories."""
+    return load_skills_from_dirs(get_user_skill_dirs(settings), source="user")
 
 
 def discover_project_skill_dirs(

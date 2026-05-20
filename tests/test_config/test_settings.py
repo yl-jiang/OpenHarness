@@ -180,6 +180,15 @@ class TestLoadSaveSettings:
 
         assert math.isinf(s.max_children)
 
+    def test_load_existing_file_supports_user_skill_dirs(self, tmp_path: Path):
+        path = tmp_path / "settings.json"
+        configured_dirs = [str(tmp_path / "skills-a"), str(tmp_path / "skills-b")]
+        path.write_text(json.dumps({"user_skill_dirs": configured_dirs}), encoding="utf-8")
+
+        s = load_settings(path)
+
+        assert s.user_skill_dirs == configured_dirs
+
     def test_save_and_load_roundtrip(self, tmp_path: Path, monkeypatch):
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)

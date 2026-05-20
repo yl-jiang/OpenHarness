@@ -87,6 +87,19 @@ def test_get_user_skill_dirs_includes_openharness_claude_and_agents(tmp_path: Pa
     assert tmp_path / "home" / ".agents" / "skills" in dirs
 
 
+def test_load_skill_registry_uses_configured_user_skill_dirs(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    default_dir = get_user_skills_dir()
+    _write_skill(default_dir, "default-only")
+    custom_dir = tmp_path / "custom-skills"
+    _write_skill(custom_dir, "custom-review")
+
+    registry = load_skill_registry(settings=Settings(user_skill_dirs=[str(custom_dir)]))
+
+    assert registry.get("custom-review") is not None
+    assert registry.get("default-only") is None
+
+
 def test_load_skill_registry_includes_project_local_skills(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     repo = tmp_path / "repo"
