@@ -60,7 +60,13 @@ def add_memory_entry(workspace: str | Path | None, title: str, content: str) -> 
             (h for h in existing if _effective_signature(h.path, h.signature) == signature),
             None,
         )
-        path = duplicate.path if duplicate is not None else _next_memory_path(memory_dir, slug)
+        if duplicate is not None:
+            path = duplicate.path
+        else:
+            # Prefer updating the base slug file in-place over creating _2/_3 variants.
+            base_path = memory_dir / f"{slug}.md"
+            slug_match = next((h for h in existing if h.path == base_path), None)
+            path = slug_match.path if slug_match is not None else _next_memory_path(memory_dir, slug)
         now = utc_now()
         now_text = format_datetime(now)
         if path.exists():
