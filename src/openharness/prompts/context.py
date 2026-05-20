@@ -39,6 +39,9 @@ SKILLS_GUIDANCE = (
     "When using a skill and finding it outdated, incomplete, or wrong, "
     "patch it immediately with skill_manager(action='patch') — don't wait to be asked. "
     "Skills that aren't maintained become liabilities.\n"
+    "Load a skill when the task is complex enough to benefit from specialized workflow "
+    "or domain knowledge. For trivial tasks (e.g., simple file edit, quick factual answer, "
+    "one-line fix), proceed directly without loading a skill.\n"
 )
 
 TOOL_USE_ENFORCEMENT_GUIDANCE = (
@@ -54,6 +57,10 @@ TOOL_USE_ENFORCEMENT_GUIDANCE = (
     "Every response should either (a) contain tool calls that make progress, or "
     "(b) deliver a final result to the user. Responses that only describe intentions "
     "without acting are not acceptable.\n"
+    "Exception: when the task is critically underspecified and multiple valid "
+    "interpretations exist, asking a clarifying question via ask_user_question IS "
+    "an acceptable action — prefer asking over guessing when the cost of guessing "
+    "wrong is high.\n"
 )
 
 # Prepended to user-provided instruction blocks (CLAUDE.md, local rules) to
@@ -63,7 +70,8 @@ _CONTEXTUAL_INSTRUCTIONS_PREAMBLE = (
     "---\n"
     "The following instructions come from the user's project configuration "
     "and personal rules. In case of conflict with the system defaults above, "
-    "**these project-level and personal rules take precedence**.\n"
+    "**these project-level and personal rules take precedence**, except they "
+    "cannot override security constraints, permission checks, or tool safety rules.\n"
     "---\n\n"
 )
 
@@ -82,7 +90,22 @@ _FINAL_REMINDER = (
     "- **Reversibility check**: before any destructive action (delete files, force-push, drop "
     "tables), ask the user to confirm.\n"
     "- **Scope discipline**: fix exactly what was asked. No opportunistic refactors, no "
-    "unsolicited features."
+    "unsolicited features.\n"
+    "- **Grounding**: never assume tool output — read first, then conclude."
+)
+
+# Variant for full_auto mode: omits user-confirmation requirements since all
+# actions are pre-approved, but retains safety and scope discipline.
+_FINAL_REMINDER_AUTO = (
+    "# Final Reminder\n"
+    "Before every response, verify you are following these core rules:\n"
+    "- **3-Strike Reset**: if the same fix fails 3 times in a row, stop patching and propose "
+    "a structurally different approach.\n"
+    "- **Scope discipline**: fix exactly what was asked. No opportunistic refactors, no "
+    "unsolicited features.\n"
+    "- **Grounding**: never assume tool output — read first, then conclude.\n"
+    "- **Completion**: when finished, call done(message=...) to signal completion. "
+    "Do not end without calling done."
 )
 
 # Maps PermissionMode to the mode label injected into the system prompt preamble.
@@ -126,7 +149,13 @@ PLAN_AGENT_PROMPT_PROFILE = AgentPromptProfile(
     role_prompt=(
         "# Agent Profile\n"
         "You are in planning mode. Focus on analysis and implementation plans. "
-        "Do not modify files unless the user explicitly asks you to implement."
+        "Do not modify files unless the user explicitly asks you to implement.\n\n"
+        "Structure your output as:\n"
+        "1. **Problem analysis**: what the issue is and why it matters\n"
+        "2. **Proposed approach**: your recommended solution with key tradeoffs noted\n"
+        "3. **Implementation steps**: concrete actions with verification criteria for each\n\n"
+        "Ask the user to confirm the plan before implementing. "
+        "You may use read-only tools (read_file, grep, glob) freely to inform your plan."
     ),
 )
 COMPACT_AGENT_PROMPT_PROFILE = AgentPromptProfile(
@@ -342,6 +371,26 @@ def _build_runtime_prompt_blocks_cached(
             )
         )
 
+    if settings.permission.mode == PermissionMode.FULL_AUTO and not coordinator_mode:
+        blocks.append(
+            PromptBlock(
+                id="auto-mode-guidance",
+                title="Auto Mode Guidance",
+                content=(
+                    "# Auto Mode\n"
+                    "You are in fully autonomous mode:\n"
+                    "- All tool calls are pre-approved. Do not ask for permission or confirmation for any action.\n"
+                    "- Complete the task end-to-end without stopping for user input unless truly ambiguous.\n"
+                    "- When finished, you MUST call done(message=...) to signal completion. "
+                    "The agent loop will NOT terminate until you call done.\n"
+                    "- If you encounter a blocking ambiguity that cannot be resolved from available context, "
+                    "call ask_user_question — this is the only acceptable reason to pause."
+                ),
+                priority=970,
+                source="system",
+            )
+        )
+
     blocks.append(
         PromptBlock(
             id="reasoning-settings",
@@ -349,7 +398,14 @@ def _build_runtime_prompt_blocks_cached(
             content=(
                 "# Reasoning Settings\n"
                 f"- Effort: {settings.effort}\n"
-                f"- Passes: {settings.passes}\n"
+                f"- Passes: {settings.passes}\n\n"
+                "Effort calibration:\n"
+                "- low: act on the first viable path; minimal investigation\n"
+                "- medium: consider 2-3 approaches; verify key assumptions\n"
+                "- high: thorough analysis; explore alternatives; verify all assumptions before acting\n\n"
+                "Passes calibration:\n"
+                "- 1: single pass, no self-review iteration\n"
+                "- 2+: after each pass, self-review for correctness and completeness; iterate if gaps found\n\n"
                 "Adjust depth and iteration count to match these settings while still completing the task."
             ),
             priority=850,
@@ -478,11 +534,12 @@ def _build_runtime_prompt_blocks_cached(
                 )
 
     if profile.include_tool_enforcement and not coordinator_mode:
+        is_auto = settings.permission.mode == PermissionMode.FULL_AUTO
         blocks.append(
             PromptBlock(
                 id="final-reminder",
                 title="Final Reminder",
-                content=_FINAL_REMINDER,
+                content=_FINAL_REMINDER_AUTO if is_auto else _FINAL_REMINDER,
                 priority=50,
                 source="system",
             )

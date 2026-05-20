@@ -371,13 +371,12 @@ async def build_runtime(
                 tool_registry.unregister(name)
     for tool_name in disallowed_tools or []:
         tool_registry.unregister(tool_name)
-    # full_auto mode: register done tool, remove ask_user_question
+    # full_auto mode: register done tool (keep ask_user_question available)
     from openharness.permissions.modes import PermissionMode
     from openharness.tools.done_tool import DoneTool
     is_full_auto = settings.permission.mode == PermissionMode.FULL_AUTO
     if is_full_auto:
         tool_registry.register(DoneTool())
-        tool_registry.unregister("ask_user_question")
     provider = detect_provider(settings)
     _, git_branch = detect_git_info(cwd)
     bridge_manager = get_bridge_manager()

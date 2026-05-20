@@ -109,7 +109,7 @@ def test_runtime_prompt_blocks_expose_metadata_and_render_default_prompt(tmp_pat
     )
 
 
-def test_runtime_tool_enforcement_requires_ask_user_question_for_user_input(
+def test_runtime_tool_enforcement_mentions_ask_user_only_as_exception(
     tmp_path: Path, monkeypatch
 ):
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
@@ -123,9 +123,37 @@ def test_runtime_tool_enforcement_requires_ask_user_question_for_user_input(
         latest_user_prompt="commit changes",
     )
 
-    assert "ask_user_question" not in prompt
+    # ask_user_question is mentioned only as an exception for ambiguous cases
+    assert "ask_user_question" in prompt
+    assert "critically underspecified" in prompt
+    # Should NOT encourage routine use of ask_user for user input
     assert "clarification, confirmation, or a choice" not in prompt
     assert "Do not end your turn with a plain-text question" not in prompt
+
+
+def test_full_auto_mode_injects_auto_guidance_and_tailored_reminder(
+    tmp_path: Path, monkeypatch
+):
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    prompt = build_runtime_system_prompt(
+        Settings(memory={"enabled": False}, permission={"mode": "full_auto"}),
+        cwd=repo,
+        latest_user_prompt="fix the bug",
+    )
+
+    # Auto mode guidance block is present
+    assert "fully autonomous mode" in prompt
+    assert "done(message=...)" in prompt
+    # Final reminder uses the auto variant (no user confirmation requirement)
+    assert "Reversibility check" not in prompt
+    assert "Confirmation Protocol" not in prompt
+    # But retains scope discipline and grounding
+    assert "Scope discipline" in prompt
+    assert "Grounding" in prompt
 
 
 def test_agent_prompt_profiles_control_runtime_sections(tmp_path: Path, monkeypatch):

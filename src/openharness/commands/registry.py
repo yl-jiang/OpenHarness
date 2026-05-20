@@ -1087,11 +1087,10 @@ def create_default_command_registry(
         if is_full_auto:
             if registry.get("done") is None:
                 registry.register(DoneTool())
-            registry.unregister("ask_user_question")
         else:
             registry.unregister("done")
-            if registry.get("ask_user_question") is None:
-                registry.register(AskUserQuestionTool())
+        if registry.get("ask_user_question") is None:
+            registry.register(AskUserQuestionTool())
         context.engine.set_require_explicit_done(is_full_auto)
 
     async def _permissions_handler(args: str, context: CommandContext) -> CommandResult:
