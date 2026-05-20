@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 class WoloHeartbeatConfig(BaseModel):
     """Periodic app-local heartbeat configuration."""
 
-    enabled: bool = False
+    enabled: bool = True
     interval_s: int = 30 * 60
     keep_recent_messages: int = 8
 

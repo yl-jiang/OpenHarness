@@ -140,8 +140,15 @@ class WoloHeartbeatService:
         if not sections:
             return None
         return (
-            "你是 wolo heartbeat。请根据以下待处理工作事项执行必要动作；"
-            "如果只是提醒用户，请给出简短、可行动的工作回复。\n\n"
+            "【heartbeat 自动触发】你是 wolo 的定时心跳 agent，当前为周期性自动检查。\n"
+            "以下各工作事项请按规则处理：\n\n"
+            "**处理规则**\n"
+            "- **HEARTBEAT.md 任务**：解析任务意图并**调用工具**完成（如 wolo_record、wolo_process），不可只用文字回答。\n"
+            "- **待确认工作记录**：无法代替用户决策；为每条输出一行提醒，格式：「待确认：<核心问题>」。\n"
+            "- **Open Work Todos**：仅输出逾期或今日到期的条目，格式：「Todo 提醒：<标题>（due: <日期>）」；无逾期则不输出。\n"
+            "- **Blockers**：为每个 blocker 输出一行告警，格式：「Blocker：<标题>」。\n"
+            "- 若所有事项处理完毕且无需通知用户，直接返回空字符串，不要输出多余内容。\n\n"
+            "---\n\n"
             + "\n\n".join(sections)
         )
 
