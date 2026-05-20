@@ -17,7 +17,7 @@ from openharness.tools.skill_manager_tool import SkillManagerToolInput
 from solo.config import build_channel_manager_config, load_config, save_config
 from solo.gateway.bridge import SoloGatewayBridge
 from solo.gateway.service import SoloGatewayService
-from solo.models import SoloConfig
+from solo.models import PendingConfirmation, SoloConfig, SoloTodo
 from solo.runner import SoloQueryRunner
 from solo.session import save_conversation
 from solo.store import SoloStore
@@ -429,3 +429,134 @@ def test_solo_save_conversation_roundtrip(tmp_path: Path):
     messages, loaded_sid = load_conversation(workspace, session_key)
     assert loaded_sid == "sid-2"
     assert len(messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_solo_heartbeat_triggers_runner_and_notifies_recent_channel(tmp_path: Path):
+    from solo.gateway.heartbeat import SoloHeartbeatService
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    store.add_todo(
+        SoloTodo(
+            id="todo1",
+            record_id="record1",
+            title="预约体检",
+            category="健康",
+            due_date="2026-05-21",
+        )
+    )
+    save_conversation(
+        workspace,
+        "feishu:chat-1",
+        [ConversationMessage.from_user_text("最近用飞书记录")],
+        session_id="sid-1",
+    )
+    bus = MessageBus()
+    calls: list[tuple[str, str]] = []
+
+    class FakeRunner:
+        def __init__(self, store, *, profile=None):
+            self.store = store
+            self.profile = profile
+
+        async def run(self, text, session_key="", **kwargs):
+            calls.append((text, session_key))
+            return "建议今天确认体检时间"
+
+    service = SoloHeartbeatService(
+        bus=bus,
+        workspace=workspace,
+        provider_profile="codex",
+        enabled_channels=["feishu"],
+        runner_factory=FakeRunner,
+    )
+
+    result = await service.trigger_once()
+    outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+
+    assert result.executed is True
+    assert "预约体检" in calls[0][0]
+    assert calls[0][1] == "heartbeat"
+    assert outbound.channel == "feishu"
+    assert outbound.chat_id == "chat-1"
+    assert outbound.content == "建议今天确认体检时间"
+
+
+@pytest.mark.asyncio
+async def test_solo_heartbeat_skips_when_agenda_is_empty(tmp_path: Path):
+    from solo.gateway.heartbeat import SoloHeartbeatService
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    bus = MessageBus()
+    called = False
+
+    class FakeRunner:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def run(self, *args, **kwargs):
+            nonlocal called
+            called = True
+            return "unexpected"
+
+    service = SoloHeartbeatService(
+        bus=bus,
+        workspace=workspace,
+        provider_profile="codex",
+        enabled_channels=["feishu"],
+        runner_factory=FakeRunner,
+    )
+
+    result = await service.trigger_once()
+
+    assert result.executed is False
+    assert result.reason == "empty"
+    assert called is False
+
+
+def test_solo_heartbeat_cli_status_reflects_config(tmp_path: Path):
+    from solo.cli import app
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    save_config(
+        SoloConfig(heartbeat={"enabled": True, "interval_s": 600}),
+        workspace,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["heartbeat", "status", "--workspace", str(workspace)])
+
+    assert result.exit_code == 0
+    assert "enabled=True" in result.output
+    assert "interval_s=600" in result.output
+
+
+def test_solo_heartbeat_agenda_includes_pending_confirmations_and_file_tasks(tmp_path: Path):
+    from solo.gateway.heartbeat import SoloHeartbeatService
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    store.add_pending_confirmation(
+        PendingConfirmation(
+            id="pending1",
+            entry_id="entry1",
+            raw_content="他说下周去检查",
+            clarification_reason="指代不清",
+            questions=["他说的是谁？"],
+            created_at="2026-05-20T00:00:00+00:00",
+        )
+    )
+    (workspace / "HEARTBEAT.md").write_text("- 检查这个月的睡眠趋势\n", encoding="utf-8")
+
+    agenda = SoloHeartbeatService(
+        bus=MessageBus(),
+        workspace=workspace,
+        provider_profile="codex",
+        enabled_channels=[],
+    ).build_agenda()
+
+    assert agenda is not None
+    assert "待确认记录" in agenda
+    assert "他说的是谁" in agenda
+    assert "检查这个月的睡眠趋势" in agenda

@@ -10,6 +10,14 @@ from openharness.attachments import StoredAttachment
 from pydantic import BaseModel, Field
 
 
+class WoloHeartbeatConfig(BaseModel):
+    """Periodic app-local heartbeat configuration."""
+
+    enabled: bool = False
+    interval_s: int = 30 * 60
+    keep_recent_messages: int = 8
+
+
 class WoloConfig(BaseModel):
     """Persistent wolo app configuration."""
 
@@ -19,6 +27,7 @@ class WoloConfig(BaseModel):
     channel_configs: dict[str, dict[str, Any]] = Field(default_factory=dict)
     send_progress: bool = True
     send_tool_hints: bool = True
+    heartbeat: WoloHeartbeatConfig = Field(default_factory=WoloHeartbeatConfig)
     log_level: str = "INFO"
 
 

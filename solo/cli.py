@@ -32,7 +32,9 @@ app = typer.Typer(
     add_completion=False,
 )
 gateway_app = typer.Typer(name="gateway", help="Run the solo gateway")
+heartbeat_app = typer.Typer(name="heartbeat", help="Inspect or trigger solo heartbeat")
 app.add_typer(gateway_app)
+app.add_typer(heartbeat_app)
 
 _INTERACTIVE_CHANNELS = ("telegram", "slack", "discord", "feishu")
 _WORKSPACE_HELP = "Path to the solo workspace (defaults to ~/.solo)"
@@ -75,6 +77,12 @@ def config_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
     enabled_channels, channel_configs = _prompt_channels(existing, target="solo")
     send_progress = _confirm_prompt("Send progress updates to channels?", default=existing.send_progress)
     send_tool_hints = _confirm_prompt("Send tool hints to channels?", default=existing.send_tool_hints)
+    heartbeat_enabled = _confirm_prompt("Enable periodic solo heartbeat?", default=existing.heartbeat.enabled)
+    heartbeat_interval = existing.heartbeat.interval_s
+    if heartbeat_enabled:
+        heartbeat_interval = int(
+            _text_prompt("Heartbeat interval seconds", default=str(existing.heartbeat.interval_s))
+        )
     config = existing.model_copy(
         update={
             "provider_profile": provider_profile,
@@ -82,6 +90,9 @@ def config_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
             "channel_configs": channel_configs,
             "send_progress": send_progress,
             "send_tool_hints": send_tool_hints,
+            "heartbeat": existing.heartbeat.model_copy(
+                update={"enabled": heartbeat_enabled, "interval_s": heartbeat_interval}
+            ),
         }
     )
     save_config(config, root)
@@ -219,6 +230,56 @@ def doctor_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
     health = workspace_health(get_workspace_root(workspace))
     for name, ok in health.items():
         print(f"{name}: {'ok' if ok else 'missing'}")
+
+
+@heartbeat_app.command("status")
+def heartbeat_status_cmd(
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    from openharness.channels.bus.queue import MessageBus
+    from solo.gateway.heartbeat import SoloHeartbeatService
+
+    config = load_config(workspace)
+    service = SoloHeartbeatService(
+        bus=MessageBus(),
+        workspace=workspace,
+        provider_profile=config.provider_profile,
+        enabled_channels=config.enabled_channels,
+        interval_s=config.heartbeat.interval_s,
+        enabled=config.heartbeat.enabled,
+        keep_recent_messages=config.heartbeat.keep_recent_messages,
+    )
+    status = service.status()
+    print(
+        f"solo heartbeat: enabled={status['enabled']} "
+        f"interval_s={status['interval_s']} agenda={status['agenda']} "
+        f"notify_target={status['notify_target']}"
+    )
+
+
+@heartbeat_app.command("trigger")
+def heartbeat_trigger_cmd(
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+    profile: str | None = typer.Option(None, "--profile", help="OpenHarness provider profile"),
+) -> None:
+    from openharness.channels.bus.queue import MessageBus
+    from solo.gateway.heartbeat import SoloHeartbeatService
+
+    config = load_config(workspace)
+    service = SoloHeartbeatService(
+        bus=MessageBus(),
+        workspace=workspace,
+        provider_profile=profile or config.provider_profile,
+        enabled_channels=config.enabled_channels,
+        interval_s=config.heartbeat.interval_s,
+        enabled=True,
+        keep_recent_messages=config.heartbeat.keep_recent_messages,
+    )
+    result = asyncio.run(service.trigger_once())
+    if not result.executed:
+        print("No solo heartbeat agenda.")
+        return
+    print(result.response or "solo heartbeat completed.")
 
 
 @gateway_app.command("run")

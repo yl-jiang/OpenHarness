@@ -19,6 +19,7 @@ from openharness.utils.log import get_logger
 
 from wolo.config import build_channel_manager_config, load_config
 from wolo.gateway.bridge import WoloGatewayBridge
+from wolo.gateway.heartbeat import WoloHeartbeatService
 from wolo.models import WoloState
 from wolo.workspace import (
     get_logs_dir,
@@ -52,6 +53,15 @@ class WoloGatewayService:
             bus=self._bus,
             workspace=root,
             provider_profile=self._config.provider_profile,
+        )
+        self._heartbeat = WoloHeartbeatService(
+            bus=self._bus,
+            workspace=root,
+            provider_profile=self._config.provider_profile,
+            enabled_channels=self._config.enabled_channels,
+            interval_s=self._config.heartbeat.interval_s,
+            enabled=self._config.heartbeat.enabled,
+            keep_recent_messages=self._config.heartbeat.keep_recent_messages,
         )
 
     @property
@@ -110,6 +120,7 @@ class WoloGatewayService:
 
         bridge_task = asyncio.create_task(self._bridge.run(), name="wolo-gateway-bridge")
         manager_task = asyncio.create_task(self._manager.start_all(), name="wolo-gateway-channels")
+        await self._heartbeat.start()
         stop_event = asyncio.Event()
 
         def _stop(*_: object) -> None:
@@ -136,6 +147,7 @@ class WoloGatewayService:
             with contextlib.suppress(asyncio.CancelledError):
                 await manager_task
             await self._manager.stop_all()
+            await self._heartbeat.stop()
             self.write_state(running=False)
             self.pid_file.unlink(missing_ok=True)
             logger.info("wolo gateway stopped pid=%d", os.getpid())

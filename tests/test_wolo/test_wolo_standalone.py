@@ -6,10 +6,11 @@ from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import ConversationMessage, TextBlock
 from openharness.engine.stream_events import AssistantTurnComplete
 from openharness.tools.base import ToolExecutionContext
+from openharness.channels.bus.queue import MessageBus
 from openharness.tools.skill_manager_tool import SkillManagerToolInput
 
 from wolo.config import save_config
-from wolo.models import WoloConfig
+from wolo.models import WoloConfig, WoloHighlight, WoloTodo
 from wolo.runner import WoloQueryRunner
 from wolo.session import save_conversation
 from wolo.store import WoloStore
@@ -270,3 +271,97 @@ def test_wolo_save_conversation_roundtrip(tmp_path: Path):
     messages, loaded_sid = load_conversation(workspace, session_key)
     assert loaded_sid == "sid-2"
     assert len(messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_wolo_heartbeat_agenda_includes_todos_and_blockers(tmp_path: Path):
+    from wolo.gateway.heartbeat import WoloHeartbeatService
+
+    workspace = initialize_workspace(tmp_path / ".wolo")
+    store = WoloStore(workspace)
+    store.add_todo(
+        WoloTodo(
+            id="todo1",
+            record_id="record1",
+            title="补齐 gateway heartbeat 测试",
+            project="OpenHarness",
+            due_date="2026-05-21",
+        )
+    )
+    store.add_highlight(
+        WoloHighlight(
+            id="h1",
+            record_id="record1",
+            kind="blocker",
+            title="飞书 token 过期",
+            project="OpenHarness",
+            content="需要重新登录后再验证 gateway",
+        )
+    )
+
+    agenda = WoloHeartbeatService(
+        bus=MessageBus(),
+        workspace=workspace,
+        provider_profile="codex",
+        enabled_channels=[],
+    ).build_agenda()
+
+    assert agenda is not None
+    assert "补齐 gateway heartbeat 测试" in agenda
+    assert "飞书 token 过期" in agenda
+
+
+@pytest.mark.asyncio
+async def test_wolo_heartbeat_trigger_does_not_notify_without_channel_target(tmp_path: Path):
+    from wolo.gateway.heartbeat import WoloHeartbeatService
+
+    workspace = initialize_workspace(tmp_path / ".wolo")
+    WoloStore(workspace).add_todo(
+        WoloTodo(
+            id="todo1",
+            record_id="record1",
+            title="整理周报材料",
+            project="OpenHarness",
+        )
+    )
+    calls: list[str] = []
+
+    class FakeRunner:
+        def __init__(self, store, *, profile=None):
+            self.store = store
+
+        async def run(self, text, session_key="", **kwargs):
+            calls.append(text)
+            return "周报材料已整理"
+
+    service = WoloHeartbeatService(
+        bus=MessageBus(),
+        workspace=workspace,
+        provider_profile="codex",
+        enabled_channels=["feishu"],
+        runner_factory=FakeRunner,
+    )
+
+    result = await service.trigger_once()
+
+    assert result.executed is True
+    assert result.notified is False
+    assert calls and "整理周报材料" in calls[0]
+
+
+def test_wolo_heartbeat_cli_status_reflects_config(tmp_path: Path):
+    from typer.testing import CliRunner
+    from wolo.cli import app
+
+    workspace = initialize_workspace(tmp_path / ".wolo")
+    save_config(
+        WoloConfig(heartbeat={"enabled": True, "interval_s": 900}),
+        workspace,
+    )
+    runner = CliRunner()
+
+    result = runner.invoke(app, ["heartbeat", "status", "--workspace", str(workspace)])
+
+    assert result.exit_code == 0
+    assert "enabled=True" in result.output
+    assert "interval_s=900" in result.output

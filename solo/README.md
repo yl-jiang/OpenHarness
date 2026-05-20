@@ -74,6 +74,7 @@ export SOLO_WORKSPACE=/path/to/workspace
 ~/.solo/
   config.json
   state.json
+  HEARTBEAT.md
   soul.md
   user.md
   gateway.pid
@@ -103,6 +104,7 @@ export SOLO_WORKSPACE=/path/to/workspace
 | --- | --- |
 | `config.json` | solo 应用配置，包括模型 profile、启用的消息通道和通道配置 |
 | `state.json` | 运行状态快照 |
+| `HEARTBEAT.md` | 可选的周期任务清单；启用 heartbeat 后会随 app 状态一起被检查 |
 | `soul.md` | 助手的人设、核心原则和行为准则 |
 | `user.md` | 用户个人资料快照（姓名、职业、重要人物等） |
 | `gateway.pid` | 后台 gateway 进程 PID |
@@ -193,6 +195,7 @@ solo config
 - 是否启用 Telegram、Slack、Discord、Feishu
 - 各通道的 token、app id、allow_from 等字段
 - 是否发送 progress 和 tool hint
+- 是否启用 heartbeat，以及 heartbeat 间隔
 
 `provider_profile` 使用 OpenHarness 的 profile 名称，例如 `codex`。鉴权仍然复用 OpenHarness：
 
@@ -336,7 +339,18 @@ solo stop --workspace ~/.solo
 
 `--cwd` 是 gateway 进程的项目工作目录；`--workspace` 是 solo 数据和配置目录。
 
-### 5.11 `gateway run`
+### 5.11 `heartbeat`
+
+`solo` 的 heartbeat 是 app-local 的周期唤醒机制，只在 `solo start` / `solo gateway run` 运行时生效；它不依赖也不修改 OpenHarness 核心。默认关闭，启用后会定期汇总待确认记录、未完成个人待办和可选的 `HEARTBEAT.md` 任务，然后通过 solo agent 执行并投递到最近活跃的已启用消息通道。
+
+```bash
+solo heartbeat status
+solo heartbeat trigger
+```
+
+`HEARTBEAT.md` 可以放在 solo workspace 根目录，例如 `~/.solo/HEARTBEAT.md`，用于补充需要周期检查的自然语言任务。
+
+### 5.12 `gateway run`
 
 前台运行 gateway，适合调试：
 
@@ -486,6 +500,11 @@ solo 的模型路由 agent 会看到一组 solo 专用工具：
   },
   "send_progress": true,
   "send_tool_hints": true,
+  "heartbeat": {
+    "enabled": false,
+    "interval_s": 1800,
+    "keep_recent_messages": 8
+  },
   "log_level": "INFO"
 }
 ```

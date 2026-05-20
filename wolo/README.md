@@ -77,6 +77,7 @@ export WOLO_WORKSPACE=/path/to/workspace
 ~/.wolo/
   config.json
   state.json
+  HEARTBEAT.md
   soul.md
   user.md
   gateway.pid
@@ -110,6 +111,7 @@ export WOLO_WORKSPACE=/path/to/workspace
 | --- | --- |
 | `config.json` | wolo 应用配置，包括模型 profile、启用的消息通道和通道配置 |
 | `state.json` | gateway 运行状态快照 |
+| `HEARTBEAT.md` | 可选的周期任务清单；启用 heartbeat 后会随 app 状态一起被检查 |
 | `soul.md` | wolo 的工作日志 persona、边界和行为准则 |
 | `user.md` | 用户工作上下文：角色、团队、项目、工具、报告偏好 |
 | `data/entries.jsonl` | 原始工作输入 |
@@ -212,6 +214,7 @@ wolo config
 - 是否启用 Telegram、Slack、Discord、Feishu
 - 各通道的 token、app id、allow_from 等字段
 - 是否发送 progress 和 tool hint
+- 是否启用 heartbeat，以及 heartbeat 间隔
 
 `provider_profile` 使用 OpenHarness 的 profile 名称，例如 `codex`。鉴权仍然复用 OpenHarness：
 
@@ -366,7 +369,18 @@ wolo start
 wolo stop
 ```
 
-### 5.12 `doctor`
+### 5.12 `heartbeat`
+
+`wolo` 的 heartbeat 是 app-local 的周期唤醒机制，只在 `wolo start` / `wolo gateway run` 运行时生效；它不依赖也不修改 OpenHarness 核心。默认关闭，启用后会定期汇总待确认工作记录、开放待办、blocker 和可选的 `HEARTBEAT.md` 任务，然后通过 wolo agent 执行并投递到最近活跃的已启用消息通道。
+
+```bash
+wolo heartbeat status
+wolo heartbeat trigger
+```
+
+`HEARTBEAT.md` 可以放在 wolo workspace 根目录，例如 `~/.wolo/HEARTBEAT.md`，用于补充需要周期检查的工作任务。
+
+### 5.13 `doctor`
 
 检查工作目录是否完整：
 

@@ -10,6 +10,14 @@ from openharness.attachments import StoredAttachment
 from pydantic import BaseModel, Field
 
 
+class SoloHeartbeatConfig(BaseModel):
+    """Periodic app-local heartbeat configuration."""
+
+    enabled: bool = False
+    interval_s: int = 30 * 60
+    keep_recent_messages: int = 8
+
+
 class SoloConfig(BaseModel):
     """Persistent solo app configuration."""
 
@@ -19,6 +27,7 @@ class SoloConfig(BaseModel):
     channel_configs: dict[str, dict[str, Any]] = Field(default_factory=dict)
     send_progress: bool = True
     send_tool_hints: bool = True
+    heartbeat: SoloHeartbeatConfig = Field(default_factory=SoloHeartbeatConfig)
     log_level: str = "INFO"
 
 
