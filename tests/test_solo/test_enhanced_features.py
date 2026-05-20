@@ -110,8 +110,9 @@ async def test_processor_rag_and_daily_question(tmp_path: Path, monkeypatch):
 
     # 2. Test Daily Question (no activity on target date)
     # Clear all activity
-    store.entries_path.write_text("")
-    store.records_path.write_text("")
+    store._db.execute("DELETE FROM entries")
+    store._db.execute("DELETE FROM records")
+    store._db.commit()
     
     # We still need some context for the agent to use
     _create_record(store, "我最近在学习 Rust 编程", "学习 Rust", "学习", date="2026-05-10")

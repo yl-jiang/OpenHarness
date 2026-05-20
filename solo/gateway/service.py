@@ -104,6 +104,10 @@ class SoloGatewayService:
             self._config.provider_profile,
             self._workspace,
         )
+
+        # Auto-register todo reminder cron job
+        _register_todo_cron(self._workspace, self._config)
+
         bridge_task = asyncio.create_task(self._bridge.run(), name="solo-gateway-bridge")
         manager_task = asyncio.create_task(self._manager.start_all(), name="solo-gateway-channels")
         stop_event = asyncio.Event()
@@ -326,3 +330,40 @@ def _print_gateway_banner(
         f"  log file  : {log_file}\n",
         flush=True,
     )
+
+
+def _register_todo_cron(
+    workspace: str | Path | None,
+    config: object,
+) -> None:
+    """Best-effort registration of the solo todo reminder cron job and scheduler daemon."""
+    try:
+        from openharness.services.todo_cron import ensure_todo_reminder_job
+
+        # Build notification config from feishu channel if available
+        notify = None
+        channel_configs = getattr(config, "channel_configs", {}) or {}
+        feishu_config = channel_configs.get("feishu", {})
+        user_open_id = feishu_config.get("owner_open_id") or feishu_config.get("user_open_id")
+        if user_open_id:
+            notify = {"type": "feishu_dm", "user_open_id": str(user_open_id)}
+
+        ensure_todo_reminder_job(
+            "solo",
+            workspace=workspace,
+            notify=notify,
+        )
+    except Exception as exc:
+        logger.warning("Failed to register solo todo cron job: %s", exc)
+
+    # Ensure cron scheduler daemon is running
+    try:
+        from openharness.services.cron_scheduler import is_scheduler_running, start_daemon
+
+        if not is_scheduler_running():
+            pid = start_daemon()
+            logger.info("Started cron scheduler daemon (pid=%d)", pid)
+        else:
+            logger.debug("Cron scheduler daemon already running")
+    except Exception as exc:
+        logger.warning("Failed to start cron scheduler daemon: %s", exc)

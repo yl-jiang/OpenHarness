@@ -221,6 +221,43 @@ class SoloReport:
 
 
 @dataclass(frozen=True)
+class SoloTodo:
+    """A personal todo derived from solo records."""
+
+    id: str
+    record_id: str
+    title: str
+    category: str = ""
+    priority: str = "medium"
+    due_date: str = ""
+    status: str = "pending"
+    source: str = "derived"
+    created_at: str = ""
+    completed_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "SoloTodo":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "record_id": self.record_id,
+            "title": self.title,
+            "category": self.category,
+            "priority": self.priority,
+            "due_date": self.due_date,
+            "status": self.status,
+            "source": self.source,
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
 class ProcessResult:
     """Summary of one solo processing run."""
 

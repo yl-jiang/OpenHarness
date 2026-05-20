@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import logging
-import hashlib
 from pathlib import Path
 
 import pytest
@@ -22,7 +21,7 @@ from solo.models import SoloConfig
 from solo.runner import SoloQueryRunner
 from solo.session import save_conversation
 from solo.store import SoloStore
-from solo.workspace import get_config_path, get_data_dir, get_sessions_dir, get_skills_dir, initialize_workspace, workspace_health
+from solo.workspace import get_config_path, get_data_dir, get_skills_dir, initialize_workspace, workspace_health
 
 
 def test_standalone_solo_workspace_and_config_are_independent(tmp_path: Path):
@@ -398,10 +397,35 @@ def test_solo_save_conversation_writes_session_snapshot_for_autodream(tmp_path: 
         session_id=session_id,
     )
 
-    token = hashlib.sha1(session_key.encode("utf-8")).hexdigest()[:12]
-    latest_path = get_sessions_dir(workspace) / f"latest-{token}.json"
-    session_path = get_sessions_dir(workspace) / f"session-{session_id}.json"
+    # Verify data is stored in SQLite
+    from solo.session import load_conversation
+    messages, loaded_sid = load_conversation(workspace, session_key)
+    assert loaded_sid == session_id
+    assert len(messages) == 1
+    assert messages[0].text == "hello solo"
 
-    assert latest_path.exists()
-    assert session_path.exists()
-    assert '"session_id": "solo-session-1"' in session_path.read_text(encoding="utf-8")
+
+def test_solo_save_conversation_roundtrip(tmp_path: Path):
+    workspace = initialize_workspace(tmp_path / ".solo")
+    session_key = "feishu:chat-2"
+
+    save_conversation(
+        workspace,
+        session_key,
+        [ConversationMessage.from_user_text("first message")],
+        session_id="sid-1",
+    )
+    save_conversation(
+        workspace,
+        session_key,
+        [
+            ConversationMessage.from_user_text("first message"),
+            ConversationMessage.from_user_text("second message"),
+        ],
+        session_id="sid-2",
+    )
+
+    from solo.session import load_conversation
+    messages, loaded_sid = load_conversation(workspace, session_key)
+    assert loaded_sid == "sid-2"
+    assert len(messages) == 2

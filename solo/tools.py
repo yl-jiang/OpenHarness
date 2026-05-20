@@ -103,6 +103,9 @@ class SoloToolRegistry:
             SoloDomainTool(_tool_view(), self._handle_view),
             SoloDomainTool(_tool_search(), self._handle_search),
             SoloDomainTool(_tool_show(), self._handle_show),
+            SoloDomainTool(_tool_todos(), self._handle_todos),
+            SoloDomainTool(_tool_done(), self._handle_done),
+            SoloDomainTool(_tool_update_todo(), self._handle_update_todo),
             SoloDomainTool(_tool_update_record(), self._handle_update_record),
             SoloDomainTool(_tool_delete_record(), self._handle_delete_record),
             SoloDomainTool(_tool_status(), self._handle_status),
@@ -352,6 +355,35 @@ class SoloToolRegistry:
             "entry": json.loads(entry.to_json()) if entry is not None else None,
             "message": _format_record_trace(self.store, record, entry),
         }
+
+    async def _handle_todos(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        status = str(arguments.get("status") or "pending")
+        category = _optional_text(arguments, "category")
+        limit = int(arguments.get("limit") or 20)
+        todos = self.store.list_todos(status=status, category=category, limit=limit)
+        return {
+            "ok": True,
+            "todos": [todo.to_dict() for todo in todos],
+            "message": _format_todos(todos),
+        }
+
+    async def _handle_done(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        todo_id = _required_text(arguments, "todo_id")
+        if not self.store.complete_todo(todo_id):
+            return {"ok": False, "message": f"未找到可完成的待办：{todo_id}"}
+        return {"ok": True, "message": f"✅ 已完成待办：{todo_id}"}
+
+    async def _handle_update_todo(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        todo_id = _required_text(arguments, "todo_id")
+        updates: dict[str, Any] = {}
+        for field in ["title", "category", "priority", "due_date", "status"]:
+            if field in arguments and arguments[field] is not None:
+                updates[field] = arguments[field]
+        if not updates:
+            return {"ok": False, "message": "未提供任何更新字段。"}
+        if not self.store.update_todo(todo_id, **updates):
+            return {"ok": False, "message": f"未找到待办：{todo_id}"}
+        return {"ok": True, "message": f"✅ 已更新待办：{todo_id}"}
 
     async def _handle_update_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Update fields of an existing solo record."""
@@ -781,6 +813,41 @@ def _tool_show() -> ToolDefinition:
     )
 
 
+def _tool_todos() -> ToolDefinition:
+    return _definition(
+        "solo_todos",
+        "List personal todos derived from solo records, optionally filtered by status or category.",
+        [
+            ("status", "string", "Todo status: pending/done. Defaults to pending.", False),
+            ("category", "string", "Category filter (健康/家庭/社交/购物/学习/其他).", False),
+            ("limit", "integer", "Number of todos.", False),
+        ],
+    )
+
+
+def _tool_done() -> ToolDefinition:
+    return _definition(
+        "solo_done",
+        "Mark a personal todo as done by todo_id.",
+        [("todo_id", "string", "The todo ID to complete.", True)],
+    )
+
+
+def _tool_update_todo() -> ToolDefinition:
+    return _definition(
+        "solo_update_todo",
+        "Update a personal todo's fields (title, category, priority, due_date, or status).",
+        [
+            ("todo_id", "string", "The todo ID to update.", True),
+            ("title", "string", "New title.", False),
+            ("category", "string", "New category.", False),
+            ("priority", "string", "New priority (high/medium/low).", False),
+            ("due_date", "string", "New due date (YYYY-MM-DD or empty).", False),
+            ("status", "string", "New status (pending/in_progress/done/cancelled).", False),
+        ],
+    )
+
+
 def _tool_update_record() -> ToolDefinition:
     return _definition(
         "solo_update_record",
@@ -926,6 +993,11 @@ def _required_text(arguments: dict[str, Any], key: str) -> str:
     return value
 
 
+def _optional_text(arguments: dict[str, Any], key: str) -> str | None:
+    value = str(arguments.get(key) or "").strip()
+    return value or None
+
+
 def _csv_list(value: Any) -> list[str] | None:
     if not value:
         return None
@@ -942,6 +1014,15 @@ def _format_records(store: SoloStore, records: list[SoloRecord]) -> str:
         lines.append(f"- [{record.id}] {record.date} {record.summary or record.raw_content}")
         lines.extend(_format_attachment_refs(store, record))
     return "\n".join(lines)
+
+
+def _format_todos(todos: list[Any]) -> str:
+    if not todos:
+        return "暂无匹配待办。"
+    return "\n".join(
+        f"- [{todo.id}] {todo.status} {todo.priority} {todo.category} {todo.title}".strip()
+        for todo in todos
+    )
 
 
 def _format_record_trace(store: SoloStore, record: SoloRecord, entry: SoloEntry | None) -> str:

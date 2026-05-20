@@ -106,6 +106,7 @@ class WoloToolRegistry:
             WoloDomainTool(_tool_show(), self._handle_show),
             WoloDomainTool(_tool_todos(), self._handle_todos),
             WoloDomainTool(_tool_done(), self._handle_done),
+            WoloDomainTool(_tool_update_todo(), self._handle_update_todo),
             WoloDomainTool(_tool_blockers(), self._handle_blockers),
             WoloDomainTool(_tool_decisions(), self._handle_decisions),
             WoloDomainTool(_tool_highlights(), self._handle_highlights),
@@ -380,7 +381,19 @@ class WoloToolRegistry:
         todo_id = _required_text(arguments, "todo_id")
         if not self.store.complete_todo(todo_id):
             return {"ok": False, "message": f"未找到可完成的待办：{todo_id}"}
-        return {"ok": True, "message": f"已完成待办：{todo_id}"}
+        return {"ok": True, "message": f"✅ 已完成待办：{todo_id}"}
+
+    async def _handle_update_todo(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        todo_id = _required_text(arguments, "todo_id")
+        updates: dict[str, Any] = {}
+        for field in ["title", "project", "priority", "due_date", "status"]:
+            if field in arguments and arguments[field] is not None:
+                updates[field] = arguments[field]
+        if not updates:
+            return {"ok": False, "message": "未提供任何更新字段。"}
+        if not self.store.update_todo(todo_id, **updates):
+            return {"ok": False, "message": f"未找到待办：{todo_id}"}
+        return {"ok": True, "message": f"✅ 已更新待办：{todo_id}"}
 
     async def _handle_blockers(self, arguments: dict[str, Any]) -> dict[str, Any]:
         project = _optional_text(arguments, "project")
@@ -907,6 +920,21 @@ def _tool_done() -> ToolDefinition:
         "wolo_done",
         "Mark a derived work todo as done by todo_id.",
         [("todo_id", "string", "The todo ID to complete.", True)],
+    )
+
+
+def _tool_update_todo() -> ToolDefinition:
+    return _definition(
+        "wolo_update_todo",
+        "Update a work todo's fields (title, project, priority, due_date, or status).",
+        [
+            ("todo_id", "string", "The todo ID to update.", True),
+            ("title", "string", "New title.", False),
+            ("project", "string", "New project.", False),
+            ("priority", "string", "New priority (high/medium/low).", False),
+            ("due_date", "string", "New due date (YYYY-MM-DD or empty).", False),
+            ("status", "string", "New status (pending/in_progress/done/cancelled).", False),
+        ],
     )
 
 

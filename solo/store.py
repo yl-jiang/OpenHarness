@@ -1,4 +1,4 @@
-"""Append-only storage for the standalone solo app."""
+"""SQLite-backed storage for the standalone solo app."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 from typing import Any
 from uuid import uuid4
 
@@ -21,42 +22,271 @@ from solo.models import (
     SoloEntry,
     SoloRecord,
     SoloReport,
+    SoloTodo,
 )
 from solo.workspace import get_attachments_dir, get_data_dir, initialize_workspace
 from solo.utils import _now
 
-ENTRIES_FILENAME = "entries.jsonl"
-RECORDS_FILENAME = "records.jsonl"
-PENDING_CONFIRMATIONS_FILENAME = "pending_confirmations.jsonl"
-PROFILE_UPDATES_FILENAME = "profile_updates.jsonl"
-REPORTS_FILENAME = "reports.jsonl"
+DB_FILENAME = "store.db"
+_SCHEMA_VERSION = 1
+
+_SCHEMA_SQL = """\
+CREATE TABLE IF NOT EXISTS entries (
+    id TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    channel TEXT NOT NULL DEFAULT 'local',
+    sender_id TEXT NOT NULL DEFAULT '',
+    chat_id TEXT NOT NULL DEFAULT '',
+    message_id TEXT,
+    metadata TEXT NOT NULL DEFAULT '{}',
+    attachments TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_entries_created_at ON entries(created_at);
+
+CREATE TABLE IF NOT EXISTS records (
+    id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
+    date TEXT NOT NULL,
+    raw_content TEXT NOT NULL,
+    corrected_content TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    tags TEXT NOT NULL,
+    emotion TEXT NOT NULL,
+    weekday TEXT NOT NULL DEFAULT '',
+    events TEXT NOT NULL DEFAULT '',
+    period TEXT NOT NULL DEFAULT '',
+    season TEXT NOT NULL DEFAULT '',
+    is_weekend INTEGER NOT NULL DEFAULT 0,
+    content_length INTEGER NOT NULL DEFAULT 0,
+    emotion_reason TEXT NOT NULL DEFAULT '',
+    related_people TEXT NOT NULL DEFAULT '',
+    related_places TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '原始',
+    created_at TEXT NOT NULL DEFAULT '',
+    attachments TEXT NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_records_date ON records(date);
+CREATE INDEX IF NOT EXISTS idx_records_emotion ON records(emotion);
+CREATE INDEX IF NOT EXISTS idx_records_entry_id ON records(entry_id);
+
+CREATE TABLE IF NOT EXISTS pending_confirmations (
+    id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
+    raw_content TEXT NOT NULL,
+    clarification_reason TEXT NOT NULL DEFAULT '',
+    questions TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS profile_updates (
+    id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_name TEXT NOT NULL,
+    suggested_value TEXT NOT NULL,
+    confidence TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending'
+);
+
+CREATE TABLE IF NOT EXISTS reports (
+    id TEXT PRIMARY KEY,
+    report_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS todos (
+    id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT '',
+    priority TEXT NOT NULL DEFAULT 'medium',
+    due_date TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    source TEXT NOT NULL DEFAULT 'derived',
+    created_at TEXT NOT NULL DEFAULT '',
+    completed_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_todos_status ON todos(status);
+
+CREATE TABLE IF NOT EXISTS _meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+"""
 
 
 class SoloStore:
-    """Append-only solo store rooted in the solo workspace."""
+    """SQLite-backed solo store rooted in the solo workspace."""
 
     def __init__(self, workspace: str | Path | None = None) -> None:
         self.workspace = initialize_workspace(workspace)
         self.root = get_data_dir(self.workspace)
         self.attachments_root = get_attachments_dir(self.workspace)
-        self.entries_path = self.root / ENTRIES_FILENAME
-        self.records_path = self.root / RECORDS_FILENAME
-        self.pending_confirmations_path = self.root / PENDING_CONFIRMATIONS_FILENAME
-        self.profile_updates_path = self.root / PROFILE_UPDATES_FILENAME
-        self.reports_path = self.root / REPORTS_FILENAME
+        self._db_path = self.root / DB_FILENAME
+        self._conn: sqlite3.Connection | None = None
+
+    @property
+    def _db(self) -> sqlite3.Connection:
+        if self._conn is None:
+            self._ensure_db()
+        return self._conn  # type: ignore[return-value]
+
+    def _ensure_db(self) -> None:
+        self.root.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(self._db_path), timeout=10)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA foreign_keys=ON")
+        self._conn.executescript(_SCHEMA_SQL)
+        cur = self._conn.execute("SELECT value FROM _meta WHERE key='schema_version'")
+        if cur.fetchone() is None:
+            self._conn.execute(
+                "INSERT INTO _meta (key, value) VALUES ('schema_version', ?)",
+                (str(_SCHEMA_VERSION),),
+            )
+            self._conn.commit()
+        self._maybe_migrate_jsonl()
+
+    def _maybe_migrate_jsonl(self) -> None:
+        """Import existing JSONL data into SQLite on first run."""
+        cur = self._db.execute("SELECT value FROM _meta WHERE key='migrated_jsonl'")
+        if cur.fetchone() is not None:
+            return
+        migrated_any = False
+        migrated_any |= self._migrate_entries_jsonl()
+        migrated_any |= self._migrate_records_jsonl()
+        migrated_any |= self._migrate_simple_jsonl(
+            "pending_confirmations", "pending_confirmations.jsonl",
+            PendingConfirmation.from_json, self._pending_confirmation_to_row,
+        )
+        migrated_any |= self._migrate_simple_jsonl(
+            "profile_updates", "profile_updates.jsonl",
+            ProfileUpdate.from_json, self._profile_update_to_row,
+        )
+        migrated_any |= self._migrate_simple_jsonl(
+            "reports", "reports.jsonl",
+            SoloReport.from_json, self._report_to_row,
+        )
+        migrated_any |= self._migrate_simple_jsonl(
+            "todos", "todos.jsonl",
+            SoloTodo.from_json, self._todo_to_row,
+        )
+        self._db.execute(
+            "INSERT INTO _meta (key, value) VALUES ('migrated_jsonl', ?)",
+            (_now(),),
+        )
+        self._db.commit()
+        if migrated_any:
+            for name in (
+                "entries.jsonl", "records.jsonl", "pending_confirmations.jsonl",
+                "profile_updates.jsonl", "reports.jsonl", "todos.jsonl",
+            ):
+                path = self.root / name
+                if path.exists() and path.stat().st_size > 0:
+                    path.rename(path.with_suffix(".jsonl.bak"))
+
+    def _migrate_entries_jsonl(self) -> bool:
+        path = self.root / "entries.jsonl"
+        if not path.exists() or path.stat().st_size == 0:
+            return False
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not lines:
+            return False
+        for line in lines:
+            entry = SoloEntry.from_json(line)
+            self._db.execute(
+                "INSERT OR IGNORE INTO entries (id, content, created_at, channel, sender_id, chat_id, message_id, metadata, attachments) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    entry.id, entry.content, entry.created_at, entry.channel,
+                    entry.sender_id, entry.chat_id, entry.message_id,
+                    json.dumps(entry.metadata or {}, ensure_ascii=False),
+                    json.dumps([a.to_dict() for a in entry.attachments], ensure_ascii=False),
+                ),
+            )
+        self._db.commit()
+        return True
+
+    def _migrate_records_jsonl(self) -> bool:
+        path = self.root / "records.jsonl"
+        if not path.exists() or path.stat().st_size == 0:
+            return False
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not lines:
+            return False
+        for line in lines:
+            record = SoloRecord.from_json(line)
+            self._db.execute(
+                "INSERT OR IGNORE INTO records "
+                "(id, entry_id, date, raw_content, corrected_content, summary, tags, emotion, "
+                "weekday, events, period, season, is_weekend, content_length, emotion_reason, "
+                "related_people, related_places, source, created_at, attachments) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    record.id, record.entry_id, record.date, record.raw_content,
+                    record.corrected_content, record.summary, record.tags, record.emotion,
+                    record.weekday, record.events, record.period, record.season,
+                    int(record.is_weekend), record.content_length, record.emotion_reason,
+                    record.related_people, record.related_places, record.source,
+                    record.created_at,
+                    json.dumps([a.to_dict() for a in record.attachments], ensure_ascii=False),
+                ),
+            )
+        self._db.commit()
+        return True
+
+    def _migrate_simple_jsonl(self, table: str, filename: str, from_json, to_row) -> bool:
+        path = self.root / filename
+        if not path.exists() or path.stat().st_size == 0:
+            return False
+        lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        if not lines:
+            return False
+        for line in lines:
+            obj = from_json(line)
+            cols, vals = to_row(obj)
+            placeholders = ", ".join("?" * len(vals))
+            self._db.execute(
+                f"INSERT OR IGNORE INTO {table} ({', '.join(cols)}) VALUES ({placeholders})",
+                vals,
+            )
+        self._db.commit()
+        return True
+
+    # --- Row conversion helpers ---
+
+    @staticmethod
+    def _pending_confirmation_to_row(p: PendingConfirmation):
+        cols = ("id", "entry_id", "raw_content", "clarification_reason", "questions", "created_at")
+        vals = (p.id, p.entry_id, p.raw_content, p.clarification_reason, json.dumps(p.questions, ensure_ascii=False), p.created_at)
+        return cols, vals
+
+    @staticmethod
+    def _profile_update_to_row(u: ProfileUpdate):
+        cols = ("id", "record_id", "category", "entity_type", "entity_name", "suggested_value", "confidence", "status")
+        vals = (u.id, u.record_id, u.category, u.entity_type, u.entity_name, u.suggested_value, u.confidence, u.status)
+        return cols, vals
+
+    @staticmethod
+    def _report_to_row(r: SoloReport):
+        cols = ("id", "report_type", "content", "created_at")
+        vals = (r.id, r.report_type, r.content, r.created_at)
+        return cols, vals
+
+    @staticmethod
+    def _todo_to_row(t: SoloTodo):
+        cols = ("id", "record_id", "title", "category", "priority", "due_date", "status", "source", "created_at", "completed_at")
+        vals = (t.id, t.record_id, t.title, t.category, t.priority, t.due_date, t.status, t.source, t.created_at, t.completed_at)
+        return cols, vals
+
+    # --- Public API (unchanged signatures) ---
 
     def initialize(self) -> Path:
         initialize_workspace(self.workspace)
         self.root.mkdir(parents=True, exist_ok=True)
-        for path in (
-            self.entries_path,
-            self.records_path,
-            self.pending_confirmations_path,
-            self.profile_updates_path,
-            self.reports_path,
-        ):
-            if not path.exists():
-                path.write_text("", encoding="utf-8")
+        _ = self._db  # ensure DB created
         return self.root
 
     def load_config(self) -> SoloConfig:
@@ -102,89 +332,211 @@ class SoloStore:
             metadata=self._merge_entry_metadata(metadata, context),
             attachments=attachments,
         )
-        with self.entries_path.open("a", encoding="utf-8") as file:
-            file.write(entry.to_json() + "\n")
-        self.entries_path.chmod(0o600)
+        self._db.execute(
+            "INSERT INTO entries (id, content, created_at, channel, sender_id, chat_id, message_id, metadata, attachments) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                entry.id, entry.content, entry.created_at, entry.channel,
+                entry.sender_id, entry.chat_id, entry.message_id,
+                json.dumps(entry.metadata or {}, ensure_ascii=False),
+                json.dumps([a.to_dict() for a in entry.attachments], ensure_ascii=False),
+            ),
+        )
+        self._db.commit()
         return entry
 
     def list_entries(self, *, limit: int | None = None) -> list[SoloEntry]:
-        entries = [SoloEntry.from_json(line) for line in self._read_jsonl(self.entries_path)]
-        return entries if limit is None else entries[-limit:]
+        if limit is not None:
+            cur = self._db.execute(
+                "SELECT * FROM entries ORDER BY rowid DESC LIMIT ?", (limit,)
+            )
+            rows = cur.fetchall()
+            rows.reverse()
+        else:
+            cur = self._db.execute("SELECT * FROM entries ORDER BY rowid")
+            rows = cur.fetchall()
+        return [self._row_to_entry(row) for row in rows]
 
     def get_entry(self, entry_id: str) -> SoloEntry | None:
-        return next((entry for entry in self.list_entries() if entry.id == entry_id), None)
+        cur = self._db.execute("SELECT * FROM entries WHERE id = ?", (entry_id,))
+        row = cur.fetchone()
+        return self._row_to_entry(row) if row else None
 
     def add_record(self, record: SoloRecord) -> None:
-        self._append_jsonl(self.records_path, record.to_json())
+        self._db.execute(
+            "INSERT INTO records "
+            "(id, entry_id, date, raw_content, corrected_content, summary, tags, emotion, "
+            "weekday, events, period, season, is_weekend, content_length, emotion_reason, "
+            "related_people, related_places, source, created_at, attachments) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                record.id, record.entry_id, record.date, record.raw_content,
+                record.corrected_content, record.summary, record.tags, record.emotion,
+                record.weekday, record.events, record.period, record.season,
+                int(record.is_weekend), record.content_length, record.emotion_reason,
+                record.related_people, record.related_places, record.source,
+                record.created_at,
+                json.dumps([a.to_dict() for a in record.attachments], ensure_ascii=False),
+            ),
+        )
+        self._db.commit()
 
     def list_records(self, *, limit: int | None = None) -> list[SoloRecord]:
-        records = [SoloRecord.from_json(line) for line in self._read_jsonl(self.records_path)]
-        return records if limit is None else records[-limit:]
+        if limit is not None:
+            cur = self._db.execute(
+                "SELECT * FROM records ORDER BY rowid DESC LIMIT ?", (limit,)
+            )
+            rows = cur.fetchall()
+            rows.reverse()
+        else:
+            cur = self._db.execute("SELECT * FROM records ORDER BY rowid")
+            rows = cur.fetchall()
+        return [self._row_to_record(row) for row in rows]
 
     def get_record(self, record_id: str) -> SoloRecord | None:
-        return next((record for record in self.list_records() if record.id == record_id), None)
+        cur = self._db.execute("SELECT * FROM records WHERE id = ?", (record_id,))
+        row = cur.fetchone()
+        return self._row_to_record(row) if row else None
 
     def resolve_attachment_path(self, attachment: StoredAttachment) -> Path:
         return resolve_stored_attachment_path(self.workspace, attachment)
 
     def update_record(self, record_id: str, **updates: Any) -> bool:
         """Update an existing record by ID with new field values."""
-        records = self.list_records()
-        updated = False
-        new_records: list[SoloRecord] = []
-        
-        for r in records:
-            if r.id == record_id:
-                # Apply updates
-                data = r.to_dict()
-                data["attachments"] = list(r.attachments)
-                data.update(updates)
-                new_records.append(SoloRecord(**data))
-                updated = True
-            else:
-                new_records.append(r)
-        
-        if updated:
-            # Overwrite the file with updated list
-            lines = [r.to_json() for r in new_records]
-            self.records_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            
-        return updated
+        record = self.get_record(record_id)
+        if record is None:
+            return False
+        data = record.to_dict()
+        data["attachments"] = list(record.attachments)
+        data.update(updates)
+        new_record = SoloRecord(**data)
+        self._db.execute(
+            "UPDATE records SET entry_id=?, date=?, raw_content=?, corrected_content=?, "
+            "summary=?, tags=?, emotion=?, weekday=?, events=?, period=?, season=?, "
+            "is_weekend=?, content_length=?, emotion_reason=?, related_people=?, "
+            "related_places=?, source=?, created_at=?, attachments=? WHERE id=?",
+            (
+                new_record.entry_id, new_record.date, new_record.raw_content,
+                new_record.corrected_content, new_record.summary, new_record.tags,
+                new_record.emotion, new_record.weekday, new_record.events, new_record.period,
+                new_record.season, int(new_record.is_weekend), new_record.content_length,
+                new_record.emotion_reason, new_record.related_people, new_record.related_places,
+                new_record.source, new_record.created_at,
+                json.dumps([a.to_dict() for a in new_record.attachments], ensure_ascii=False),
+                record_id,
+            ),
+        )
+        self._db.commit()
+        return True
 
     def delete_record(self, record_id: str) -> bool:
         """Permanently delete a record by ID."""
-        records = self.list_records()
-        original_count = len(records)
-        new_records = [r for r in records if r.id != record_id]
-        
-        if len(new_records) < original_count:
-            # Overwrite the file
-            lines = [r.to_json() for r in new_records]
-            self.records_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            return True
-            
-        return False
+        cur = self._db.execute("DELETE FROM records WHERE id = ?", (record_id,))
+        self._db.commit()
+        return cur.rowcount > 0
 
     def add_pending_confirmation(self, pending: PendingConfirmation) -> None:
-        self._append_jsonl(self.pending_confirmations_path, pending.to_json())
+        cols, vals = self._pending_confirmation_to_row(pending)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO pending_confirmations ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
 
     def list_pending_confirmations(self) -> list[PendingConfirmation]:
-        return [
-            PendingConfirmation.from_json(line)
-            for line in self._read_jsonl(self.pending_confirmations_path)
-        ]
+        cur = self._db.execute("SELECT * FROM pending_confirmations ORDER BY rowid")
+        return [self._row_to_pending_confirmation(row) for row in cur.fetchall()]
 
     def add_profile_update(self, update: ProfileUpdate) -> None:
-        self._append_jsonl(self.profile_updates_path, update.to_json())
+        cols, vals = self._profile_update_to_row(update)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO profile_updates ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
 
     def list_profile_updates(self) -> list[ProfileUpdate]:
-        return [ProfileUpdate.from_json(line) for line in self._read_jsonl(self.profile_updates_path)]
+        cur = self._db.execute("SELECT * FROM profile_updates ORDER BY rowid")
+        return [self._row_to_profile_update(row) for row in cur.fetchall()]
 
     def add_report(self, report: SoloReport) -> None:
-        self._append_jsonl(self.reports_path, report.to_json())
+        cols, vals = self._report_to_row(report)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO reports ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
 
     def list_reports(self) -> list[SoloReport]:
-        return [SoloReport.from_json(line) for line in self._read_jsonl(self.reports_path)]
+        cur = self._db.execute("SELECT * FROM reports ORDER BY rowid")
+        return [self._row_to_report(row) for row in cur.fetchall()]
+
+    def add_todo(self, todo: SoloTodo) -> None:
+        cols, vals = self._todo_to_row(todo)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO todos ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
+
+    def list_todos(
+        self,
+        *,
+        status: str | None = None,
+        category: str | None = None,
+        limit: int | None = None,
+    ) -> list[SoloTodo]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if category:
+            clauses.append("LOWER(category) LIKE ?")
+            params.append(f"%{category.lower()}%")
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        if limit is not None:
+            cur = self._db.execute(
+                f"SELECT * FROM todos{where} ORDER BY rowid DESC LIMIT ?",
+                params + [limit],
+            )
+            rows = cur.fetchall()
+            rows.reverse()
+        else:
+            cur = self._db.execute(f"SELECT * FROM todos{where} ORDER BY rowid", params)
+            rows = cur.fetchall()
+        return [self._row_to_todo(row) for row in rows]
+
+    def complete_todo(self, todo_id: str) -> bool:
+        cur = self._db.execute(
+            "UPDATE todos SET status='done', completed_at=? WHERE id=? AND status != 'done'",
+            (_now(), todo_id),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def update_todo(self, todo_id: str, **updates: Any) -> bool:
+        """Update an existing todo by ID with new field values."""
+        cur = self._db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,))
+        row = cur.fetchone()
+        if row is None:
+            return False
+        todo = self._row_to_todo(row)
+        data = todo.to_dict()
+        data.update(updates)
+        if data.get("status") == "done" and not data.get("completed_at"):
+            data["completed_at"] = _now()
+        self._db.execute(
+            "UPDATE todos SET record_id=?, title=?, category=?, priority=?, due_date=?, "
+            "status=?, source=?, created_at=?, completed_at=? WHERE id=?",
+            (
+                data["record_id"], data["title"], data["category"], data["priority"],
+                data["due_date"], data["status"], data["source"], data["created_at"],
+                data["completed_at"], todo_id,
+            ),
+        )
+        self._db.commit()
+        return True
 
     def search_records(
         self,
@@ -196,21 +548,28 @@ class SoloStore:
         end_date: str | None = None,
         limit: int = 10,
     ) -> list[SoloRecord]:
-        """Search records with filters and optimized ranking (BM25 + Temporal Decay)."""
-        records = self.list_records()
-        filtered: list[SoloRecord] = []
+        """Search records with SQL filters and BM25 + Temporal Decay ranking."""
+        clauses: list[str] = []
+        params: list[Any] = []
+        if start_date:
+            clauses.append("date >= ?")
+            params.append(start_date)
+        if end_date:
+            clauses.append("date <= ?")
+            params.append(end_date)
+        if emotions:
+            placeholders = ", ".join("?" * len(emotions))
+            clauses.append(f"emotion IN ({placeholders})")
+            params.extend(emotions)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        cur = self._db.execute(f"SELECT * FROM records{where} ORDER BY rowid", params)
+        filtered = [self._row_to_record(row) for row in cur.fetchall()]
 
-        # 1. Hard Filters (Date/Tag/Emotion)
-        for record in records:
-            if start_date and record.date < start_date:
-                continue
-            if end_date and record.date > end_date:
-                continue
-            if tags and not any(t.strip().lower() in record.tags.lower() for t in tags):
-                continue
-            if emotions and record.emotion not in emotions:
-                continue
-            filtered.append(record)
+        if tags:
+            filtered = [
+                r for r in filtered
+                if any(t.strip().lower() in r.tags.lower() for t in tags)
+            ]
 
         if not filtered:
             return []
@@ -218,15 +577,12 @@ class SoloStore:
         if not query:
             return filtered[-limit:]
 
-        # 2. Tokenization with Jieba
         query_tokens = _tokenize_enhanced(query)
         if not query_tokens:
             return filtered[-limit:]
 
-        # BM25 Scoring using rank_bm25 package
         from rank_bm25 import BM25Okapi
-        
-        # Prepare corpus
+
         corpus_tokens = [
             _tokenize_enhanced(
                 f"{r.summary} {r.corrected_content} {r.tags} {r.weekday} {r.events} {r.period} {r.season} "
@@ -234,19 +590,15 @@ class SoloStore:
             )
             for r in filtered
         ]
-        
+
         bm25 = BM25Okapi(corpus_tokens)
         doc_scores = bm25.get_scores(query_tokens)
 
         scored: list[tuple[float, SoloRecord]] = []
         now_ts = datetime.now(timezone.utc).timestamp()
-        
+
         for i, score in enumerate(doc_scores):
-            # rank_bm25 can return 0 or negative for common words in tiny corpus
-            # We only care about positive matches for retrieval context
             if score <= 0:
-                # If there's an exact match in summary or content even with 0 score (IDF issue),
-                # we give it a tiny epsilon score so boosts can still work.
                 doc_text = (
                     f"{filtered[i].summary} {filtered[i].corrected_content} {filtered[i].weekday} "
                     f"{filtered[i].events} {filtered[i].period} {filtered[i].season} "
@@ -256,10 +608,8 @@ class SoloStore:
                     score = 0.1
                 else:
                     continue
-            
+
             record = filtered[i]
-            
-            # Boost matches in summary and tags
             summary_tokens = set(_tokenize_enhanced(record.summary))
             tag_tokens = set(_tokenize_enhanced(record.tags))
             for t in query_tokens:
@@ -268,7 +618,6 @@ class SoloStore:
                 if t in tag_tokens:
                     score *= 1.2
 
-            # 4. Temporal Decay (Recency bias)
             try:
                 rec_date = datetime.fromisoformat(record.created_at or record.date)
                 if rec_date.tzinfo is None:
@@ -276,35 +625,64 @@ class SoloStore:
                 age_days = (now_ts - rec_date.timestamp()) / 86400
             except ValueError:
                 age_days = 0
-                
+
             decay_factor = 0.5 ** (age_days / 90.0)
             final_score = score * max(0.2, decay_factor)
-            
             scored.append((final_score, record))
 
         scored.sort(key=lambda item: -item[0])
         return [item[1] for item in scored[:limit]]
 
     def status(self) -> dict[str, object]:
-        entries = self.list_entries()
-        records = self.list_records()
-        pending = self.list_pending_confirmations()
+        entry_count = self._db.execute("SELECT COUNT(*) FROM entries").fetchone()[0]
+        record_count = self._db.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+        pending_count = self._db.execute("SELECT COUNT(*) FROM pending_confirmations").fetchone()[0]
+        todo_count = self._db.execute("SELECT COUNT(*) FROM todos").fetchone()[0]
+        cur = self._db.execute("SELECT attachments FROM entries")
+        attachment_count = sum(len(json.loads(row[0])) for row in cur.fetchall())
+        last_row = self._db.execute(
+            "SELECT created_at FROM entries ORDER BY rowid DESC LIMIT 1"
+        ).fetchone()
         return {
-            "entries": len(entries),
-            "records": len(records),
-            "attachments": sum(len(entry.attachments) for entry in entries),
-            "pending_confirmations": len(pending),
-            "last_entry_at": entries[-1].created_at if entries else None,
+            "entries": entry_count,
+            "records": record_count,
+            "attachments": attachment_count,
+            "todos": todo_count,
+            "pending_confirmations": pending_count,
+            "last_entry_at": last_row[0] if last_row else None,
             "path": str(self.root),
         }
 
     def dates_with_activity(self) -> set[str]:
-        dates = {self._entry_date(entry) for entry in self.list_entries()}
-        dates.update(record.date for record in self.list_records())
-        return {item for item in dates if item}
+        dates: set[str] = set()
+        cur = self._db.execute("SELECT metadata, created_at FROM entries")
+        for row in cur.fetchall():
+            meta = json.loads(row[0]) if row[0] else {}
+            date_str = str(meta.get("record_date") or row[1][:10])
+            if date_str:
+                dates.add(date_str)
+        cur = self._db.execute("SELECT DISTINCT date FROM records")
+        for row in cur.fetchall():
+            if row[0]:
+                dates.add(row[0])
+        return dates
 
     def has_activity_on(self, target_date: str) -> bool:
-        return target_date in self.dates_with_activity()
+        cur = self._db.execute("SELECT 1 FROM records WHERE date = ? LIMIT 1", (target_date,))
+        if cur.fetchone():
+            return True
+        cur = self._db.execute(
+            "SELECT 1 FROM entries WHERE created_at LIKE ? LIMIT 1",
+            (f"{target_date}%",),
+        )
+        if cur.fetchone():
+            return True
+        cur = self._db.execute("SELECT metadata FROM entries")
+        for row in cur.fetchall():
+            meta = json.loads(row[0]) if row[0] else {}
+            if meta.get("record_date") == target_date:
+                return True
+        return False
 
     def reminder_state(self) -> dict[str, int]:
         data = self._read_config()
@@ -334,6 +712,85 @@ class SoloStore:
             encoding="utf-8",
         )
 
+    # --- Row deserialization helpers ---
+
+    @staticmethod
+    def _row_to_entry(row: tuple) -> SoloEntry:
+        return SoloEntry(
+            id=row[0],
+            content=row[1],
+            created_at=row[2],
+            channel=row[3],
+            sender_id=row[4],
+            chat_id=row[5],
+            message_id=row[6],
+            metadata=json.loads(row[7]) if row[7] else {},
+            attachments=[
+                StoredAttachment.from_dict(a)
+                for a in json.loads(row[8]) if isinstance(a, dict)
+            ],
+        )
+
+    @staticmethod
+    def _row_to_record(row: tuple) -> SoloRecord:
+        return SoloRecord(
+            id=row[0],
+            entry_id=row[1],
+            date=row[2],
+            raw_content=row[3],
+            corrected_content=row[4],
+            summary=row[5],
+            tags=row[6],
+            emotion=row[7],
+            weekday=row[8],
+            events=row[9],
+            period=row[10],
+            season=row[11],
+            is_weekend=bool(row[12]),
+            content_length=row[13],
+            emotion_reason=row[14],
+            related_people=row[15],
+            related_places=row[16],
+            source=row[17],
+            created_at=row[18],
+            attachments=[
+                StoredAttachment.from_dict(a)
+                for a in json.loads(row[19]) if isinstance(a, dict)
+            ],
+        )
+
+    @staticmethod
+    def _row_to_pending_confirmation(row: tuple) -> PendingConfirmation:
+        return PendingConfirmation(
+            id=row[0],
+            entry_id=row[1],
+            raw_content=row[2],
+            clarification_reason=row[3],
+            questions=json.loads(row[4]) if row[4] else [],
+            created_at=row[5],
+        )
+
+    @staticmethod
+    def _row_to_profile_update(row: tuple) -> ProfileUpdate:
+        return ProfileUpdate(
+            id=row[0], record_id=row[1], category=row[2], entity_type=row[3],
+            entity_name=row[4], suggested_value=row[5], confidence=row[6], status=row[7],
+        )
+
+    @staticmethod
+    def _row_to_report(row: tuple) -> SoloReport:
+        return SoloReport(id=row[0], report_type=row[1], content=row[2], created_at=row[3])
+
+    @staticmethod
+    def _row_to_todo(row: tuple) -> SoloTodo:
+        return SoloTodo(
+            id=row[0], record_id=row[1], title=row[2], category=row[3],
+            priority=row[4], due_date=row[5], status=row[6], source=row[7],
+            created_at=row[8], completed_at=row[9],
+        )
+
+    # --- Private helpers ---
+
     def _entry_date(self, entry: SoloEntry) -> str:
         metadata = entry.metadata or {}
         return str(metadata.get("record_date") or entry.created_at[:10])
@@ -343,16 +800,6 @@ class SoloStore:
 
         initialize_workspace(self.workspace)
         return dict(json.loads(get_config_path(self.workspace).read_text(encoding="utf-8")))
-
-    def _read_jsonl(self, path: Path) -> list[str]:
-        self.initialize()
-        return [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-
-    def _append_jsonl(self, path: Path, line: str) -> None:
-        self.initialize()
-        with path.open("a", encoding="utf-8") as file:
-            file.write(line + "\n")
-        path.chmod(0o600)
 
     def _persist_entry_attachments(
         self,
@@ -404,19 +851,11 @@ def _tokenize_enhanced(text: str) -> list[str]:
     """Tokenize text using Jieba for Chinese and regex for English."""
     if not text:
         return []
-    
+
     import jieba
     import re
-    
-    # 1. Clean and lower
+
     text = text.lower()
-    
-    # 2. Use Jieba for Chinese (standard mode)
-    # This handles both individual characters and multi-character words correctly.
     jieba_tokens = list(jieba.cut(text))
-    
-    # 3. Use regex for English/Numbers to ensure consistency (length >= 2)
     ascii_tokens = re.findall(r"[a-z0-9]{2,}", text)
-    
-    # Combine and deduplicate within a document for tf counting later
     return [t.strip() for t in jieba_tokens + ascii_tokens if t.strip()]

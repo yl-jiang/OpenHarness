@@ -8,6 +8,7 @@ from uuid import uuid4
 from openharness.utils.log import get_logger
 
 from solo.agent import OpenHarnessSoloAgent
+from solo.artifacts import persist_personal_artifacts
 from solo.models import (
     PendingConfirmation,
     ProcessResult,
@@ -91,7 +92,9 @@ class SoloProcessor:
                 for item in result["records"]:
                     if not isinstance(item, dict):
                         continue
-                    self.store.add_record(self._record_from_import(entry, item))
+                    record = self._record_from_import(entry, item)
+                    self.store.add_record(record)
+                    await self._persist_artifacts_for_record(record, entry.content, full_context)
                     auto_processed += 1
                 continue
             if result.get("needs_clarification"):
@@ -101,6 +104,7 @@ class SoloProcessor:
                 continue
             record = self._record_from_result(entry, result)
             self.store.add_record(record)
+            await self._persist_artifacts_for_record(record, entry.content, full_context)
             auto_processed += 1
             for update in result.get("suggested_profile_updates") or []:
                 if isinstance(update, dict) and str(update.get("confidence") or "").lower() != "low":
@@ -148,6 +152,27 @@ class SoloProcessor:
         question = await self.agent.generate_daily_question(context)
         return question
 
+    async def _persist_artifacts_for_record(
+        self,
+        record: SoloRecord,
+        raw_content: str,
+        profile_context: str,
+    ) -> None:
+        try:
+            artifacts = await self.agent.extract_artifacts(
+                record.to_dict(),
+                raw_content,
+                profile_context,
+            )
+        except Exception as exc:
+            logger.warning("artifact extraction failed record_id=%s: %s", record.id, exc)
+            return
+
+        persist_personal_artifacts(self.store, record, artifacts)
+        for update in artifacts.get("suggested_profile_updates") or []:
+            if isinstance(update, dict) and str(update.get("confidence") or "").lower() != "low":
+                self.store.add_profile_update(self._profile_update(record.id, update))
+
     async def generate_report(self, report_type: str) -> SoloReport:
         records = [record.to_dict() for record in self.store.list_records()]
         logger.info("generate_report start type=%s records=%d", report_type, len(records))
@@ -180,12 +205,26 @@ class SoloProcessor:
             missing_day_reminder=missing_day_reminder,
         )
 
-    def _record_from_result(self, entry: SoloEntry, result: dict[str, object]) -> SoloRecord:
+    def _build_record(
+        self,
+        entry: SoloEntry,
+        data: dict[str, object],
+        *,
+        raw_content: str | None = None,
+        default_source: str = "原始",
+    ) -> SoloRecord:
+        """Build a SoloRecord from entry + extracted/imported data dict.
+
+        Args:
+            entry: The source entry.
+            data: LLM result or imported item dict.
+            raw_content: Pre-resolved raw content; defaults to entry.content.
+            default_source: Fallback source label when not in data or metadata.
+        """
         metadata = entry.metadata or {}
-        # Priority: result['date'] (semantic) > metadata['record_date'] (explicit) > entry.created_at (fallback)
-        date = str(result.get("date") or metadata.get("record_date") or entry.created_at[:10])
-        raw_content = entry.content
-        events = str(result.get("events") or "")
+        date = str(data.get("date") or metadata.get("record_date") or entry.created_at[:10])
+        raw = raw_content if raw_content is not None else entry.content
+        events = str(data.get("events") or "")
         holiday = _get_holiday(date)
         if holiday and holiday not in events:
             events = f"{holiday}, {events}" if events else holiday
@@ -194,55 +233,32 @@ class SoloProcessor:
             id=uuid4().hex[:12],
             entry_id=entry.id,
             date=date,
-            raw_content=raw_content,
-            corrected_content=str(result.get("corrected_content") or raw_content),
-            summary=str(result.get("summary") or ""),
-            tags=str(result.get("tags") or ""),
-            emotion=str(result.get("emotion") or "中性"),
+            raw_content=raw,
+            corrected_content=str(data.get("corrected_content") or raw),
+            summary=str(data.get("summary") or ""),
+            tags=str(data.get("tags") or ""),
+            emotion=str(data.get("emotion") or "中性"),
             weekday=_get_weekday(date),
             events=events,
-            period=str(result.get("period") or _get_period(entry.created_at)),
+            period=str(data.get("period") or _get_period(entry.created_at)),
             season=_get_season(date),
             is_weekend=_is_weekend(date),
-            content_length=len(raw_content),
-            emotion_reason=str(result.get("emotion_reason") or ""),
-            related_people=str(result.get("related_people") or ""),
-            related_places=str(result.get("related_places") or ""),
-            source=str(metadata.get("source") or "原始"),
+            content_length=len(raw),
+            emotion_reason=str(data.get("emotion_reason") or ""),
+            related_people=str(data.get("related_people") or ""),
+            related_places=str(data.get("related_places") or ""),
+            source=str(data.get("source") or metadata.get("source") or default_source),
             created_at=_now(),
             attachments=list(entry.attachments),
         )
 
-    def _record_from_import(self, entry: SoloEntry, item: dict[str, object]) -> SoloRecord:
-        metadata = entry.metadata or {}
-        date = str(item.get("date") or metadata.get("record_date") or entry.created_at[:10])
-        raw = str(item.get("content") or item.get("raw_content") or item.get("corrected_content") or "")
-        events = str(item.get("events") or "")
-        holiday = _get_holiday(date)
-        if holiday and holiday not in events:
-            events = f"{holiday}, {events}" if events else holiday
+    def _record_from_result(self, entry: SoloEntry, result: dict[str, object]) -> SoloRecord:
+        return self._build_record(entry, result, default_source="原始")
 
-        return SoloRecord(
-            id=uuid4().hex[:12],
-            entry_id=entry.id,
-            date=date,
-            raw_content=raw or entry.content,
-            corrected_content=str(item.get("corrected_content") or raw or entry.content),
-            summary=str(item.get("summary") or ""),
-            tags=str(item.get("tags") or ""),
-            emotion=str(item.get("emotion") or "中性"),
-            weekday=_get_weekday(date),
-            events=events,
-            period=_get_period(entry.created_at),
-            season=_get_season(date),
-            is_weekend=_is_weekend(date),
-            content_length=len(raw or entry.content),
-            emotion_reason=str(item.get("emotion_reason") or ""),
-            related_people=str(item.get("related_people") or ""),
-            related_places=str(item.get("related_places") or ""),
-            source=str(item.get("source") or metadata.get("source") or "补录"),
-            created_at=_now(),
-            attachments=list(entry.attachments),
+    def _record_from_import(self, entry: SoloEntry, item: dict[str, object]) -> SoloRecord:
+        raw = str(item.get("content") or item.get("raw_content") or item.get("corrected_content") or "")
+        return self._build_record(
+            entry, item, raw_content=raw or entry.content, default_source="补录",
         )
 
     def _pending_from_result(self, entry: SoloEntry, result: dict[str, object]) -> PendingConfirmation:

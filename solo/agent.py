@@ -98,6 +98,25 @@ class OpenHarnessSoloAgent:
             user_prompt=user_prompt + "\n\n请生成 3 个深度复盘问题。",
         )
 
+    async def extract_artifacts(
+        self,
+        record: dict[str, Any],
+        raw_content: str,
+        profile_context: str,
+    ) -> dict[str, Any]:
+        logger.debug("extract_artifacts start record_id=%s", record.get("id") or record.get("entry_id"))
+        content = await self._complete(
+            system_prompt=_ARTIFACT_EXTRACTION_SYSTEM_PROMPT,
+            user_prompt=(
+                f"{profile_context}\n\n"
+                f"## 原始输入\n{raw_content}\n\n"
+                f"## 已结构化记录\n{json.dumps(record, ensure_ascii=False)}\n\n"
+                "请只提取个人 artifacts，输出 JSON。"
+            ),
+        )
+        result = _safe_parse_json(content)
+        return _normalize_artifacts(result)
+
     async def _complete(self, *, system_prompt: str, user_prompt: str) -> str:
         request = ApiMessageRequest(
             model=self._settings.model,
@@ -236,3 +255,45 @@ _REFLECTION_SYSTEM_PROMPT = """你是一位个人成长教练。
 3. **针对性**：如果提供了 focus 领域，请严格围绕该领域提问。
 4. **启发性**：问题不应有标准答案，而是为了开启对话。
 """
+
+_ARTIFACT_EXTRACTION_SYSTEM_PROMPT = """你是一位个人事务 artifacts 提取器。输入包含原始文本和已经整理好的个人记录。
+
+你的唯一职责是从事实中提取可执行的个人待办事项，不要重写主记录，也不要推测缺失事实。
+
+### 提取原则
+- 只提取用户明确提到或暗示的待办/计划/承诺
+- 涉及约会、预约、购物清单、健康检查、家务、人情往来等个人事务
+- 不要将已完成的事情标记为待办
+- 不要为模糊的愿望创建待办（如"想减肥"不算，但"明天开始跑步"算）
+
+### 输出格式 (严格 JSON)
+{
+  "todos": [
+    {
+      "title": "明确可执行的待办",
+      "category": "健康/家庭/社交/购物/学习/其他",
+      "priority": "high/medium/low",
+      "due_date": "YYYY-MM-DD 或空"
+    }
+  ],
+  "suggested_profile_updates": [
+    {
+      "category": "分类",
+      "entity_type": "人物/关系/地点/偏好/习惯",
+      "entity_name": "名称",
+      "suggested_value": "新发现或更新的个人事实",
+      "confidence": "high/medium/low"
+    }
+  ]
+}
+
+若没有对应内容，输出空数组。只输出 JSON。
+"""
+
+
+def _normalize_artifacts(result: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {"todos": [], "suggested_profile_updates": []}
+    for key in normalized:
+        value = result.get(key)
+        normalized[key] = value if isinstance(value, list) else []
+    return normalized
