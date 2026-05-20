@@ -9,7 +9,7 @@ from openharness.tools.base import ToolExecutionContext
 from openharness.channels.bus.queue import MessageBus
 from openharness.tools.skill_manager_tool import SkillManagerToolInput
 
-from wolo.config import save_config
+from wolo.config import load_config, save_config
 from wolo.models import WoloConfig, WoloHighlight, WoloTodo
 from wolo.runner import WoloQueryRunner
 from wolo.session import save_conversation
@@ -45,6 +45,58 @@ def test_wolo_workspace_and_config_are_independent(tmp_path: Path, monkeypatch):
     assert WoloConfig().provider_profile == "deepseek"
     assert "work log assistant" in get_soul_path().read_text(encoding="utf-8")
     assert get_skills_dir() == workspace.resolve() / "skills"
+
+
+def test_wolo_load_config_backfills_missing_fields(tmp_path: Path):
+    import json
+
+    workspace = tmp_path / ".wolo"
+    workspace.mkdir()
+    partial = {"provider_profile": "my-profile", "enabled_channels": ["feishu"]}
+    (workspace / "config.json").write_text(json.dumps(partial), encoding="utf-8")
+
+    config = load_config(workspace)
+
+    assert config.provider_profile == "my-profile"
+    assert config.enabled_channels == ["feishu"]
+    assert config.send_progress is True
+    assert config.heartbeat.enabled is True
+    assert config.log_level == "INFO"
+
+    saved = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
+    assert "send_progress" in saved
+    assert "heartbeat" in saved
+    assert "log_level" in saved
+
+
+def test_wolo_load_config_backfills_missing_nested_heartbeat_fields(tmp_path: Path):
+    import json
+
+    workspace = tmp_path / ".wolo"
+    workspace.mkdir()
+    partial = {"provider_profile": "codex", "heartbeat": {"enabled": True, "interval_s": 900}}
+    (workspace / "config.json").write_text(json.dumps(partial), encoding="utf-8")
+
+    config = load_config(workspace)
+
+    assert config.heartbeat.enabled is True
+    assert config.heartbeat.interval_s == 900
+    assert config.heartbeat.keep_recent_messages == 8
+
+    saved = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
+    assert saved["heartbeat"]["keep_recent_messages"] == 8
+
+
+def test_wolo_load_config_does_not_rewrite_complete_config(tmp_path: Path):
+    workspace = tmp_path / ".wolo"
+    workspace.mkdir()
+    save_config(WoloConfig(provider_profile="stable"), workspace)
+    config_path = workspace / "config.json"
+    content_before = config_path.read_text(encoding="utf-8")
+
+    load_config(workspace)
+
+    assert config_path.read_text(encoding="utf-8") == content_before
 
 
 def test_wolo_command_prefix_help_and_work_actions():

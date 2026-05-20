@@ -60,6 +60,58 @@ def test_standalone_solo_config_projects_channels(tmp_path: Path):
     assert channel_config.channels.send_progress is False
 
 
+def test_load_config_backfills_missing_fields(tmp_path: Path):
+    import json
+
+    workspace = tmp_path / ".solo"
+    workspace.mkdir()
+    partial = {"provider_profile": "my-profile", "enabled_channels": ["feishu"]}
+    (workspace / "config.json").write_text(json.dumps(partial), encoding="utf-8")
+
+    config = load_config(workspace)
+
+    assert config.provider_profile == "my-profile"
+    assert config.enabled_channels == ["feishu"]
+    assert config.send_progress is True
+    assert config.heartbeat.enabled is True
+    assert config.log_level == "INFO"
+
+    saved = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
+    assert "send_progress" in saved
+    assert "heartbeat" in saved
+    assert "log_level" in saved
+
+
+def test_load_config_backfills_missing_nested_heartbeat_fields(tmp_path: Path):
+    import json
+
+    workspace = tmp_path / ".solo"
+    workspace.mkdir()
+    partial = {"provider_profile": "codex", "heartbeat": {"enabled": True, "interval_s": 900}}
+    (workspace / "config.json").write_text(json.dumps(partial), encoding="utf-8")
+
+    config = load_config(workspace)
+
+    assert config.heartbeat.enabled is True
+    assert config.heartbeat.interval_s == 900
+    assert config.heartbeat.keep_recent_messages == 8
+
+    saved = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
+    assert saved["heartbeat"]["keep_recent_messages"] == 8
+
+
+def test_load_config_does_not_rewrite_complete_config(tmp_path: Path):
+    workspace = tmp_path / ".solo"
+    workspace.mkdir()
+    save_config(SoloConfig(provider_profile="stable"), workspace)
+    config_path = workspace / "config.json"
+    content_before = config_path.read_text(encoding="utf-8")
+
+    load_config(workspace)
+
+    assert config_path.read_text(encoding="utf-8") == content_before
+
+
 @pytest.mark.asyncio
 async def test_standalone_solo_gateway_routes_bare_text_to_solo_tools(
     tmp_path: Path,
