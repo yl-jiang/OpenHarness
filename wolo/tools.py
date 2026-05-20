@@ -145,6 +145,16 @@ class WoloToolRegistry:
         return str(result.get("message") or result)
 
     async def _handle_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Record a work entry, optionally structuring it into a queryable record.
+
+        Two-phase design:
+          Phase 1 — Always create a raw entry (guarantees no data loss).
+          Phase 2 — If the model provided structured fields (summary, tags, etc.),
+                    immediately create a structured record as well.
+                    Otherwise, only the raw entry is persisted; it will be structured
+                    later by ``process_pending()`` (triggered via wolo_process or
+                    automatically before report generation).
+        """
         content = _required_text(arguments, "content")
         # Fall back to local date when the model does not provide an explicit date
         local_today = datetime.now().strftime("%Y-%m-%d")
@@ -156,7 +166,14 @@ class WoloToolRegistry:
             }.items()
             if value
         }
+
+        # Phase 1: Persist raw entry — this never fails and guarantees the user's
+        # input is safely stored even if structuring fails or is deferred.
         entry = self.store.record(content, metadata=metadata, source_context=self._source_context)
+
+        # Phase 2: If the model already extracted structured fields, create a
+        # record immediately (fast path). Otherwise the entry remains "unprocessed"
+        # and will be picked up by the next `process_pending()` call.
         if any(
             arguments.get(key)
             for key in (
@@ -213,6 +230,9 @@ class WoloToolRegistry:
                 "record_id": record.id,
                 "message": f"✅ 刚才的记录已经入库。record_id={record.id}",
             }
+
+        # No structured fields provided — entry saved but not yet structured.
+        # It will be processed by the next `wolo_process` / `process_pending()` call.
         backfill_hint = _backfill_hint(self.store, arguments.get("record_date") or arguments.get("date"))
         message = "✅ 刚才的记录已经入库。"
         if backfill_hint:
@@ -286,6 +306,17 @@ class WoloToolRegistry:
         return {"ok": True, "needs_user_reply": True, "question": question, "message": message}
 
     async def _handle_process(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Process unstructured entries that were saved but not yet converted to records.
+
+        This handles the "Phase 2" backlog: entries created by _handle_record (Phase 1)
+        that didn't have structured fields at creation time. For each unprocessed entry,
+        the processor calls the LLM to extract structured fields (date, summary, tags,
+        emotion, etc.) and either:
+          - Creates a structured record (auto_processed), or
+          - Marks it as needing user clarification (pending_confirmations).
+
+        Also checks for missing days and generates reminders.
+        """
         result = await self._processor().process_pending(
             limit=int(arguments.get("limit") or 20),
             backfill_missing_yesterday=bool(arguments.get("backfill_missing_yesterday") or False),
