@@ -20,8 +20,8 @@ from openharness.utils.log import get_logger
 from solo.config import build_channel_manager_config, load_config
 from solo.gateway.bridge import SoloGatewayBridge
 from solo.gateway.heartbeat import SoloHeartbeatService
-from solo.models import SoloState
-from solo.workspace import (
+from solo.core.models import SoloState
+from solo.core.workspace import (
     get_logs_dir,
     get_pid_path,
     get_state_path,
@@ -359,7 +359,7 @@ def _resolve_feishu_notify_target(
     # Fall back to the most recent feishu conversation partner
     if not user_open_id:
         try:
-            from solo.session import list_conversations
+            from solo.core.session import list_conversations
 
             root = get_workspace_root(workspace)
             for item in list_conversations(root, limit=20):

@@ -21,10 +21,10 @@ from wolo.gateway.service import (
     start_gateway_process,
     stop_gateway_process,
 )
-from wolo.models import WoloConfig, WoloEntry, WoloRecord
+from wolo.core.models import WoloConfig, WoloEntry, WoloRecord
 from wolo.processor import WoloProcessor
-from wolo.store import WoloStore
-from wolo.workspace import get_config_path, get_logs_dir, get_workspace_root, initialize_workspace, workspace_health
+from wolo.core.store import WoloStore
+from wolo.core.workspace import get_config_path, get_logs_dir, get_workspace_root, initialize_workspace, workspace_health
 
 app = typer.Typer(
     name="wolo",
@@ -390,7 +390,7 @@ def gateway_install_service_cmd(
 ) -> None:
     """Install the wolo gateway as a system-level background service (LaunchAgent/systemd)."""
     from openharness.utils.platform_service import install_service
-    from wolo.workspace import get_workspace_root
+    from wolo.core.workspace import get_workspace_root
 
     root = get_workspace_root(workspace)
     args = ["-m", "wolo", "gateway", "run", "--workspace", str(root)]

@@ -20,11 +20,11 @@ from openharness.skills import load_skill_registry
 from openharness.ui.runtime import _resolve_api_client_from_settings, _resolve_vision_config
 from openharness.utils.log import get_logger
 
-from wolo.memory import load_memory_prompt
-from wolo.session import load_conversation, save_conversation
-from wolo.store import WoloStore
+from wolo.core.memory import load_memory_prompt
+from wolo.core.session import load_conversation, save_conversation
+from wolo.core.store import WoloStore
 from wolo.tools import WoloToolRegistry, build_oh_registry
-from wolo.workspace import get_memory_dir, get_sessions_dir, get_skills_dir, get_soul_path, get_user_path, get_workspace_root
+from wolo.core.workspace import get_memory_dir, get_sessions_dir, get_skills_dir, get_soul_path, get_user_path, get_workspace_root
 
 logger = get_logger(__name__)
 

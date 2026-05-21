@@ -1,4 +1,4 @@
-"""Per-session conversation history persistence for solo (SQLite-backed)."""
+"""Per-session conversation history persistence for wolo (SQLite-backed)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
 
-from solo.workspace import get_data_dir, get_sessions_dir
+from wolo.core.workspace import get_data_dir, get_sessions_dir
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +77,7 @@ def _maybe_migrate_json_sessions(workspace: Path, conn: sqlite3.Connection) -> N
 
     if migrated:
         conn.commit()
-        logger.info("solo session: migrated %d JSON sessions into SQLite", migrated)
+        logger.info("wolo session: migrated %d JSON sessions into SQLite", migrated)
 
 
 def save_conversation(
@@ -104,7 +104,7 @@ def save_conversation(
             (session_key, sid, messages_json, len(clean), now, now),
         )
         conn.commit()
-        logger.debug("solo session saved session_key=%s messages=%d", session_key, len(clean))
+        logger.debug("wolo session saved session_key=%s messages=%d", session_key, len(clean))
     finally:
         conn.close()
 
@@ -133,14 +133,14 @@ def load_conversation(
             [ConversationMessage.model_validate(m) for m in raw]
         )
         logger.debug(
-            "solo session loaded session_key=%s messages=%d session_id=%s",
+            "wolo session loaded session_key=%s messages=%d session_id=%s",
             session_key,
             len(messages),
             session_id,
         )
         return messages, session_id
     except Exception:
-        logger.warning("solo session load failed for session_key=%s, starting fresh", session_key, exc_info=True)
+        logger.warning("wolo session load failed for session_key=%s, starting fresh", session_key, exc_info=True)
         return [], None
     finally:
         conn.close()

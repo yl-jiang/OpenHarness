@@ -9,7 +9,7 @@ from wolo.commands import (
     parse_wolo_command,
     wolo_help_text,
 )
-from wolo.models import (
+from wolo.core.models import (
     PendingConfirmation,
     ProcessResult,
     ProfileUpdate,
@@ -22,7 +22,7 @@ from wolo.models import (
     WoloTodo,
 )
 from wolo.processor import WoloProcessor
-from wolo.store import WoloStore
+from wolo.core.store import WoloStore
 from wolo.tools import WoloDomainTool, WoloToolRegistry
 
 __all__ = [

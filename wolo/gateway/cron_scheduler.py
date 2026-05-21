@@ -36,12 +36,12 @@ _WORKSPACE: str | Path | None = None
 # ---------------------------------------------------------------------------
 
 def _data_dir() -> Path:
-    from wolo.workspace import get_data_dir
+    from wolo.core.workspace import get_data_dir
     return get_data_dir(_WORKSPACE)
 
 
 def _logs_dir() -> Path:
-    from wolo.workspace import get_logs_dir
+    from wolo.core.workspace import get_logs_dir
     return get_logs_dir(_WORKSPACE)
 
 
@@ -137,7 +137,7 @@ def _is_agent_task_job(job: dict[str, Any]) -> bool:
 async def _run_agent_task(job: dict[str, Any]) -> str:
     """Invoke the wolo agent with the job's prompt and return the output text."""
     from wolo.runner import WoloQueryRunner
-    from wolo.store import WoloStore
+    from wolo.core.store import WoloStore
 
     payload = job.get("payload") or {}
     prompt = str(payload.get("message") or "").strip()
@@ -232,7 +232,7 @@ async def _agent_reformat(raw_output: str, job_name: str) -> str:
     """Use the wolo agent to rewrite raw cron output into a friendly notification."""
     try:
         from wolo.runner import WoloQueryRunner
-        from wolo.store import WoloStore
+        from wolo.core.store import WoloStore
 
         store = WoloStore(_WORKSPACE)
         runner = WoloQueryRunner(store)

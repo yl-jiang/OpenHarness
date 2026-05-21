@@ -9,7 +9,7 @@ from solo.commands import (
     parse_solo_command,
     solo_help_text,
 )
-from solo.models import (
+from solo.core.models import (
     PendingConfirmation,
     ProcessResult,
     ProfileUpdate,
@@ -19,7 +19,7 @@ from solo.models import (
     SoloReport,
 )
 from solo.processor import SoloProcessor
-from solo.store import SoloStore
+from solo.core.store import SoloStore
 from solo.tools import SoloDomainTool, SoloToolRegistry
 
 __all__ = [

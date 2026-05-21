@@ -14,9 +14,9 @@ from wolo.agent import (
     _ARTIFACT_EXTRACTION_SYSTEM_PROMPT,
     _PROCESS_RECORD_SYSTEM_PROMPT,
 )
-from wolo.models import WoloDecision, WoloHighlight, WoloTodo
+from wolo.core.models import WoloDecision, WoloHighlight, WoloTodo
 from wolo.processor import WoloProcessor
-from wolo.store import WoloStore
+from wolo.core.store import WoloStore
 from wolo.tools import WoloToolRegistry, build_oh_registry
 
 
@@ -219,7 +219,7 @@ async def test_work_tools_query_todos_blockers_decisions_and_lessons(tmp_path: P
 
 @pytest.mark.asyncio
 async def test_wolo_remind_tool_schedules_one_shot_feishu_reminder(tmp_path: Path, monkeypatch):
-    from wolo.workspace import get_data_dir
+    from wolo.core.workspace import get_data_dir
 
     store = WoloStore(tmp_path / ".wolo")
     started: list[Path] = []

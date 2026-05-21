@@ -10,16 +10,16 @@ from openharness.channels.bus.queue import MessageBus
 from openharness.tools.skill_manager_tool import SkillManagerToolInput
 
 from wolo.config import load_config, save_config
-from wolo.models import WoloConfig, WoloHighlight, WoloTodo
+from wolo.core.models import WoloConfig, WoloHighlight, WoloTodo
 from wolo.runner import WoloQueryRunner
-from wolo.session import save_conversation
-from wolo.store import WoloStore
-from wolo.workspace import get_skills_dir, initialize_workspace
+from wolo.core.session import save_conversation
+from wolo.core.store import WoloStore
+from wolo.core.workspace import get_skills_dir, initialize_workspace
 
 def test_wolo_workspace_and_config_are_independent(tmp_path: Path, monkeypatch):
-    from wolo.models import WoloConfig
-    from wolo.store import WoloStore
-    from wolo.workspace import (
+    from wolo.core.models import WoloConfig
+    from wolo.core.store import WoloStore
+    from wolo.core.workspace import (
         get_config_path,
         get_data_dir,
         get_soul_path,
@@ -121,7 +121,7 @@ def test_wolo_command_prefix_help_and_work_actions():
 
 
 def test_wolo_tool_names_and_descriptions_are_work_focused(tmp_path: Path):
-    from wolo.store import WoloStore
+    from wolo.core.store import WoloStore
     from wolo.tools import WoloToolRegistry
 
     registry = WoloToolRegistry(WoloStore(tmp_path / ".wolo"))
@@ -175,7 +175,7 @@ def test_standalone_wolo_gateway_logging_writes_workspace_log_file(tmp_path: Pat
 
     from openharness.utils.log import get_logger, reset_logging
     from wolo.cli import _configure_gateway_logging
-    from wolo.workspace import get_logs_dir
+    from wolo.core.workspace import get_logs_dir
 
     workspace = tmp_path / ".wolo"
     save_config(WoloConfig(log_level="INFO"), workspace)
@@ -292,7 +292,7 @@ def test_wolo_save_conversation_writes_session_snapshot_for_autodream(tmp_path: 
     )
 
     # Verify data is stored in SQLite
-    from wolo.session import load_conversation
+    from wolo.core.session import load_conversation
     messages, loaded_sid = load_conversation(workspace, session_key)
     assert loaded_sid == session_id
     assert len(messages) == 1
@@ -319,7 +319,7 @@ def test_wolo_save_conversation_roundtrip(tmp_path: Path):
         session_id="sid-2",
     )
 
-    from wolo.session import load_conversation
+    from wolo.core.session import load_conversation
     messages, loaded_sid = load_conversation(workspace, session_key)
     assert loaded_sid == "sid-2"
     assert len(messages) == 2

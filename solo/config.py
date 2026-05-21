@@ -7,8 +7,8 @@ from pathlib import Path
 
 from openharness.config.schema import Config
 
-from solo.models import SoloConfig
-from solo.workspace import get_config_path
+from solo.core.models import SoloConfig
+from solo.core.workspace import get_config_path
 
 
 def _has_missing_keys(raw: dict[str, object], full: dict[str, object]) -> bool:

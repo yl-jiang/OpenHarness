@@ -10,12 +10,12 @@ import sqlite3
 from typing import Any
 from uuid import uuid4
 
-from solo.attachments import (
+from solo.core.attachments import (
     StoredAttachment,
     persist_attachment_paths,
     resolve_stored_attachment_path,
 )
-from solo.models import (
+from solo.core.models import (
     PendingConfirmation,
     ProfileUpdate,
     SoloConfig,
@@ -24,8 +24,8 @@ from solo.models import (
     SoloReport,
     SoloTodo,
 )
-from solo.workspace import get_attachments_dir, get_data_dir, initialize_workspace
-from solo.utils import _now
+from solo.core.workspace import get_attachments_dir, get_data_dir, initialize_workspace
+from solo.core.utils import _now
 
 DB_FILENAME = "store.db"
 _SCHEMA_VERSION = 1
@@ -711,7 +711,7 @@ class SoloStore:
         if missing_streak is not None:
             reminders["last_missing_streak"] = missing_streak
         data["reminders"] = reminders
-        from solo.workspace import get_config_path
+        from solo.core.workspace import get_config_path
 
         get_config_path(self.workspace).write_text(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n",
@@ -802,7 +802,7 @@ class SoloStore:
         return str(metadata.get("record_date") or entry.created_at[:10])
 
     def _read_config(self) -> dict[str, Any]:
-        from solo.workspace import get_config_path
+        from solo.core.workspace import get_config_path
 
         initialize_workspace(self.workspace)
         return dict(json.loads(get_config_path(self.workspace).read_text(encoding="utf-8")))

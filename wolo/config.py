@@ -7,8 +7,8 @@ from pathlib import Path
 
 from openharness.config.schema import Config
 
-from wolo.models import WoloConfig
-from wolo.workspace import get_config_path
+from wolo.core.models import WoloConfig
+from wolo.core.workspace import get_config_path
 
 
 def _has_missing_keys(raw: dict[str, object], full: dict[str, object]) -> bool:

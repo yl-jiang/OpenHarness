@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import wolo.gateway.cron_scheduler as scheduler
-from wolo.workspace import ensure_workspace, get_data_dir, get_logs_dir
+from wolo.core.workspace import ensure_workspace, get_data_dir, get_logs_dir
 
 
 @pytest.fixture(autouse=True)

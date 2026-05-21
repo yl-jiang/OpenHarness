@@ -17,11 +17,11 @@ from openharness.tools.skill_manager_tool import SkillManagerToolInput
 from solo.config import build_channel_manager_config, load_config, save_config
 from solo.gateway.bridge import SoloGatewayBridge
 from solo.gateway.service import SoloGatewayService
-from solo.models import PendingConfirmation, SoloConfig, SoloTodo
+from solo.core.models import PendingConfirmation, SoloConfig, SoloTodo
 from solo.runner import SoloQueryRunner
-from solo.session import save_conversation
-from solo.store import SoloStore
-from solo.workspace import get_config_path, get_data_dir, get_skills_dir, initialize_workspace, workspace_health
+from solo.core.session import save_conversation
+from solo.core.store import SoloStore
+from solo.core.workspace import get_config_path, get_data_dir, get_skills_dir, initialize_workspace, workspace_health
 
 
 def test_standalone_solo_workspace_and_config_are_independent(tmp_path: Path):
@@ -223,7 +223,7 @@ def test_standalone_solo_gateway_logging_writes_workspace_log_file(tmp_path: Pat
 
     from openharness.utils.log import get_logger, reset_logging
     from solo.cli import _configure_gateway_logging
-    from solo.workspace import get_logs_dir
+    from solo.core.workspace import get_logs_dir
 
     workspace = tmp_path / ".solo"
     save_config(SoloConfig(log_level="INFO"), workspace)
@@ -457,7 +457,7 @@ def test_solo_save_conversation_writes_session_snapshot_for_autodream(tmp_path: 
     )
 
     # Verify data is stored in SQLite
-    from solo.session import load_conversation
+    from solo.core.session import load_conversation
     messages, loaded_sid = load_conversation(workspace, session_key)
     assert loaded_sid == session_id
     assert len(messages) == 1
@@ -484,7 +484,7 @@ def test_solo_save_conversation_roundtrip(tmp_path: Path):
         session_id="sid-2",
     )
 
-    from solo.session import load_conversation
+    from solo.core.session import load_conversation
     messages, loaded_sid = load_conversation(workspace, session_key)
     assert loaded_sid == "sid-2"
     assert len(messages) == 2

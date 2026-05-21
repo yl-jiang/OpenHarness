@@ -8,8 +8,8 @@ from uuid import uuid4
 from openharness.utils.log import get_logger
 
 from solo.agent import OpenHarnessSoloAgent
-from solo.artifacts import persist_personal_artifacts
-from solo.models import (
+from solo.core.artifacts import persist_personal_artifacts
+from solo.core.models import (
     PendingConfirmation,
     ProcessResult,
     ProfileUpdate,
@@ -17,8 +17,8 @@ from solo.models import (
     SoloRecord,
     SoloReport,
 )
-from solo.store import SoloStore
-from solo.utils import (
+from solo.core.store import SoloStore
+from solo.core.utils import (
     _get_holiday,
     _get_period,
     _get_season,
@@ -286,8 +286,8 @@ class SoloProcessor:
         )
 
     def _profile_context(self, target_date: str | None = None) -> str:
-        from solo.memory import load_memory_prompt
-        from solo.workspace import get_soul_path, get_user_path
+        from solo.core.memory import load_memory_prompt
+        from solo.core.workspace import get_soul_path, get_user_path
 
         sections: list[str] = []
 

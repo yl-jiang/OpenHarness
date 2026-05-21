@@ -20,7 +20,7 @@ from solo.commands import (
 )
 from solo.processor import SoloProcessor
 from solo.runner import SoloQueryRunner
-from solo.store import SoloStore
+from solo.core.store import SoloStore
 
 logger = get_logger(__name__)
 

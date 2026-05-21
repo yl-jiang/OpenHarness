@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from solo.models import SoloRecord, SoloTodo
-from solo.store import SoloStore
-from solo.utils import _now
+from solo.core.models import SoloRecord, SoloTodo
+from solo.core.store import SoloStore
+from solo.core.utils import _now
 
 
 def persist_personal_artifacts(

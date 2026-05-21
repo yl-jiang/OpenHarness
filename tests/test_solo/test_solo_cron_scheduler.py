@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import solo.gateway.cron_scheduler as scheduler
-from solo.workspace import ensure_workspace, get_data_dir, get_logs_dir
+from solo.core.workspace import ensure_workspace, get_data_dir, get_logs_dir
 
 
 @pytest.fixture(autouse=True)

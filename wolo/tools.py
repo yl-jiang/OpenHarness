@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
-from wolo.attachments import StoredAttachment
+from wolo.core.attachments import StoredAttachment
 from openharness.services.app_reminders import (
     build_one_shot_reminder_schedule,
     format_local_reminder_time,
@@ -24,12 +24,12 @@ from openharness.tools.image_to_text_tool import ImageToTextTool
 from openharness.tools.skill_manager_tool import SkillManagerTool
 from openharness.utils.log import get_logger
 
-from wolo.artifacts import persist_work_artifacts
-from wolo.memory import add_memory_entry
-from wolo.models import ProfileUpdate, WoloEntry, WoloRecord
+from wolo.core.artifacts import persist_work_artifacts
+from wolo.core.memory import add_memory_entry
+from wolo.core.models import ProfileUpdate, WoloEntry, WoloRecord
 from wolo.processor import WoloProcessor
-from wolo.store import WoloStore
-from wolo.utils import (
+from wolo.core.store import WoloStore
+from wolo.core.utils import (
     _get_holiday,
     _get_period,
     _get_personal_events,

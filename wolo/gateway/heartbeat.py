@@ -12,9 +12,9 @@ from openharness.channels.bus.queue import MessageBus
 from openharness.utils.log import get_logger
 
 from wolo.runner import WoloQueryRunner
-from wolo.session import list_conversations, load_conversation, save_conversation
-from wolo.store import WoloStore
-from wolo.workspace import get_workspace_root
+from wolo.core.session import list_conversations, load_conversation, save_conversation
+from wolo.core.store import WoloStore
+from wolo.core.workspace import get_workspace_root
 
 logger = get_logger(__name__)
 

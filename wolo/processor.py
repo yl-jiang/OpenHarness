@@ -8,10 +8,10 @@ from uuid import uuid4
 from openharness.utils.log import get_logger
 
 from wolo.agent import OpenHarnessWoloAgent
-from wolo.artifacts import persist_work_artifacts
-from wolo.models import PendingConfirmation, ProcessResult, ProfileUpdate, WoloEntry, WoloRecord, WoloReport
-from wolo.store import WoloStore
-from wolo.utils import (
+from wolo.core.artifacts import persist_work_artifacts
+from wolo.core.models import PendingConfirmation, ProcessResult, ProfileUpdate, WoloEntry, WoloRecord, WoloReport
+from wolo.core.store import WoloStore
+from wolo.core.utils import (
     _get_holiday,
     _get_period,
     _get_season,
@@ -311,8 +311,8 @@ class WoloProcessor:
         return "## Work Artifacts\n\n" + "\n\n".join(sections) if sections else ""
 
     def _profile_context(self, target_date: str | None = None) -> str:
-        from wolo.memory import load_memory_prompt
-        from wolo.workspace import get_soul_path, get_user_path
+        from wolo.core.memory import load_memory_prompt
+        from wolo.core.workspace import get_soul_path, get_user_path
 
         sections: list[str] = []
 

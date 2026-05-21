@@ -4,8 +4,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from solo.store import SoloStore
-from solo.models import SoloRecord
+from solo.core.store import SoloStore
+from solo.core.models import SoloRecord
 from solo.processor import SoloProcessor
 
 def _create_record(store, content, summary, tags, date=None, emotion="积极"):
@@ -177,7 +177,7 @@ async def test_tool_visualize_and_export(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_solo_remind_tool_schedules_one_shot_feishu_reminder(tmp_path: Path, monkeypatch):
     from solo.tools import SoloToolRegistry
-    from solo.workspace import get_data_dir
+    from solo.core.workspace import get_data_dir
 
     workspace = tmp_path / ".solo"
     store = SoloStore(workspace)

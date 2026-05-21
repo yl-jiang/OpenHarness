@@ -12,7 +12,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
-from solo.attachments import StoredAttachment
+from solo.core.attachments import StoredAttachment
 from openharness.services.app_reminders import (
     build_one_shot_reminder_schedule,
     format_local_reminder_time,
@@ -24,11 +24,11 @@ from openharness.tools.image_to_text_tool import ImageToTextTool
 from openharness.tools.skill_manager_tool import SkillManagerTool
 from openharness.utils.log import get_logger
 
-from solo.memory import add_memory_entry
-from solo.models import ProfileUpdate, SoloEntry, SoloRecord
+from solo.core.memory import add_memory_entry
+from solo.core.models import ProfileUpdate, SoloEntry, SoloRecord
 from solo.processor import SoloProcessor
-from solo.store import SoloStore
-from solo.utils import (
+from solo.core.store import SoloStore
+from solo.core.utils import (
     _get_holiday,
     _get_period,
     _get_personal_events,

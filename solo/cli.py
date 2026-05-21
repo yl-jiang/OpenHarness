@@ -21,10 +21,10 @@ from solo.gateway.service import (
     start_gateway_process,
     stop_gateway_process,
 )
-from solo.models import SoloConfig, SoloEntry, SoloRecord
+from solo.core.models import SoloConfig, SoloEntry, SoloRecord
 from solo.processor import SoloProcessor
-from solo.store import SoloStore
-from solo.workspace import get_config_path, get_logs_dir, get_workspace_root, initialize_workspace, workspace_health
+from solo.core.store import SoloStore
+from solo.core.workspace import get_config_path, get_logs_dir, get_workspace_root, initialize_workspace, workspace_health
 
 app = typer.Typer(
     name="solo",
@@ -297,7 +297,7 @@ def gateway_install_service_cmd(
 ) -> None:
     """Install the solo gateway as a system-level background service (LaunchAgent/systemd)."""
     from openharness.utils.platform_service import install_service
-    from solo.workspace import get_workspace_root
+    from solo.core.workspace import get_workspace_root
 
     root = get_workspace_root(workspace)
     args = ["-m", "solo", "gateway", "run", "--workspace", str(root)]

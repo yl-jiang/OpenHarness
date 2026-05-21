@@ -1,10 +1,9 @@
 import pytest
 from pathlib import Path
-from datetime import datetime
 from uuid import uuid4
 
-from solo.store import SoloStore
-from solo.models import SoloRecord
+from solo.core.store import SoloStore
+from solo.core.models import SoloRecord
 from solo.processor import SoloProcessor
 
 @pytest.mark.asyncio

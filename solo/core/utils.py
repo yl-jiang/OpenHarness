@@ -1,4 +1,4 @@
-"""Utility functions for wolo."""
+"""Utility functions for solo."""
 
 from __future__ import annotations
 
@@ -132,7 +132,7 @@ def _get_personal_events(workspace: str | Path | None, date_str: str) -> str | N
     except Exception:
         return None
 
-    from wolo.workspace import get_user_path
+    from solo.core.workspace import get_user_path
 
     user_path = get_user_path(workspace)
     if not user_path.exists():

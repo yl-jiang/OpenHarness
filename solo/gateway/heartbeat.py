@@ -12,9 +12,9 @@ from openharness.channels.bus.queue import MessageBus
 from openharness.utils.log import get_logger
 
 from solo.runner import SoloQueryRunner
-from solo.session import list_conversations, load_conversation, save_conversation
-from solo.store import SoloStore
-from solo.workspace import get_workspace_root
+from solo.core.session import list_conversations, load_conversation, save_conversation
+from solo.core.store import SoloStore
+from solo.core.workspace import get_workspace_root
 
 logger = get_logger(__name__)
 

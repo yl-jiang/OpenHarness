@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from wolo.models import WoloDecision, WoloHighlight, WoloRecord, WoloTodo
-from wolo.store import WoloStore
-from wolo.utils import _now
+from wolo.core.models import WoloDecision, WoloHighlight, WoloRecord, WoloTodo
+from wolo.core.store import WoloStore
+from wolo.core.utils import _now
 
 
 def persist_work_artifacts(

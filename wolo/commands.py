@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from wolo.models import ProcessResult
+from wolo.core.models import ProcessResult
 
 WoloAction = Literal["record", "process", "status", "view", "report", "backfill", "help"]
 

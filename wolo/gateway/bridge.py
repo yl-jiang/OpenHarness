@@ -20,7 +20,7 @@ from wolo.commands import (
 )
 from wolo.processor import WoloProcessor
 from wolo.runner import WoloQueryRunner
-from wolo.store import WoloStore
+from wolo.core.store import WoloStore
 
 logger = get_logger(__name__)
 

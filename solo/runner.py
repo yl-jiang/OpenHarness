@@ -20,11 +20,11 @@ from openharness.skills import load_skill_registry
 from openharness.ui.runtime import _resolve_api_client_from_settings, _resolve_vision_config
 from openharness.utils.log import get_logger
 
-from solo.memory import load_memory_prompt
-from solo.session import load_conversation, save_conversation
-from solo.store import SoloStore
+from solo.core.memory import load_memory_prompt
+from solo.core.session import load_conversation, save_conversation
+from solo.core.store import SoloStore
 from solo.tools import SoloToolRegistry, build_oh_registry
-from solo.workspace import get_memory_dir, get_sessions_dir, get_skills_dir, get_soul_path, get_user_path, get_workspace_root
+from solo.core.workspace import get_memory_dir, get_sessions_dir, get_skills_dir, get_soul_path, get_user_path, get_workspace_root
 
 logger = get_logger(__name__)
 

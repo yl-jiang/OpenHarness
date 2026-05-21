@@ -10,12 +10,12 @@ import sqlite3
 from typing import Any
 from uuid import uuid4
 
-from wolo.attachments import (
+from wolo.core.attachments import (
     StoredAttachment,
     persist_attachment_paths,
     resolve_stored_attachment_path,
 )
-from wolo.models import (
+from wolo.core.models import (
     PendingConfirmation,
     ProfileUpdate,
     WoloConfig,
@@ -26,8 +26,8 @@ from wolo.models import (
     WoloReport,
     WoloTodo,
 )
-from wolo.workspace import get_attachments_dir, get_data_dir, initialize_workspace
-from wolo.utils import _now
+from wolo.core.workspace import get_attachments_dir, get_data_dir, initialize_workspace
+from wolo.core.utils import _now
 
 DB_FILENAME = "store.db"
 _SCHEMA_VERSION = 1
@@ -827,7 +827,7 @@ class WoloStore:
         if missing_streak is not None:
             reminders["last_missing_streak"] = missing_streak
         data["reminders"] = reminders
-        from wolo.workspace import get_config_path
+        from wolo.core.workspace import get_config_path
 
         get_config_path(self.workspace).write_text(
             json.dumps(data, ensure_ascii=False, indent=2) + "\n",
@@ -932,7 +932,7 @@ class WoloStore:
         return str(metadata.get("record_date") or entry.created_at[:10])
 
     def _read_config(self) -> dict[str, Any]:
-        from wolo.workspace import get_config_path
+        from wolo.core.workspace import get_config_path
 
         initialize_workspace(self.workspace)
         return dict(json.loads(get_config_path(self.workspace).read_text(encoding="utf-8")))

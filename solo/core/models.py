@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import json
 from typing import Any
 
-from solo.attachments import StoredAttachment
+from solo.core.attachments import StoredAttachment
 from pydantic import BaseModel, Field
 
 
