@@ -113,6 +113,41 @@ def schedule_one_shot_reminder(
     return job
 
 
+def schedule_one_shot_agent_task(
+    app: str,
+    *,
+    workspace: str | Path | None = None,
+    run_at: datetime,
+    prompt: str,
+    notify: dict[str, str],
+) -> dict[str, Any]:
+    """Persist a one-shot agent-task job for the app-local scheduler.
+
+    At `run_at` the scheduler will invoke the app's agent with `prompt`,
+    then DM the resulting output to the user.
+    """
+
+    task_prompt = str(prompt).strip()
+    if not task_prompt:
+        raise ValueError("prompt is required for agent_task jobs")
+
+    due_at = run_at if run_at.tzinfo is not None else run_at.replace(tzinfo=timezone.utc)
+    job = {
+        "name": f"{app}-task-{uuid4().hex[:12]}",
+        "kind": "one_shot",
+        "enabled": True,
+        "next_run": due_at.astimezone(timezone.utc).isoformat(),
+        "notify": notify,
+        "payload": {
+            "kind": "agent_task",
+            "message": task_prompt,
+        },
+    }
+    _upsert_cron_job(job, workspace)
+    logger.info("Registered one-shot agent_task job: %s next_run=%s", job["name"], job["next_run"])
+    return job
+
+
 def ensure_todo_reminder_job(
     app: str,
     *,

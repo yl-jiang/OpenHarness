@@ -101,7 +101,10 @@ def _is_one_shot_job(job: dict[str, Any]) -> bool:
     if str(job.get("kind") or "").strip().lower() == "one_shot":
         return True
     payload = job.get("payload")
-    return isinstance(payload, dict) and str(payload.get("kind") or "").strip().lower() == "reminder"
+    if not isinstance(payload, dict):
+        return False
+    pk = str(payload.get("kind") or "").strip().lower()
+    return pk in {"reminder", "agent_task"}
 
 
 def _parse_next_run(job: dict[str, Any]) -> datetime | None:
@@ -125,6 +128,26 @@ def _inline_output_for_job(job: dict[str, Any]) -> str | None:
     if not reminder_text:
         raise ValueError("reminder cron job is missing payload.message")
     return reminder_text if reminder_text.startswith("⏰") else f"⏰ 提醒：{reminder_text}"
+
+
+def _is_agent_task_job(job: dict[str, Any]) -> bool:
+    payload = job.get("payload")
+    return isinstance(payload, dict) and str(payload.get("kind") or "").strip().lower() == "agent_task"
+
+
+async def _run_agent_task(job: dict[str, Any]) -> str:
+    """Invoke the wolo agent with the job's prompt and return the output text."""
+    from wolo.runner import WoloQueryRunner
+    from wolo.store import WoloStore
+
+    payload = job.get("payload") or {}
+    prompt = str(payload.get("message") or "").strip()
+    if not prompt:
+        raise ValueError("agent_task job is missing payload.message")
+
+    store = WoloStore(_WORKSPACE)
+    runner = WoloQueryRunner(store)
+    return await runner.run(prompt)
 
 
 def _finalize_job_run(job: dict[str, Any], *, success: bool) -> None:
@@ -285,7 +308,7 @@ async def _notify_job_result(job: dict[str, Any], entry: dict[str, Any]) -> None
     is_success = entry.get("status") == "success"
     raw_stdout = str(entry.get("stdout") or "").strip()
     payload_kind = str(payload.get("kind") or "").strip().lower() if isinstance(payload, dict) else ""
-    if payload_kind == "reminder" and raw_stdout:
+    if payload_kind in {"reminder", "agent_task"} and raw_stdout:
         content = raw_stdout
     elif is_success and raw_stdout:
         content = await _agent_reformat(raw_stdout, str(job.get("name", "?")))
@@ -340,43 +363,94 @@ def _command_for_job(job: dict[str, Any]) -> str:
     return " ".join(shlex.quote(part) for part in parts)
 
 
+async def _execute_inline_task(
+    job: dict[str, Any],
+    *,
+    label: str,
+    output: str,
+    started_at: datetime,
+) -> dict[str, Any]:
+    """Finalize and record an inline one-shot job (reminder or agent_task).
+
+    Shared pipeline: build history entry → finalize (delete one-shot) → notify → persist.
+    """
+    entry: dict[str, Any] = {
+        "name": job["name"],
+        "command": f"({label})",
+        "started_at": started_at.isoformat(),
+        "ended_at": datetime.now(timezone.utc).isoformat(),
+        "returncode": 0,
+        "status": "success",
+        "stdout": output,
+        "stderr": "",
+    }
+    _finalize_job_run(job, success=True)
+    await _notify_job_result(job, entry)
+    _append_history(entry)
+    logger.info("Job %r finished %s dispatch", job["name"], label)
+    return entry
+
+
+async def _execute_inline_task_with_error(
+    job: dict[str, Any],
+    *,
+    label: str,
+    error: Exception,
+    started_at: datetime,
+) -> dict[str, Any]:
+    """Record an inline one-shot job failure."""
+    entry: dict[str, Any] = {
+        "name": job["name"],
+        "command": f"({label})",
+        "started_at": started_at.isoformat(),
+        "ended_at": datetime.now(timezone.utc).isoformat(),
+        "returncode": -1,
+        "status": "error",
+        "stdout": "",
+        "stderr": str(error),
+    }
+    _finalize_job_run(job, success=False)
+    await _notify_job_result(job, entry)
+    _append_history(entry)
+    return entry
+
+
+async def _handle_reminder_job(job: dict[str, Any], started_at: datetime) -> dict[str, Any] | None:
+    """Execute an inline reminder job. Returns None if job is not a reminder."""
+    try:
+        inline_output = _inline_output_for_job(job)
+    except Exception as exc:  # noqa: BLE001
+        return await _execute_inline_task_with_error(job, label="reminder", error=exc, started_at=started_at)
+    if inline_output is None:
+        return None
+    return await _execute_inline_task(job, label="reminder", output=inline_output, started_at=started_at)
+
+
+async def _handle_agent_task_job(job: dict[str, Any], started_at: datetime) -> dict[str, Any] | None:
+    """Execute an agent_task job. Returns None if job is not an agent_task."""
+    if not _is_agent_task_job(job):
+        return None
+    try:
+        agent_output = await _run_agent_task(job)
+    except Exception as exc:  # noqa: BLE001
+        return await _execute_inline_task_with_error(job, label="agent_task", error=exc, started_at=started_at)
+    return await _execute_inline_task(job, label="agent_task", output=agent_output, started_at=started_at)
+
+
 async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
     name = job["name"]
     cwd = Path(job.get("cwd") or ".").expanduser()
     started_at = datetime.now(timezone.utc)
-    try:
-        inline_output = _inline_output_for_job(job)
-    except Exception as exc:  # noqa: BLE001
-        entry = {
-            "name": name,
-            "command": "(reminder)",
-            "started_at": started_at.isoformat(),
-            "ended_at": datetime.now(timezone.utc).isoformat(),
-            "returncode": -1,
-            "status": "error",
-            "stdout": "",
-            "stderr": str(exc),
-        }
-        _finalize_job_run(job, success=False)
-        await _notify_job_result(job, entry)
-        _append_history(entry)
-        return entry
-    if inline_output is not None:
-        entry = {
-            "name": name,
-            "command": "(reminder)",
-            "started_at": started_at.isoformat(),
-            "ended_at": datetime.now(timezone.utc).isoformat(),
-            "returncode": 0,
-            "status": "success",
-            "stdout": inline_output,
-            "stderr": "",
-        }
-        _finalize_job_run(job, success=True)
-        await _notify_job_result(job, entry)
-        _append_history(entry)
-        logger.info("Job %r finished inline reminder dispatch", name)
-        return entry
+
+    # --- One-shot inline tasks (reminder / agent_task) ---
+    result = await _handle_reminder_job(job, started_at)
+    if result is not None:
+        return result
+    result = await _handle_agent_task_job(job, started_at)
+    if result is not None:
+        return result
+
+    # --- Shell command job ---
     try:
         command = _command_for_job(job)
     except Exception as exc:  # noqa: BLE001

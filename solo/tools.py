@@ -105,6 +105,7 @@ class SoloToolRegistry:
             SoloDomainTool(_tool_process(), self._handle_process),
             SoloDomainTool(_tool_backfill(), self._handle_backfill),
             SoloDomainTool(_tool_remind(), self._handle_remind),
+            SoloDomainTool(_tool_schedule(), self._handle_schedule),
             SoloDomainTool(_tool_report(), self._handle_report),
             SoloDomainTool(_tool_view(), self._handle_view),
             SoloDomainTool(_tool_search(), self._handle_search),
@@ -377,6 +378,41 @@ class SoloToolRegistry:
             "job_name": job["name"],
             "next_run": job["next_run"],
             "message": f"✅ 已设置提醒：将在 {local_due}（{schedule.delay_text}）提醒你：{reminder_message}",
+        }
+
+    async def _handle_schedule(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        task_prompt = _required_text(arguments, "prompt")
+        notify = _resolve_reminder_notify_target(self._source_context, self.store.workspace)
+        if notify is None:
+            raise ValueError("solo_schedule 目前只支持带 sender_id 的飞书会话。")
+
+        schedule = build_one_shot_reminder_schedule(
+            remind_at=_optional_text(arguments, "run_at"),
+            delay_seconds=arguments.get("delay_seconds"),
+            delay_minutes=arguments.get("delay_minutes"),
+            delay_hours=arguments.get("delay_hours"),
+            delay_days=arguments.get("delay_days"),
+        )
+
+        from solo.gateway.cron_scheduler import is_scheduler_running, start_daemon
+        from solo.gateway.todo_cron import schedule_one_shot_agent_task
+
+        if not is_scheduler_running():
+            start_daemon(self.store.workspace)
+
+        job = schedule_one_shot_agent_task(
+            "solo",
+            workspace=self.store.workspace,
+            run_at=schedule.due_at_utc,
+            prompt=task_prompt,
+            notify=notify,
+        )
+        local_due = format_local_reminder_time(schedule.due_at_local)
+        return {
+            "ok": True,
+            "job_name": job["name"],
+            "next_run": job["next_run"],
+            "message": f"✅ 已安排定时任务：将在 {local_due}（{schedule.delay_text}）执行「{task_prompt}」并把结果发给你。",
         }
 
     async def _handle_report(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -883,6 +919,26 @@ def _tool_remind() -> ToolDefinition:
             ("remind_at", "string", "Absolute reminder time as ISO-8601 datetime. Use this for explicit future timestamps.", False),
             ("delay_seconds", "integer", "Relative delay in seconds for very short reminders.", False),
             ("delay_minutes", "integer", "Relative delay in minutes, e.g. 2 for '2分钟后'.", False),
+            ("delay_hours", "integer", "Relative delay in hours.", False),
+            ("delay_days", "integer", "Relative delay in days.", False),
+        ],
+    )
+
+
+def _tool_schedule() -> ToolDefinition:
+    return _definition(
+        "solo_schedule",
+        (
+            "Schedule a one-shot agent task that runs at a future time and DMs the result to the user. "
+            "Use for requests like '明天12点生成一份周报' or '下午3点帮我整理这周的日志'. "
+            "The agent will execute the prompt at the scheduled time using your full solo context. "
+            "Provide either run_at (ISO-8601 datetime) or one/more delay_* fields."
+        ),
+        [
+            ("prompt", "string", "The task prompt for the agent to execute at the scheduled time, e.g. 生成本周总结 / 整理今天的日志.", True),
+            ("run_at", "string", "Absolute run time as ISO-8601 datetime.", False),
+            ("delay_seconds", "integer", "Relative delay in seconds.", False),
+            ("delay_minutes", "integer", "Relative delay in minutes.", False),
             ("delay_hours", "integer", "Relative delay in hours.", False),
             ("delay_days", "integer", "Relative delay in days.", False),
         ],
