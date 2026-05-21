@@ -540,7 +540,7 @@ class WoloToolRegistry:
         return {
             "ok": True,
             "todo": todo.to_dict(),
-            "message": f"✅ 待办已完成：{detail}。请用自然语言向用户确认这条待办已完成，简要提及标题和所属项目。",
+            "message": f"✅ 已完成待办：{detail}。请用自然语言向用户确认这条待办已完成，简要提及标题和所属项目。",
             "notify_user": True,
         }
 
