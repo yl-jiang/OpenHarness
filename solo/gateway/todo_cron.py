@@ -13,11 +13,12 @@ from openharness.services.cron import next_run_time, validate_cron_expression
 from openharness.utils.file_lock import exclusive_file_lock
 from openharness.utils.fs import atomic_write_text
 from openharness.utils.log import get_logger
-from solo.workspace import get_data_dir
+from solo.core.workspace import get_data_dir
 
 logger = get_logger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
+_APP_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _cron_registry_path(workspace: str | Path | None) -> Path:
@@ -189,8 +190,8 @@ def ensure_todo_reminder_job(
         return
 
     python = sys.executable
-    script = str(_REPO_ROOT / "scripts" / "todo_reminder.py")
-    command = f"{python} {script} --app {app}"
+    script = str(_APP_ROOT / "gateway" / "todo_reminder.py")
+    command = f"{python} {script}"
     if workspace:
         command += f" --workspace {workspace}"
 
