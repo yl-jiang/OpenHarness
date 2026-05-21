@@ -16,7 +16,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from openharness.sandbox import SandboxUnavailableError
 from openharness.services.cron import next_run_time, validate_cron_expression
 from openharness.utils.file_lock import exclusive_file_lock
 from openharness.utils.fs import atomic_write_text
@@ -473,39 +472,20 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
-    except asyncio.TimeoutError:
-        try:
-            process.kill()
-            await process.wait()
-        except Exception:
-            pass
-        entry = {
-            "name": name, "command": command,
-            "started_at": started_at.isoformat(),
-            "ended_at": datetime.now(timezone.utc).isoformat(),
-            "returncode": -1, "status": "timeout", "stdout": "", "stderr": "Job timed out after 300s",
-        }
-        _finalize_job_run(job, success=False)
-        await _notify_job_result(job, entry)
-        _append_history(entry)
-        return entry
-    except SandboxUnavailableError as exc:
-        entry = {
-            "name": name, "command": command,
-            "started_at": started_at.isoformat(),
-            "ended_at": datetime.now(timezone.utc).isoformat(),
-            "returncode": -1, "status": "error", "stdout": "", "stderr": str(exc),
-        }
-        _finalize_job_run(job, success=False)
-        await _notify_job_result(job, entry)
-        _append_history(entry)
-        return entry
     except Exception as exc:  # noqa: BLE001
+        if isinstance(exc, asyncio.TimeoutError):
+            try:
+                process.kill()
+                await process.wait()
+            except Exception:
+                pass
+        status = "timeout" if isinstance(exc, asyncio.TimeoutError) else "error"
+        stderr_text = "Job timed out after 300s" if isinstance(exc, asyncio.TimeoutError) else str(exc)
         entry = {
             "name": name, "command": command,
             "started_at": started_at.isoformat(),
             "ended_at": datetime.now(timezone.utc).isoformat(),
-            "returncode": -1, "status": "error", "stdout": "", "stderr": str(exc),
+            "returncode": -1, "status": status, "stdout": "", "stderr": stderr_text,
         }
         _finalize_job_run(job, success=False)
         await _notify_job_result(job, entry)
