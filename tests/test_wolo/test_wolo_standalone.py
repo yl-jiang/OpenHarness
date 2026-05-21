@@ -153,7 +153,7 @@ def test_wolo_prompts_are_optimized_for_work_logs():
         ]
     )
 
-    for expected in ("工作", "项目", "会议", "prompt", "tool", "blocker"):
+    for expected in ("工作", "项目", "会议", "prompt", "tool", "blocker", "提醒", "wolo_remind"):
         assert expected in prompt_text
 
 

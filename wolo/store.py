@@ -10,7 +10,7 @@ import sqlite3
 from typing import Any
 from uuid import uuid4
 
-from openharness.attachments import (
+from wolo.attachments import (
     StoredAttachment,
     persist_attachment_paths,
     resolve_stored_attachment_path,
@@ -556,6 +556,12 @@ class WoloStore:
             cur = self._db.execute(f"SELECT * FROM todos{where} ORDER BY rowid", params)
             rows = cur.fetchall()
         return [self._row_to_todo(row) for row in rows]
+
+    def get_todo(self, todo_id: str) -> WoloTodo | None:
+        """Fetch a single todo by ID, or None if not found."""
+        cur = self._db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,))
+        row = cur.fetchone()
+        return self._row_to_todo(row) if row else None
 
     def complete_todo(self, todo_id: str) -> bool:
         cur = self._db.execute(

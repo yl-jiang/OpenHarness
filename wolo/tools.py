@@ -6,12 +6,17 @@ import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
-from openharness.attachments import StoredAttachment
+from wolo.attachments import StoredAttachment
+from openharness.services.app_reminders import (
+    build_one_shot_reminder_schedule,
+    format_local_reminder_time,
+)
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from openharness.tools.bash_tool import BashTool
 from openharness.tools.file_read_tool import FileReadTool
@@ -100,6 +105,7 @@ class WoloToolRegistry:
             WoloDomainTool(_tool_clarify(), self._handle_clarify),
             WoloDomainTool(_tool_process(), self._handle_process),
             WoloDomainTool(_tool_backfill(), self._handle_backfill),
+            WoloDomainTool(_tool_remind(), self._handle_remind),
             WoloDomainTool(_tool_report(), self._handle_report),
             WoloDomainTool(_tool_view(), self._handle_view),
             WoloDomainTool(_tool_search(), self._handle_search),
@@ -348,6 +354,41 @@ class WoloToolRegistry:
             "message": f"已补录 {target_date}，entry_id={entry.id}",
         }
 
+    async def _handle_remind(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        reminder_message = _required_text(arguments, "message")
+        notify = _resolve_reminder_notify_target(self._source_context, self.store.workspace)
+        if notify is None:
+            raise ValueError("wolo_remind 目前只支持带 sender_id 的飞书会话。")
+
+        schedule = build_one_shot_reminder_schedule(
+            remind_at=_optional_text(arguments, "remind_at"),
+            delay_seconds=arguments.get("delay_seconds"),
+            delay_minutes=arguments.get("delay_minutes"),
+            delay_hours=arguments.get("delay_hours"),
+            delay_days=arguments.get("delay_days"),
+        )
+
+        from wolo.gateway.cron_scheduler import is_scheduler_running, start_daemon
+        from wolo.gateway.todo_cron import schedule_one_shot_reminder
+
+        if not is_scheduler_running():
+            start_daemon(self.store.workspace)
+
+        job = schedule_one_shot_reminder(
+            "wolo",
+            workspace=self.store.workspace,
+            remind_at=schedule.due_at_utc,
+            message=reminder_message,
+            notify=notify,
+        )
+        local_due = format_local_reminder_time(schedule.due_at_local)
+        return {
+            "ok": True,
+            "job_name": job["name"],
+            "next_run": job["next_run"],
+            "message": f"✅ 已设置提醒：将在 {local_due}（{schedule.delay_text}）提醒你：{reminder_message}",
+        }
+
     async def _handle_report(self, arguments: dict[str, Any]) -> dict[str, Any]:
         report_type = str(arguments.get("report_type") or arguments.get("type") or "weekly")
         report = await self._processor().generate_report(report_type)
@@ -410,9 +451,25 @@ class WoloToolRegistry:
 
     async def _handle_done(self, arguments: dict[str, Any]) -> dict[str, Any]:
         todo_id = _required_text(arguments, "todo_id")
+        todo = self.store.get_todo(todo_id)
+        if todo is None:
+            return {"ok": False, "message": f"未找到待办：{todo_id}"}
         if not self.store.complete_todo(todo_id):
-            return {"ok": False, "message": f"未找到可完成的待办：{todo_id}"}
-        return {"ok": True, "message": f"✅ 已完成待办：{todo_id}"}
+            return {"ok": False, "message": f"待办已完成或无法更新：{todo_id}"}
+        parts = [f"「{todo.title}」"]
+        if todo.project:
+            parts.append(f"项目：{todo.project}")
+        if todo.priority:
+            parts.append(f"优先级：{todo.priority}")
+        if todo.due_date:
+            parts.append(f"截止：{todo.due_date}")
+        detail = "，".join(parts)
+        return {
+            "ok": True,
+            "todo": todo.to_dict(),
+            "message": f"✅ 待办已完成：{detail}。请用自然语言向用户确认这条待办已完成，简要提及标题和所属项目。",
+            "notify_user": True,
+        }
 
     async def _handle_update_todo(self, arguments: dict[str, Any]) -> dict[str, Any]:
         todo_id = _required_text(arguments, "todo_id")
@@ -903,6 +960,25 @@ def _tool_report() -> ToolDefinition:
     )
 
 
+def _tool_remind() -> ToolDefinition:
+    return _definition(
+        "wolo_remind",
+        (
+            "Schedule a one-shot reminder that proactively pings the current user later via Feishu DM. "
+            "Use for requests like '2分钟后提醒我喝水' or '明天 09:30 提醒我发周报'. "
+            "Provide either remind_at (ISO-8601 datetime) or one/more delay_* fields."
+        ),
+        [
+            ("message", "string", "What to remind the user about, e.g. 喝水 / 发周报 / 跟进 blocker.", True),
+            ("remind_at", "string", "Absolute reminder time as ISO-8601 datetime. Use this for explicit future timestamps.", False),
+            ("delay_seconds", "integer", "Relative delay in seconds for very short reminders.", False),
+            ("delay_minutes", "integer", "Relative delay in minutes, e.g. 2 for '2分钟后'.", False),
+            ("delay_hours", "integer", "Relative delay in hours.", False),
+            ("delay_days", "integer", "Relative delay in days.", False),
+        ],
+    )
+
+
 def _tool_view() -> ToolDefinition:
     return _definition(
         "wolo_view",
@@ -1174,6 +1250,21 @@ def _csv_list(value: Any) -> list[str] | None:
     if isinstance(value, list):
         return [str(v).strip() for v in value if str(v).strip()]
     return [item.strip() for item in str(value).split(",") if item.strip()]
+
+
+def _resolve_reminder_notify_target(
+    source_context: dict[str, Any],
+    workspace: str | Path | None,
+) -> dict[str, str] | None:
+    channel = str(source_context.get("channel") or "").strip().lower()
+    sender_id = str(source_context.get("sender_id") or "").strip()
+    if channel != "feishu" or not sender_id:
+        return None
+    return {
+        "type": "feishu_dm",
+        "user_open_id": sender_id,
+        "workspace": str(workspace),
+    }
 
 
 def _format_records(store: WoloStore, records: list[WoloRecord]) -> str:

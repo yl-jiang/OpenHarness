@@ -194,6 +194,13 @@ def test_standalone_solo_gateway_service_uses_standalone_config(tmp_path: Path):
     assert service._config.channel_configs["feishu"]["app_id"] == "solo-app"
 
 
+def test_solo_prompt_routes_future_reminders():
+    from solo.runner import _SOLO_TOOL_ROUTER_PROMPT
+
+    assert "提醒" in _SOLO_TOOL_ROUTER_PROMPT
+    assert "solo_remind" in _SOLO_TOOL_ROUTER_PROMPT
+
+
 def test_standalone_solo_gateway_run_configures_foreground_logging(tmp_path: Path):
     import logging as stdlib_logging
 

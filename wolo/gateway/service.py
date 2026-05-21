@@ -344,21 +344,53 @@ def _print_gateway_banner(
     )
 
 
+def _resolve_feishu_notify_target(
+    config: object,
+    workspace: str | Path | None,
+) -> dict[str, str] | None:
+    """Resolve feishu notification target from config or conversation history."""
+    channel_configs = getattr(config, "channel_configs", {}) or {}
+    feishu_config = channel_configs.get("feishu", {})
+    user_open_id = (
+        feishu_config.get("owner_open_id")
+        or feishu_config.get("user_open_id")
+    )
+
+    # Fall back to the most recent feishu conversation partner
+    if not user_open_id:
+        try:
+            from wolo.session import list_conversations
+
+            root = get_workspace_root(workspace)
+            for item in list_conversations(root, limit=20):
+                key = str(item.get("session_key") or "")
+                if ":" not in key:
+                    continue
+                channel, chat_id = key.split(":", 1)
+                if channel == "feishu" and chat_id:
+                    user_open_id = chat_id
+                    break
+        except Exception:
+            pass
+
+    if not user_open_id:
+        return None
+    return {
+        "type": "feishu_dm",
+        "user_open_id": str(user_open_id),
+        "workspace": str(get_workspace_root(workspace)),
+    }
+
+
 def _register_todo_cron(
     workspace: str | Path | None,
     config: object,
 ) -> None:
     """Best-effort registration of the wolo todo reminder cron job and scheduler daemon."""
     try:
-        from openharness.services.todo_cron import ensure_todo_reminder_job
+        from wolo.gateway.todo_cron import ensure_todo_reminder_job
 
-        # Build notification config from feishu channel if available
-        notify = None
-        channel_configs = getattr(config, "channel_configs", {}) or {}
-        feishu_config = channel_configs.get("feishu", {})
-        user_open_id = feishu_config.get("owner_open_id") or feishu_config.get("user_open_id")
-        if user_open_id:
-            notify = {"type": "feishu_dm", "user_open_id": str(user_open_id)}
+        notify = _resolve_feishu_notify_target(config, workspace)
 
         ensure_todo_reminder_job(
             "wolo",
@@ -370,10 +402,10 @@ def _register_todo_cron(
 
     # Ensure cron scheduler daemon is running
     try:
-        from openharness.services.cron_scheduler import is_scheduler_running, start_daemon
+        from wolo.gateway.cron_scheduler import is_scheduler_running, start_daemon
 
         if not is_scheduler_running():
-            pid = start_daemon()
+            pid = start_daemon(workspace)
             logger.info("Started cron scheduler daemon (pid=%d)", pid)
         else:
             logger.debug("Cron scheduler daemon already running")

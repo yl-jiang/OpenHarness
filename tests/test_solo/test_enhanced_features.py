@@ -1,3 +1,4 @@
+import json
 import pytest
 from pathlib import Path
 from datetime import datetime, timezone
@@ -171,3 +172,51 @@ async def test_tool_visualize_and_export(tmp_path: Path):
     content = files[0].read_text()
     assert "# Self-Log Export" in content
     assert "心情好" in content
+
+
+@pytest.mark.asyncio
+async def test_solo_remind_tool_schedules_one_shot_feishu_reminder(tmp_path: Path, monkeypatch):
+    from solo.tools import SoloToolRegistry
+    from solo.workspace import get_data_dir
+
+    workspace = tmp_path / ".solo"
+    store = SoloStore(workspace)
+    store.initialize()
+    started: list[Path] = []
+
+    monkeypatch.setattr("solo.gateway.cron_scheduler.is_scheduler_running", lambda: False)
+    monkeypatch.setattr(
+        "solo.gateway.cron_scheduler.start_daemon",
+        lambda workspace=None: started.append(Path(workspace)) or 4321,
+    )
+
+    registry = SoloToolRegistry(
+        store,
+        source_context={
+            "channel": "feishu",
+            "sender_id": "ou_user",
+            "chat_id": "ou_user",
+            "session_key": "feishu:ou_user",
+        },
+    )
+
+    result = await registry.execute(
+        "solo_remind",
+        {
+            "message": "休息一下",
+            "delay_minutes": 5,
+        },
+    )
+
+    cron_path = get_data_dir(store.workspace) / "cron_jobs.json"
+    jobs = json.loads(cron_path.read_text(encoding="utf-8"))
+
+    assert "已设置提醒" in result
+    assert started == [Path(store.workspace)]
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job["payload"]["kind"] == "reminder"
+    assert job["payload"]["message"] == "休息一下"
+    assert job["notify"]["user_open_id"] == "ou_user"
+    assert job["enabled"] is True
+    assert job["next_run"]

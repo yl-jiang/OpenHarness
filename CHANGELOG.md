@@ -47,6 +47,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- `solo` and `wolo` standalone apps now expose `solo_remind` / `wolo_remind` for one-shot future reminders, persist those requests as app-local scheduled jobs, and execute them through the app cron daemons so chat requests like “2分钟后提醒我喝水” can proactively DM the user later instead of falling back to a plain-text refusal.
 - `solo` and `wolo` standalone agent runtimes now register the built-in `bash` tool, so workspace-local OpenCLI/search skills can execute shell commands instead of failing with `unknown tool: bash`.
 - Managed subagents now carry a structured agent-run context with real parent/root session lineage, and child workers are leaf by default: nested `agent` / `task_create(local_agent)` delegation is blocked unless the parent session explicitly has orchestration budget.
 - `write_file` now waits for edit approval before creating missing parent directories, so rejected writes no longer leave empty folders behind.

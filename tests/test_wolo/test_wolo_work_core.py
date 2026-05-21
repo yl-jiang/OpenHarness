@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -214,6 +215,51 @@ async def test_work_tools_query_todos_blockers_decisions_and_lessons(tmp_path: P
     assert "补齐 wolo 周报证据链" in await registry.execute("wolo_todos", {"status": "pending"})
     assert "ruff 先跑新包" in await registry.execute("wolo_highlights", {"kind": "tool"})
     assert "已完成待办" in await registry.execute("wolo_done", {"todo_id": "todo1"})
+
+
+@pytest.mark.asyncio
+async def test_wolo_remind_tool_schedules_one_shot_feishu_reminder(tmp_path: Path, monkeypatch):
+    from wolo.workspace import get_data_dir
+
+    store = WoloStore(tmp_path / ".wolo")
+    started: list[Path] = []
+
+    monkeypatch.setattr("wolo.gateway.cron_scheduler.is_scheduler_running", lambda: False)
+    monkeypatch.setattr(
+        "wolo.gateway.cron_scheduler.start_daemon",
+        lambda workspace=None: started.append(Path(workspace)) or 4321,
+    )
+
+    registry = WoloToolRegistry(
+        store,
+        source_context={
+            "channel": "feishu",
+            "sender_id": "ou_user",
+            "chat_id": "ou_user",
+            "session_key": "feishu:ou_user",
+        },
+    )
+
+    result = await registry.execute(
+        "wolo_remind",
+        {
+            "message": "喝水",
+            "delay_minutes": 2,
+        },
+    )
+
+    cron_path = get_data_dir(store.workspace) / "cron_jobs.json"
+    jobs = json.loads(cron_path.read_text(encoding="utf-8"))
+
+    assert "已设置提醒" in result
+    assert started == [Path(store.workspace)]
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job["payload"]["kind"] == "reminder"
+    assert job["payload"]["message"] == "喝水"
+    assert job["notify"]["user_open_id"] == "ou_user"
+    assert job["enabled"] is True
+    assert job["next_run"]
 
 
 @pytest.mark.asyncio

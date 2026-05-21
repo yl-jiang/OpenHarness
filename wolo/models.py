@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 import json
 from typing import Any
 
-from openharness.attachments import StoredAttachment
+from wolo.attachments import StoredAttachment
 from pydantic import BaseModel, Field
 
 
