@@ -473,13 +473,7 @@ class FeishuChannel(BaseChannel):
         if not self._ensure_rest_client():
             return
 
-        # Create event handler (only register message receive, ignore other events)
-        event_handler = lark.EventDispatcherHandler.builder(
-            self.config.encrypt_key or "",
-            self.config.verification_token or "",
-        ).register_p2_im_message_receive_v1(
-            self._on_message_sync
-        ).build()
+        event_handler = self._build_event_handler(lark)
 
         # Create WebSocket client for long connection
         self._ws_client = lark.ws.Client(
@@ -521,6 +515,22 @@ class FeishuChannel(BaseChannel):
         # Keep running until stopped
         while self._running:
             await asyncio.sleep(1)
+
+    def _build_event_handler(self, lark: Any) -> Any:
+        """Build the Lark event dispatcher for message events we intentionally accept."""
+        return (
+            lark.EventDispatcherHandler.builder(
+                self.config.encrypt_key or "",
+                self.config.verification_token or "",
+            )
+            .register_p2_im_message_receive_v1(self._on_message_sync)
+            .register_p2_im_message_message_read_v1(self._ignore_lark_event_sync)
+            .register_p2_im_message_reaction_created_v1(self._ignore_lark_event_sync)
+            .build()
+        )
+
+    def _ignore_lark_event_sync(self, data: Any) -> None:
+        logger.debug("Ignoring Feishu non-message event: %s", data.__class__.__name__)
 
     async def stop(self) -> None:
         """

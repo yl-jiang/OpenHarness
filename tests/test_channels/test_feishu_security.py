@@ -15,6 +15,51 @@ from openharness.config.schema import FeishuConfig
 from ohmo.group_registry import save_managed_group_record
 
 
+def test_feishu_event_handler_registers_noop_processors_for_noise_events():
+    channel = FeishuChannel(
+        FeishuConfig(encrypt_key="encrypt", verification_token="verify"),
+        MessageBus(),
+    )
+    calls: list[tuple[str, object]] = []
+
+    class FakeBuilder:
+        def register_p2_im_message_receive_v1(self, handler):
+            calls.append(("receive", handler))
+            return self
+
+        def register_p2_im_message_message_read_v1(self, handler):
+            calls.append(("read", handler))
+            return self
+
+        def register_p2_im_message_reaction_created_v1(self, handler):
+            calls.append(("reaction_created", handler))
+            return self
+
+        def build(self):
+            return "handler"
+
+    class FakeDispatcher:
+        @staticmethod
+        def builder(encrypt_key: str, verification_token: str):
+            calls.append((f"builder:{encrypt_key}:{verification_token}", object()))
+            return FakeBuilder()
+
+    fake_lark = SimpleNamespace(EventDispatcherHandler=FakeDispatcher)
+
+    handler = channel._build_event_handler(fake_lark)
+
+    assert handler == "handler"
+    assert [name for name, _ in calls] == [
+        "builder:encrypt:verify",
+        "receive",
+        "read",
+        "reaction_created",
+    ]
+    for name, registered_handler in calls[2:]:
+        assert name in {"read", "reaction_created"}
+        registered_handler(SimpleNamespace())
+
+
 @pytest.mark.asyncio
 async def test_feishu_send_does_not_reply_in_thread_for_private_messages(monkeypatch):
     channel = FeishuChannel(FeishuConfig(), MessageBus())
