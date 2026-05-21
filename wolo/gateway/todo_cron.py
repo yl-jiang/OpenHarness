@@ -81,6 +81,14 @@ def delete_cron_job(name: str, workspace: str | Path | None = None) -> bool:
     return True
 
 
+def list_one_shot_jobs(workspace: str | Path | None = None) -> list[dict[str, Any]]:
+    """Return all pending one-shot jobs (reminder + agent_task) sorted by next_run."""
+    return sorted(
+        [j for j in _load(workspace) if j.get("kind") == "one_shot" and j.get("enabled", True)],
+        key=lambda j: str(j.get("next_run") or ""),
+    )
+
+
 def schedule_one_shot_reminder(
     app: str,
     *,

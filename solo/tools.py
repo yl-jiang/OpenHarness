@@ -106,6 +106,8 @@ class SoloToolRegistry:
             SoloDomainTool(_tool_backfill(), self._handle_backfill),
             SoloDomainTool(_tool_remind(), self._handle_remind),
             SoloDomainTool(_tool_schedule(), self._handle_schedule),
+            SoloDomainTool(_tool_jobs(), self._handle_jobs),
+            SoloDomainTool(_tool_cancel(), self._handle_cancel),
             SoloDomainTool(_tool_report(), self._handle_report),
             SoloDomainTool(_tool_view(), self._handle_view),
             SoloDomainTool(_tool_search(), self._handle_search),
@@ -414,6 +416,41 @@ class SoloToolRegistry:
             "next_run": job["next_run"],
             "message": f"✅ 已安排定时任务：将在 {local_due}（{schedule.delay_text}）执行「{task_prompt}」并把结果发给你。",
         }
+
+    async def _handle_jobs(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        from solo.gateway.todo_cron import list_one_shot_jobs
+
+        jobs = list_one_shot_jobs(self.store.workspace)
+        if not jobs:
+            return {"ok": True, "jobs": [], "message": "当前没有待执行的提醒或定时任务。"}
+        lines = []
+        for job in jobs:
+            payload = job.get("payload") or {}
+            kind = str(payload.get("kind") or "unknown")
+            content = str(payload.get("message") or "")
+            next_run_str = str(job.get("next_run") or "")
+            try:
+                local_due = format_local_reminder_time(
+                    datetime.fromisoformat(next_run_str).astimezone()
+                )
+            except (ValueError, TypeError):
+                local_due = next_run_str
+            label = "提醒" if kind == "reminder" else "定时任务"
+            lines.append(f"• [{label}] {content}  ⏰ {local_due}  (job_name: {job['name']})")
+        return {
+            "ok": True,
+            "jobs": [{"name": j["name"], "kind": (j.get("payload") or {}).get("kind"), "next_run": j.get("next_run")} for j in jobs],
+            "message": "待执行的任务：\n" + "\n".join(lines),
+        }
+
+    async def _handle_cancel(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        from solo.gateway.todo_cron import delete_cron_job
+
+        job_name = _required_text(arguments, "job_name")
+        deleted = delete_cron_job(job_name, self.store.workspace)
+        if deleted:
+            return {"ok": True, "message": f"✅ 已取消任务：{job_name}"}
+        return {"ok": False, "message": f"未找到任务 {job_name!r}，可能已执行或不存在。"}
 
     async def _handle_report(self, arguments: dict[str, Any]) -> dict[str, Any]:
         report_type = str(arguments.get("report_type") or arguments.get("type") or "weekly")
@@ -941,6 +978,28 @@ def _tool_schedule() -> ToolDefinition:
             ("delay_minutes", "integer", "Relative delay in minutes.", False),
             ("delay_hours", "integer", "Relative delay in hours.", False),
             ("delay_days", "integer", "Relative delay in days.", False),
+        ],
+    )
+
+
+def _tool_jobs() -> ToolDefinition:
+    return _definition(
+        "solo_jobs",
+        "List all pending one-shot reminders and scheduled tasks (not yet executed). Use before cancelling to get job names.",
+        [],
+    )
+
+
+def _tool_cancel() -> ToolDefinition:
+    return _definition(
+        "solo_cancel",
+        (
+            "Cancel a pending one-shot reminder or scheduled task by job name. "
+            "Use solo_jobs first to get the job name. "
+            "Use for requests like '取消刚才的提醒' or '我不想要那个定时任务了'."
+        ),
+        [
+            ("job_name", "string", "Name of the job to cancel (from solo_jobs).", True),
         ],
     )
 
