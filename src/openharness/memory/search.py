@@ -7,12 +7,10 @@ import math
 import re
 import time
 from dataclasses import dataclass
-from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from openharness.memory.scan import scan_memory_files
-from openharness.memory.schema import parse_datetime, utc_now
 from openharness.memory.types import MemoryHeader
 from openharness.memory.usage import get_memory_usage
 
