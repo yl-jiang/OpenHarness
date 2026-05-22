@@ -62,7 +62,56 @@ Typical scenarios:
 
 See the provider compatibility table in [`README.md`](../README.md#-provider-compatibility).
 
-## 6. Documentation-first onboarding
+## 6. Personal journal with solo
+
+`solo` captures daily life notes from CLI or chat channels (Feishu/Telegram/Slack/Discord). The model handles structuring, tagging, and summarizing messy input.
+
+```bash
+solo init
+solo record "Today I finished reading a good book"
+solo process
+solo view
+solo report weekly
+```
+
+From Feishu/Telegram, just send text directly — solo's gateway structures it automatically:
+
+```text
+今天和朋友吃了火锅，聊了很多关于工作的事
+```
+
+## 7. Work logging with wolo
+
+`wolo` records work fragments — project progress, meeting notes, prompt/tool experiences, blockers, decisions — and turns them into structured weekly reports.
+
+```bash
+wolo init
+wolo record "Fixed gateway dedup logic; root cause was session hash not covering chat_id"
+wolo process
+wolo report weekly
+```
+
+wolo also tracks work artifacts (todos, decisions, highlights) extracted from records:
+
+```text
+/wolo 最近有哪些待办？
+/wolo 查一下最近的 blocker
+/wolo 这周 prompt/tool 方面有什么经验？
+```
+
+## 8. Dry-run safe preview
+
+Use `--dry-run` to inspect what OpenHarness would do without executing anything:
+
+```bash
+oh --dry-run -p "Review this bug fix and grep for failing tests"
+oh --dry-run -p "/plugin list"
+oh --dry-run --output-format json
+```
+
+Useful for CI validation, pre-flight checks, and debugging configuration issues.
+
+## 9. Documentation-first onboarding
 
 If you are evaluating the project rather than contributing code, start here:
 

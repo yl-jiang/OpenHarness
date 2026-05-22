@@ -31,7 +31,7 @@ cd ../..
 Run the same core checks that CI runs before opening a PR:
 
 ```bash
-uv run ruff check src tests scripts
+uv run ruff check src tests scripts solo wolo
 uv run pytest -q
 ```
 
@@ -40,6 +40,14 @@ Frontend sanity check:
 ```bash
 cd frontend/terminal
 npx tsc --noEmit
+```
+
+Solo/wolo checks (if you touched those packages):
+
+```bash
+uv run pytest -q tests/test_solo
+uv run pytest -q tests/test_wolo
+uv run ruff check solo wolo
 ```
 
 ## Pull request expectations

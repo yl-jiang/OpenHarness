@@ -20,15 +20,15 @@
 <p align="center">
   <a href="#-quick-start"><img src="https://img.shields.io/badge/Quick_Start-5_min-blue?style=for-the-badge" alt="Quick Start"></a>
   <a href="#-harness-architecture"><img src="https://img.shields.io/badge/Harness-Architecture-ff69b4?style=for-the-badge" alt="Architecture"></a>
-  <a href="#-features"><img src="https://img.shields.io/badge/Tools-40+-green?style=for-the-badge" alt="Tools"></a>
-  <a href="#-test-results"><img src="https://img.shields.io/badge/Tests-909_Passing-brightgreen?style=for-the-badge" alt="Tests"></a>
+  <a href="#-features"><img src="https://img.shields.io/badge/Tools-42+-green?style=for-the-badge" alt="Tools"></a>
+  <a href="#-test-results"><img src="https://img.shields.io/badge/Tests-1488_Passing-brightgreen?style=for-the-badge" alt="Tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License"></a>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/python-≥3.10-blue?logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/React+Ink-TUI-61DAFB?logo=react&logoColor=white" alt="React">
-  <img src="https://img.shields.io/badge/pytest-909_pass-brightgreen" alt="Pytest">
+  <img src="https://img.shields.io/badge/pytest-1488_pass-brightgreen" alt="Pytest">
   <img src="https://img.shields.io/badge/E2E-6_suites-orange" alt="E2E">
   <img src="https://img.shields.io/badge/output-text_|_json_|_stream--json-blueviolet" alt="Output">
   <a href="https://github.com/HKUDS/OpenHarness/actions/workflows/ci.yml"><img src="https://github.com/HKUDS/OpenHarness/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
@@ -75,7 +75,7 @@ Supports CLI agent integration including OpenClaw, nanobot, Cursor, and more.
 
 <img src="assets/scene-toolkit.png" width="140">
 
-<p align="center"><strong>• 40 Tools (File, Shell, Search, Web, Git, MCP)</strong></p>
+<p align="center"><strong>• 42 Tools (File, Shell, Search, Web, Git, MCP)</strong></p>
 <p align="center"><strong>• On-Demand Skill Loading (.md)</strong></p>
 <p align="center"><strong>• Plugin Ecosystem (Skills + Hooks + Agents)</strong></p>
 <p align="center"><strong>• Compatible with anthropics/skills & plugins</strong></p>
@@ -460,18 +460,19 @@ OpenHarness implements the core Agent Harness pattern with 10 subsystems:
 ```
 openharness/
   engine/          # 🧠 Agent Loop — query → stream → tool-call → loop
-  tools/           # 🔧 40 Tools — file I/O, shell, search, web, git, MCP
+  tools/           # 🔧 42 Tools — file I/O, shell, search, web, git, MCP
   skills/          # 📚 Knowledge — on-demand skill loading (.md files)
   plugins/         # 🔌 Extensions — commands, hooks, agents, MCP servers
   permissions/     # 🛡️ Safety — multi-level modes, path rules, command deny
   hooks/           # ⚡ Lifecycle — PreToolUse/PostToolUse event hooks
-  commands/        # 💬 54 Commands — /help, /commit, /plan, /resume, ...
+  commands/        # 💬 Commands — /help, /commit, /plan, /resume, ...
   mcp/             # 🌐 MCP — Model Context Protocol client
   memory/          # 🧠 Memory — persistent cross-session knowledge
   tasks/           # 📋 Tasks — background task management
   coordinator/     # 🤝 Multi-Agent — subagent spawning, team coordination
   prompts/         # 📝 Context — system prompt assembly, CLAUDE.md, skills
   config/          # ⚙️ Settings — multi-layer config, migrations
+  sandbox/         # 🐳 Sandbox — Docker isolation backend
   ui/              # 🖥️ React TUI — backend protocol + frontend
 ```
 
@@ -516,7 +517,7 @@ flowchart LR
 
 ## ✨ Features
 
-### 🔧 Tools (40+)
+### 🔧 Tools (42+)
 
 | Category | Tools | Description |
 |----------|-------|-------------|
@@ -732,13 +733,45 @@ Currently `ohmo init` / `ohmo config` can guide channel setup for:
 - Discord
 - Feishu
 
+### 📔 solo — Personal Journal
+
+`solo` is a standalone personal journal app that runs on OpenHarness infrastructure. It handles messy real-world input — just send daily notes, and the model structures, tags, and summarizes them.
+
+```bash
+solo init             # initialize ~/.solo workspace
+solo config           # configure provider and channels
+solo record "..."     # record an entry
+solo process          # model structures pending entries
+solo view             # view structured records
+solo report weekly    # generate weekly report
+solo start            # start gateway (Feishu/Telegram/...)
+```
+
+See [`solo/README.md`](solo/README.md) for full documentation.
+
+### 📋 wolo — Work Log
+
+`wolo` is a standalone work-log app. It captures project progress, meeting conclusions, code changes, prompt/tool experiences, blockers, and decisions.
+
+```bash
+wolo init             # initialize ~/.wolo workspace
+wolo config           # configure provider and channels
+wolo record "..."     # record a work entry
+wolo process          # model structures pending entries
+wolo view             # view structured records
+wolo report weekly    # generate weekly report
+wolo start            # start gateway
+```
+
+See [`wolo/README.md`](wolo/README.md) for full documentation.
+
 ---
 
 ## 📊 Test Results
 
 | Suite | Tests | Status |
 |-------|-------|--------|
-| Unit + Integration | 909 | ✅ 909 passing |
+| Unit + Integration | 1488 | ✅ 1488 passing |
 | CLI Flags E2E | 6 | ✅ Real model calls |
 | Harness Features E2E | 9 | ✅ Retry, skills, parallel, permissions |
 | React TUI E2E | 3 | ✅ Welcome, conversation, status |
@@ -747,7 +780,7 @@ Currently `ohmo init` / `ohmo config` can guide channel setup for:
 
 ```bash
 # Run all tests
-uv run pytest -q                           # 900+ unit/integration
+uv run pytest -q                           # 1488 unit/integration
 python scripts/test_harness_features.py     # Harness E2E
 python scripts/test_real_skills_plugins.py  # Real plugins E2E
 ```
