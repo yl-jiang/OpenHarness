@@ -38,11 +38,6 @@ def get_user_skill_dirs(settings: Settings | None = None, *, create_missing: boo
     return directories
 
 
-def get_project_skills_dir(cwd: str | Path) -> Path:
-    """Return the project-local skills directory."""
-    return Path(cwd).expanduser().resolve() / ".openharness" / "skills"
-
-
 def load_skill_registry(
     cwd: str | Path | None = None,
     *,
