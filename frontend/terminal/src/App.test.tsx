@@ -411,6 +411,51 @@ setInterval(() => {}, 1000);
 	}
 });
 
+test('keeps long slash-command output pinned at the head instead of following the tail', async () => {
+	const stdout = createTestStdout();
+	const stdin = createTestStdin();
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+
+	const backendScript = `
+const emit = (event) => process.stdout.write('OHJSON:' + JSON.stringify(event) + '\\n');
+const longMessage = Array.from({length: 80}, (_, index) => 'section-' + String(index + 1).padStart(3, '0')).join('\\n');
+emit({type: 'ready', state: {model: 'test-model', permission_mode: 'default', cwd: process.cwd()}, tasks: []});
+setTimeout(() => emit({type: 'transcript_item', item: {role: 'user', text: '/context show'}}), 20);
+setTimeout(() => emit({type: 'command_output_start'}), 40);
+setTimeout(() => emit({type: 'transcript_item', item: {role: 'system', text: longMessage}}), 60);
+setTimeout(() => emit({type: 'line_complete'}), 80);
+setInterval(() => {}, 1000);
+`;
+
+	const instance = render(
+		<App config={{backend_command: [process.execPath, '-e', backendScript], theme: 'default'}} />,
+		{
+			stdout: stdout as unknown as NodeJS.WriteStream,
+			stdin: stdin as unknown as NodeJS.ReadStream,
+			exitOnCtrlC: false,
+			patchConsole: false,
+			debug: true,
+		},
+	);
+
+	try {
+		await sleep(350);
+		await nextLoopTurn();
+		const frame = extractLastFrame(stripAnsi(output));
+		assert.match(frame, /history view \(PgDn\/End\/G to resume\)/u);
+		assert.match(frame, /section-001/u);
+		assert.doesNotMatch(frame, /section-080/u);
+	} finally {
+		const exitPromise = instance.waitUntilExit();
+		instance.unmount();
+		await exitPromise;
+		instance.cleanup();
+	}
+});
+
 test('renders background work without full-frame redraws only when direct-write overlay is enabled', async () => {
 	// Ensure the terminal capability decision is based on the local platform,
 	// not an inherited SSH session.

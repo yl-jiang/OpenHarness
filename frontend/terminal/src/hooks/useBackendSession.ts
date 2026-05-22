@@ -35,6 +35,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	const [busy, setBusy] = useState(false);
 	const [busyLabel, setBusyLabel] = useState<string | undefined>(undefined);
 	const [ready, setReady] = useState(false);
+	const [commandOutputStartCount, setCommandOutputStartCount] = useState(0);
 	const [todoMarkdown, setTodoMarkdown] = useState('');
 	const [swarmTeammates, setSwarmTeammates] = useState<SwarmTeammateSnapshot[]>([]);
 	const [swarmNotifications, setSwarmNotifications] = useState<SwarmNotificationSnapshot[]>([]);
@@ -278,6 +279,12 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			queueTranscriptItem(event.item as TranscriptItem);
 			return;
 		}
+		if (event.type === 'command_output_start') {
+			startTransition(() => {
+				setCommandOutputStartCount((count) => count + 1);
+			});
+			return;
+		}
 		if (event.type === 'status') {
 			const message = event.message?.trim();
 			if (!message) {
@@ -473,6 +480,12 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		}
 	};
 
+	const notifyCommandOutputStart = (): void => {
+		startTransition(() => {
+			setCommandOutputStartCount((count) => count + 1);
+		});
+	};
+
 	return useMemo(
 		() => ({
 			transcript,
@@ -481,6 +494,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			tasks,
 			commands,
 			skills,
+			commandOutputStartCount,
 			mcpServers,
 			bridgeSessions,
 			modal,
@@ -495,7 +509,8 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			setSelectRequest,
 			setBusy,
 			sendRequest,
+			notifyCommandOutputStart,
 		}),
-		[assistantBuffer, bridgeSessions, busy, busyLabel, commands, mcpServers, modal, ready, selectRequest, skills, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
+		[assistantBuffer, bridgeSessions, busy, busyLabel, commandOutputStartCount, commands, mcpServers, modal, ready, selectRequest, skills, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
 	);
 }

@@ -853,6 +853,9 @@ function AppInner({
 			payload.images = imagePayloads();
 			setImageAttachments([]);
 		}
+		if (inputMode === 'chat' && resolvedSubmission.line.startsWith('/')) {
+			session.notifyCommandOutputStart();
+		}
 		session.sendRequest(payload);
 		pushHistoryEntry(submittedValue);
 		session.setBusy(true);
@@ -1655,6 +1658,7 @@ function AppInner({
 				showWelcome={showWelcome}
 				welcomeVersion={config.version}
 				outputStyle={outputStyle}
+				revealHeadKey={session.commandOutputStartCount}
 				onPauseChange={setPaused}
 			/>
 
