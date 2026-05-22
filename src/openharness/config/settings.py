@@ -339,6 +339,7 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             auth_source="deepseek_api_key",
             default_model="deepseek-v4-flash",
             allowed_models=["deepseek-v4-flash", "deepseek-v4-pro"],
+            context_window_tokens=1_000_000,
             base_url="https://api.deepseek.com/v1",
             reasoning_effort="max",
         ),
