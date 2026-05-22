@@ -162,7 +162,7 @@ def ensure_todo_reminder_job(
     *,
     workspace: str | Path | None = None,
     notify: dict[str, str] | None = None,
-    schedule: str = "0 9 * * *",
+    schedule: str = "0 9 * * *",  # schedule for daily at 9:00 AM
     timezone: str = "Asia/Shanghai",
 ) -> None:
     """Register or update the cron job that checks todos and sends reminders.

@@ -492,17 +492,20 @@ def test_solo_save_conversation_roundtrip(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_solo_heartbeat_triggers_runner_and_notifies_recent_channel(tmp_path: Path):
+    from datetime import date
+
     from solo.gateway.heartbeat import SoloHeartbeatService
 
     workspace = initialize_workspace(tmp_path / ".solo")
     store = SoloStore(workspace)
+    today = date.today().isoformat()
     store.add_todo(
         SoloTodo(
             id="todo1",
             record_id="record1",
             title="预约体检",
             category="健康",
-            due_date="2026-05-21",
+            due_date=today,
         )
     )
     save_conversation(
@@ -512,7 +515,7 @@ async def test_solo_heartbeat_triggers_runner_and_notifies_recent_channel(tmp_pa
         session_id="sid-1",
     )
     bus = MessageBus()
-    calls: list[tuple[str, str]] = []
+    calls: list[str] = []
 
     class FakeRunner:
         def __init__(self, store, *, profile=None):
@@ -520,8 +523,8 @@ async def test_solo_heartbeat_triggers_runner_and_notifies_recent_channel(tmp_pa
             self.profile = profile
 
         async def run(self, text, session_key="", **kwargs):
-            calls.append((text, session_key))
-            return "建议今天确认体检时间"
+            calls.append(text)
+            return '{"notifications": ["预约体检今日到期，记得安排时间"]}'
 
     service = SoloHeartbeatService(
         bus=bus,
@@ -535,11 +538,12 @@ async def test_solo_heartbeat_triggers_runner_and_notifies_recent_channel(tmp_pa
     outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
 
     assert result.executed is True
-    assert "预约体检" in calls[0][0]
-    assert calls[0][1] == "heartbeat"
+    assert result.notified is True
+    # Runner was called with signal data
+    assert calls and "预约体检" in calls[0]
     assert outbound.channel == "feishu"
     assert outbound.chat_id == "chat-1"
-    assert outbound.content == "建议今天确认体检时间"
+    assert "预约体检" in outbound.content
 
 
 @pytest.mark.asyncio
@@ -616,6 +620,6 @@ def test_solo_heartbeat_agenda_includes_pending_confirmations_and_file_tasks(tmp
     ).build_agenda()
 
     assert agenda is not None
-    assert "待确认记录" in agenda
+    assert "待确认" in agenda
     assert "他说的是谁" in agenda
     assert "检查这个月的睡眠趋势" in agenda

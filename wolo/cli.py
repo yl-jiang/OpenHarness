@@ -345,7 +345,7 @@ def heartbeat_status_cmd(
     status = service.status()
     print(
         f"wolo heartbeat: enabled={status['enabled']} "
-        f"interval_s={status['interval_s']} agenda={status['agenda']} "
+        f"interval_s={status['interval_s']} has_signals={status['has_signals']} "
         f"notify_target={status['notify_target']}"
     )
 
@@ -370,7 +370,7 @@ def heartbeat_trigger_cmd(
     )
     result = asyncio.run(service.trigger_once())
     if not result.executed:
-        print("No wolo heartbeat agenda.")
+        print("No wolo heartbeat signals.")
         return
     print(result.response or "wolo heartbeat completed.")
 

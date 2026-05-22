@@ -368,12 +368,15 @@ async def test_wolo_heartbeat_trigger_does_not_notify_without_channel_target(tmp
     from wolo.gateway.heartbeat import WoloHeartbeatService
 
     workspace = initialize_workspace(tmp_path / ".wolo")
+    from datetime import date
+
     WoloStore(workspace).add_todo(
         WoloTodo(
             id="todo1",
             record_id="record1",
             title="整理周报材料",
             project="OpenHarness",
+            due_date=date.today().isoformat(),
         )
     )
     calls: list[str] = []
@@ -384,7 +387,7 @@ async def test_wolo_heartbeat_trigger_does_not_notify_without_channel_target(tmp
 
         async def run(self, text, session_key="", **kwargs):
             calls.append(text)
-            return "周报材料已整理"
+            return '{"notifications": ["整理周报材料（今日到期）"]}'
 
     service = WoloHeartbeatService(
         bus=MessageBus(),
@@ -396,9 +399,12 @@ async def test_wolo_heartbeat_trigger_does_not_notify_without_channel_target(tmp
 
     result = await service.trigger_once()
 
-    assert result.executed is True
-    assert result.notified is False
+    # Runner was called with signal context
     assert calls and "整理周报材料" in calls[0]
+    assert result.executed is True
+    # No conversations saved => no notify target => notified is False
+    assert result.notified is False
+    assert "整理周报材料" in (result.response or "")
 
 
 def test_wolo_heartbeat_cli_status_reflects_config(tmp_path: Path):

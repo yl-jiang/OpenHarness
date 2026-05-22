@@ -252,7 +252,7 @@ def heartbeat_status_cmd(
     status = service.status()
     print(
         f"solo heartbeat: enabled={status['enabled']} "
-        f"interval_s={status['interval_s']} agenda={status['agenda']} "
+        f"interval_s={status['interval_s']} has_signals={status['has_signals']} "
         f"notify_target={status['notify_target']}"
     )
 
