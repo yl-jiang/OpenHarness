@@ -130,6 +130,7 @@ class WoloToolRegistry:
             WoloDomainTool(_tool_sync_context(), self._handle_sync_context),
             WoloDomainTool(_tool_visualize(), self._handle_visualize),
             WoloDomainTool(_tool_export(), self._handle_export),
+            WoloDomainTool(_tool_heartbeat_task(), self._handle_heartbeat_task),
         ]
 
     def tool_schemas(self) -> list[dict[str, Any]]:
@@ -868,6 +869,61 @@ class WoloToolRegistry:
             "message": f"已成功按 {fmt} 格式导出 {len(records)} 条记录到：{path}"
         }
 
+    async def _handle_heartbeat_task(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Manage periodic tasks in HEARTBEAT.md."""
+        action = _required_text(arguments, "action")
+        hb_path = self.store.workspace / "HEARTBEAT.md"
+
+        if action == "list":
+            if not hb_path.exists():
+                return {"ok": True, "tasks": [], "message": "HEARTBEAT.md 不存在，暂无周期性任务。"}
+            lines = _read_heartbeat_tasks(hb_path)
+            return {"ok": True, "tasks": lines, "message": "\n".join(lines) if lines else "暂无周期性任务。"}
+
+        if action == "add":
+            task = _required_text(arguments, "task")
+            _ensure_heartbeat_file(hb_path)
+            lines = _read_heartbeat_tasks(hb_path)
+            # Avoid duplicates
+            if any(task.strip("- ") in ln for ln in lines):
+                return {"ok": False, "message": f"任务已存在：{task}"}
+            lines.append(f"- {task.strip('- ')}")
+            _write_heartbeat_tasks(hb_path, lines)
+            return {"ok": True, "message": f"✅ 已添加周期性任务：{task}"}
+
+        if action == "remove":
+            keyword = _required_text(arguments, "task")
+            if not hb_path.exists():
+                return {"ok": False, "message": "HEARTBEAT.md 不存在。"}
+            lines = _read_heartbeat_tasks(hb_path)
+            remaining = [ln for ln in lines if keyword not in ln]
+            if len(remaining) == len(lines):
+                return {"ok": False, "message": f"未找到匹配「{keyword}」的任务。"}
+            removed_count = len(lines) - len(remaining)
+            _write_heartbeat_tasks(hb_path, remaining)
+            return {"ok": True, "message": f"✅ 已移除 {removed_count} 条匹配「{keyword}」的任务。"}
+
+        if action == "update":
+            old_keyword = _required_text(arguments, "task")
+            new_task = str(arguments.get("new_task") or "").strip()
+            if not new_task:
+                raise ValueError("update 操作需要提供 new_task 参数。")
+            if not hb_path.exists():
+                return {"ok": False, "message": "HEARTBEAT.md 不存在。"}
+            lines = _read_heartbeat_tasks(hb_path)
+            updated = False
+            for i, line in enumerate(lines):
+                if old_keyword in line:
+                    lines[i] = f"- {new_task.strip('- ')}"
+                    updated = True
+                    break
+            if not updated:
+                return {"ok": False, "message": f"未找到匹配「{old_keyword}」的任务。"}
+            _write_heartbeat_tasks(hb_path, lines)
+            return {"ok": True, "message": f"✅ 已更新任务：{new_task}"}
+
+        return {"ok": False, "message": f"未知操作：{action}，支持 add/remove/update/list"}
+
 
 class _AnyInput(BaseModel):
     """Permissive Pydantic model that accepts any tool arguments as extra fields."""
@@ -1329,6 +1385,48 @@ def _tool_export() -> ToolDefinition:
             ("include_summary", "boolean", "Whether to include an AI-generated summary at the top of the export.", False),
         ]
     )
+
+
+def _tool_heartbeat_task() -> ToolDefinition:
+    return _definition(
+        "wolo_heartbeat_task",
+        (
+            "Manage periodic heartbeat tasks in HEARTBEAT.md. These tasks are automatically "
+            "executed by the heartbeat watchdog every 30 minutes. Use to add/remove/update "
+            "recurring checks the user wants performed periodically — e.g. '检查邮件有没有紧急回复', "
+            "'看一下 CI 有没有失败', '提醒我每小时喝水'. "
+            "Actions: add (add a new periodic task), remove (remove by keyword match), "
+            "update (replace an existing task), list (show all current tasks)."
+        ),
+        [
+            ("action", "string", "One of: add, remove, update, list.", True),
+            ("task", "string", "The task content (for add: new task text; for remove/update: keyword to match existing task).", False),
+            ("new_task", "string", "New task text when action=update (replaces the matched task).", False),
+        ],
+    )
+
+
+def _read_heartbeat_tasks(path: Path) -> list[str]:
+    """Read task lines from HEARTBEAT.md, ignoring comments and blank lines."""
+    content = path.read_text(encoding="utf-8", errors="replace")
+    return [
+        line.strip()
+        for line in content.splitlines()
+        if line.strip() and not line.strip().startswith("<!--")
+    ]
+
+
+def _write_heartbeat_tasks(path: Path, lines: list[str]) -> None:
+    """Write task lines back to HEARTBEAT.md."""
+    content = "\n".join(lines) + "\n" if lines else ""
+    path.write_text(content, encoding="utf-8")
+
+
+def _ensure_heartbeat_file(path: Path) -> None:
+    """Create HEARTBEAT.md if it doesn't exist."""
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
 
 
 def _definition(
