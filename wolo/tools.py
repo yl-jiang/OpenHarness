@@ -359,48 +359,80 @@ class WoloToolRegistry:
         }
 
     async def _handle_remind(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        reminder_message = _required_text(arguments, "message")
-        notify = _resolve_reminder_notify_target(self._source_context, self.store.workspace)
-        if notify is None:
-            raise ValueError("wolo_remind 目前只支持带 sender_id 的飞书会话。")
+        """Register a one-shot reminder: only sends a notification message at the scheduled time.
 
-        schedule = build_one_shot_reminder_schedule(
-            remind_at=_optional_text(arguments, "remind_at"),
-            delay_seconds=arguments.get("delay_seconds"),
-            delay_minutes=arguments.get("delay_minutes"),
-            delay_hours=arguments.get("delay_hours"),
-            delay_days=arguments.get("delay_days"),
-        )
-
-        from wolo.gateway.cron_scheduler import is_scheduler_running, start_daemon
+        Counterpart: _handle_schedule (which executes an agent task instead of just notifying).
+        Both share _prepare_one_shot for time parsing and daemon management.
+        """
         from wolo.gateway.todo_cron import schedule_one_shot_reminder
 
-        if not is_scheduler_running():
-            start_daemon(self.store.workspace)
-
+        reminder_message = _required_text(arguments, "message")
+        due_at_utc, notify, local_due, delay_text = self._prepare_one_shot(arguments, time_field="remind_at")
         job = schedule_one_shot_reminder(
             "wolo",
             workspace=self.store.workspace,
-            remind_at=schedule.due_at_utc,
+            remind_at=due_at_utc,
             message=reminder_message,
             notify=notify,
         )
-        local_due = format_local_reminder_time(schedule.due_at_local)
         return {
             "ok": True,
             "job_name": job["name"],
             "next_run": job["next_run"],
-            "message": f"✅ 已设置提醒：将在 {local_due}（{schedule.delay_text}）提醒你：{reminder_message}",
+            "message": f"✅ 已设置提醒：将在 {local_due}（{delay_text}）提醒你：{reminder_message}",
         }
 
     async def _handle_schedule(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Register a one-shot agent task: runs the full agent loop at the scheduled time and DMs results.
+
+        Counterpart: _handle_remind (which only sends a notification without executing anything).
+        Both share _prepare_one_shot for time parsing and daemon management.
+        """
+        from wolo.gateway.todo_cron import schedule_one_shot_agent_task
+
         task_prompt = _required_text(arguments, "prompt")
+        due_at_utc, notify, local_due, delay_text = self._prepare_one_shot(arguments, time_field="run_at")
+        job = schedule_one_shot_agent_task(
+            "wolo",
+            workspace=self.store.workspace,
+            run_at=due_at_utc,
+            prompt=task_prompt,
+            notify=notify,
+        )
+        return {
+            "ok": True,
+            "job_name": job["name"],
+            "next_run": job["next_run"],
+            "message": f"✅ 已安排定时任务：将在 {local_due}（{delay_text}）执行「{task_prompt}」并把结果发给你。",
+        }
+
+    def _prepare_one_shot(
+        self,
+        arguments: dict[str, Any],
+        *,
+        time_field: str,
+    ) -> tuple[datetime, dict[str, str], str, str]:
+        """Shared preparation for _handle_remind and _handle_schedule.
+
+        Handles the three concerns common to both:
+        1. Resolve the Feishu DM notify target from source_context
+        2. Parse absolute/relative time into a UTC datetime
+        3. Ensure the cron scheduler daemon is running
+
+        Args:
+            arguments: Tool call arguments containing delay_* or an absolute time field.
+            time_field: Which argument key holds the absolute ISO-8601 time
+                        ("remind_at" for remind, "run_at" for schedule).
+
+        Returns:
+            (due_at_utc, notify_dict, local_due_str, delay_text)
+        """
         notify = _resolve_reminder_notify_target(self._source_context, self.store.workspace)
         if notify is None:
-            raise ValueError("wolo_schedule 目前只支持带 sender_id 的飞书会话。")
+            raise ValueError("此功能目前只支持带 sender_id 的飞书会话。")
 
         schedule = build_one_shot_reminder_schedule(
-            remind_at=_optional_text(arguments, "run_at"),
+            remind_at=_optional_text(arguments, time_field),
             delay_seconds=arguments.get("delay_seconds"),
             delay_minutes=arguments.get("delay_minutes"),
             delay_hours=arguments.get("delay_hours"),
@@ -408,25 +440,12 @@ class WoloToolRegistry:
         )
 
         from wolo.gateway.cron_scheduler import is_scheduler_running, start_daemon
-        from wolo.gateway.todo_cron import schedule_one_shot_agent_task
 
         if not is_scheduler_running():
             start_daemon(self.store.workspace)
 
-        job = schedule_one_shot_agent_task(
-            "wolo",
-            workspace=self.store.workspace,
-            run_at=schedule.due_at_utc,
-            prompt=task_prompt,
-            notify=notify,
-        )
         local_due = format_local_reminder_time(schedule.due_at_local)
-        return {
-            "ok": True,
-            "job_name": job["name"],
-            "next_run": job["next_run"],
-            "message": f"✅ 已安排定时任务：将在 {local_due}（{schedule.delay_text}）执行「{task_prompt}」并把结果发给你。",
-        }
+        return schedule.due_at_utc, notify, local_due, schedule.delay_text
 
     async def _handle_jobs(self, arguments: dict[str, Any]) -> dict[str, Any]:
         from wolo.gateway.todo_cron import list_one_shot_jobs
@@ -1076,7 +1095,11 @@ def _tool_process() -> ToolDefinition:
 def _tool_backfill() -> ToolDefinition:
     return _definition(
         "wolo_backfill",
-        "Backfill a missing wolo work entry.",
+        (
+            "Quick-path for backfilling a missing work entry when the user provides raw content without structured fields. "
+            "Saves the entry and auto-triggers process_pending to structure it via LLM. "
+            "Use wolo_record instead if you can already extract structured fields (summary, tags, emotion)."
+        ),
         [("content", "string", "Backfill content.", True)],
     )
 
@@ -1093,8 +1116,11 @@ def _tool_remind() -> ToolDefinition:
     return _definition(
         "wolo_remind",
         (
-            "Schedule a one-shot reminder that proactively pings the current user later via Feishu DM. "
+            "Schedule a one-shot reminder that sends a notification to the user at a future time. "
+            "The system only SENDS A MESSAGE — it does NOT execute any task. "
             "Use for requests like '2分钟后提醒我喝水' or '明天 09:30 提醒我发周报'. "
+            "If the user wants the system to DO something and return results, use wolo_schedule instead. "
+            "For recurring/periodic reminders, use wolo_heartbeat_task instead. "
             "Provide either remind_at (ISO-8601 datetime) or one/more delay_* fields."
         ),
         [
@@ -1112,9 +1138,11 @@ def _tool_schedule() -> ToolDefinition:
     return _definition(
         "wolo_schedule",
         (
-            "Schedule a one-shot agent task that runs at a future time and DMs the result to the user. "
+            "Schedule a one-shot agent task that EXECUTES at a future time and DMs the result to the user. "
+            "The system will actually perform the work (e.g. generate a report, summarize records) — not just remind. "
             "Use for requests like '明天12点生成一份周报' or '下午3点帮我整理今天的工作记录'. "
-            "The agent will execute the prompt at the scheduled time using your full wolo context. "
+            "If the user only needs a notification without execution, use wolo_remind instead. "
+            "For recurring/periodic tasks, use wolo_heartbeat_task instead. "
             "Provide either run_at (ISO-8601 datetime) or one/more delay_* fields."
         ),
         [
@@ -1153,15 +1181,19 @@ def _tool_cancel() -> ToolDefinition:
 def _tool_view() -> ToolDefinition:
     return _definition(
         "wolo_view",
-        "View recent wolo records.",
-        [("limit", "integer", "Number of records.", False)],
+        "Browse the most recent wolo records in reverse-chronological order. Use for quick 'what did I log lately' checks without any filter criteria. For filtered queries, use wolo_search instead.",
+        [("limit", "integer", "Number of records (default 10).", False)],
     )
 
 
 def _tool_search() -> ToolDefinition:
     return _definition(
         "wolo_search",
-        "Search through wolo work records using keywords, dates, project tags, status labels, prompt/tool names, or blockers.",
+        (
+            "Search through wolo work records with precise filters (keywords, date range, tags, status labels). "
+            "Use this for targeted lookups like 'find all records tagged blocker in May' or 'records mentioning gateway'. "
+            "For open-ended work-history questions (e.g. 'what did I accomplish last week'), prefer wolo_work_query which aggregates records + decisions + highlights."
+        ),
         [
             ("query", "string", "Text search query.", False),
             ("tags", "string", "Comma-separated tags.", False),
@@ -1219,7 +1251,7 @@ def _tool_update_todo() -> ToolDefinition:
 def _tool_blockers() -> ToolDefinition:
     return _definition(
         "wolo_blockers",
-        "List blocker highlights derived from work records.",
+        "List blocker highlights derived from work records. This is the dedicated tool for blocker queries — prefer this over wolo_highlights(kind='blocker').",
         [
             ("project", "string", "Project filter.", False),
             ("query", "string", "Text query.", False),
@@ -1243,7 +1275,11 @@ def _tool_decisions() -> ToolDefinition:
 def _tool_highlights() -> ToolDefinition:
     return _definition(
         "wolo_highlights",
-        "List important work highlights, including prompt lessons, tool lessons, blockers, and risks.",
+        (
+            "List important work highlights including prompt lessons, tool lessons, and risks. "
+            "For blocker-specific queries, prefer the dedicated wolo_blockers tool. "
+            "For decision-specific queries, prefer wolo_decisions."
+        ),
         [
             ("kind", "string", "Highlight kind: important/prompt/tool/blocker/risk.", False),
             ("project", "string", "Project filter.", False),
@@ -1256,7 +1292,11 @@ def _tool_highlights() -> ToolDefinition:
 def _tool_work_query() -> ToolDefinition:
     return _definition(
         "wolo_work_query",
-        "Answer work-history queries by retrieving matching records, decisions, and highlights.",
+        (
+            "Answer open-ended work-history questions by aggregating matching records, decisions, AND highlights into one response. "
+            "Use for questions like 'what did I do last week', 'summarize project X progress', 'any unresolved blockers'. "
+            "For precise filtering by specific date range/tags/emotions, use wolo_search instead."
+        ),
         [
             ("query", "string", "Question or search query, e.g. 'what did I do last week'.", False),
             ("project", "string", "Project filter.", False),
@@ -1313,9 +1353,10 @@ def _tool_profile_update() -> ToolDefinition:
     return _definition(
         "wolo_profile_update",
         (
-            "Store a suggested update for transient or evolving work profile info "
-            "(e.g. active projects, reporting preferences, temporary blockers, prompt/tool habits, or minor observations). "
-            "Use this for things that might change over weeks or months and are not yet established as durable work facts."
+            "Store a suggested update for TRANSIENT or evolving work profile info that may change within weeks or months "
+            "(e.g. current sprint focus, temporary blockers, active experiment parameters, reporting preferences). "
+            "These are reviewed and may expire. "
+            "For STABLE facts expected to last 3+ months (project goals, team structure, toolchains), use wolo_remember instead."
         ),
         [
             ("record_id", "string", "Related record id.", False),
@@ -1332,10 +1373,10 @@ def _tool_remember() -> ToolDefinition:
     return _definition(
         "wolo_remember",
         (
-            "Store highly stable, core work facts into the long-term memory directory "
+            "Store STABLE, core work facts into the long-term memory directory — information expected to remain valid for 3+ months "
             "(e.g. project goals, repository ownership, team conventions, toolchains, recurring prompt patterns, reporting cadence). "
-            "These facts serve as the foundation for future work-log sessions. "
-            "Use this ONLY for information expected to remain valid beyond the current task."
+            "These facts serve as foundation context for all future sessions. "
+            "For transient/evolving info that may change within weeks (sprint focus, temporary blockers), use wolo_profile_update instead."
         ),
         [
             ("title", "string", "A short English title for this memory entry (used as filename, ASCII only, e.g. 'project_context', 'tooling_lessons').", True),
@@ -1391,10 +1432,11 @@ def _tool_heartbeat_task() -> ToolDefinition:
     return _definition(
         "wolo_heartbeat_task",
         (
-            "Manage periodic heartbeat tasks in HEARTBEAT.md. These tasks are automatically "
-            "executed by the heartbeat watchdog every 30 minutes. Use to add/remove/update "
-            "recurring checks the user wants performed periodically — e.g. '检查邮件有没有紧急回复', "
-            "'看一下 CI 有没有失败', '提醒我每小时喝水'. "
+            "Manage periodic/recurring heartbeat tasks in HEARTBEAT.md. These tasks are automatically "
+            "executed by the heartbeat watchdog every 30 minutes — use for RECURRING checks only. "
+            "Examples: '每小时提醒我喝水', '检查邮件有没有紧急回复', '看一下 CI 有没有失败'. "
+            "For ONE-TIME reminders, use wolo_remind instead. "
+            "For ONE-TIME scheduled tasks, use wolo_schedule instead. "
             "Actions: add (add a new periodic task), remove (remove by keyword match), "
             "update (replace an existing task), list (show all current tasks)."
         ),

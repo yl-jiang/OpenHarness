@@ -349,48 +349,80 @@ class SoloToolRegistry:
         }
 
     async def _handle_remind(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        reminder_message = _required_text(arguments, "message")
-        notify = _resolve_reminder_notify_target(self._source_context, self.store.workspace)
-        if notify is None:
-            raise ValueError("solo_remind 目前只支持带 sender_id 的飞书会话。")
+        """Register a one-shot reminder: only sends a notification message at the scheduled time.
 
-        schedule = build_one_shot_reminder_schedule(
-            remind_at=_optional_text(arguments, "remind_at"),
-            delay_seconds=arguments.get("delay_seconds"),
-            delay_minutes=arguments.get("delay_minutes"),
-            delay_hours=arguments.get("delay_hours"),
-            delay_days=arguments.get("delay_days"),
-        )
-
-        from solo.gateway.cron_scheduler import is_scheduler_running, start_daemon
+        Counterpart: _handle_schedule (which executes an agent task instead of just notifying).
+        Both share _prepare_one_shot for time parsing and daemon management.
+        """
         from solo.gateway.todo_cron import schedule_one_shot_reminder
 
-        if not is_scheduler_running():
-            start_daemon(self.store.workspace)
-
+        reminder_message = _required_text(arguments, "message")
+        due_at_utc, notify, local_due, delay_text = self._prepare_one_shot(arguments, time_field="remind_at")
         job = schedule_one_shot_reminder(
             "solo",
             workspace=self.store.workspace,
-            remind_at=schedule.due_at_utc,
+            remind_at=due_at_utc,
             message=reminder_message,
             notify=notify,
         )
-        local_due = format_local_reminder_time(schedule.due_at_local)
         return {
             "ok": True,
             "job_name": job["name"],
             "next_run": job["next_run"],
-            "message": f"✅ 已设置提醒：将在 {local_due}（{schedule.delay_text}）提醒你：{reminder_message}",
+            "message": f"✅ 已设置提醒：将在 {local_due}（{delay_text}）提醒你：{reminder_message}",
         }
 
     async def _handle_schedule(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Register a one-shot agent task: runs the full agent loop at the scheduled time and DMs results.
+
+        Counterpart: _handle_remind (which only sends a notification without executing anything).
+        Both share _prepare_one_shot for time parsing and daemon management.
+        """
+        from solo.gateway.todo_cron import schedule_one_shot_agent_task
+
         task_prompt = _required_text(arguments, "prompt")
+        due_at_utc, notify, local_due, delay_text = self._prepare_one_shot(arguments, time_field="run_at")
+        job = schedule_one_shot_agent_task(
+            "solo",
+            workspace=self.store.workspace,
+            run_at=due_at_utc,
+            prompt=task_prompt,
+            notify=notify,
+        )
+        return {
+            "ok": True,
+            "job_name": job["name"],
+            "next_run": job["next_run"],
+            "message": f"✅ 已安排定时任务：将在 {local_due}（{delay_text}）执行「{task_prompt}」并把结果发给你。",
+        }
+
+    def _prepare_one_shot(
+        self,
+        arguments: dict[str, Any],
+        *,
+        time_field: str,
+    ) -> tuple[datetime, dict[str, str], str, str]:
+        """Shared preparation for _handle_remind and _handle_schedule.
+
+        Handles the three concerns common to both:
+        1. Resolve the Feishu DM notify target from source_context
+        2. Parse absolute/relative time into a UTC datetime
+        3. Ensure the cron scheduler daemon is running
+
+        Args:
+            arguments: Tool call arguments containing delay_* or an absolute time field.
+            time_field: Which argument key holds the absolute ISO-8601 time
+                        ("remind_at" for remind, "run_at" for schedule).
+
+        Returns:
+            (due_at_utc, notify_dict, local_due_str, delay_text)
+        """
         notify = _resolve_reminder_notify_target(self._source_context, self.store.workspace)
         if notify is None:
-            raise ValueError("solo_schedule 目前只支持带 sender_id 的飞书会话。")
+            raise ValueError("此功能目前只支持带 sender_id 的飞书会话。")
 
         schedule = build_one_shot_reminder_schedule(
-            remind_at=_optional_text(arguments, "run_at"),
+            remind_at=_optional_text(arguments, time_field),
             delay_seconds=arguments.get("delay_seconds"),
             delay_minutes=arguments.get("delay_minutes"),
             delay_hours=arguments.get("delay_hours"),
@@ -398,25 +430,12 @@ class SoloToolRegistry:
         )
 
         from solo.gateway.cron_scheduler import is_scheduler_running, start_daemon
-        from solo.gateway.todo_cron import schedule_one_shot_agent_task
 
         if not is_scheduler_running():
             start_daemon(self.store.workspace)
 
-        job = schedule_one_shot_agent_task(
-            "solo",
-            workspace=self.store.workspace,
-            run_at=schedule.due_at_utc,
-            prompt=task_prompt,
-            notify=notify,
-        )
         local_due = format_local_reminder_time(schedule.due_at_local)
-        return {
-            "ok": True,
-            "job_name": job["name"],
-            "next_run": job["next_run"],
-            "message": f"✅ 已安排定时任务：将在 {local_due}（{schedule.delay_text}）执行「{task_prompt}」并把结果发给你。",
-        }
+        return schedule.due_at_utc, notify, local_due, schedule.delay_text
 
     async def _handle_jobs(self, arguments: dict[str, Any]) -> dict[str, Any]:
         from solo.gateway.todo_cron import list_one_shot_jobs
@@ -985,7 +1004,11 @@ def _tool_process() -> ToolDefinition:
 def _tool_backfill() -> ToolDefinition:
     return _definition(
         "solo_backfill",
-        "Backfill a missing solo entry.",
+        (
+            "Quick-path for backfilling a missing personal entry when the user provides raw content without structured fields. "
+            "Saves the entry and auto-triggers process_pending to structure it via LLM. "
+            "Use solo_record instead if you can already extract structured fields (summary, tags, emotion)."
+        ),
         [("content", "string", "Backfill content.", True)],
     )
 
@@ -1002,8 +1025,11 @@ def _tool_remind() -> ToolDefinition:
     return _definition(
         "solo_remind",
         (
-            "Schedule a one-shot reminder that proactively pings the current user later via Feishu DM. "
+            "Schedule a one-shot reminder that sends a notification to the user at a future time. "
+            "The system only SENDS A MESSAGE — it does NOT execute any task. "
             "Use for requests like '2分钟后提醒我喝水' or '明天 09:30 提醒我去运动'. "
+            "If the user wants the system to DO something and return results, use solo_schedule instead. "
+            "For recurring/periodic reminders, use solo_heartbeat_task instead. "
             "Provide either remind_at (ISO-8601 datetime) or one/more delay_* fields."
         ),
         [
@@ -1021,9 +1047,11 @@ def _tool_schedule() -> ToolDefinition:
     return _definition(
         "solo_schedule",
         (
-            "Schedule a one-shot agent task that runs at a future time and DMs the result to the user. "
+            "Schedule a one-shot agent task that EXECUTES at a future time and DMs the result to the user. "
+            "The system will actually perform the work (e.g. generate a report, summarize logs) — not just remind. "
             "Use for requests like '明天12点生成一份周报' or '下午3点帮我整理这周的日志'. "
-            "The agent will execute the prompt at the scheduled time using your full solo context. "
+            "If the user only needs a notification without execution, use solo_remind instead. "
+            "For recurring/periodic tasks, use solo_heartbeat_task instead. "
             "Provide either run_at (ISO-8601 datetime) or one/more delay_* fields."
         ),
         [
@@ -1062,15 +1090,19 @@ def _tool_cancel() -> ToolDefinition:
 def _tool_view() -> ToolDefinition:
     return _definition(
         "solo_view",
-        "View recent solo records.",
-        [("limit", "integer", "Number of records.", False)],
+        "Browse the most recent solo records in reverse-chronological order. Use for quick 'what did I log lately' checks without any filter criteria. For filtered queries, use solo_search instead.",
+        [("limit", "integer", "Number of records (default 10).", False)],
     )
 
 
 def _tool_search() -> ToolDefinition:
     return _definition(
         "solo_search",
-        "Search through solo records using keywords, dates, tags, or emotions.",
+        (
+            "Search through solo records with precise filters (keywords, date range, tags, emotions). "
+            "Use this for targeted lookups like 'find all records tagged 健康 in May' or 'records mentioning 小李'. "
+            "Also use for open-ended retrospective questions like 'how have I been feeling lately' since solo has no separate aggregation tool."
+        ),
         [
             ("query", "string", "Text search query.", False),
             ("tags", "string", "Comma-separated tags.", False),
@@ -1173,9 +1205,10 @@ def _tool_profile_update() -> ToolDefinition:
     return _definition(
         "solo_profile_update",
         (
-            "Store a suggested update for transient or evolving user profile info "
-            "(e.g. current preferences, temporary habits, or minor observations). "
-            "Use this for things that might change over months or are not yet established as core life facts."
+            "Store a suggested update for TRANSIENT or evolving user profile info that may change within weeks or months "
+            "(e.g. current preferences, temporary habits, mood patterns, seasonal routines). "
+            "These are reviewed and may expire. "
+            "For STABLE life facts expected to last years (family, career milestones, medical history), use solo_remember instead."
         ),
         [
             ("record_id", "string", "Related record id.", False),
@@ -1192,10 +1225,10 @@ def _tool_remember() -> ToolDefinition:
     return _definition(
         "solo_remember",
         (
-            "Store highly stable, core life facts into the long-term memory directory "
-            "(e.g. family trees, medical history, career milestones, home location). "
-            "These facts serve as the foundation for context in all future sessions. "
-            "Use this ONLY for information expected to remain valid for years."
+            "Store STABLE, core life facts into the long-term memory directory — information expected to remain valid for years "
+            "(e.g. family trees, medical history, career milestones, home location, chronic conditions). "
+            "These facts serve as foundation context for all future sessions. "
+            "For transient/evolving info that may change within months (current habits, temporary preferences), use solo_profile_update instead."
         ),
         [
             ("title", "string", "A short English title for this memory entry (used as filename, ASCII only, e.g. 'family_members', 'medical_history').", True),
@@ -1251,10 +1284,11 @@ def _tool_heartbeat_task() -> ToolDefinition:
     return _definition(
         "solo_heartbeat_task",
         (
-            "Manage periodic heartbeat tasks in HEARTBEAT.md. These tasks are automatically "
-            "executed by the heartbeat watchdog every 30 minutes. Use to add/remove/update "
-            "recurring checks the user wants performed periodically — e.g. '检查有没有未读重要消息', "
-            "'看看天气预报', '提醒我每小时站起来活动'. "
+            "Manage periodic/recurring heartbeat tasks in HEARTBEAT.md. These tasks are automatically "
+            "executed by the heartbeat watchdog every 30 minutes — use for RECURRING checks only. "
+            "Examples: '每小时提醒我站起来活动', '检查有没有未读重要消息', '看看天气预报'. "
+            "For ONE-TIME reminders, use solo_remind instead. "
+            "For ONE-TIME scheduled tasks, use solo_schedule instead. "
             "Actions: add (add a new periodic task), remove (remove by keyword match), "
             "update (replace an existing task), list (show all current tasks)."
         ),
