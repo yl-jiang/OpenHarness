@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
 from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
+from openharness.utils.fs import atomic_write_text
 
 from wolo.core.workspace import get_data_dir, get_sessions_dir
 
@@ -41,6 +43,31 @@ def _get_db(workspace: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_CONVERSATIONS_SCHEMA)
     return conn
+
+
+def _write_dream_snapshot(
+    workspace: Path,
+    session_key: str,
+    session_id: str,
+    messages: list[ConversationMessage],
+) -> None:
+    """Write session-{id}.json to the sessions dir so autodream can scan it."""
+    sessions_dir = get_sessions_dir(workspace)
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    summary = next((m.text.strip()[:80] for m in messages if m.role == "user" and m.text.strip()), "")
+    payload = {
+        "session_id": session_id,
+        "session_key": session_key,
+        "messages": [m.model_dump(mode="json") for m in messages],
+        "message_count": len(messages),
+        "created_at": time.time(),
+        "summary": summary,
+    }
+    path = sessions_dir / f"session-{session_id}.json"
+    try:
+        atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+    except OSError:
+        logger.warning("wolo session: failed to write dream snapshot %s", path)
 
 
 def _maybe_migrate_json_sessions(workspace: Path, conn: sqlite3.Connection) -> None:
@@ -107,6 +134,7 @@ def save_conversation(
         logger.debug("wolo session saved session_key=%s messages=%d", session_key, len(clean))
     finally:
         conn.close()
+    _write_dream_snapshot(workspace, session_key, sid, clean)
 
 
 def load_conversation(
