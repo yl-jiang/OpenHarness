@@ -6,6 +6,7 @@ import asyncio
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -94,6 +95,10 @@ async def create_shell_subprocess(
             stdout=stdout,
             stderr=stderr,
             env=dict(env) if env is not None else None,
+            # Create a new process group on Unix so that _terminate_process can
+            # send signals to the entire group (including child processes), preventing
+            # orphaned subprocesses when the shell is killed.
+            **({} if sys.platform == "win32" else {"start_new_session": True}),
         )
     except Exception:
         if cleanup_path is not None:

@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import os
 import shlex
+import signal
+import sys
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -14,8 +16,11 @@ from openharness.sandbox import SandboxUnavailableError
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 from openharness.utils.shell import create_shell_subprocess
 
+_IS_UNIX = sys.platform != "win32"
 
 _READ_REMAINING_OUTPUT_TIMEOUT_SECONDS = 2.0
+# Seconds with no new output before the process is considered stalled.
+_NO_OUTPUT_STALL_SECONDS = 30.0
 _NON_INTERACTIVE_ENV_OVERRIDES = {
     "CI": "1",
     "GIT_PAGER": "cat",
@@ -34,7 +39,17 @@ class BashToolInput(BaseModel):
 
     command: str = Field(description="Shell command to execute")
     cwd: str | None = Field(default=None, description="Working directory override")
-    timeout_seconds: int = Field(default=600, ge=1, le=600)
+    timeout_seconds: int = Field(
+        default=30,
+        ge=1,
+        le=600,
+        description=(
+            "Timeout in seconds (1–600, default 30). "
+            "Increase for commands expected to take longer (e.g. large builds or installs). "
+            "The command is killed if it runs longer than this value or produces no output "
+            f"for {_NO_OUTPUT_STALL_SECONDS:.0f} seconds."
+        ),
+    )
 
 
 class BashTool(BaseTool):
@@ -65,8 +80,13 @@ class BashTool(BaseTool):
                     },
                     "timeout_seconds": {
                         "type": "integer",
-                        "description": "Timeout in seconds (1-600)",
-                        "default": 600,
+                        "description": (
+                            "Timeout in seconds (1–600, default 30). "
+                            "Increase for commands expected to take longer (e.g. large builds or installs). "
+                            "The command is killed if it runs longer than this value or produces no output "
+                            f"for {_NO_OUTPUT_STALL_SECONDS:.0f} seconds."
+                        ),
+                        "default": 30,
                     },
                 },
                 "required": ["command"],
@@ -100,6 +120,7 @@ class BashTool(BaseTool):
             raise
 
         output_buffer = bytearray()
+        stall_detected = False
 
         async def _read_all() -> None:
             assert process.stdout is not None
@@ -112,12 +133,26 @@ class BashTool(BaseTool):
             except OSError:
                 pass
 
+        async def _stall_watchdog() -> None:
+            nonlocal stall_detected
+            while True:
+                prev_len = len(output_buffer)
+                await asyncio.sleep(_NO_OUTPUT_STALL_SECONDS)
+                if process.returncode is not None:
+                    return
+                if len(output_buffer) == prev_len:
+                    stall_detected = True
+                    await _terminate_process(process, force=True)
+                    return
+
+        watchdog_task = asyncio.create_task(_stall_watchdog())
         try:
             await asyncio.wait_for(
                 asyncio.gather(process.wait(), _read_all()),
                 timeout=arguments.timeout_seconds,
             )
         except asyncio.TimeoutError:
+            watchdog_task.cancel()
             await _terminate_process(process, force=True)
             output_buffer.extend(await _read_remaining_output(process))
             return ToolResult(
@@ -130,8 +165,22 @@ class BashTool(BaseTool):
                 metadata={"returncode": process.returncode, "timed_out": True},
             )
         except asyncio.CancelledError:
+            watchdog_task.cancel()
             await _terminate_process(process, force=False)
             raise
+        else:
+            watchdog_task.cancel()
+
+        # Stall detected: watchdog killed the process due to sustained silence.
+        # Guard against the rare race where the process exited naturally (returncode >= 0)
+        # just as the watchdog fired.
+        if stall_detected and process.returncode is not None and process.returncode < 0:
+            output_buffer.extend(await _read_remaining_output(process))
+            return ToolResult(
+                output=_format_stall_output(output_buffer, command=arguments.command),
+                is_error=True,
+                metadata={"returncode": process.returncode, "stalled": True},
+            )
 
         text = _format_output(output_buffer)
         return ToolResult(
@@ -141,18 +190,38 @@ class BashTool(BaseTool):
         )
 
 
+def _kill_process_group(process: asyncio.subprocess.Process, *, force: bool) -> None:
+    """Send SIGKILL/SIGTERM to the entire process group (Unix) or just the process (Windows).
+
+    Using the process group ensures that child processes spawned by the shell
+    are also terminated, preventing orphaned subprocesses.
+    """
+    if _IS_UNIX:
+        sig = signal.SIGKILL if force else signal.SIGTERM
+        try:
+            os.killpg(os.getpgid(process.pid), sig)
+            return
+        except (AttributeError, OSError, ProcessLookupError):
+            pass
+    # Windows, or fallback when getpgid fails (process already gone).
+    if force:
+        process.kill()
+    else:
+        process.terminate()
+
+
 async def _terminate_process(process: asyncio.subprocess.Process, *, force: bool) -> None:
     if process.returncode is not None:
         return
     if force:
-        process.kill()
+        _kill_process_group(process, force=True)
         await process.wait()
         return
-    process.terminate()
+    _kill_process_group(process, force=False)
     try:
         await asyncio.wait_for(process.wait(), timeout=2.0)
     except asyncio.TimeoutError:
-        process.kill()
+        _kill_process_group(process, force=True)
         await process.wait()
 
 
@@ -187,6 +256,21 @@ def _format_timeout_output(output_buffer: bytearray, *, command: str, timeout_se
     hint = _interactive_command_hint(command=command, output=text)
     if hint:
         parts.extend(["", hint])
+    return "\n".join(parts)
+
+
+def _format_stall_output(output_buffer: bytearray, *, command: str) -> str:
+    parts = [
+        f"Command produced no new output for {_NO_OUTPUT_STALL_SECONDS:.0f} seconds and was stopped.",
+        "The process may be waiting for interactive input, stuck in an infinite loop, or blocking indefinitely.",
+        "Suggestions:",
+        "  • Add non-interactive flags (e.g. --yes, -y, --no-input) if the command prompts for input.",
+        "  • Use a background task if the command is intended to run continuously.",
+        "  • Verify the command exits on its own under normal conditions.",
+    ]
+    text = _format_output(output_buffer)
+    if text != "(no output)":
+        parts.extend(["", "Output before stall:", text])
     return "\n".join(parts)
 
 
