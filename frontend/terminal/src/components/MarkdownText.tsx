@@ -4,6 +4,8 @@ import {lexer, type Token, type Tokens} from 'marked';
 import stringWidth from 'string-width';
 
 import {useTheme} from '../theme/ThemeContext.js';
+import {useTerminalSize} from '../hooks/useTerminalSize.js';
+import {truncateWithEllipsis} from '../textLayout.js';
 import type {ThemeConfig} from '../theme/builtinThemes.js';
 
 function getInlineFallbackText(token: Token): string {
@@ -126,22 +128,112 @@ function renderInline(tokens: Token[] | undefined, theme: ThemeConfig): React.Re
 	});
 }
 
-function renderBlocks(tokens: Token[] | undefined, theme: ThemeConfig): React.ReactNode {
+const MIN_COL_WIDTH = 3;
+
+function computeColWidths(naturalColWidths: number[], availWidth: number): number[] {
+	const colCount = naturalColWidths.length;
+	if (colCount === 0) return [];
+	// availWidth is the container width visible to TableBlock (outer margins already excluded).
+	// TableBlock renders: marginLeft(1) + leadingPipe(1) + sum(colWidths + 3)
+	// => usable content per column = availWidth - 2 - 3*colCount
+	const availContentWidth = availWidth - 2 - 3 * colCount;
+	const naturalTotal = naturalColWidths.reduce((a, b) => a + b, 0);
+	if (naturalTotal <= availContentWidth) return naturalColWidths;
+	// Distribute available space proportionally with a per-column minimum.
+	const budget = Math.max(colCount * MIN_COL_WIDTH, availContentWidth);
+	const distributable = budget - colCount * MIN_COL_WIDTH;
+	return naturalColWidths.map((w) => {
+		const share = naturalTotal > 0 ? (w / naturalTotal) * distributable : distributable / colCount;
+		return MIN_COL_WIDTH + Math.floor(share);
+	});
+}
+
+function TableBlock({token, theme, availWidth}: {token: Tokens.Table; theme: ThemeConfig; availWidth: number}): React.JSX.Element {
+	const headerTexts = token.header.map(getTableCellDisplayText);
+	const rowTexts = token.rows.map((row) => row.map(getTableCellDisplayText));
+	const colCount = token.header.length;
+
+	const naturalColWidths: number[] = headerTexts.map((t) => stringWidth(t));
+	for (const row of rowTexts) {
+		for (let c = 0; c < colCount; c++) {
+			naturalColWidths[c] = Math.max(naturalColWidths[c] ?? 0, stringWidth(row[c] ?? ''));
+		}
+	}
+
+	const colWidths = computeColWidths(naturalColWidths, availWidth);
+	const naturalTotal = naturalColWidths.reduce((a, b) => a + b, 0);
+	const availContentWidth = availWidth - 2 - 3 * colCount;
+	const needsTruncation = naturalTotal > availContentWidth;
+
+	const trailingSpaces = (text: string, c: number): string =>
+		' '.repeat(Math.max(0, (colWidths[c] ?? 0) - stringWidth(text)));
+
+	const fitCellText = (text: string, c: number): string => {
+		const w = colWidths[c] ?? 0;
+		return stringWidth(text) > w ? truncateWithEllipsis(text, w) : text;
+	};
+
+	const top = '┌' + colWidths.map((w) => '─'.repeat(w + 2)).join('┬') + '┐';
+	const mid = '├' + colWidths.map((w) => '─'.repeat(w + 2)).join('┼') + '┤';
+	const bot = '└' + colWidths.map((w) => '─'.repeat(w + 2)).join('┴') + '┘';
+
+	return (
+		<Box flexDirection="column" marginTop={1} marginLeft={1}>
+			<Text color={theme.colors.muted}>{top}</Text>
+			<Text>
+				<Text color={theme.colors.muted}>{'│'}</Text>
+				{token.header.map((cell, c) => {
+					const fitted = fitCellText(headerTexts[c] ?? '', c);
+					return (
+						<React.Fragment key={c}>
+							<Text color={theme.colors.primary} bold>
+								{' '}{needsTruncation ? fitted : renderInline(cell.tokens, theme)}{trailingSpaces(fitted, c)}{' '}
+							</Text>
+							<Text color={theme.colors.muted}>{'│'}</Text>
+						</React.Fragment>
+					);
+				})}
+			</Text>
+			<Text color={theme.colors.muted}>{mid}</Text>
+			{token.rows.map((row, i) => (
+				<Text key={i}>
+					<Text color={theme.colors.muted}>{'│'}</Text>
+					{row.map((cell, c) => {
+						const fitted = fitCellText(rowTexts[i]?.[c] ?? '', c);
+						return (
+							<React.Fragment key={c}>
+								<Text>
+									{' '}{needsTruncation ? fitted : renderInline(cell.tokens, theme)}{trailingSpaces(fitted, c)}{' '}
+								</Text>
+								<Text color={theme.colors.muted}>{'│'}</Text>
+							</React.Fragment>
+						);
+					})}
+				</Text>
+			))}
+			<Text color={theme.colors.muted}>{bot}</Text>
+		</Box>
+	);
+}
+
+function renderBlocks(tokens: Token[] | undefined, theme: ThemeConfig, availWidth: number): React.ReactNode {
 	if (!tokens || tokens.length === 0) {
 		return null;
 	}
 
 	return tokens.map((token, i) => (
-		<MarkdownBlock key={i} token={token} theme={theme} />
+		<MarkdownBlock key={i} token={token} theme={theme} availWidth={availWidth} />
 	));
 }
 
 function MarkdownBlock({
 	token,
 	theme,
+	availWidth,
 }: {
 	token: Token;
 	theme: ThemeConfig;
+	availWidth: number;
 }): React.JSX.Element | null {
 	switch (token.type) {
 		case 'heading': {
@@ -200,7 +292,7 @@ function MarkdownBlock({
 						<Box key={i} flexDirection="row">
 							<Text color={theme.colors.muted}>{'│ '}</Text>
 							<Box flexDirection="column" flexGrow={1}>
-								{renderBlocks([t], theme)}
+								{renderBlocks([t], theme, availWidth - 2)}
 							</Box>
 						</Box>
 					))}
@@ -248,52 +340,7 @@ function MarkdownBlock({
 
 		case 'table': {
 			const t = token as Tokens.Table;
-			const headerTexts = t.header.map(getTableCellDisplayText);
-			const rowTexts = t.rows.map((row) => row.map(getTableCellDisplayText));
-			// Use stringWidth for correct CJK and wide-char column widths.
-			const colCount = t.header.length;
-			const colWidths: number[] = headerTexts.map((cellText) => stringWidth(cellText));
-			for (const row of rowTexts) {
-				for (let c = 0; c < colCount; c++) {
-					colWidths[c] = Math.max(colWidths[c] ?? 0, stringWidth(row[c] ?? ''));
-				}
-			}
-			const trailing = (cellText: string, c: number): string =>
-				' '.repeat(Math.max(0, (colWidths[c] ?? 0) - stringWidth(cellText)));
-			const top = '┌' + colWidths.map((w) => '─'.repeat(w + 2)).join('┬') + '┐';
-			const mid = '├' + colWidths.map((w) => '─'.repeat(w + 2)).join('┼') + '┤';
-			const bot = '└' + colWidths.map((w) => '─'.repeat(w + 2)).join('┴') + '┘';
-			return (
-				<Box flexDirection="column" marginTop={1} marginLeft={1}>
-					<Text color={theme.colors.muted}>{top}</Text>
-					<Text>
-						<Text color={theme.colors.muted}>{'│'}</Text>
-						{t.header.map((cell, c) => (
-							<React.Fragment key={c}>
-								<Text color={theme.colors.primary} bold>
-									{' '}{renderInline(cell.tokens, theme)}{trailing(headerTexts[c] ?? '', c)}{' '}
-								</Text>
-								<Text color={theme.colors.muted}>{'│'}</Text>
-							</React.Fragment>
-						))}
-					</Text>
-					<Text color={theme.colors.muted}>{mid}</Text>
-					{t.rows.map((row, i) => (
-						<Text key={i}>
-							<Text color={theme.colors.muted}>{'│'}</Text>
-							{row.map((cell, c) => (
-								<React.Fragment key={c}>
-									<Text>
-										{' '}{renderInline(cell.tokens, theme)}{trailing(rowTexts[i]?.[c] ?? '', c)}{' '}
-									</Text>
-									<Text color={theme.colors.muted}>{'│'}</Text>
-								</React.Fragment>
-							))}
-						</Text>
-					))}
-					<Text color={theme.colors.muted}>{bot}</Text>
-				</Box>
-			);
+			return <TableBlock token={t} theme={theme} availWidth={availWidth} />;
 		}
 
 		default:
@@ -304,12 +351,14 @@ function MarkdownBlock({
 	}
 }
 
-export const MarkdownText = React.memo(function MarkdownText({content}: {content: string}): React.JSX.Element {
+export const MarkdownText = React.memo(function MarkdownText({content, availableWidth}: {content: string; availableWidth?: number}): React.JSX.Element {
 	const {theme} = useTheme();
+	const {cols} = useTerminalSize();
+	const effectiveWidth = availableWidth ?? cols;
 	const tokens = React.useMemo(() => lexer(content), [content]);
 	return (
 		<Box flexDirection="column">
-			{renderBlocks(tokens, theme)}
+			{renderBlocks(tokens, theme, effectiveWidth)}
 		</Box>
 	);
 });

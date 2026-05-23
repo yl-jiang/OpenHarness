@@ -3,6 +3,7 @@ import test from 'node:test';
 import {PassThrough} from 'node:stream';
 import React from 'react';
 import {render} from 'ink';
+import stringWidth from 'string-width';
 
 import {ThemeProvider} from '../theme/ThemeContext.js';
 import {MarkdownText} from './MarkdownText.js';
@@ -19,10 +20,10 @@ type InkTestStdout = PassThrough & {
 	moveCursor: () => boolean;
 };
 
-function createTestStdout(): InkTestStdout {
+function createTestStdout(columns = 120): InkTestStdout {
 	return Object.assign(new PassThrough(), {
 		isTTY: true,
-		columns: 120,
+		columns,
 		rows: 40,
 		cursorTo: () => true,
 		clearLine: () => true,
@@ -48,8 +49,8 @@ async function waitForOutputToStabilize(getOutput: () => string): Promise<string
 	throw new Error(`Ink output did not stabilize: ${JSON.stringify(previous)}`);
 }
 
-async function renderMarkdownLines(content: string): Promise<string[]> {
-	const stdout = createTestStdout();
+async function renderMarkdownLines(content: string, columns = 120): Promise<string[]> {
+	const stdout = createTestStdout(columns);
 
 	let output = '';
 	stdout.on('data', (chunk) => {
@@ -75,8 +76,8 @@ async function renderMarkdownLines(content: string): Promise<string[]> {
 		.filter(Boolean);
 }
 
-async function renderTableLines(content: string): Promise<string[]> {
-	return (await renderMarkdownLines(content))
+async function renderTableLines(content: string, columns = 120): Promise<string[]> {
+	return (await renderMarkdownLines(content, columns))
 		.filter((line) => /[┌├│└]/.test(line))
 		.slice(0, 5);
 }
@@ -108,6 +109,31 @@ test('renders unknown inline table tokens using the visible token text fallback'
 		`Expected fallback-token table lines to share a width, got ${JSON.stringify(
 			lines.map((line, index) => ({line, width: widths[index]})),
 		)}`,
+	);
+});
+
+test('truncates wide table columns to fit within narrow terminal width', async () => {
+	// 3 wide columns that would overflow a 40-col terminal
+	const wideTable = [
+		'| Commit message with long text | Content description | Files changed |',
+		'|-------------------------------|---------------------|---------------|',
+		'| chore: rename directories     | Reorganize files    | 16 files      |',
+	].join('\n');
+	const lines = await renderTableLines(wideTable, 40);
+
+	assert.equal(lines.length, 5);
+	// All table border lines must be the same width (no wrapping)
+	const widths = lines.map((line) => stringWidth(line));
+	assert.ok(
+		widths.every((w) => w === widths[0]),
+		`Table lines have inconsistent widths in narrow terminal: ${JSON.stringify(
+			lines.map((line, index) => ({line, width: widths[index]})),
+		)}`,
+	);
+	// Total width must fit within terminal (40 cols minus left margin of 1)
+	assert.ok(
+		(widths[0] ?? 0) <= 39,
+		`Table is wider than terminal allows: width=${widths[0]}`,
 	);
 });
 

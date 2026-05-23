@@ -386,7 +386,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 							>
 								{liveAssistantStartsNewRun ? <AssistantRunHeader theme={theme} /> : null}
 								<Box marginLeft={2} flexDirection="column">
-									<MarkdownText content={assistantBuffer} />
+									<MarkdownText content={assistantBuffer} availableWidth={cols - 2} />
 								</Box>
 							</Box>
 						)
@@ -503,7 +503,7 @@ function MessageRow({
 			return (
 				<Box marginTop={0} marginBottom={0}>
 					<Box marginLeft={2} flexDirection="column">
-						<MarkdownText content={item.text} />
+						<MarkdownText content={item.text} availableWidth={cols - 2} />
 					</Box>
 				</Box>
 			);
