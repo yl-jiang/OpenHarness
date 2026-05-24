@@ -217,6 +217,28 @@ async def test_commit_command_supports_explicit_remote_admin_opt_in(tmp_path: Pa
 
 
 @pytest.mark.asyncio
+async def test_session_transcript_commands_are_marked_local_only(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+
+    for payload in ("/resume", "/resume abc123", "/summary 10", "/share"):
+        command, _ = registry.lookup(payload)
+        assert command is not None
+        assert command.remote_invocable is False, payload
+
+
+@pytest.mark.asyncio
+async def test_session_transcript_commands_support_explicit_remote_admin_opt_in(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+
+    for payload in ("/resume", "/resume abc123", "/summary 10", "/share"):
+        command, _ = registry.lookup(payload)
+        assert command is not None
+        assert getattr(command, "remote_admin_opt_in", False) is True, payload
+
+
+@pytest.mark.asyncio
 async def test_tasks_command_is_marked_local_only(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
@@ -232,6 +254,34 @@ async def test_tasks_command_supports_explicit_remote_admin_opt_in(tmp_path: Pat
     command, _ = registry.lookup("/tasks run cmd")
     assert command is not None
     assert getattr(command, "remote_admin_opt_in", False) is True
+
+
+@pytest.mark.asyncio
+async def test_project_context_commands_are_marked_local_only(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+
+    for payload in (
+        "/issue set Remote supplied issue :: marker",
+        "/pr_comments add src/app.py:1 :: marker",
+    ):
+        command, _ = registry.lookup(payload)
+        assert command is not None
+        assert command.remote_invocable is False, payload
+
+
+@pytest.mark.asyncio
+async def test_project_context_commands_support_explicit_remote_admin_opt_in(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+
+    for payload in (
+        "/issue set Remote supplied issue :: marker",
+        "/pr_comments add src/app.py:1 :: marker",
+    ):
+        command, _ = registry.lookup(payload)
+        assert command is not None
+        assert getattr(command, "remote_admin_opt_in", False) is True, payload
 
 
 @pytest.mark.asyncio
@@ -873,8 +923,25 @@ async def test_version_context_and_share_commands(tmp_path: Path, monkeypatch):
 async def test_auth_feedback_and_project_context_commands(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    for key in (
+        "OPENHARNESS_ANTHROPIC_API_KEY",
+        "OPENHARNESS_OPENAI_API_KEY",
+        "OPENHARNESS_DASHSCOPE_API_KEY",
+        "OPENHARNESS_MOONSHOT_API_KEY",
+        "OPENHARNESS_GEMINI_API_KEY",
+        "OPENHARNESS_MINIMAX_API_KEY",
+        "OPENHARNESS_NVIDIA_API_KEY",
+        "OPENHARNESS_DEEPSEEK_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "OPENAI_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "MOONSHOT_API_KEY",
+        "GEMINI_API_KEY",
+        "MINIMAX_API_KEY",
+        "NVIDIA_API_KEY",
+        "DEEPSEEK_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
     registry = create_default_command_registry()
     context = _make_context(tmp_path)
 

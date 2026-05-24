@@ -246,7 +246,7 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
                 auth_source=resolved.source,
             )
             return resolved
-        except (ValueError, Exception) as exc:
+        except Exception as exc:
             logger.event(
                 "runtime_auth_resolution_failed",
                 active_profile=active_profile_name,
@@ -256,12 +256,7 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
                 error_type=type(exc).__name__,
                 error=str(exc),
             )
-            print(
-                "Error: No API key configured.\n"
-                "  Run `oh auth login` to set up authentication, or set the\n"
-                "  ANTHROPIC_API_KEY (or OPENAI_API_KEY) environment variable.",
-                file=sys.stderr,
-            )
+            _print_auth_resolution_error(settings, exc)
             raise SystemExit(1)
 
     if settings.api_format == "copilot":
@@ -299,6 +294,39 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
     return AnthropicApiClient(
         api_key=auth.value,
         base_url=settings.base_url,
+    )
+
+
+def _print_auth_resolution_error(settings, exc: Exception) -> None:
+    """Render auth failures without collapsing subscription errors into API-key advice."""
+    try:
+        profile_name, profile = settings.resolve_profile()
+        auth_source = (getattr(profile, "auth_source", "") or "").strip()
+    except Exception:
+        profile_name = ""
+        auth_source = ""
+
+    message = str(exc).strip() or exc.__class__.__name__
+    if auth_source in {"claude_subscription", "codex_subscription"}:
+        login_command = "claude-login" if auth_source == "claude_subscription" else "codex-login"
+        provider_name = profile_name or (
+            "claude-subscription" if auth_source == "claude_subscription" else "codex"
+        )
+        print(
+            f"Error: {message}\n"
+            "  This profile uses subscription auth, not an API key.\n"
+            f"  Run `oh auth {login_command}` to bind the local CLI session, then\n"
+            f"  run `oh provider use {provider_name}` to activate it.",
+            file=sys.stderr,
+        )
+        return
+
+    print(
+        "Error: No API key configured.\n"
+        f"  {message}\n"
+        "  Run `oh auth login` to set up authentication, or set the\n"
+        "  ANTHROPIC_API_KEY (or OPENAI_API_KEY) environment variable.",
+        file=sys.stderr,
     )
 
 

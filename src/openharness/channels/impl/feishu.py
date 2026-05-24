@@ -452,6 +452,7 @@ class FeishuChannel(BaseChannel):
         self._client = lark.Client.builder() \
             .app_id(self.config.app_id) \
             .app_secret(self.config.app_secret) \
+            .domain(self.config.domain) \
             .log_level(lark.LogLevel.INFO) \
             .build()
         return True
@@ -480,6 +481,7 @@ class FeishuChannel(BaseChannel):
             self.config.app_id,
             self.config.app_secret,
             event_handler=event_handler,
+            domain=self.config.domain,
             log_level=lark.LogLevel.INFO
         )
 
