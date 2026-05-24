@@ -19,6 +19,7 @@ from typing import Any, AsyncIterator
 from openharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
+    ApiReasoningDeltaEvent,
     ApiRetryEvent,
     ApiTextDeltaEvent,
 )
@@ -31,6 +32,7 @@ from openharness.engine.stream_events import (
     AssistantTurnComplete,
     CompactProgressEvent,
     ErrorEvent,
+    ReasoningDelta,
     StatusEvent,
     StreamEvent,
     ToolExecutionCompleted,
@@ -293,6 +295,9 @@ async def api_call_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, U
         ):
             if isinstance(event, ApiTextDeltaEvent):
                 yield AssistantTextDelta(text=event.text), None
+                continue
+            if isinstance(event, ApiReasoningDeltaEvent):
+                yield ReasoningDelta(text=event.text), None
                 continue
             if isinstance(event, ApiRetryEvent):
                 yield StatusEvent(

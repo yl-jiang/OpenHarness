@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from openharness.api.client import ApiMessageCompleteEvent
+from openharness.api.client import ApiMessageCompleteEvent, ApiReasoningDeltaEvent
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.stream_events import CompactProgressEvent, CompactProgressPhase
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock
@@ -35,6 +35,17 @@ class StaticApiClient:
         del request
         yield ApiMessageCompleteEvent(
             message=ConversationMessage(role="assistant", content=[TextBlock(text=self._text)]),
+            usage=UsageSnapshot(input_tokens=2, output_tokens=3),
+            stop_reason=None,
+        )
+
+
+class ReasoningApiClient:
+    async def stream_message(self, request):
+        del request
+        yield ApiReasoningDeltaEvent(text="thinking")
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="done")]),
             usage=UsageSnapshot(input_tokens=2, output_tokens=3),
             stop_reason=None,
         )
@@ -292,6 +303,30 @@ async def test_backend_host_processes_model_turn(tmp_path, monkeypatch):
         and "hello from react backend" in event.item.text
         for event in events
     )
+
+
+@pytest.mark.asyncio
+async def test_backend_host_emits_reasoning_delta(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    host = ReactBackendHost(BackendHostConfig(api_client=ReasoningApiClient()))
+    host._bundle = await build_runtime(api_client=ReasoningApiClient())
+    events = []
+
+    async def _emit(event):
+        events.append(event)
+
+    host._emit = _emit  # type: ignore[method-assign]
+    await start_runtime(host._bundle)
+    try:
+        should_continue = await host._process_line("hi")
+    finally:
+        await close_runtime(host._bundle)
+
+    assert should_continue is True
+    assert any(event.type == "reasoning_delta" and event.message == "thinking" for event in events)
 
 
 @pytest.mark.asyncio

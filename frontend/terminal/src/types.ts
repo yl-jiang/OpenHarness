@@ -11,6 +11,8 @@ export type TranscriptItem = {
 	tool_name?: string;
 	tool_input?: Record<string, unknown>;
 	is_error?: boolean;
+	/** Captured reasoning text for completed assistant turns. */
+	reasoning?: string;
 };
 
 export type ImageAttachmentPayload = {
@@ -75,8 +77,30 @@ export type SwarmNotificationSnapshot = {
 	timestamp: number;
 };
 
+export type BackendEventType =
+	| 'ready'
+	| 'state_snapshot'
+	| 'tasks_snapshot'
+	| 'transcript_item'
+	| 'compact_progress'
+	| 'assistant_delta'
+	| 'reasoning_delta'
+	| 'assistant_complete'
+	| 'line_complete'
+	| 'tool_started'
+	| 'tool_completed'
+	| 'clear_transcript'
+	| 'modal_request'
+	| 'select_request'
+	| 'todo_update'
+	| 'plan_mode_change'
+	| 'swarm_status'
+	| 'error'
+	| 'shutdown'
+	| 'status';
+
 export type BackendEvent = {
-	type: string;
+	type: BackendEventType;
 	message?: string | null;
 	item?: TranscriptItem | null;
 	state?: Record<string, unknown> | null;

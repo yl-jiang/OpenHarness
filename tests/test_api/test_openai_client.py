@@ -8,7 +8,7 @@ import httpx
 
 import pytest
 
-from openharness.api.client import ApiMessageRequest
+from openharness.api.client import ApiMessageRequest, ApiMessageCompleteEvent, ApiReasoningDeltaEvent, ApiTextDeltaEvent
 from openharness.api.openai_client import (
     OpenAICompatibleClient,
     _convert_assistant_message,
@@ -283,10 +283,23 @@ class _FakeUsage:
     completion_tokens = 7
 
 
+class _FakeDelta:
+    def __init__(self, *, content=None, reasoning_content=None, tool_calls=None) -> None:
+        self.content = content
+        self.reasoning_content = reasoning_content
+        self.tool_calls = tool_calls
+
+
+class _FakeChoice:
+    def __init__(self, delta: _FakeDelta, finish_reason=None) -> None:
+        self.delta = delta
+        self.finish_reason = finish_reason
+
+
 class _FakeChunk:
-    def __init__(self) -> None:
-        self.choices = []
-        self.usage = _FakeUsage()
+    def __init__(self, delta: _FakeDelta | None = None, *, finish_reason=None, usage=None) -> None:
+        self.choices = [] if delta is None else [_FakeChoice(delta, finish_reason)]
+        self.usage = usage
 
 
 class _FakeCompletions:
@@ -297,7 +310,7 @@ class _FakeCompletions:
         self.last_kwargs = kwargs
 
         async def _stream():
-            yield _FakeChunk()
+            yield _FakeChunk(usage=_FakeUsage())
 
         return _stream()
 
@@ -420,6 +433,66 @@ class TestStreamMessageTokenParams:
         assert "max_completion_tokens" not in fake_sdk.chat.completions.last_kwargs
 
 
+class _FakeCompletionsWithChunks:
+    def __init__(self, chunks) -> None:
+        self._chunks = chunks
+
+    async def create(self, **kwargs):
+        del kwargs
+
+        async def _stream():
+            for chunk in self._chunks:
+                yield chunk
+
+        return _stream()
+
+
+class _FakeOpenAIClientWithChunks:
+    def __init__(self, chunks) -> None:
+        self.chat = type("FakeChat", (), {"completions": _FakeCompletionsWithChunks(chunks)})()
+        self.base_url = ""
+        self.default_headers = {}
+
+
+@pytest.mark.asyncio
+async def test_openai_client_streams_reasoning_content_delta():
+    client = OpenAICompatibleClient(api_key="test-key")
+    client._client = _FakeOpenAIClientWithChunks([
+        _FakeChunk(_FakeDelta(reasoning_content="thinking")),
+        _FakeChunk(_FakeDelta(content="visible"), finish_reason="stop"),
+        _FakeChunk(usage=_FakeUsage()),
+    ])
+
+    request = ApiMessageRequest(
+        model="gpt-4o",
+        messages=[ConversationMessage.from_user_text("hi")],
+    )
+    events = [event async for event in client.stream_message(request)]
+
+    assert [event.text for event in events if isinstance(event, ApiReasoningDeltaEvent)] == ["thinking"]
+    assert [event.text for event in events if isinstance(event, ApiTextDeltaEvent)] == ["visible"]
+    complete = next(event for event in events if isinstance(event, ApiMessageCompleteEvent))
+    assert getattr(complete.message, "_reasoning") == "thinking"
+
+
+@pytest.mark.asyncio
+async def test_openai_client_streams_inline_think_blocks_as_reasoning():
+    client = OpenAICompatibleClient(api_key="test-key")
+    client._client = _FakeOpenAIClientWithChunks([
+        _FakeChunk(_FakeDelta(content="Hi<think>secret</think>there"), finish_reason="stop"),
+        _FakeChunk(usage=_FakeUsage()),
+    ])
+
+    request = ApiMessageRequest(
+        model="gpt-4o",
+        messages=[ConversationMessage.from_user_text("hi")],
+    )
+    events = [event async for event in client.stream_message(request)]
+
+    assert [event.text for event in events if isinstance(event, ApiReasoningDeltaEvent)] == ["secret"]
+    assert [event.text for event in events if isinstance(event, ApiTextDeltaEvent)] == ["Hithere"]
+
+
 class TestReasoningContentEmission:
     """``reasoning_content`` is a non-standard field. It must round-trip
     when the streaming parser captured non-empty reasoning, but the
@@ -479,4 +552,3 @@ class TestReasoningContentEmission:
         msg = ConversationMessage(role="assistant", content=[TextBlock(text="hi")])
         out = _convert_assistant_message(msg)
         assert "reasoning_content" not in out
-

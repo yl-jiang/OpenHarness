@@ -18,6 +18,7 @@ from openai import APITimeoutError as OpenAITimeoutError
 from openharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
+    ApiReasoningDeltaEvent,
     ApiRetryEvent,
     ApiStreamEvent,
     ApiTextDeltaEvent,
@@ -368,6 +369,7 @@ class OpenAICompatibleClient:
             reasoning_piece = getattr(delta, "reasoning_content", None) or ""
             if reasoning_piece:
                 collected_reasoning += reasoning_piece
+                yield ApiReasoningDeltaEvent(text=reasoning_piece)
 
             # Stream text content to user, stripping inline <think> blocks
             if delta.content:
@@ -375,6 +377,7 @@ class OpenAICompatibleClient:
                 visible, _think_buf, inline_reasoning = _strip_think_blocks(_think_buf)
                 if inline_reasoning:
                     collected_reasoning += inline_reasoning
+                    yield ApiReasoningDeltaEvent(text=inline_reasoning)
                 if visible:
                     collected_content += visible
                     yield ApiTextDeltaEvent(text=visible)

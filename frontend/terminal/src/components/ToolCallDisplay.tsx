@@ -1,5 +1,6 @@
 import React from 'react';
 import {Box, Text} from 'ink';
+import stringWidth from 'string-width';
 
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TranscriptItem} from '../types.js';
@@ -7,8 +8,9 @@ import type {TranscriptItem} from '../types.js';
 export type TreePos = 'single' | 'first' | 'middle' | 'last';
 
 const USER_SHELL_ORIGIN = 'user_shell';
+const DEFAULT_AVAILABLE_WIDTH = 100;
 
-export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item: TranscriptItem; resultItem?: TranscriptItem; outputStyle?: string; treePos?: TreePos}): React.JSX.Element {
+export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availableWidth}: {item: TranscriptItem; resultItem?: TranscriptItem; outputStyle?: string; treePos?: TreePos; availableWidth?: number}): React.JSX.Element {
 	const {theme} = useTheme();
 	const isCodexStyle = outputStyle === 'codex';
 
@@ -16,11 +18,11 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 		const isUserShellTool = item.tool_input?.origin === USER_SHELL_ORIGIN;
 		const toolName = isUserShellTool ? 'shell' : (item.tool_name ?? 'tool');
 		const summaryToolName = item.tool_name ?? toolName;
+		const isShellLikeTool = isShellToolName(summaryToolName) || isShellToolName(toolName);
 		const summary = summarizeInput(summaryToolName, item.tool_input, item.text).replace(/\s+/g, ' ').trim();
 
 		let statusNode: React.ReactNode = null;
 		let errorLines: string[] | null = null;
-		let outputLines: string[] | null = null;
 
 		if (resultItem) {
 			if (resultItem.is_error) {
@@ -32,19 +34,6 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 				errorLines = lines.length > maxErrLines
 					? [...lines.slice(0, maxErrLines), `... (${lines.length - maxErrLines} more lines)`]
 					: lines;
-			} else if (!isCodexStyle) {
-				const lineCount = resultItem.text.split('\n').filter((l) => l.trim()).length;
-				const resultLabel = lineCount > 0 ? `${lineCount}L` : theme.icons.success.trim();
-				statusNode = <Text dimColor> → {resultLabel}</Text>;
-				if (isUserShellTool) {
-					outputLines = resultItem.text.length > 0 ? resultItem.text.split('\n') : [''];
-				}
-			} else {
-				const lineCount = resultItem.text.split('\n').filter((l) => l.trim()).length;
-				statusNode = <Text dimColor>{lineCount > 0 ? ` ${lineCount}L` : ''}</Text>;
-				if (isUserShellTool) {
-					outputLines = resultItem.text.length > 0 ? resultItem.text.split('\n') : [''];
-				}
 			}
 		} else if (!isCodexStyle) {
 			// Tool is still in progress — no result yet
@@ -56,7 +45,6 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 				<ShellToolPanel
 					command={summary}
 					resultItem={resultItem}
-					outputLines={outputLines}
 					errorLines={errorLines}
 				/>
 			);
@@ -65,22 +53,21 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 		if (isCodexStyle) {
 			return (
 				<Box marginLeft={0} flexDirection="column">
-					<Text dimColor>{`• Ran ${toolName}${summary ? ` ${summary}` : ''}`}{statusNode}</Text>
+					<Text>
+						<Text dimColor>{`• Ran ${toolName}`}</Text>
+						{summary ? (
+							<Text color={isShellLikeTool ? theme.colors.warning : undefined} dimColor={!isShellLikeTool}>
+								{` ${summary}`}
+							</Text>
+						) : null}
+						{statusNode}
+					</Text>
 					{errorLines?.map((line, i) => {
 						const prefix = i === errorLines.length - 1 ? '└ ' : '│ ';
 						return (
 							<Text key={i} color={theme.colors.error}>
 								{prefix}
 								{line}
-							</Text>
-						);
-					})}
-					{outputLines?.map((line, i) => {
-						const prefix = i === outputLines.length - 1 ? '└ ' : '│ ';
-						return (
-							<Text key={i} dimColor>
-								{prefix}
-								{line || ' '}
 							</Text>
 						);
 					})}
@@ -93,25 +80,44 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 		const connectorIcon = isParallel
 			? (treePos === 'last' ? '  └─ ' : '  ├─ ')
 			: theme.icons.tool;
+		const continuationConnector = isParallel && treePos !== 'last'
+			? '  │  '
+			: ' '.repeat(stringWidth(connectorIcon));
 		const toolColor = isUserShellTool ? theme.colors.warning : theme.colors.accent;
 		const connectorColor = isParallel ? theme.colors.muted : toolColor;
+		const contentWidth = Math.max(1, (availableWidth ?? DEFAULT_AVAILABLE_WIDTH) - 2);
+		const summaryLines = wrapToolSummary({
+			summary,
+			firstPrefixWidth: stringWidth(connectorIcon) + stringWidth(toolName) + 1,
+			continuationPrefixWidth: stringWidth(continuationConnector) + stringWidth(toolName) + 1,
+			availableWidth: contentWidth,
+		});
+		const firstSummaryLine = summaryLines[0] ?? '';
+		const continuationSummaryLines = summaryLines.slice(1);
 
 		return (
 			<Box marginLeft={2} flexDirection="column">
 				<Text>
 					<Text color={connectorColor}>{connectorIcon}</Text>
 					<Text color={toolColor} bold>{toolName}</Text>
-					<Text dimColor> {summary}</Text>
+					<Text color={isShellLikeTool ? theme.colors.warning : undefined} dimColor={!isShellLikeTool}>
+						{firstSummaryLine ? ` ${firstSummaryLine}` : ''}
+					</Text>
 					{statusNode}
 				</Text>
+				{continuationSummaryLines.map((line, i) => (
+					<Text key={i}>
+						<Text color={connectorColor}>{continuationConnector}</Text>
+						<Text>{' '.repeat(stringWidth(toolName))}</Text>
+						<Text>{' '}</Text>
+						<Text color={isShellLikeTool ? theme.colors.warning : undefined} dimColor={!isShellLikeTool}>
+							{line || ' '}
+						</Text>
+					</Text>
+				))}
 				{errorLines?.map((line, i) => (
 					<Box key={i} marginLeft={4}>
 						<Text color={theme.colors.error}>{line}</Text>
-					</Box>
-				))}
-				{outputLines?.map((line, i) => (
-					<Box key={i} marginLeft={4}>
-						<Text>{line || ' '}</Text>
 					</Box>
 				))}
 			</Box>
@@ -125,6 +131,9 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 		const maxLines = isCodexStyle ? 8 : 5;
 		const display = lines.length > maxLines ? [...lines.slice(0, maxLines), `... (${lines.length - maxLines} more lines)`] : lines;
 		const color = item.is_error ? theme.colors.error : undefined;
+		if (!item.is_error) {
+			return <></>;
+		}
 		if (isCodexStyle) {
 			return (
 				<Box marginLeft={0} flexDirection="column">
@@ -139,9 +148,6 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 					})}
 				</Box>
 			);
-		}
-		if (!item.is_error) {
-			return <></>;
 		}
 		return (
 			<Box marginLeft={4} flexDirection="column">
@@ -158,18 +164,15 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos}: {item:
 function ShellToolPanel({
 	command,
 	resultItem,
-	outputLines,
 	errorLines,
 }: {
 	command: string;
 	resultItem?: TranscriptItem;
-	outputLines: string[] | null;
 	errorLines: string[] | null;
 }): React.JSX.Element {
 	const {theme} = useTheme();
 	const statusColor = resultItem?.is_error ? theme.colors.error : theme.colors.success;
 	const statusSymbol = resultItem ? (resultItem.is_error ? 'x' : '✓') : '⊷';
-	const bodyLines = resultItem?.is_error ? errorLines : outputLines;
 
 	return (
 		<Box marginLeft={2} flexDirection="column">
@@ -180,27 +183,85 @@ function ShellToolPanel({
 				{command ? (
 					<>
 						<Text>{' '}</Text>
-						<Text color={theme.colors.muted}>{command}</Text>
+						<Text color={theme.colors.warning}>{command}</Text>
 					</>
 				) : null}
 			</Text>
-			{bodyLines && bodyLines.length > 0 ? (
+			{errorLines && errorLines.length > 0 ? (
 				<>
 					<Text> </Text>
-					{bodyLines.map((line, i) => {
-						const lineColor = resultItem?.is_error ? theme.colors.error : undefined;
-						return (
-							<Box key={i} marginLeft={4}>
-								<Text color={lineColor} dimColor>
-									{line || ' '}
-								</Text>
-							</Box>
-						);
-					})}
+					{errorLines.map((line, i) => (
+						<Box key={i} marginLeft={4}>
+							<Text color={theme.colors.error} dimColor>
+								{line || ' '}
+							</Text>
+						</Box>
+					))}
 				</>
 			) : null}
 		</Box>
 	);
+}
+
+function isShellToolName(toolName: string): boolean {
+	const lower = toolName.toLowerCase();
+	return lower === 'bash' || lower === 'shell';
+}
+
+function wrapToolSummary({
+	summary,
+	firstPrefixWidth,
+	continuationPrefixWidth,
+	availableWidth,
+}: {
+	summary: string;
+	firstPrefixWidth: number;
+	continuationPrefixWidth: number;
+	availableWidth: number;
+}): string[] {
+	if (!summary) {
+		return [''];
+	}
+	const firstWidth = Math.max(1, availableWidth - firstPrefixWidth);
+	const continuationWidth = Math.max(1, availableWidth - continuationPrefixWidth);
+	const lines: string[] = [];
+	let remaining = summary;
+	let width = firstWidth;
+
+	while (remaining) {
+		const [line, rest] = takeWrappedLine(remaining, width);
+		lines.push(line);
+		remaining = rest;
+		width = continuationWidth;
+	}
+
+	return lines;
+}
+
+function takeWrappedLine(value: string, maxWidth: number): [string, string] {
+	if (stringWidth(value) <= maxWidth) {
+		return [value, ''];
+	}
+
+	let sliceEnd = 0;
+	let usedWidth = 0;
+	let lastWhitespace = -1;
+	let offset = 0;
+	for (const char of value) {
+		const charWidth = stringWidth(char);
+		if (usedWidth + charWidth > maxWidth) {
+			break;
+		}
+		usedWidth += charWidth;
+		offset += char.length;
+		sliceEnd = offset;
+		if (/\s/.test(char)) {
+			lastWhitespace = offset;
+		}
+	}
+
+	const breakAt = lastWhitespace > 0 ? lastWhitespace : Math.max(sliceEnd, 1);
+	return [value.slice(0, breakAt).trimEnd(), value.slice(breakAt).trimStart()];
 }
 
 function summarizeInput(toolName: string, toolInput?: Record<string, unknown>, fallback?: string): string {
@@ -208,9 +269,19 @@ function summarizeInput(toolName: string, toolInput?: Record<string, unknown>, f
 		return fallback?.slice(0, 80) ?? '';
 	}
 	const lower = toolName.toLowerCase();
-	// bash
-	if (lower === 'bash' && toolInput.command) {
-		return String(toolInput.command).slice(0, 120);
+	// bash / shell
+	if ((lower === 'bash' || lower === 'shell') && toolInput.command) {
+		return String(toolInput.command).slice(0, 200);
+	}
+	if (lower === 'mcp_call') {
+		const server = toolInput.server ?? toolInput.server_name ?? toolInput.mcp_server;
+		const tool = toolInput.tool ?? toolInput.tool_name ?? toolInput.name;
+		if (server && tool) {
+			return `${String(server)}:${String(tool)}`;
+		}
+		if (tool) {
+			return String(tool);
+		}
 	}
 	// file read — actual tool uses `path`; also accept legacy `file_path`
 	if ((lower === 'read_file' || lower === 'read' || lower === 'fileread') && (toolInput.path || toolInput.file_path)) {

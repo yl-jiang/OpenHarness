@@ -24,6 +24,7 @@ const stableStringify = (value: unknown): string => JSON.stringify(value);
 export function useBackendSession(config: FrontendConfig, onExit: (code?: number | null) => void) {
 	const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
 	const [assistantBuffer, setAssistantBuffer] = useState('');
+	const [reasoningBuffer, setReasoningBuffer] = useState('');
 	const [status, setStatus] = useState<Record<string, unknown>>({});
 	const [tasks, setTasks] = useState<TaskSnapshot[]>([]);
 	const [commands, setCommands] = useState<string[]>([]);
@@ -51,8 +52,11 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	// Streaming deltas can arrive one token at a time; updating Ink state for each
 	// delta causes heavy re-rendering/flicker. Buffer and flush at ~30fps.
 	const assistantBufferRef = useRef('');
+	const reasoningBufferRef = useRef('');
 	const pendingAssistantDeltaRef = useRef('');
+	const pendingReasoningDeltaRef = useRef('');
 	const assistantFlushTimerRef = useRef<NodeJS.Timeout | null>(null);
+	const reasoningFlushTimerRef = useRef<NodeJS.Timeout | null>(null);
 	const pendingTranscriptItemsRef = useRef<TranscriptItem[]>([]);
 	const transcriptFlushTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -65,6 +69,18 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		assistantBufferRef.current += pending;
 		startTransition(() => {
 			setAssistantBuffer(assistantBufferRef.current);
+		});
+	};
+
+	const flushReasoningDelta = (): void => {
+		const pending = pendingReasoningDeltaRef.current;
+		if (!pending) {
+			return;
+		}
+		pendingReasoningDeltaRef.current = '';
+		reasoningBufferRef.current += pending;
+		startTransition(() => {
+			setReasoningBuffer(reasoningBufferRef.current);
 		});
 	};
 
@@ -105,6 +121,16 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			assistantFlushTimerRef.current = null;
 		}
 		setAssistantBuffer('');
+	};
+
+	const clearReasoningDelta = (): void => {
+		pendingReasoningDeltaRef.current = '';
+		reasoningBufferRef.current = '';
+		if (reasoningFlushTimerRef.current) {
+			clearTimeout(reasoningFlushTimerRef.current);
+			reasoningFlushTimerRef.current = null;
+		}
+		setReasoningBuffer('');
 	};
 
 	const clearPendingTranscriptItems = (): void => {
@@ -186,6 +212,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 				clearTimeout(assistantFlushTimerRef.current);
 				assistantFlushTimerRef.current = null;
 			}
+			clearReasoningDelta();
 			clearPendingTranscriptItems();
 		};
 		process.on('exit', killChild);
@@ -355,12 +382,35 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			}
 			return;
 		}
+		if (event.type === 'reasoning_delta') {
+			const delta = event.message ?? '';
+			if (!delta) {
+				return;
+			}
+			pendingReasoningDeltaRef.current += delta;
+			if (pendingReasoningDeltaRef.current.length >= ASSISTANT_DELTA_FLUSH_CHARS) {
+				flushReasoningDelta();
+				return;
+			}
+			if (!reasoningFlushTimerRef.current) {
+				reasoningFlushTimerRef.current = setTimeout(() => {
+					reasoningFlushTimerRef.current = null;
+					flushReasoningDelta();
+				}, ASSISTANT_DELTA_FLUSH_MS);
+			}
+			return;
+		}
 		if (event.type === 'assistant_complete') {
 			if (assistantFlushTimerRef.current) {
 				clearTimeout(assistantFlushTimerRef.current);
 				assistantFlushTimerRef.current = null;
 			}
+			if (reasoningFlushTimerRef.current) {
+				clearTimeout(reasoningFlushTimerRef.current);
+				reasoningFlushTimerRef.current = null;
+			}
 			flushTranscriptItems();
+			flushReasoningDelta();
 			const isCodexStyle = String(statusRef.current.output_style ?? 'default') === 'codex';
 			if (isCodexStyle) {
 				if (pendingAssistantDeltaRef.current) {
@@ -371,10 +421,12 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 				flushAssistantDelta();
 			}
 			const text = event.message ?? assistantBufferRef.current;
+			const reasoning = reasoningBufferRef.current || undefined;
 			startTransition(() => {
-				setTranscript((items) => [...items, {role: 'assistant', text}]);
+				setTranscript((items) => [...items, {role: 'assistant', text, reasoning}]);
 			});
 			clearAssistantDelta();
+			clearReasoningDelta();
 			// Do NOT reset busy here: tool calls may follow this event.
 			// busy is reset by line_complete (the true end-of-turn signal).
 			setBusyLabel(undefined);
@@ -383,6 +435,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		if (event.type === 'line_complete') {
 			// Final end-of-turn: clear everything, stop spinner.
 			clearAssistantDelta();
+			clearReasoningDelta();
 			setBusy(false);
 			setBusyLabel(undefined);
 			// Surface non-completed finish reasons to the user as a system message.
@@ -418,6 +471,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			clearPendingTranscriptItems();
 			setTranscript([]);
 			clearAssistantDelta();
+			clearReasoningDelta();
 			setBusyLabel(undefined);
 			return;
 		}
@@ -438,6 +492,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			flushTranscriptItems();
 			queueTranscriptItem({role: 'system', text: `error: ${event.message ?? 'unknown error'}`});
 			clearAssistantDelta();
+			clearReasoningDelta();
 			setBusy(false);
 			setBusyLabel(undefined);
 			return;
@@ -490,6 +545,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		() => ({
 			transcript,
 			assistantBuffer,
+			reasoningBuffer,
 			status,
 			tasks,
 			commands,
@@ -511,6 +567,6 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			sendRequest,
 			notifyCommandOutputStart,
 		}),
-		[assistantBuffer, bridgeSessions, busy, busyLabel, commandOutputStartCount, commands, mcpServers, modal, ready, selectRequest, skills, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
+		[assistantBuffer, bridgeSessions, busy, busyLabel, commandOutputStartCount, commands, mcpServers, modal, ready, reasoningBuffer, selectRequest, skills, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
 	);
 }

@@ -428,16 +428,24 @@ function AppInner({
 	// where Ink's measureElement gives us pixel-accurate dimensions.
 	const conversationRef = useRef<ConversationViewHandle | null>(null);
 	const [paused, setPaused] = useState(false);
+	const [reasoningExpanded, setReasoningExpanded] = useState(false);
 
 	const session = useBackendSession(config, () => exit());
 	const vimEnabled = Boolean(session.status.vim_enabled);
 	const deferredTranscript = useDeferredValue(session.transcript);
 	const deferredAssistantBuffer = useDeferredValue(session.assistantBuffer);
+	const deferredReasoningBuffer = useDeferredValue(session.reasoningBuffer);
 	const deferredStatus = useDeferredValue(session.status);
 	const deferredTasks = useDeferredValue(session.tasks);
 	const deferredTodoMarkdown = useDeferredValue(session.todoMarkdown);
 	const deferredSwarmTeammates = useDeferredValue(session.swarmTeammates);
 	const deferredSwarmNotifications = useDeferredValue(session.swarmNotifications);
+
+	useEffect(() => {
+		if (!session.reasoningBuffer) {
+			setReasoningExpanded(false);
+		}
+	}, [session.reasoningBuffer]);
 
 	useEffect(() => {
 		const nextTheme = session.status.theme;
@@ -1339,6 +1347,11 @@ function AppInner({
 			return;
 		}
 
+		if (session.busy && session.reasoningBuffer && chunk === ' ') {
+			setReasoningExpanded((prev) => !prev);
+			return;
+		}
+
 		if (session.busy) {
 			return;
 		}
@@ -1655,6 +1668,8 @@ function AppInner({
 				ref={conversationRef}
 				transcript={deferredTranscript}
 				assistantBuffer={deferredAssistantBuffer}
+				reasoningBuffer={deferredReasoningBuffer}
+				reasoningExpanded={reasoningExpanded}
 				showWelcome={showWelcome}
 				welcomeVersion={config.version}
 				outputStyle={outputStyle}

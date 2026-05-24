@@ -14,6 +14,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - `solo` / `wolo` now durably copy inbound channel images/files into each app workspace `attachments/` directory, persist attachment metadata on entries and records, expose `solo show <record_id>` / `wolo show <record_id>`, and surface linked attachment paths in model-facing history queries so a structured record can be traced back to and reopened from its original source files.
 - `solo` / `wolo` now participate in OpenHarness auto-dream: each app passes its own memory/session workspace context into the QueryEngine and persists `session-*.json` snapshots so automatic dream consolidation can review standalone app histories instead of only core OpenHarness/ohmo sessions.
 - `settings.json` now supports `max_children` to configure the primary session's total managed subagent/background-agent child budget instead of always using the built-in default of 16, and accepts `"infinity"` for an unbounded budget.
+- React TUI now streams model reasoning/thinking deltas as a transient live preview and color-codes shell commands without showing non-error tool result previews.
 - Shell injection support in the React TUI and skills:
   - Pressing **bare `!`** in the chat composer (or typing `!cmd`) opens a one-shot shell prompt. The command is dispatched to the built-in `bash` tool with `origin="user_shell"`, runs under the existing permission model, and its output is injected back into the conversation as a tool result the model can read.
   - Type `exit` / `quit` (or press `Esc` on an empty buffer) to leave shell mode.
@@ -47,8 +48,9 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
-- `solo` and `wolo` standalone apps now expose `solo_remind` / `wolo_remind` for one-shot future reminders, persist those requests as app-local scheduled jobs, and execute them through the app cron daemons so chat requests like “2分钟后提醒我喝水” can proactively DM the user later instead of falling back to a plain-text refusal.
+- `solo` and `wolo` standalone apps now expose `solo_remind` / `wolo_remind` for one-shot future reminders, persist those requests as app-local scheduled jobs, and execute them through the app cron daemons so chat requests like "2分钟后提醒我喝水" can proactively DM the user later instead of falling back to a plain-text refusal.
 - `solo` and `wolo` standalone agent runtimes now register the built-in `bash` tool, so workspace-local OpenCLI/search skills can execute shell commands instead of failing with `unknown tool: bash`.
+- React TUI now manually wraps long tool command lines with continuation tree prefixes, keeping grouped tool connector lines visually continuous.
 - Managed subagents now carry a structured agent-run context with real parent/root session lineage, and child workers are leaf by default: nested `agent` / `task_create(local_agent)` delegation is blocked unless the parent session explicitly has orchestration budget.
 - `write_file` now waits for edit approval before creating missing parent directories, so rejected writes no longer leave empty folders behind.
 - Default app logging now creates a process-stable timestamped file when `OPENHARNESS_LOG_FILE` is unset, avoids redundant startup rotation for those generated files, and still applies retention cleanup across older `openharness*.jsonl` runs.

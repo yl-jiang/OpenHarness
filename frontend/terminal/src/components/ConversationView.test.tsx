@@ -54,12 +54,16 @@ async function renderConversation(
 	{
 		showWelcome = false,
 		welcomeVersion,
+		assistantBuffer = '',
+		reasoningBuffer = '',
 		columns,
 		rows,
 		strip = true,
 	}: {
 		showWelcome?: boolean;
 		welcomeVersion?: string;
+		assistantBuffer?: string;
+		reasoningBuffer?: string;
 		columns?: number;
 		rows?: number;
 		strip?: boolean;
@@ -75,7 +79,8 @@ async function renderConversation(
 		<ThemeProvider initialTheme="default">
 			<ConversationView
 				transcript={items}
-				assistantBuffer=""
+				assistantBuffer={assistantBuffer}
+				reasoningBuffer={reasoningBuffer}
 				showWelcome={showWelcome}
 				welcomeVersion={welcomeVersion}
 				outputStyle="default"
@@ -116,7 +121,7 @@ test('renders the welcome banner with the runtime version', async () => {
 	const output = await renderConversation([], {showWelcome: true, welcomeVersion: '9.9.9'});
 	const plainOutput = stripAnsi(output);
 
-	assert.match(plainOutput, /╭────╮ ╷   ╷/);
+	assert.match(plainOutput, /╭─────────╮/);
 	assert.match(plainOutput, /v9\.9\.9/);
 	assert.match(plainOutput, /plans · tools · skills · memory/);
 	assert.match(plainOutput, /@ files/);
@@ -142,6 +147,74 @@ test('keeps an unfinished trailing tool call rendered in the live region', async
 
 	assert.match(output, /do it/);
 	assert.match(output, /bash/);
+});
+
+test('renders live reasoning as a rolling preview before assistant text', async () => {
+	const output = await renderConversation(
+		[{role: 'user', text: 'think'}],
+		{
+			reasoningBuffer: 'line1\nline2\nline3\nline4\nline5\nline6',
+			assistantBuffer: 'answer',
+		},
+	);
+	const frame = finalFrameFrom(output, 'you · think');
+
+	assert.match(frame, /╰─ assistant/);
+	assert.match(frame, /reasoning/);
+	assert.match(frame, /expand 3 lines/);
+	assert.doesNotMatch(frame, /line1/);
+	assert.doesNotMatch(frame, /line2/);
+	assert.doesNotMatch(frame, /line3/);
+	assert.match(frame, /line4/);
+	assert.match(frame, /line5/);
+	assert.match(frame, /line6/);
+	assert.match(frame, /answer/);
+});
+
+test('omits non-error tool result previews', async () => {
+	const output = await renderConversation([
+		{role: 'user', text: 'read'},
+		{role: 'tool', text: 'read_file', tool_name: 'read_file', tool_input: {path: 'README.md'}},
+		{role: 'tool_result', text: 'a\nb\nc\nd\ne\nf\ng\nh\ni', tool_name: 'read_file'},
+	]);
+	const frame = finalFrameFrom(output, 'you · read');
+
+	assert.match(frame, /read_file README\.md/);
+	assert.doesNotMatch(frame, /→ 9L/);
+	assert.doesNotMatch(frame, /│ a/);
+	assert.doesNotMatch(frame, /\.\.\. \(\+1 more\)/);
+});
+
+test('color-codes bash command without showing result previews', async () => {
+	const output = await renderConversation([
+		{role: 'user', text: 'run'},
+		{role: 'tool', text: 'bash', tool_name: 'bash', tool_input: {command: 'ls -la'}},
+		{role: 'tool_result', text: 'total 0', tool_name: 'bash'},
+	], {strip: false});
+	const plainOutput = stripAnsi(output);
+
+	assert.match(plainOutput, /bash ls -la/);
+	assert.doesNotMatch(plainOutput, /→ 1L/);
+	assert.doesNotMatch(plainOutput, /total 0/);
+	assert.match(output, /\u001B\[[0-9;]*33m(?:\u001B\[[0-9;]*m){0,3} ls -la/u);
+});
+
+test('keeps tree connector visible when long tool commands wrap', async () => {
+	const output = await renderConversation(
+		[
+			{role: 'user', text: 'inspect'},
+			{role: 'tool', text: 'bash', tool_name: 'bash', tool_input: {command: 'cd /Users/yulin/Github/OpenHarness && git --no-pager diff HEAD -- src/openharness/api/client.py'}},
+			{role: 'tool', text: 'bash', tool_name: 'bash', tool_input: {command: 'git status --short'}},
+			{role: 'tool_result', text: 'ok', tool_name: 'bash'},
+			{role: 'tool_result', text: 'ok', tool_name: 'bash'},
+		],
+		{columns: 72},
+	);
+	const frame = finalFrameFrom(output, 'you · inspect');
+
+	assert.match(frame, /├─ bash cd \/Users\/yulin\/Github\/OpenHarness && git/);
+	assert.match(frame, /│       HEAD -- src\/openharness\/api\/client\.py/);
+	assert.match(frame, /└─ bash git status --short/);
 });
 
 test('renders assistant header before tool runs in a later turn', async () => {
@@ -178,10 +251,8 @@ test('does not render an assistant header for user shell tool runs', async () =>
 	assert.match(frame, /! ls/);
 	assert.doesNotMatch(frame, /[╭╮╰╯]/);
 	assert.match(frame, /✓\s+Shell Command ls/);
-	assert.match(frame, /README\.md/);
-	assert.match(frame, /src/);
-	assert.match(output, /\u001B\[[0-9;]*2m(?:\u001B\[[0-9;]*m){0,3}README\.md/u);
-	assert.match(output, /\u001B\[[0-9;]*2m(?:\u001B\[[0-9;]*m){0,3}src/u);
+	assert.doesNotMatch(frame, /README\.md/);
+	assert.doesNotMatch(frame, /src/);
 	assert.doesNotMatch(frame, /╰─ assistant/);
 });
 

@@ -110,6 +110,7 @@ function renderGroup(
 				resultItem={group.result}
 				outputStyle={outputStyle}
 				treePos={treePos}
+				availableWidth={cols}
 			/>
 		);
 	}
@@ -121,6 +122,7 @@ function renderGroup(
 				resultItem={undefined}
 				outputStyle={outputStyle}
 				treePos={treePos}
+				availableWidth={cols}
 			/>
 		);
 	}
@@ -224,6 +226,8 @@ function AssistantRunHeader({
 type ConversationViewInnerProps = {
 	transcript: TranscriptItem[];
 	assistantBuffer: string;
+	reasoningBuffer?: string;
+	reasoningExpanded?: boolean;
 	showWelcome: boolean;
 	welcomeVersion?: string | null;
 	outputStyle?: string;
@@ -233,7 +237,7 @@ type ConversationViewInnerProps = {
 
 const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationViewInnerProps>(
 	function ConversationViewInner(
-		{transcript, assistantBuffer, showWelcome, welcomeVersion, outputStyle, revealHeadKey, onPauseChange},
+		{transcript, assistantBuffer, reasoningBuffer = '', reasoningExpanded = false, showWelcome, welcomeVersion, outputStyle, revealHeadKey, onPauseChange},
 		forwardedRef,
 	): React.JSX.Element {
 		const {theme} = useTheme();
@@ -253,7 +257,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		const groups = buildGroups(transcript);
 		const treePositions = assignTreePositions(groups);
 		const liveAssistantStartsNewRun = previousConversationOwner(groups, groups.length) !== 'assistant';
-		const hasConversation = groups.length > 0 || (assistantBuffer != null && assistantBuffer.length > 0);
+		const hasConversation = groups.length > 0 || assistantBuffer.length > 0 || reasoningBuffer.length > 0;
 		const showWelcomeBanner = showWelcome;
 		const contentMode: ContentMode = hasConversation ? 'conversation' : 'welcome';
 
@@ -372,10 +376,11 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 							</Box>
 						);
 					})}
-					{assistantBuffer ? (
+					{reasoningBuffer || assistantBuffer ? (
 						isCodexStyle ? (
-							<Box flexShrink={0} flexDirection="row" marginTop={0}>
-								<Text>{assistantBuffer}</Text>
+							<Box flexShrink={0} flexDirection="column" marginTop={0}>
+								{reasoningBuffer ? <Text dimColor>{reasoningBuffer}</Text> : null}
+								{assistantBuffer ? <Text>{assistantBuffer}</Text> : null}
 							</Box>
 						) : (
 							<Box
@@ -385,9 +390,12 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 								flexDirection="column"
 							>
 								{liveAssistantStartsNewRun ? <AssistantRunHeader theme={theme} /> : null}
-								<Box marginLeft={2} flexDirection="column">
-									<MarkdownText content={assistantBuffer} availableWidth={cols - 2} />
-								</Box>
+								{reasoningBuffer ? <ReasoningBlock text={reasoningBuffer} theme={theme} expanded={reasoningExpanded} cols={cols} /> : null}
+								{assistantBuffer ? (
+									<Box marginLeft={2} flexDirection="column">
+										<MarkdownText content={assistantBuffer} availableWidth={cols - 2} />
+									</Box>
+								) : null}
 							</Box>
 						)
 					) : null}
@@ -398,6 +406,105 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 );
 
 export const ConversationView = React.memo(ConversationViewInner);
+
+function ReasoningBlock({
+	text,
+	theme,
+	expanded = false,
+	cols = 80,
+}: {
+	text: string;
+	theme: ReturnType<typeof useTheme>['theme'];
+	expanded?: boolean;
+	cols?: number;
+}): React.JSX.Element {
+	const [spinnerFrame, setSpinnerFrame] = useState(0);
+	useEffect(() => {
+		const interval = setInterval(() => {
+			setSpinnerFrame((f) => (f + 1) % theme.icons.spinner.length);
+		}, 80);
+		return () => clearInterval(interval);
+	}, [theme.icons.spinner.length]);
+
+	const allLines = text.split('\n');
+	if (allLines[allLines.length - 1] === '') {
+		allLines.pop();
+	}
+
+	const foldLines = 3;
+	const needsFold = allLines.length > foldLines && !expanded;
+	const visibleLines = needsFold ? allLines.slice(-foldLines) : allLines;
+	const hiddenCount = Math.max(0, allLines.length - foldLines);
+
+	const spinner = theme.icons.spinner[spinnerFrame] ?? '⠋';
+	const header = `╭─ ${spinner} reasoning`;
+
+	// Account for parent paddingX={1} (2 cols) + this Box marginLeft={2} (2 cols) + │+space prefix (2 cols)
+	const contentWidth = Math.max(1, cols - 6);
+	// Account for parent paddingX={1} (2 cols) + this Box marginLeft={2} (2 cols)
+	const borderLineWidth = Math.max(1, cols - 4);
+
+	let footer: string | null = null;
+	if (needsFold) {
+		footer = truncateWithEllipsis(
+			`╰─ ⬇ Space · expand ${hiddenCount} line${hiddenCount === 1 ? '' : 's'}`,
+			borderLineWidth,
+		);
+	} else if (allLines.length > foldLines) {
+		footer = '╰─ ⬆ Space · collapse';
+	}
+
+	return (
+		<Box marginLeft={2} flexDirection="column">
+			<Text color={theme.colors.info}>{truncateWithEllipsis(header, borderLineWidth)}</Text>
+			{visibleLines.map((line, i) => (
+				<Text key={i} color={theme.colors.muted} dimColor>
+					{'│ '}{truncateWithEllipsis(line || ' ', contentWidth)}
+				</Text>
+			))}
+			{footer ? (
+				<Text color={theme.colors.info} dimColor>{footer}</Text>
+			) : (
+				<Text color={theme.colors.muted} dimColor>╰─</Text>
+			)}
+		</Box>
+	);
+}
+
+function CompletedReasoningBlock({
+	text,
+	theme,
+	cols = 80,
+}: {
+	text: string;
+	theme: ReturnType<typeof useTheme>['theme'];
+	cols?: number;
+}): React.JSX.Element {
+	const allLines = text.split('\n');
+	if (allLines[allLines.length - 1] === '') {
+		allLines.pop();
+	}
+
+	const lineCount = allLines.length;
+	const header = `╭─ ✓ reasoning · ${lineCount} line${lineCount === 1 ? '' : 's'}`;
+	// Account for parent paddingX={1} (2 cols) + this Box marginLeft={2} (2 cols) + │+space prefix (2 cols)
+	const contentWidth = Math.max(1, cols - 6);
+	// Account for parent paddingX={1} (2 cols) + this Box marginLeft={2} (2 cols)
+	const borderLineWidth = Math.max(1, cols - 4);
+
+	return (
+		<Box marginLeft={2} flexDirection="column" marginBottom={0}>
+			<Text color={theme.colors.muted} dimColor>{truncateWithEllipsis(header, borderLineWidth)}</Text>
+			{allLines.map((line, i) => (
+				<Text key={i} color={theme.colors.muted} dimColor>
+					{'│ '}{truncateWithEllipsis(line || ' ', contentWidth)}
+				</Text>
+			))}
+			<Text color={theme.colors.muted} dimColor>╰─</Text>
+		</Box>
+	);
+}
+
 
 function MessageRow({
 	item,
@@ -501,7 +608,10 @@ function MessageRow({
 			}
 			if (!item.text.trim()) return <></>;
 			return (
-				<Box marginTop={0} marginBottom={0}>
+				<Box marginTop={0} marginBottom={0} flexDirection="column">
+					{item.reasoning ? (
+						<CompletedReasoningBlock text={item.reasoning} theme={theme} cols={cols} />
+					) : null}
 					<Box marginLeft={2} flexDirection="column">
 						<MarkdownText content={item.text} availableWidth={cols - 2} />
 					</Box>
@@ -510,7 +620,7 @@ function MessageRow({
 
 		case 'tool':
 		case 'tool_result':
-			return <ToolCallDisplay item={item} outputStyle={outputStyle} />;
+			return <ToolCallDisplay item={item} outputStyle={outputStyle} availableWidth={cols} />;
 
 		case 'system':
 			if (isCodexStyle) {

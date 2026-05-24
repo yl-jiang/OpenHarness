@@ -24,6 +24,7 @@ from openharness.engine.stream_events import (
     AssistantTurnComplete,
     CompactProgressEvent,
     ErrorEvent,
+    ReasoningDelta,
     StatusEvent,
     StreamEvent,
     StreamFinished,
@@ -381,6 +382,15 @@ class ReactBackendHost:
                     text_length=len(event.text),
                 )
                 await self._emit(BackendEvent(type="assistant_delta", message=event.text))
+                return
+            if isinstance(event, ReasoningDelta):
+                logger.event(
+                    "backend_stream_event",
+                    session_id=self._bundle.session_id,
+                    event_type="reasoning_delta",
+                    text_length=len(event.text),
+                )
+                await self._emit(BackendEvent(type="reasoning_delta", message=event.text))
                 return
             if isinstance(event, CompactProgressEvent):
                 logger.event(

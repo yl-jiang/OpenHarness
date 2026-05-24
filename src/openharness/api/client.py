@@ -55,6 +55,13 @@ class ApiTextDeltaEvent:
 
 
 @dataclass(frozen=True)
+class ApiReasoningDeltaEvent:
+    """Incremental reasoning/thinking text from the model."""
+
+    text: str
+
+
+@dataclass(frozen=True)
 class ApiMessageCompleteEvent:
     """Terminal event containing the full assistant message."""
 
@@ -74,7 +81,7 @@ class ApiRetryEvent:
     delay_seconds: float
 
 
-ApiStreamEvent = ApiTextDeltaEvent | ApiMessageCompleteEvent | ApiRetryEvent
+ApiStreamEvent = ApiTextDeltaEvent | ApiReasoningDeltaEvent | ApiMessageCompleteEvent | ApiRetryEvent
 
 
 class SupportsStreamingMessages(Protocol):
@@ -232,10 +239,22 @@ class AnthropicApiClient:
             stream_api = self._client.beta.messages if self._claude_oauth else self._client.messages
             async with stream_api.stream(**params) as stream:
                 async for event in stream:
-                    if getattr(event, "type", None) != "content_block_delta":
+                    event_type = getattr(event, "type", None)
+                    if event_type == "thinking":
+                        thinking_text = getattr(event, "thinking", "") or getattr(event, "text", "")
+                        if thinking_text:
+                            yield ApiReasoningDeltaEvent(text=thinking_text)
+                        continue
+                    if event_type != "content_block_delta":
                         continue
                     delta = getattr(event, "delta", None)
-                    if getattr(delta, "type", None) != "text_delta":
+                    delta_type = getattr(delta, "type", None)
+                    if delta_type == "thinking_delta":
+                        thinking_text = getattr(delta, "thinking", "")
+                        if thinking_text:
+                            yield ApiReasoningDeltaEvent(text=thinking_text)
+                        continue
+                    if delta_type != "text_delta":
                         continue
                     text = getattr(delta, "text", "")
                     if text:

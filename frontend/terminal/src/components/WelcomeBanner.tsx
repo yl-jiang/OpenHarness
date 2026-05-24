@@ -4,11 +4,13 @@ import {Box, Text} from 'ink';
 import {useTheme} from '../theme/ThemeContext.js';
 
 const MARK: ReadonlyArray<string> = [
-	'╭────╮ ╷   ╷',
-	'│╭──╮│ │   │',
-	'││  ││ ├───┤',
-	'│╰──╯│ │   │',
-	'╰────╯ ╵   ╵',
+	'╭─────────╮',
+	'│  ╷   ╷  │',
+	'│  │   │  │',
+	'│  ├───┤  │',
+	'│  │   │  │',
+	'│  ╵   ╵  │',
+	'╰─────────╯',
 ];
 
 export function WelcomeBanner({version}: {version?: string | null}): React.JSX.Element {
@@ -17,14 +19,14 @@ export function WelcomeBanner({version}: {version?: string | null}): React.JSX.E
 	return (
 		<Box
 			flexDirection="row"
-			alignItems="flex-start"
+			alignItems="center"
 			marginTop={1}
 			marginBottom={1}
 			paddingLeft={1}
 		>
 			<Box flexDirection="column" marginRight={2}>
 				{MARK.map((row, i) => (
-					<Text key={i} color={i === 2 ? theme.colors.accent : theme.colors.muted}>
+					<Text key={i} color={i === 3 ? theme.colors.accent : theme.colors.muted}>
 						{row}
 					</Text>
 				))}

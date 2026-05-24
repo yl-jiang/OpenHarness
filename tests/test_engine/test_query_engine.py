@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from openharness.api.client import ApiMessageCompleteEvent, ApiRetryEvent, ApiTextDeltaEvent
+from openharness.api.client import ApiMessageCompleteEvent, ApiReasoningDeltaEvent, ApiRetryEvent, ApiTextDeltaEvent
 from openharness.api.errors import RequestFailure
 from openharness.api.usage import UsageSnapshot
 from openharness.config.settings import PermissionSettings, Settings
@@ -21,6 +21,7 @@ from openharness.engine.stream_events import (
     AssistantTurnComplete,
     CompactProgressEvent,
     CompactProgressPhase,
+    ReasoningDelta,
     StatusEvent,
     StreamFinished,
     ToolExecutionCompleted,
@@ -88,6 +89,18 @@ class RetryThenSuccessApiClient:
         yield ApiRetryEvent(message="rate limited", attempt=1, max_attempts=4, delay_seconds=1.5)
         yield ApiMessageCompleteEvent(
             message=ConversationMessage(role="assistant", content=[TextBlock(text="after retry")]),
+            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            stop_reason=None,
+        )
+
+
+class ReasoningThenTextApiClient:
+    async def stream_message(self, request):
+        del request
+        yield ApiReasoningDeltaEvent(text="thinking")
+        yield ApiTextDeltaEvent(text="answer")
+        yield ApiMessageCompleteEvent(
+            message=ConversationMessage(role="assistant", content=[TextBlock(text="answer")]),
             usage=UsageSnapshot(input_tokens=1, output_tokens=1),
             stop_reason=None,
         )
@@ -368,6 +381,26 @@ async def test_query_engine_plain_text_reply(tmp_path: Path, monkeypatch):
     assert engine.total_usage.input_tokens == 10
     assert engine.total_usage.output_tokens == 5
     assert len(engine.messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_query_engine_forwards_reasoning_delta(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
+    engine = QueryEngine(
+        api_client=ReasoningThenTextApiClient(),
+        tool_registry=create_default_tool_registry(),
+        permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
+        cwd=tmp_path,
+        model="claude-test",
+        system_prompt="system",
+    )
+
+    events = [event async for event in engine.submit_message("hello")]
+
+    assert isinstance(events[0], ReasoningDelta)
+    assert events[0].text == "thinking"
+    assert isinstance(events[1], AssistantTextDelta)
+    assert events[1].text == "answer"
 
 
 @pytest.mark.asyncio
