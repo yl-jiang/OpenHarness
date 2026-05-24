@@ -21,6 +21,7 @@ from wolo.core.models import (
     WoloConfig,
     WoloDecision,
     WoloEntry,
+    WoloExperiment,
     WoloHighlight,
     WoloRecord,
     WoloReport,
@@ -30,7 +31,7 @@ from wolo.core.workspace import get_attachments_dir, get_data_dir, initialize_wo
 from wolo.core.utils import _now
 
 DB_FILENAME = "store.db"
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS entries (
@@ -66,7 +67,14 @@ CREATE TABLE IF NOT EXISTS records (
     related_places TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT '原始',
     created_at TEXT NOT NULL DEFAULT '',
-    attachments TEXT NOT NULL DEFAULT '[]'
+    attachments TEXT NOT NULL DEFAULT '[]',
+    sample_type TEXT NOT NULL DEFAULT 'neutral',
+    problem_essence TEXT NOT NULL DEFAULT '',
+    available_cards TEXT NOT NULL DEFAULT '',
+    strategy TEXT NOT NULL DEFAULT '',
+    next_move TEXT NOT NULL DEFAULT '',
+    deadline TEXT NOT NULL DEFAULT '',
+    validation_signal TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_records_date ON records(date);
 CREATE INDEX IF NOT EXISTS idx_records_emotion ON records(emotion);
@@ -137,6 +145,23 @@ CREATE TABLE IF NOT EXISTS highlights (
 );
 CREATE INDEX IF NOT EXISTS idx_highlights_kind ON highlights(kind);
 
+CREATE TABLE IF NOT EXISTS experiments (
+    id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    hypothesis TEXT NOT NULL DEFAULT '',
+    problem TEXT NOT NULL DEFAULT '',
+    strategy TEXT NOT NULL DEFAULT '',
+    next_move TEXT NOT NULL DEFAULT '',
+    success_signal TEXT NOT NULL DEFAULT '',
+    deadline TEXT NOT NULL DEFAULT '',
+    project TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    source TEXT NOT NULL DEFAULT 'derived',
+    created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
+
 CREATE TABLE IF NOT EXISTS _meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -166,16 +191,60 @@ class WoloStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA_SQL)
+        self._apply_migrations()
         # Set schema version if not present
         cur = self._conn.execute("SELECT value FROM _meta WHERE key='schema_version'")
-        if cur.fetchone() is None:
+        row = cur.fetchone()
+        if row is None:
             self._conn.execute(
                 "INSERT INTO _meta (key, value) VALUES ('schema_version', ?)",
                 (str(_SCHEMA_VERSION),),
             )
-            self._conn.commit()
+        elif row[0] != str(_SCHEMA_VERSION):
+            self._conn.execute(
+                "UPDATE _meta SET value=? WHERE key='schema_version'",
+                (str(_SCHEMA_VERSION),),
+            )
+        self._conn.commit()
         # Auto-migrate from JSONL if needed
         self._maybe_migrate_jsonl()
+
+    def _apply_migrations(self) -> None:
+        assert self._conn is not None
+        record_columns = {
+            "sample_type": "TEXT NOT NULL DEFAULT 'neutral'",
+            "problem_essence": "TEXT NOT NULL DEFAULT ''",
+            "available_cards": "TEXT NOT NULL DEFAULT ''",
+            "strategy": "TEXT NOT NULL DEFAULT ''",
+            "next_move": "TEXT NOT NULL DEFAULT ''",
+            "deadline": "TEXT NOT NULL DEFAULT ''",
+            "validation_signal": "TEXT NOT NULL DEFAULT ''",
+        }
+        existing = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(records)").fetchall()
+        }
+        for name, definition in record_columns.items():
+            if name not in existing:
+                self._conn.execute(f"ALTER TABLE records ADD COLUMN {name} {definition}")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS experiments (
+                id TEXT PRIMARY KEY,
+                record_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                hypothesis TEXT NOT NULL DEFAULT '',
+                problem TEXT NOT NULL DEFAULT '',
+                strategy TEXT NOT NULL DEFAULT '',
+                next_move TEXT NOT NULL DEFAULT '',
+                success_signal TEXT NOT NULL DEFAULT '',
+                deadline TEXT NOT NULL DEFAULT '',
+                project TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                source TEXT NOT NULL DEFAULT 'derived',
+                created_at TEXT NOT NULL DEFAULT ''
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status)")
 
     def _maybe_migrate_jsonl(self) -> None:
         """Import existing JSONL data into SQLite on first run."""
@@ -209,6 +278,10 @@ class WoloStore:
             "highlights", "highlights.jsonl",
             WoloHighlight.from_json, self._highlight_to_row,
         )
+        migrated_any |= self._migrate_simple_jsonl(
+            "experiments", "experiments.jsonl",
+            WoloExperiment.from_json, self._experiment_to_row,
+        )
         self._db.execute(
             "INSERT INTO _meta (key, value) VALUES ('migrated_jsonl', ?)",
             (_now(),),
@@ -219,7 +292,7 @@ class WoloStore:
             for name in (
                 "entries.jsonl", "records.jsonl", "pending_confirmations.jsonl",
                 "profile_updates.jsonl", "reports.jsonl", "todos.jsonl",
-                "decisions.jsonl", "highlights.jsonl",
+                "decisions.jsonl", "highlights.jsonl", "experiments.jsonl",
             ):
                 path = self.root / name
                 if path.exists() and path.stat().st_size > 0:
@@ -331,6 +404,20 @@ class WoloStore:
         vals = (h.id, h.record_id, h.kind, h.title, h.content, h.project, h.tags, h.source, h.created_at)
         return cols, vals
 
+    @staticmethod
+    def _experiment_to_row(e: WoloExperiment):
+        cols = (
+            "id", "record_id", "title", "hypothesis", "problem", "strategy",
+            "next_move", "success_signal", "deadline", "project", "status",
+            "source", "created_at",
+        )
+        vals = (
+            e.id, e.record_id, e.title, e.hypothesis, e.problem, e.strategy,
+            e.next_move, e.success_signal, e.deadline, e.project, e.status,
+            e.source, e.created_at,
+        )
+        return cols, vals
+
     # --- Public API (unchanged signatures) ---
 
     def initialize(self) -> Path:
@@ -417,8 +504,9 @@ class WoloStore:
             "INSERT INTO records "
             "(id, entry_id, date, raw_content, corrected_content, summary, tags, emotion, "
             "weekday, events, period, season, is_weekend, content_length, emotion_reason, "
-            "related_people, related_places, source, created_at, attachments) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "related_people, related_places, source, created_at, attachments, sample_type, "
+            "problem_essence, available_cards, strategy, next_move, deadline, validation_signal) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.id, record.entry_id, record.date, record.raw_content,
                 record.corrected_content, record.summary, record.tags, record.emotion,
@@ -427,6 +515,8 @@ class WoloStore:
                 record.related_people, record.related_places, record.source,
                 record.created_at,
                 json.dumps([a.to_dict() for a in record.attachments], ensure_ascii=False),
+                record.sample_type, record.problem_essence, record.available_cards,
+                record.strategy, record.next_move, record.deadline, record.validation_signal,
             ),
         )
         self._db.commit()
@@ -464,7 +554,9 @@ class WoloStore:
             "UPDATE records SET entry_id=?, date=?, raw_content=?, corrected_content=?, "
             "summary=?, tags=?, emotion=?, weekday=?, events=?, period=?, season=?, "
             "is_weekend=?, content_length=?, emotion_reason=?, related_people=?, "
-            "related_places=?, source=?, created_at=?, attachments=? WHERE id=?",
+            "related_places=?, source=?, created_at=?, attachments=?, sample_type=?, "
+            "problem_essence=?, available_cards=?, strategy=?, next_move=?, deadline=?, "
+            "validation_signal=? WHERE id=?",
             (
                 new_record.entry_id, new_record.date, new_record.raw_content,
                 new_record.corrected_content, new_record.summary, new_record.tags,
@@ -473,6 +565,9 @@ class WoloStore:
                 new_record.emotion_reason, new_record.related_people, new_record.related_places,
                 new_record.source, new_record.created_at,
                 json.dumps([a.to_dict() for a in new_record.attachments], ensure_ascii=False),
+                new_record.sample_type, new_record.problem_essence, new_record.available_cards,
+                new_record.strategy, new_record.next_move, new_record.deadline,
+                new_record.validation_signal,
                 record_id,
             ),
         )
@@ -625,6 +720,14 @@ class WoloStore:
         )
         self._db.commit()
 
+    def add_experiment(self, experiment: WoloExperiment) -> None:
+        cols, vals = self._experiment_to_row(experiment)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO experiments ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
+
     def list_highlights(
         self,
         *,
@@ -646,6 +749,28 @@ class WoloStore:
             if _artifact_matches(h.to_dict(), project=project, query=query)
         ]
         return highlights if limit is None else highlights[-limit:]
+
+    def list_experiments(
+        self,
+        *,
+        status: str | None = None,
+        project: str | None = None,
+        query: str | None = None,
+        limit: int | None = None,
+    ) -> list[WoloExperiment]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        cur = self._db.execute(f"SELECT * FROM experiments{where} ORDER BY rowid", params)
+        experiments = [self._row_to_experiment(row) for row in cur.fetchall()]
+        experiments = [
+            item for item in experiments
+            if _artifact_matches(item.to_dict(), project=project, query=query)
+        ]
+        return experiments if limit is None else experiments[-limit:]
 
     def search_records(
         self,
@@ -698,7 +823,8 @@ class WoloStore:
         corpus_tokens = [
             _tokenize_enhanced(
                 f"{r.summary} {r.corrected_content} {r.tags} {r.weekday} {r.events} {r.period} {r.season} "
-                f"{'周末' if r.is_weekend else '工作日'}"
+                f"{'周末' if r.is_weekend else '工作日'} {r.sample_type} {r.problem_essence} "
+                f"{r.available_cards} {r.strategy} {r.next_move} {r.deadline} {r.validation_signal}"
             )
             for r in filtered
         ]
@@ -714,7 +840,10 @@ class WoloStore:
                 doc_text = (
                     f"{filtered[i].summary} {filtered[i].corrected_content} {filtered[i].weekday} "
                     f"{filtered[i].events} {filtered[i].period} {filtered[i].season} "
-                    f"{'周末' if filtered[i].is_weekend else '工作日'}"
+                    f"{'周末' if filtered[i].is_weekend else '工作日'} {filtered[i].sample_type} "
+                    f"{filtered[i].problem_essence} {filtered[i].available_cards} "
+                    f"{filtered[i].strategy} {filtered[i].next_move} {filtered[i].deadline} "
+                    f"{filtered[i].validation_signal}"
                 ).lower()
                 if any(t in doc_text for t in query_tokens):
                     score = 0.1
@@ -752,6 +881,7 @@ class WoloStore:
         todo_count = self._db.execute("SELECT COUNT(*) FROM todos").fetchone()[0]
         decision_count = self._db.execute("SELECT COUNT(*) FROM decisions").fetchone()[0]
         highlight_count = self._db.execute("SELECT COUNT(*) FROM highlights").fetchone()[0]
+        experiment_count = self._db.execute("SELECT COUNT(*) FROM experiments").fetchone()[0]
         # Attachment count from entries
         cur = self._db.execute("SELECT attachments FROM entries")
         attachment_count = sum(len(json.loads(row[0])) for row in cur.fetchall())
@@ -766,6 +896,7 @@ class WoloStore:
             "todos": todo_count,
             "decisions": decision_count,
             "highlights": highlight_count,
+            "experiments": experiment_count,
             "pending_confirmations": pending_count,
             "last_entry_at": last_row[0] if last_row else None,
             "path": str(self.root),
@@ -879,6 +1010,13 @@ class WoloStore:
                 StoredAttachment.from_dict(a)
                 for a in json.loads(row[19]) if isinstance(a, dict)
             ],
+            sample_type=row[20],
+            problem_essence=row[21],
+            available_cards=row[22],
+            strategy=row[23],
+            next_move=row[24],
+            deadline=row[25],
+            validation_signal=row[26],
         )
 
     @staticmethod
@@ -923,6 +1061,24 @@ class WoloStore:
         return WoloHighlight(
             id=row[0], record_id=row[1], kind=row[2], title=row[3],
             content=row[4], project=row[5], tags=row[6], source=row[7], created_at=row[8],
+        )
+
+    @staticmethod
+    def _row_to_experiment(row: tuple) -> WoloExperiment:
+        return WoloExperiment(
+            id=row[0],
+            record_id=row[1],
+            title=row[2],
+            hypothesis=row[3],
+            problem=row[4],
+            strategy=row[5],
+            next_move=row[6],
+            success_signal=row[7],
+            deadline=row[8],
+            project=row[9],
+            status=row[10],
+            source=row[11],
+            created_at=row[12],
         )
 
     # --- Private helpers ---

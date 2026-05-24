@@ -244,6 +244,13 @@ class WoloProcessor:
             source=str(data.get("source") or metadata.get("source") or default_source),
             created_at=_now(),
             attachments=list(entry.attachments),
+            sample_type=str(data.get("sample_type") or "neutral"),
+            problem_essence=str(data.get("problem_essence") or ""),
+            available_cards=str(data.get("available_cards") or ""),
+            strategy=str(data.get("strategy") or ""),
+            next_move=str(data.get("next_move") or ""),
+            deadline=str(data.get("deadline") or ""),
+            validation_signal=str(data.get("validation_signal") or ""),
         )
 
     def _record_from_result(self, entry: WoloEntry, result: dict[str, object]) -> WoloRecord:
@@ -308,7 +315,18 @@ class WoloProcessor:
                     for item in highlights
                 )
             )
-        return "## Work Artifacts\n\n" + "\n\n".join(sections) if sections else ""
+        experiments = self.store.list_experiments(status="active", limit=30)
+        if experiments:
+            sections.append(
+                "## Active Work Experiments\n"
+                + "\n".join(
+                    f"- {item.title} project={item.project}; hypothesis={item.hypothesis}; "
+                    f"problem={item.problem}; strategy={item.strategy}; next_move={item.next_move}; "
+                    f"success={item.success_signal}; deadline={item.deadline}"
+                    for item in experiments
+                )
+            )
+        return "## Work Artifacts\n\n### Work Iteration Artifacts\n\n" + "\n\n".join(sections) if sections else ""
 
     def _profile_context(self, target_date: str | None = None) -> str:
         from wolo.core.memory import load_memory_prompt
@@ -386,7 +404,8 @@ class WoloProcessor:
             return None
         
         lines = [
-            f"- [{record.date}] {record.summary} ({record.tags})"
+            f"- [{record.date}] {record.summary} ({record.tags}) sample={record.sample_type} "
+            f"problem={record.problem_essence} strategy={record.strategy}"
             for record in records
         ]
         return "\n".join(lines)

@@ -115,6 +115,13 @@ class WoloRecord:
     source: str = "原始"
     created_at: str = ""
     attachments: list[StoredAttachment] = field(default_factory=list)
+    sample_type: str = "neutral"
+    problem_essence: str = ""
+    available_cards: str = ""
+    strategy: str = ""
+    next_move: str = ""
+    deadline: str = ""
+    validation_signal: str = ""
 
     @classmethod
     def from_json(cls, line: str) -> "WoloRecord":
@@ -148,6 +155,13 @@ class WoloRecord:
             "source": self.source,
             "created_at": self.created_at,
             "attachments": [item.to_dict() for item in self.attachments],
+            "sample_type": self.sample_type,
+            "problem_essence": self.problem_essence,
+            "available_cards": self.available_cards,
+            "strategy": self.strategy,
+            "next_move": self.next_move,
+            "deadline": self.deadline,
+            "validation_signal": self.validation_signal,
         }
 
     def to_json(self) -> str:
@@ -326,6 +340,49 @@ class WoloHighlight:
             "content": self.content,
             "project": self.project,
             "tags": self.tags,
+            "source": self.source,
+            "created_at": self.created_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class WoloExperiment:
+    """A work experiment derived from wolo records."""
+
+    id: str
+    record_id: str
+    title: str
+    hypothesis: str = ""
+    problem: str = ""
+    strategy: str = ""
+    next_move: str = ""
+    success_signal: str = ""
+    deadline: str = ""
+    project: str = ""
+    status: str = "active"
+    source: str = "derived"
+    created_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "WoloExperiment":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "record_id": self.record_id,
+            "title": self.title,
+            "hypothesis": self.hypothesis,
+            "problem": self.problem,
+            "strategy": self.strategy,
+            "next_move": self.next_move,
+            "success_signal": self.success_signal,
+            "deadline": self.deadline,
+            "project": self.project,
+            "status": self.status,
             "source": self.source,
             "created_at": self.created_at,
         }

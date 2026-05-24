@@ -114,12 +114,15 @@ class WoloToolRegistry:
             WoloDomainTool(_tool_search(), self._handle_search),
             WoloDomainTool(_tool_show(), self._handle_show),
             WoloDomainTool(_tool_todos(), self._handle_todos),
+            WoloDomainTool(_tool_experiments(), self._handle_experiments),
             WoloDomainTool(_tool_done(), self._handle_done),
             WoloDomainTool(_tool_update_todo(), self._handle_update_todo),
             WoloDomainTool(_tool_blockers(), self._handle_blockers),
             WoloDomainTool(_tool_decisions(), self._handle_decisions),
             WoloDomainTool(_tool_highlights(), self._handle_highlights),
             WoloDomainTool(_tool_work_query(), self._handle_work_query),
+            WoloDomainTool(_tool_patterns(), self._handle_patterns),
+            WoloDomainTool(_tool_playbook(), self._handle_playbook),
             WoloDomainTool(_tool_update_record(), self._handle_update_record),
             WoloDomainTool(_tool_delete_record(), self._handle_delete_record),
             WoloDomainTool(_tool_status(), self._handle_status),
@@ -542,6 +545,23 @@ class WoloToolRegistry:
             "message": _format_todos(todos),
         }
 
+    async def _handle_experiments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        status = str(arguments.get("status") or "active").strip().lower()
+        project = _optional_text(arguments, "project")
+        query = _optional_text(arguments, "query")
+        limit = int(arguments.get("limit") or 20)
+        experiments = self.store.list_experiments(
+            status=None if status in {"", "all"} else status,
+            project=project,
+            query=query,
+            limit=limit,
+        )
+        return {
+            "ok": True,
+            "experiments": [item.to_dict() for item in experiments],
+            "message": _format_experiments(experiments),
+        }
+
     async def _handle_done(self, arguments: dict[str, Any]) -> dict[str, Any]:
         todo_id = _required_text(arguments, "todo_id")
         todo = self.store.get_todo(todo_id)
@@ -627,16 +647,88 @@ class WoloToolRegistry:
         records = self.store.search_records(query=query, tags=[project] if project else None, limit=limit)
         decisions = self.store.list_decisions(project=project, query=query, limit=limit)
         highlights = self.store.list_highlights(project=project, query=query, limit=limit)
+        experiments = self.store.list_experiments(project=project, query=query, limit=limit)
         sections = [
             "## Records\n" + _format_records(self.store, records),
             "## Decisions\n" + _format_decisions(decisions),
             "## Highlights\n" + _format_highlights(highlights, empty="暂无重要事项。"),
+            "## Experiments\n" + _format_experiments(experiments),
         ]
         return {
             "ok": True,
             "records": [record.to_dict() for record in records],
             "decisions": [decision.to_dict() for decision in decisions],
             "highlights": [item.to_dict() for item in highlights],
+            "experiments": [item.to_dict() for item in experiments],
+            "message": "\n\n".join(sections),
+        }
+
+    async def _handle_patterns(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        from collections import Counter
+
+        days = int(arguments.get("days") or 30)
+        limit = int(arguments.get("limit") or 5)
+        start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+        query = _optional_text(arguments, "query")
+        project = _optional_text(arguments, "project")
+        search_query = " ".join(part for part in (project, query) if part)
+        records = self.store.search_records(
+            query=search_query or None,
+            start_date=start_date,
+            limit=300,
+        )
+        if not records:
+            return {"ok": False, "message": f"最近 {days} 天暂无工作记录，无法总结模式。"}
+
+        sample_counts = Counter(record.sample_type or "neutral" for record in records)
+        problem_counts = Counter(record.problem_essence for record in records if record.problem_essence)
+        strategy_counts = Counter(record.strategy for record in records if record.strategy)
+        validation_counts = Counter(record.validation_signal for record in records if record.validation_signal)
+
+        sections = [
+            "## Sample Types\n" + "\n".join(f"- {name}: {count}" for name, count in sample_counts.most_common(limit)),
+            "## Problem Essence\n" + ("\n".join(f"- {name}: {count}" for name, count in problem_counts.most_common(limit)) or "- 暂无"),
+            "## Strategies\n" + ("\n".join(f"- {name}: {count}" for name, count in strategy_counts.most_common(limit)) or "- 暂无"),
+            "## Validation Signals\n" + ("\n".join(f"- {name}: {count}" for name, count in validation_counts.most_common(limit)) or "- 暂无"),
+        ]
+        return {
+            "ok": True,
+            "records": [record.to_dict() for record in records],
+            "message": "\n\n".join(sections),
+        }
+
+    async def _handle_playbook(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        limit = int(arguments.get("limit") or 5)
+        project = _optional_text(arguments, "project")
+        query = _optional_text(arguments, "query")
+        search_query = " ".join(part for part in (project, query) if part)
+        records = self.store.search_records(query=search_query or None, limit=100)
+        decisions = self.store.list_decisions(project=project, query=query, limit=limit)
+        experiments = self.store.list_experiments(status="active", project=project, query=query, limit=limit)
+
+        problem_rules = [
+            f"- 问题：{record.problem_essence}\n  策略：{record.strategy}\n  下一步：{record.next_move}\n  验证：{record.validation_signal}"
+            for record in records
+            if record.problem_essence and record.strategy
+        ][:limit]
+        decision_lines = [
+            f"- {item.title}（项目：{item.project}；原因：{item.rationale}）"
+            for item in decisions
+        ]
+        experiment_lines = [
+            f"- {item.title}: {item.hypothesis} -> {item.next_move}（成功信号：{item.success_signal}）"
+            for item in experiments
+        ]
+
+        sections = [
+            "## Problem → Strategy\n" + ("\n".join(problem_rules) or "- 暂无"),
+            "## Decision Anchors\n" + ("\n".join(decision_lines) or "- 暂无"),
+            "## Active Experiments\n" + ("\n".join(experiment_lines) or "- 暂无"),
+        ]
+        return {
+            "ok": True,
+            "decisions": [item.to_dict() for item in decisions],
+            "experiments": [item.to_dict() for item in experiments],
             "message": "\n\n".join(sections),
         }
 
@@ -648,7 +740,9 @@ class WoloToolRegistry:
         updates = {}
         for field in [
             "summary", "tags", "emotion", "emotion_reason", "events", "period",
-            "corrected_content", "related_people", "related_places", "date"
+            "corrected_content", "related_people", "related_places", "date",
+            "sample_type", "problem_essence", "available_cards", "strategy",
+            "next_move", "deadline", "validation_signal",
         ]:
             if field in arguments:
                 updates[field] = arguments[field]
@@ -685,7 +779,8 @@ class WoloToolRegistry:
         message = (
             f"wolo 状态：entries={status['entries']}，records={status['records']}，"
             f"todos={status['todos']}，decisions={status['decisions']}，"
-            f"highlights={status['highlights']}，pending={status['pending_confirmations']}，"
+            f"highlights={status['highlights']}，experiments={status['experiments']}，"
+            f"pending={status['pending_confirmations']}，"
             f"path={status['path']}"
         )
         return {"ok": True, **status, "message": message}
@@ -741,7 +836,11 @@ class WoloToolRegistry:
 
         # Use the agent for dynamic question generation
         processor = self._processor()
-        records_summary = "\n".join([f"- [{r.date}] {r.summary}" for r in records])
+        records_summary = "\n".join(
+            f"- [{r.date}] {r.summary} sample={r.sample_type} problem={r.problem_essence} "
+            f"strategy={r.strategy} next={r.next_move} validation={r.validation_signal}"
+            for r in records
+        )
 
         try:
             questions = await processor.agent.generate_reflection_questions(
@@ -827,7 +926,13 @@ class WoloToolRegistry:
             rows = [" ".join(heatmap[i:i + chunk_size]) for i in range(0, len(heatmap), chunk_size)]
             return {"ok": True, "message": f"最近 {days} 天的活动热力图 (每行 7 天)：\n" + "\n".join(rows)}
 
-        return {"ok": False, "message": f"不支持的可视化类型：{viz_type}。目前支持：emotion_distribution, tag_cloud, activity_heatmap"}
+        if viz_type == "sample_type_distribution":
+            sample_types = [r.sample_type for r in records]
+            counts = Counter(sample_types)
+            chart = "\n".join([f"{kind}: {'█' * count}" for kind, count in counts.items()])
+            return {"ok": True, "message": f"最近 {days} 天的样本类型分布：\n{chart}"}
+
+        return {"ok": False, "message": f"不支持的可视化类型：{viz_type}。目前支持：emotion_distribution, tag_cloud, activity_heatmap, sample_type_distribution"}
 
     async def _handle_export(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Export records with dynamic filters and optional AI summary."""
@@ -880,6 +985,16 @@ class WoloToolRegistry:
                 meta_info = f" ({r.season}, {'周末' if r.is_weekend else '工作日'}, {r.content_length}字)"
                 content += f"### {r.date}{weekday_info}{period_info} {r.emotion}{event_info}\n"
                 content += f"**摘要**：{r.summary} {meta_info}\n\n{r.corrected_content}\n\n---\n\n"
+                if r.sample_type != "neutral":
+                    content += (
+                        f"- 样本类型：{r.sample_type}\n"
+                        f"- 问题本质：{r.problem_essence}\n"
+                        f"- 手上牌：{r.available_cards}\n"
+                        f"- 策略：{r.strategy}\n"
+                        f"- 下一步：{r.next_move}\n"
+                        f"- 截止：{r.deadline}\n"
+                        f"- 验证信号：{r.validation_signal}\n\n---\n\n"
+                    )
             path.write_text(content, encoding="utf-8")
 
         return {
@@ -970,10 +1085,13 @@ class _WoloToolAdapter(BaseTool):
             "wolo_show",
             "wolo_status",
             "wolo_todos",
+            "wolo_experiments",
             "wolo_blockers",
             "wolo_decisions",
             "wolo_highlights",
             "wolo_work_query",
+            "wolo_patterns",
+            "wolo_playbook",
         }
 
     async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
@@ -1225,6 +1343,19 @@ def _tool_todos() -> ToolDefinition:
     )
 
 
+def _tool_experiments() -> ToolDefinition:
+    return _definition(
+        "wolo_experiments",
+        "List strategy experiments derived from wolo records, optionally filtered by status, project, or query.",
+        [
+            ("status", "string", "Experiment status: active/completed/abandoned/all. Defaults to active.", False),
+            ("project", "string", "Project filter.", False),
+            ("query", "string", "Text query.", False),
+            ("limit", "integer", "Number of experiments.", False),
+        ],
+    )
+
+
 def _tool_done() -> ToolDefinition:
     return _definition(
         "wolo_done",
@@ -1293,7 +1424,7 @@ def _tool_work_query() -> ToolDefinition:
     return _definition(
         "wolo_work_query",
         (
-            "Answer open-ended work-history questions by aggregating matching records, decisions, AND highlights into one response. "
+            "Answer open-ended work-history questions by aggregating matching records, decisions, highlights, AND experiments into one response. "
             "Use for questions like 'what did I do last week', 'summarize project X progress', 'any unresolved blockers'. "
             "For precise filtering by specific date range/tags/emotions, use wolo_search instead."
         ),
@@ -1301,6 +1432,31 @@ def _tool_work_query() -> ToolDefinition:
             ("query", "string", "Question or search query, e.g. 'what did I do last week'.", False),
             ("project", "string", "Project filter.", False),
             ("limit", "integer", "Number of items per section.", False),
+        ],
+    )
+
+
+def _tool_patterns() -> ToolDefinition:
+    return _definition(
+        "wolo_patterns",
+        "Summarize recent repeated problem essences, strategies, and validation signals from work records.",
+        [
+            ("days", "integer", "How many recent days to analyze. Defaults to 30.", False),
+            ("project", "string", "Project filter.", False),
+            ("query", "string", "Text query.", False),
+            ("limit", "integer", "Number of items per section. Defaults to 5.", False),
+        ],
+    )
+
+
+def _tool_playbook() -> ToolDefinition:
+    return _definition(
+        "wolo_playbook",
+        "Generate a reusable playbook from recent work records, decisions, and active experiments.",
+        [
+            ("project", "string", "Project filter.", False),
+            ("query", "string", "Text query.", False),
+            ("limit", "integer", "Maximum items per section.", False),
         ],
     )
 
@@ -1321,6 +1477,13 @@ def _tool_update_record() -> ToolDefinition:
             ("related_people", "string", "New comma-separated people.", False),
             ("related_places", "string", "New comma-separated places.", False),
             ("date", "string", "New date (YYYY-MM-DD).", False),
+            ("sample_type", "string", "New sample type (tension_success/aware_failure/avoidance_design/neutral).", False),
+            ("problem_essence", "string", "New problem essence.", False),
+            ("available_cards", "string", "New available cards.", False),
+            ("strategy", "string", "New strategy.", False),
+            ("next_move", "string", "New next move.", False),
+            ("deadline", "string", "New deadline.", False),
+            ("validation_signal", "string", "New validation signal.", False),
         ],
     )
 
@@ -1409,7 +1572,7 @@ def _tool_visualize() -> ToolDefinition:
         "wolo_visualize",
         "Generate a visual report of recent work activity. Model can choose the type and time range.",
         [
-            ("type", "string", "Type of visualization: emotion_distribution, tag_cloud, activity_heatmap.", False),
+            ("type", "string", "Type of visualization: emotion_distribution, tag_cloud, activity_heatmap, sample_type_distribution.", False),
             ("days", "integer", "Number of days to analyze (default 30).", False),
         ]
     )
@@ -1527,7 +1690,8 @@ def _format_records(store: WoloStore, records: list[WoloRecord]) -> str:
         return "暂无 wolo 记录。"
     lines: list[str] = []
     for record in records:
-        lines.append(f"- [{record.id}] {record.date} {record.summary or record.raw_content}")
+        sample = f" [{record.sample_type}]" if record.sample_type and record.sample_type != "neutral" else ""
+        lines.append(f"- [{record.id}] {record.date}{sample} {record.summary or record.raw_content}")
         lines.extend(_format_attachment_refs(store, record))
     return "\n".join(lines)
 
@@ -1597,6 +1761,15 @@ def _format_todos(todos: list[Any]) -> str:
     return "\n".join(
         f"- [{todo.id}] {todo.status} {todo.priority} {todo.project} {todo.title}".strip()
         for todo in todos
+    )
+
+
+def _format_experiments(experiments: list[Any]) -> str:
+    if not experiments:
+        return "暂无匹配实验。"
+    return "\n".join(
+        f"- [{item.id}] {item.status} {item.project} {item.title}：{item.hypothesis} -> {item.next_move}".strip()
+        for item in experiments
     )
 
 
