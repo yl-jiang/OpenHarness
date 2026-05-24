@@ -20,6 +20,7 @@ from solo.core.models import (
     ProfileUpdate,
     SoloConfig,
     SoloEntry,
+    SoloExperiment,
     SoloRecord,
     SoloReport,
     SoloTodo,
@@ -28,7 +29,7 @@ from solo.core.workspace import get_attachments_dir, get_data_dir, initialize_wo
 from solo.core.utils import _now
 
 DB_FILENAME = "store.db"
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS entries (
@@ -64,7 +65,15 @@ CREATE TABLE IF NOT EXISTS records (
     related_places TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT '原始',
     created_at TEXT NOT NULL DEFAULT '',
-    attachments TEXT NOT NULL DEFAULT '[]'
+    attachments TEXT NOT NULL DEFAULT '[]',
+    sample_type TEXT NOT NULL DEFAULT 'neutral',
+    trigger_scene TEXT NOT NULL DEFAULT '',
+    friction_signal TEXT NOT NULL DEFAULT '',
+    awareness_timing TEXT NOT NULL DEFAULT '',
+    break_point TEXT NOT NULL DEFAULT '',
+    bridge_action TEXT NOT NULL DEFAULT '',
+    environment_design TEXT NOT NULL DEFAULT '',
+    next_experiment TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_records_date ON records(date);
 CREATE INDEX IF NOT EXISTS idx_records_emotion ON records(emotion);
@@ -111,6 +120,22 @@ CREATE TABLE IF NOT EXISTS todos (
 );
 CREATE INDEX IF NOT EXISTS idx_todos_status ON todos(status);
 
+CREATE TABLE IF NOT EXISTS experiments (
+    id TEXT PRIMARY KEY,
+    record_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    hypothesis TEXT NOT NULL DEFAULT '',
+    trigger TEXT NOT NULL DEFAULT '',
+    desired_action TEXT NOT NULL DEFAULT '',
+    environment_design TEXT NOT NULL DEFAULT '',
+    success_criteria TEXT NOT NULL DEFAULT '',
+    observation_window TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    source TEXT NOT NULL DEFAULT 'derived',
+    created_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
+
 CREATE TABLE IF NOT EXISTS _meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -140,14 +165,58 @@ class SoloStore:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA_SQL)
+        self._apply_migrations()
         cur = self._conn.execute("SELECT value FROM _meta WHERE key='schema_version'")
-        if cur.fetchone() is None:
+        row = cur.fetchone()
+        if row is None:
             self._conn.execute(
                 "INSERT INTO _meta (key, value) VALUES ('schema_version', ?)",
                 (str(_SCHEMA_VERSION),),
             )
-            self._conn.commit()
+        elif row[0] != str(_SCHEMA_VERSION):
+            self._conn.execute(
+                "UPDATE _meta SET value=? WHERE key='schema_version'",
+                (str(_SCHEMA_VERSION),),
+            )
+        self._conn.commit()
         self._maybe_migrate_jsonl()
+
+    def _apply_migrations(self) -> None:
+        assert self._conn is not None
+        record_columns = {
+            "sample_type": "TEXT NOT NULL DEFAULT 'neutral'",
+            "trigger_scene": "TEXT NOT NULL DEFAULT ''",
+            "friction_signal": "TEXT NOT NULL DEFAULT ''",
+            "awareness_timing": "TEXT NOT NULL DEFAULT ''",
+            "break_point": "TEXT NOT NULL DEFAULT ''",
+            "bridge_action": "TEXT NOT NULL DEFAULT ''",
+            "environment_design": "TEXT NOT NULL DEFAULT ''",
+            "next_experiment": "TEXT NOT NULL DEFAULT ''",
+        }
+        existing = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(records)").fetchall()
+        }
+        for name, definition in record_columns.items():
+            if name not in existing:
+                self._conn.execute(f"ALTER TABLE records ADD COLUMN {name} {definition}")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS experiments (
+                id TEXT PRIMARY KEY,
+                record_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                hypothesis TEXT NOT NULL DEFAULT '',
+                trigger TEXT NOT NULL DEFAULT '',
+                desired_action TEXT NOT NULL DEFAULT '',
+                environment_design TEXT NOT NULL DEFAULT '',
+                success_criteria TEXT NOT NULL DEFAULT '',
+                observation_window TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                source TEXT NOT NULL DEFAULT 'derived',
+                created_at TEXT NOT NULL DEFAULT ''
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status)")
 
     def _maybe_migrate_jsonl(self) -> None:
         """Import existing JSONL data into SQLite on first run."""
@@ -173,6 +242,10 @@ class SoloStore:
             "todos", "todos.jsonl",
             SoloTodo.from_json, self._todo_to_row,
         )
+        migrated_any |= self._migrate_simple_jsonl(
+            "experiments", "experiments.jsonl",
+            SoloExperiment.from_json, self._experiment_to_row,
+        )
         self._db.execute(
             "INSERT INTO _meta (key, value) VALUES ('migrated_jsonl', ?)",
             (_now(),),
@@ -181,7 +254,7 @@ class SoloStore:
         if migrated_any:
             for name in (
                 "entries.jsonl", "records.jsonl", "pending_confirmations.jsonl",
-                "profile_updates.jsonl", "reports.jsonl", "todos.jsonl",
+                "profile_updates.jsonl", "reports.jsonl", "todos.jsonl", "experiments.jsonl",
             ):
                 path = self.root / name
                 if path.exists() and path.stat().st_size > 0:
@@ -281,6 +354,20 @@ class SoloStore:
         vals = (t.id, t.record_id, t.title, t.category, t.priority, t.due_date, t.status, t.source, t.created_at, t.completed_at)
         return cols, vals
 
+    @staticmethod
+    def _experiment_to_row(e: SoloExperiment):
+        cols = (
+            "id", "record_id", "title", "hypothesis", "trigger", "desired_action",
+            "environment_design", "success_criteria", "observation_window", "status",
+            "source", "created_at",
+        )
+        vals = (
+            e.id, e.record_id, e.title, e.hypothesis, e.trigger, e.desired_action,
+            e.environment_design, e.success_criteria, e.observation_window, e.status,
+            e.source, e.created_at,
+        )
+        return cols, vals
+
     # --- Public API (unchanged signatures) ---
 
     def initialize(self) -> Path:
@@ -367,8 +454,10 @@ class SoloStore:
             "INSERT INTO records "
             "(id, entry_id, date, raw_content, corrected_content, summary, tags, emotion, "
             "weekday, events, period, season, is_weekend, content_length, emotion_reason, "
-            "related_people, related_places, source, created_at, attachments) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "related_people, related_places, source, created_at, attachments, sample_type, "
+            "trigger_scene, friction_signal, awareness_timing, break_point, bridge_action, "
+            "environment_design, next_experiment) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 record.id, record.entry_id, record.date, record.raw_content,
                 record.corrected_content, record.summary, record.tags, record.emotion,
@@ -377,6 +466,9 @@ class SoloStore:
                 record.related_people, record.related_places, record.source,
                 record.created_at,
                 json.dumps([a.to_dict() for a in record.attachments], ensure_ascii=False),
+                record.sample_type, record.trigger_scene, record.friction_signal,
+                record.awareness_timing, record.break_point, record.bridge_action,
+                record.environment_design, record.next_experiment,
             ),
         )
         self._db.commit()
@@ -414,7 +506,9 @@ class SoloStore:
             "UPDATE records SET entry_id=?, date=?, raw_content=?, corrected_content=?, "
             "summary=?, tags=?, emotion=?, weekday=?, events=?, period=?, season=?, "
             "is_weekend=?, content_length=?, emotion_reason=?, related_people=?, "
-            "related_places=?, source=?, created_at=?, attachments=? WHERE id=?",
+            "related_places=?, source=?, created_at=?, attachments=?, sample_type=?, "
+            "trigger_scene=?, friction_signal=?, awareness_timing=?, break_point=?, "
+            "bridge_action=?, environment_design=?, next_experiment=? WHERE id=?",
             (
                 new_record.entry_id, new_record.date, new_record.raw_content,
                 new_record.corrected_content, new_record.summary, new_record.tags,
@@ -423,6 +517,9 @@ class SoloStore:
                 new_record.emotion_reason, new_record.related_people, new_record.related_places,
                 new_record.source, new_record.created_at,
                 json.dumps([a.to_dict() for a in new_record.attachments], ensure_ascii=False),
+                new_record.sample_type, new_record.trigger_scene, new_record.friction_signal,
+                new_record.awareness_timing, new_record.break_point, new_record.bridge_action,
+                new_record.environment_design, new_record.next_experiment,
                 record_id,
             ),
         )
@@ -479,6 +576,14 @@ class SoloStore:
         )
         self._db.commit()
 
+    def add_experiment(self, experiment: SoloExperiment) -> None:
+        cols, vals = self._experiment_to_row(experiment)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO experiments ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
+
     def list_todos(
         self,
         *,
@@ -512,6 +617,30 @@ class SoloStore:
         cur = self._db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,))
         row = cur.fetchone()
         return self._row_to_todo(row) if row else None
+
+    def list_experiments(
+        self,
+        *,
+        status: str | None = None,
+        limit: int | None = None,
+    ) -> list[SoloExperiment]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        if limit is not None:
+            cur = self._db.execute(
+                f"SELECT * FROM experiments{where} ORDER BY rowid DESC LIMIT ?",
+                params + [limit],
+            )
+            rows = cur.fetchall()
+            rows.reverse()
+        else:
+            cur = self._db.execute(f"SELECT * FROM experiments{where} ORDER BY rowid", params)
+            rows = cur.fetchall()
+        return [self._row_to_experiment(row) for row in rows]
 
     def complete_todo(self, todo_id: str) -> bool:
         cur = self._db.execute(
@@ -592,7 +721,8 @@ class SoloStore:
         corpus_tokens = [
             _tokenize_enhanced(
                 f"{r.summary} {r.corrected_content} {r.tags} {r.weekday} {r.events} {r.period} {r.season} "
-                f"{'周末' if r.is_weekend else '工作日'}"
+                f"{'周末' if r.is_weekend else '工作日'} {r.sample_type} {r.trigger_scene} "
+                f"{r.break_point} {r.bridge_action} {r.environment_design} {r.next_experiment}"
             )
             for r in filtered
         ]
@@ -608,7 +738,10 @@ class SoloStore:
                 doc_text = (
                     f"{filtered[i].summary} {filtered[i].corrected_content} {filtered[i].weekday} "
                     f"{filtered[i].events} {filtered[i].period} {filtered[i].season} "
-                    f"{'周末' if filtered[i].is_weekend else '工作日'}"
+                    f"{'周末' if filtered[i].is_weekend else '工作日'} {filtered[i].sample_type} "
+                    f"{filtered[i].trigger_scene} {filtered[i].break_point} "
+                    f"{filtered[i].bridge_action} {filtered[i].environment_design} "
+                    f"{filtered[i].next_experiment}"
                 ).lower()
                 if any(t in doc_text for t in query_tokens):
                     score = 0.1
@@ -644,6 +777,7 @@ class SoloStore:
         record_count = self._db.execute("SELECT COUNT(*) FROM records").fetchone()[0]
         pending_count = self._db.execute("SELECT COUNT(*) FROM pending_confirmations").fetchone()[0]
         todo_count = self._db.execute("SELECT COUNT(*) FROM todos").fetchone()[0]
+        experiment_count = self._db.execute("SELECT COUNT(*) FROM experiments").fetchone()[0]
         cur = self._db.execute("SELECT attachments FROM entries")
         attachment_count = sum(len(json.loads(row[0])) for row in cur.fetchall())
         last_row = self._db.execute(
@@ -654,6 +788,7 @@ class SoloStore:
             "records": record_count,
             "attachments": attachment_count,
             "todos": todo_count,
+            "experiments": experiment_count,
             "pending_confirmations": pending_count,
             "last_entry_at": last_row[0] if last_row else None,
             "path": str(self.root),
@@ -763,6 +898,14 @@ class SoloStore:
                 StoredAttachment.from_dict(a)
                 for a in json.loads(row[19]) if isinstance(a, dict)
             ],
+            sample_type=row[20],
+            trigger_scene=row[21],
+            friction_signal=row[22],
+            awareness_timing=row[23],
+            break_point=row[24],
+            bridge_action=row[25],
+            environment_design=row[26],
+            next_experiment=row[27],
         )
 
     @staticmethod
@@ -793,6 +936,23 @@ class SoloStore:
             id=row[0], record_id=row[1], title=row[2], category=row[3],
             priority=row[4], due_date=row[5], status=row[6], source=row[7],
             created_at=row[8], completed_at=row[9],
+        )
+
+    @staticmethod
+    def _row_to_experiment(row: tuple) -> SoloExperiment:
+        return SoloExperiment(
+            id=row[0],
+            record_id=row[1],
+            title=row[2],
+            hypothesis=row[3],
+            trigger=row[4],
+            desired_action=row[5],
+            environment_design=row[6],
+            success_criteria=row[7],
+            observation_window=row[8],
+            status=row[9],
+            source=row[10],
+            created_at=row[11],
         )
 
     # --- Private helpers ---

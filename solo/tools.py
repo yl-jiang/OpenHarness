@@ -113,6 +113,9 @@ class SoloToolRegistry:
             SoloDomainTool(_tool_search(), self._handle_search),
             SoloDomainTool(_tool_show(), self._handle_show),
             SoloDomainTool(_tool_todos(), self._handle_todos),
+            SoloDomainTool(_tool_experiments(), self._handle_experiments),
+            SoloDomainTool(_tool_patterns(), self._handle_patterns),
+            SoloDomainTool(_tool_rulebook(), self._handle_rulebook),
             SoloDomainTool(_tool_done(), self._handle_done),
             SoloDomainTool(_tool_update_todo(), self._handle_update_todo),
             SoloDomainTool(_tool_update_record(), self._handle_update_record),
@@ -532,6 +535,85 @@ class SoloToolRegistry:
             "message": _format_todos(todos),
         }
 
+    async def _handle_experiments(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        status = str(arguments.get("status") or "active").strip().lower()
+        limit = int(arguments.get("limit") or 20)
+        experiments = self.store.list_experiments(
+            status=None if status in {"", "all"} else status,
+            limit=limit,
+        )
+        return {
+            "ok": True,
+            "experiments": [item.to_dict() for item in experiments],
+            "message": _format_experiments(experiments),
+        }
+
+    async def _handle_patterns(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        from collections import Counter
+
+        days = int(arguments.get("days") or 30)
+        limit = int(arguments.get("limit") or 5)
+        start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
+        records = self.store.search_records(start_date=start_date, limit=300)
+        if not records:
+            return {"ok": False, "message": f"最近 {days} 天暂无记录，无法总结模式。"}
+
+        sample_counts = Counter(record.sample_type or "neutral" for record in records)
+        trigger_counts = Counter(record.trigger_scene for record in records if record.trigger_scene)
+        break_counts = Counter(record.break_point for record in records if record.break_point)
+        bridge_counts = Counter(record.bridge_action for record in records if record.bridge_action)
+        design_counts = Counter(record.environment_design for record in records if record.environment_design)
+
+        sections = [
+            "## Sample Types\n" + "\n".join(f"- {name}: {count}" for name, count in sample_counts.most_common(limit)),
+            "## Trigger Scenes\n" + ("\n".join(f"- {name}: {count}" for name, count in trigger_counts.most_common(limit)) or "- 暂无"),
+            "## Break Points\n" + ("\n".join(f"- {name}: {count}" for name, count in break_counts.most_common(limit)) or "- 暂无"),
+            "## Bridge Actions\n" + ("\n".join(f"- {name}: {count}" for name, count in bridge_counts.most_common(limit)) or "- 暂无"),
+            "## Avoidance Designs\n" + ("\n".join(f"- {name}: {count}" for name, count in design_counts.most_common(limit)) or "- 暂无"),
+        ]
+        return {
+            "ok": True,
+            "records": [record.to_dict() for record in records],
+            "message": "\n\n".join(sections),
+        }
+
+    async def _handle_rulebook(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        limit = int(arguments.get("limit") or 5)
+        records = self.store.list_records(limit=100)
+        experiments = self.store.list_experiments(status="active", limit=limit)
+
+        avoidance = [
+            f"- 当 {record.trigger_scene} 时，提前 {record.environment_design}"
+            for record in records
+            if record.sample_type == "avoidance_design" and record.trigger_scene and record.environment_design
+        ][:limit]
+        bridge = [
+            f"- 当 {record.trigger_scene} 时，先做 {record.bridge_action}"
+            for record in records
+            if record.sample_type == "tension_success" and record.trigger_scene and record.bridge_action
+        ][:limit]
+        failures = [
+            f"- 当 {record.trigger_scene} 时，注意卡在 {record.break_point}；下一轮实验：{record.next_experiment}"
+            for record in records
+            if record.sample_type == "aware_failure" and record.trigger_scene and record.break_point
+        ][:limit]
+        experiment_lines = [
+            f"- {item.title}: {item.hypothesis} -> {item.desired_action}（成功标准：{item.success_criteria}）"
+            for item in experiments
+        ]
+
+        sections = [
+            "## Avoidance Designs\n" + ("\n".join(avoidance) or "- 暂无"),
+            "## Bridge Actions\n" + ("\n".join(bridge) or "- 暂无"),
+            "## Failure Recovery Rules\n" + ("\n".join(failures) or "- 暂无"),
+            "## Active Experiments\n" + ("\n".join(experiment_lines) or "- 暂无"),
+        ]
+        return {
+            "ok": True,
+            "experiments": [item.to_dict() for item in experiments],
+            "message": "\n\n".join(sections),
+        }
+
     async def _handle_done(self, arguments: dict[str, Any]) -> dict[str, Any]:
         todo_id = _required_text(arguments, "todo_id")
         todo = self.store.get_todo(todo_id)
@@ -574,7 +656,9 @@ class SoloToolRegistry:
         updates = {}
         for field in [
             "summary", "tags", "emotion", "emotion_reason", "events", "period",
-            "corrected_content", "related_people", "related_places", "date"
+            "corrected_content", "related_people", "related_places", "date",
+            "sample_type", "trigger_scene", "friction_signal", "awareness_timing",
+            "break_point", "bridge_action", "environment_design", "next_experiment",
         ]:
             if field in arguments:
                 updates[field] = arguments[field]
@@ -610,6 +694,7 @@ class SoloToolRegistry:
         status = self.store.status()
         message = (
             f"solo 状态：entries={status['entries']}，records={status['records']}，"
+            f"todos={status['todos']}，experiments={status['experiments']}，"
             f"pending={status['pending_confirmations']}，path={status['path']}"
         )
         return {"ok": True, **status, "message": message}
@@ -665,7 +750,11 @@ class SoloToolRegistry:
 
         # Use the agent for dynamic question generation
         processor = self._processor()
-        records_summary = "\n".join([f"- [{r.date}] {r.summary}" for r in records])
+        records_summary = "\n".join(
+            f"- [{r.date}] {r.summary} sample={r.sample_type} trigger={r.trigger_scene} "
+            f"break={r.break_point} design={r.environment_design} next={r.next_experiment}"
+            for r in records
+        )
 
         try:
             questions = await processor.agent.generate_reflection_questions(
@@ -751,7 +840,13 @@ class SoloToolRegistry:
             rows = [" ".join(heatmap[i:i + chunk_size]) for i in range(0, len(heatmap), chunk_size)]
             return {"ok": True, "message": f"最近 {days} 天的活动热力图 (每行 7 天)：\n" + "\n".join(rows)}
 
-        return {"ok": False, "message": f"不支持的可视化类型：{viz_type}。目前支持：emotion_distribution, tag_cloud, activity_heatmap"}
+        if viz_type == "sample_type_distribution":
+            sample_types = [r.sample_type for r in records]
+            counts = Counter(sample_types)
+            chart = "\n".join([f"{kind}: {'█' * count}" for kind, count in counts.items()])
+            return {"ok": True, "message": f"最近 {days} 天的样本类型分布：\n{chart}"}
+
+        return {"ok": False, "message": f"不支持的可视化类型：{viz_type}。目前支持：emotion_distribution, tag_cloud, activity_heatmap, sample_type_distribution"}
 
     async def _handle_export(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Export records with dynamic filters and optional AI summary."""
@@ -804,6 +899,15 @@ class SoloToolRegistry:
                 meta_info = f" ({r.season}, {'周末' if r.is_weekend else '工作日'}, {r.content_length}字)"
                 content += f"### {r.date}{weekday_info}{period_info} {r.emotion}{event_info}\n"
                 content += f"**摘要**：{r.summary} {meta_info}\n\n{r.corrected_content}\n\n---\n\n"
+                if r.sample_type != "neutral":
+                    content += (
+                        f"- 样本类型：{r.sample_type}\n"
+                        f"- 触发场景：{r.trigger_scene}\n"
+                        f"- 断裂点：{r.break_point}\n"
+                        f"- 跨越动作：{r.bridge_action}\n"
+                        f"- 规避设计：{r.environment_design}\n"
+                        f"- 下一轮实验：{r.next_experiment}\n\n---\n\n"
+                    )
             path.write_text(content, encoding="utf-8")
 
         return {
@@ -887,7 +991,15 @@ class _SoloToolAdapter(BaseTool):
         return self._domain_tool.definition.to_api_schema()
 
     def is_read_only(self, arguments: BaseModel) -> bool:
-        return self.name in {"solo_view", "solo_search", "solo_show", "solo_status"}
+        return self.name in {
+            "solo_view",
+            "solo_search",
+            "solo_show",
+            "solo_status",
+            "solo_experiments",
+            "solo_patterns",
+            "solo_rulebook",
+        }
 
     async def execute(self, arguments: BaseModel, context: ToolExecutionContext) -> ToolResult:
         raw = arguments.model_dump()
@@ -1134,6 +1246,36 @@ def _tool_todos() -> ToolDefinition:
     )
 
 
+def _tool_experiments() -> ToolDefinition:
+    return _definition(
+        "solo_experiments",
+        "List behavior experiments derived from solo records, optionally filtered by status.",
+        [
+            ("status", "string", "Experiment status: active/completed/abandoned/all. Defaults to active.", False),
+            ("limit", "integer", "Number of experiments.", False),
+        ],
+    )
+
+
+def _tool_patterns() -> ToolDefinition:
+    return _definition(
+        "solo_patterns",
+        "Summarize recent trigger scenes, break points, bridge actions, and avoidance designs from solo records.",
+        [
+            ("days", "integer", "How many recent days to analyze. Defaults to 30.", False),
+            ("limit", "integer", "Number of items per section. Defaults to 5.", False),
+        ],
+    )
+
+
+def _tool_rulebook() -> ToolDefinition:
+    return _definition(
+        "solo_rulebook",
+        "Generate a reusable personal rulebook from recent solo records and active behavior experiments.",
+        [("limit", "integer", "Maximum rules per section.", False)],
+    )
+
+
 def _tool_done() -> ToolDefinition:
     return _definition(
         "solo_done",
@@ -1173,6 +1315,14 @@ def _tool_update_record() -> ToolDefinition:
             ("related_people", "string", "New comma-separated people.", False),
             ("related_places", "string", "New comma-separated places.", False),
             ("date", "string", "New date (YYYY-MM-DD).", False),
+            ("sample_type", "string", "New sample type (tension_success/aware_failure/avoidance_design/neutral).", False),
+            ("trigger_scene", "string", "New trigger scene.", False),
+            ("friction_signal", "string", "New friction signal.", False),
+            ("awareness_timing", "string", "New awareness timing.", False),
+            ("break_point", "string", "New break point.", False),
+            ("bridge_action", "string", "New bridge action.", False),
+            ("environment_design", "string", "New environment design.", False),
+            ("next_experiment", "string", "New next experiment.", False),
         ],
     )
 
@@ -1261,7 +1411,7 @@ def _tool_visualize() -> ToolDefinition:
         "solo_visualize",
         "Generate a visual report of recent activity. Model can choose the type and time range.",
         [
-            ("type", "string", "Type of visualization: emotion_distribution, tag_cloud, activity_heatmap.", False),
+            ("type", "string", "Type of visualization: emotion_distribution, tag_cloud, activity_heatmap, sample_type_distribution.", False),
             ("days", "integer", "Number of days to analyze (default 30).", False),
         ]
     )
@@ -1379,7 +1529,8 @@ def _format_records(store: SoloStore, records: list[SoloRecord]) -> str:
         return "暂无 solo 记录。"
     lines: list[str] = []
     for record in records:
-        lines.append(f"- [{record.id}] {record.date} {record.summary or record.raw_content}")
+        sample = f" [{record.sample_type}]" if record.sample_type and record.sample_type != "neutral" else ""
+        lines.append(f"- [{record.id}] {record.date}{sample} {record.summary or record.raw_content}")
         lines.extend(_format_attachment_refs(store, record))
     return "\n".join(lines)
 
@@ -1390,6 +1541,15 @@ def _format_todos(todos: list[Any]) -> str:
     return "\n".join(
         f"- [{todo.id}] {todo.status} {todo.priority} {todo.category} {todo.title}".strip()
         for todo in todos
+    )
+
+
+def _format_experiments(experiments: list[Any]) -> str:
+    if not experiments:
+        return "暂无匹配实验。"
+    return "\n".join(
+        f"- [{item.id}] {item.status} {item.title}：{item.hypothesis} -> {item.desired_action}".strip()
+        for item in experiments
     )
 
 

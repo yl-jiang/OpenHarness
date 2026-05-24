@@ -115,6 +115,14 @@ class SoloRecord:
     source: str = "原始"
     created_at: str = ""
     attachments: list[StoredAttachment] = field(default_factory=list)
+    sample_type: str = "neutral"
+    trigger_scene: str = ""
+    friction_signal: str = ""
+    awareness_timing: str = ""
+    break_point: str = ""
+    bridge_action: str = ""
+    environment_design: str = ""
+    next_experiment: str = ""
 
     @classmethod
     def from_json(cls, line: str) -> "SoloRecord":
@@ -148,6 +156,14 @@ class SoloRecord:
             "source": self.source,
             "created_at": self.created_at,
             "attachments": [item.to_dict() for item in self.attachments],
+            "sample_type": self.sample_type,
+            "trigger_scene": self.trigger_scene,
+            "friction_signal": self.friction_signal,
+            "awareness_timing": self.awareness_timing,
+            "break_point": self.break_point,
+            "bridge_action": self.bridge_action,
+            "environment_design": self.environment_design,
+            "next_experiment": self.next_experiment,
         }
 
     def to_json(self) -> str:
@@ -260,6 +276,47 @@ class SoloTodo:
             "source": self.source,
             "created_at": self.created_at,
             "completed_at": self.completed_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class SoloExperiment:
+    """A behavior experiment derived from solo records."""
+
+    id: str
+    record_id: str
+    title: str
+    hypothesis: str = ""
+    trigger: str = ""
+    desired_action: str = ""
+    environment_design: str = ""
+    success_criteria: str = ""
+    observation_window: str = ""
+    status: str = "active"
+    source: str = "derived"
+    created_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "SoloExperiment":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "record_id": self.record_id,
+            "title": self.title,
+            "hypothesis": self.hypothesis,
+            "trigger": self.trigger,
+            "desired_action": self.desired_action,
+            "environment_design": self.environment_design,
+            "success_criteria": self.success_criteria,
+            "observation_window": self.observation_window,
+            "status": self.status,
+            "source": self.source,
+            "created_at": self.created_at,
         }
 
     def to_json(self) -> str:

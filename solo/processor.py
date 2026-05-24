@@ -176,7 +176,11 @@ class SoloProcessor:
     async def generate_report(self, report_type: str) -> SoloReport:
         records = [record.to_dict() for record in self.store.list_records()]
         logger.info("generate_report start type=%s records=%d", report_type, len(records))
-        content = await self.agent.generate_report(report_type, records, self._profile_context())
+        context = self._profile_context()
+        artifacts_context = self._iteration_artifacts_context()
+        if artifacts_context:
+            context = f"{context}\n\n{artifacts_context}"
+        content = await self.agent.generate_report(report_type, records, context)
         report = SoloReport(
             id=uuid4().hex[:12],
             report_type=report_type,
@@ -250,6 +254,14 @@ class SoloProcessor:
             source=str(data.get("source") or metadata.get("source") or default_source),
             created_at=_now(),
             attachments=list(entry.attachments),
+            sample_type=str(data.get("sample_type") or "neutral"),
+            trigger_scene=str(data.get("trigger_scene") or ""),
+            friction_signal=str(data.get("friction_signal") or ""),
+            awareness_timing=str(data.get("awareness_timing") or ""),
+            break_point=str(data.get("break_point") or ""),
+            bridge_action=str(data.get("bridge_action") or ""),
+            environment_design=str(data.get("environment_design") or ""),
+            next_experiment=str(data.get("next_experiment") or ""),
         )
 
     def _record_from_result(self, entry: SoloEntry, result: dict[str, object]) -> SoloRecord:
@@ -284,6 +296,30 @@ class SoloProcessor:
             suggested_value=str(update.get("suggested_value") or ""),
             confidence=str(update.get("confidence") or "low"),
         )
+
+    def _iteration_artifacts_context(self) -> str:
+        sections: list[str] = []
+        todos = self.store.list_todos(status="pending", limit=30)
+        if todos:
+            sections.append(
+                "## Open Personal Todos\n"
+                + "\n".join(
+                    f"- [{todo.priority}] {todo.title} category={todo.category} due={todo.due_date}"
+                    for todo in todos
+                )
+            )
+        experiments = self.store.list_experiments(status="active", limit=30)
+        if experiments:
+            sections.append(
+                "## Active Behavior Experiments\n"
+                + "\n".join(
+                    f"- {item.title}; hypothesis={item.hypothesis}; trigger={item.trigger}; "
+                    f"desired_action={item.desired_action}; design={item.environment_design}; "
+                    f"success={item.success_criteria}; window={item.observation_window}"
+                    for item in experiments
+                )
+            )
+        return "## Iteration Artifacts\n\n" + "\n\n".join(sections) if sections else ""
 
     def _profile_context(self, target_date: str | None = None) -> str:
         from solo.core.memory import load_memory_prompt
@@ -361,7 +397,8 @@ class SoloProcessor:
             return None
         
         lines = [
-            f"- [{record.date}] {record.summary} ({record.tags})"
+            f"- [{record.date}] {record.summary} ({record.tags}) sample={record.sample_type} "
+            f"trigger={record.trigger_scene} design={record.environment_design}"
             for record in records
         ]
         return "\n".join(lines)
