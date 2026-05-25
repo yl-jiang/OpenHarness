@@ -33,8 +33,10 @@ app = typer.Typer(
 )
 gateway_app = typer.Typer(name="gateway", help="Run the solo gateway")
 heartbeat_app = typer.Typer(name="heartbeat", help="Inspect or trigger solo heartbeat")
+onboard_app = typer.Typer(name="onboard", help="WebUI dashboard management")
 app.add_typer(gateway_app)
 app.add_typer(heartbeat_app)
+app.add_typer(onboard_app)
 
 _INTERACTIVE_CHANNELS = ("telegram", "slack", "discord", "feishu")
 _WORKSPACE_HELP = "Path to the solo workspace (defaults to ~/.solo)"
@@ -230,6 +232,53 @@ def doctor_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
     health = workspace_health(get_workspace_root(workspace))
     for name, ok in health.items():
         print(f"{name}: {'ok' if ok else 'missing'}")
+
+
+@onboard_app.command("run")
+def onboard_run_cmd(
+    host: str = typer.Option("127.0.0.1", "--host", help="Host interface to bind"),
+    port: int = typer.Option(8090, "--port", min=1, max=65535, help="Port to bind"),
+    reload: bool = typer.Option(False, "--reload", help="Enable uvicorn reload"),
+) -> None:
+    """Start onboard WebUI in the foreground."""
+    from onboard.server import run_server
+
+    run_server(host=host, port=port, reload=reload)
+
+
+@onboard_app.command("start")
+def onboard_start_cmd(
+    host: str = typer.Option("127.0.0.1", "--host", help="Host interface to bind"),
+    port: int = typer.Option(8090, "--port", min=1, max=65535, help="Port to bind"),
+) -> None:
+    """Start onboard WebUI in the background."""
+    from onboard.server import start_background
+
+    pid = start_background(host=host, port=port)
+    print(f"onboard started (pid={pid}, url=http://{host}:{port})")
+
+
+@onboard_app.command("stop")
+def onboard_stop_cmd() -> None:
+    """Stop background onboard WebUI."""
+    from onboard.server import stop_background
+
+    if stop_background():
+        print("onboard stopped.")
+        return
+    print("onboard is not running.")
+
+
+@onboard_app.command("status")
+def onboard_status_cmd() -> None:
+    """Show onboard WebUI process status."""
+    from onboard.server import server_status
+
+    status = server_status()
+    print(
+        f"onboard: {status['status']} | pid={status['pid']} | "
+        f"url=http://{status['host']}:{status['port']} | log={status['log_file']}"
+    )
 
 
 @heartbeat_app.command("status")

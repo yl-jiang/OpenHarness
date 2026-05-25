@@ -41,6 +41,8 @@ dependencies = [
     "rank-bm25>=0.2.2",
     "lunar-python>=1.3.11",
     "python-socks>=2.8.1",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 
 [project.optional-dependencies]
@@ -64,9 +66,10 @@ openh = "openharness.cli:app"
 ohmo = "ohmo.cli:app"
 solo = "solo.cli:app"
 wolo = "wolo.cli:app"
+onboard = "onboard.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/openharness", "ohmo", "solo", "wolo"]
+packages = ["src/openharness", "ohmo", "solo", "wolo", "onboard"]
 
 [tool.hatch.build]
 exclude = [
