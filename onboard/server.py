@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 from pathlib import Path
 import signal
+import socket
 import subprocess
 import sys
 from time import time
+from typing import Iterator
 from typing import Any
 
 from fastapi import FastAPI
@@ -24,6 +27,10 @@ _ONBOARD_ROOT = Path(os.environ.get("ONBOARD_WORKSPACE", "~/.onboard")).expandus
 _PID_PATH = _ONBOARD_ROOT / "onboard.pid"
 _STATE_PATH = _ONBOARD_ROOT / "state.json"
 _LOG_PATH = _ONBOARD_ROOT / "logs" / "server.log"
+
+
+class OnboardServerError(RuntimeError):
+    """Raised when onboard cannot start cleanly."""
 
 
 def create_app() -> FastAPI:
@@ -86,16 +93,15 @@ def run_server(
 ) -> None:
     import uvicorn
 
-    _ONBOARD_ROOT.mkdir(parents=True, exist_ok=True)
-    _PID_PATH.write_text(str(os.getpid()), encoding="utf-8")
-    _write_state(host=host, port=port, pid=os.getpid(), started_at=time())
-    try:
-        target: str | FastAPI
-        target = "onboard.server:create_app" if reload else create_app()
-        uvicorn.run(target, factory=reload, host=host, port=port, reload=reload)
-    finally:
-        with contextlib.suppress(FileNotFoundError):
-            _PID_PATH.unlink()
+    with _reserve_listener(host=host, port=port) as listener:
+        _write_state(host=host, port=port, pid=os.getpid(), started_at=time())
+        try:
+            target: str | FastAPI
+            target = "onboard.server:create_app" if reload else create_app()
+            uvicorn.run(target, factory=reload, fd=listener.fileno(), reload=reload)
+        finally:
+            with contextlib.suppress(FileNotFoundError):
+                _PID_PATH.unlink()
 
 
 def start_background(
@@ -234,6 +240,55 @@ def _pid_is_running(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+@contextlib.contextmanager
+def _reserve_listener(*, host: str, port: int) -> Iterator[socket.socket]:
+    listener: socket.socket | None = None
+    last_error: OSError | None = None
+    try:
+        for family, socktype, proto, _, sockaddr in socket.getaddrinfo(
+            host,
+            port,
+            type=socket.SOCK_STREAM,
+            flags=socket.AI_PASSIVE,
+        ):
+            candidate: socket.socket | None = None
+            try:
+                candidate = socket.socket(family, socktype, proto)
+                candidate.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if family == socket.AF_INET6 and hasattr(socket, "IPV6_V6ONLY"):
+                    candidate.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                candidate.bind(sockaddr)
+                candidate.listen(socket.SOMAXCONN)
+                candidate.set_inheritable(True)
+                listener = candidate
+                break
+            except OSError as exc:
+                last_error = exc
+                if candidate is not None:
+                    with contextlib.suppress(OSError):
+                        candidate.close()
+        if listener is None:
+            raise _bind_error(host=host, port=port, error=last_error)
+        yield listener
+    except socket.gaierror as exc:
+        raise OnboardServerError(f"onboard cannot resolve {host!r}: {exc}") from exc
+    finally:
+        if listener is not None:
+            listener.close()
+
+
+def _bind_error(*, host: str, port: int, error: OSError | None) -> OnboardServerError:
+    if error is None:
+        return OnboardServerError(f"onboard cannot bind http://{host}:{port}")
+    if error.errno == errno.EADDRINUSE:
+        return OnboardServerError(
+            "onboard cannot bind "
+            f"http://{host}:{port}: address already in use; stop the existing service "
+            "or choose another port"
+        )
+    return OnboardServerError(f"onboard cannot bind http://{host}:{port}: {error.strerror or error}")
 
 
 app = create_app()

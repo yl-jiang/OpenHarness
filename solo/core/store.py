@@ -221,14 +221,36 @@ class SoloStore:
     def _maybe_migrate_jsonl(self) -> None:
         """Import existing JSONL data into SQLite on first run."""
         cur = self._db.execute("SELECT value FROM _meta WHERE key='migrated_jsonl'")
+        if cur.fetchone() is not None:
+            return
         migrated_any = False
-        if cur.fetchone() is None:
-            migrated_any = self._migrate_jsonl_dir(self.root)
-            self._db.execute(
-                "INSERT INTO _meta (key, value) VALUES ('migrated_jsonl', ?)",
-                (_now(),),
-            )
-            self._db.commit()
+        migrated_any |= self._migrate_entries_jsonl()
+        migrated_any |= self._migrate_records_jsonl()
+        migrated_any |= self._migrate_simple_jsonl(
+            "pending_confirmations", "pending_confirmations.jsonl",
+            PendingConfirmation.from_json, self._pending_confirmation_to_row,
+        )
+        migrated_any |= self._migrate_simple_jsonl(
+            "profile_updates", "profile_updates.jsonl",
+            ProfileUpdate.from_json, self._profile_update_to_row,
+        )
+        migrated_any |= self._migrate_simple_jsonl(
+            "reports", "reports.jsonl",
+            SoloReport.from_json, self._report_to_row,
+        )
+        migrated_any |= self._migrate_simple_jsonl(
+            "todos", "todos.jsonl",
+            SoloTodo.from_json, self._todo_to_row,
+        )
+        migrated_any |= self._migrate_simple_jsonl(
+            "experiments", "experiments.jsonl",
+            SoloExperiment.from_json, self._experiment_to_row,
+        )
+        self._db.execute(
+            "INSERT INTO _meta (key, value) VALUES ('migrated_jsonl', ?)",
+            (_now(),),
+        )
+        self._db.commit()
         if migrated_any:
             for name in (
                 "entries.jsonl", "records.jsonl", "pending_confirmations.jsonl",
@@ -238,55 +260,8 @@ class SoloStore:
                 if path.exists() and path.stat().st_size > 0:
                     path.rename(path.with_suffix(".jsonl.bak"))
 
-        cur = self._db.execute("SELECT value FROM _meta WHERE key='migrated_legacy_self_log_jsonl'")
-        if cur.fetchone() is not None:
-            return
-        for data_dir in self._legacy_self_log_data_dirs():
-            self._migrate_jsonl_dir(data_dir)
-        self._db.execute(
-            "INSERT INTO _meta (key, value) VALUES ('migrated_legacy_self_log_jsonl', ?)",
-            (_now(),),
-        )
-        self._db.commit()
-
-    def _migrate_jsonl_dir(self, data_dir: Path) -> bool:
-        migrated_any = False
-        migrated_any |= self._migrate_entries_jsonl(data_dir)
-        migrated_any |= self._migrate_records_jsonl(data_dir)
-        migrated_any |= self._migrate_simple_jsonl(
-            data_dir, "pending_confirmations", "pending_confirmations.jsonl",
-            PendingConfirmation.from_json, self._pending_confirmation_to_row,
-        )
-        migrated_any |= self._migrate_simple_jsonl(
-            data_dir, "profile_updates", "profile_updates.jsonl",
-            ProfileUpdate.from_json, self._profile_update_to_row,
-        )
-        migrated_any |= self._migrate_simple_jsonl(
-            data_dir, "reports", "reports.jsonl",
-            SoloReport.from_json, self._report_to_row,
-        )
-        migrated_any |= self._migrate_simple_jsonl(
-            data_dir, "todos", "todos.jsonl",
-            SoloTodo.from_json, self._todo_to_row,
-        )
-        migrated_any |= self._migrate_simple_jsonl(
-            data_dir, "experiments", "experiments.jsonl",
-            SoloExperiment.from_json, self._experiment_to_row,
-        )
-        return migrated_any
-
-    def _legacy_self_log_data_dirs(self) -> list[Path]:
-        default_workspace = (Path.home() / ".solo").resolve()
-        if self.workspace != default_workspace:
-            return []
-        candidates = [
-            Path.home() / ".self-log" / "data",
-            Path.home() / ".ohmo" / "self-log",
-        ]
-        return [path for path in candidates if path.exists()]
-
-    def _migrate_entries_jsonl(self, data_dir: Path) -> bool:
-        path = data_dir / "entries.jsonl"
+    def _migrate_entries_jsonl(self) -> bool:
+        path = self.root / "entries.jsonl"
         if not path.exists() or path.stat().st_size == 0:
             return False
         lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -307,8 +282,8 @@ class SoloStore:
         self._db.commit()
         return True
 
-    def _migrate_records_jsonl(self, data_dir: Path) -> bool:
-        path = data_dir / "records.jsonl"
+    def _migrate_records_jsonl(self) -> bool:
+        path = self.root / "records.jsonl"
         if not path.exists() or path.stat().st_size == 0:
             return False
         lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -335,8 +310,8 @@ class SoloStore:
         self._db.commit()
         return True
 
-    def _migrate_simple_jsonl(self, data_dir: Path, table: str, filename: str, from_json, to_row) -> bool:
-        path = data_dir / filename
+    def _migrate_simple_jsonl(self, table: str, filename: str, from_json, to_row) -> bool:
+        path = self.root / filename
         if not path.exists() or path.stat().st_size == 0:
             return False
         lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]

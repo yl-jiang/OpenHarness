@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import typer
 
-from onboard.server import run_server, server_status, start_background, stop_background
+from onboard.server import (
+    OnboardServerError,
+    run_server,
+    server_status,
+    start_background,
+    stop_background,
+)
 
 
 app = typer.Typer(
@@ -21,7 +27,11 @@ def run_cmd(
     reload: bool = typer.Option(False, "--reload", help="Enable uvicorn reload"),
 ) -> None:
     """Start onboard in the foreground."""
-    run_server(host=host, port=port, reload=reload)
+    try:
+        run_server(host=host, port=port, reload=reload)
+    except OnboardServerError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
 
 
 @app.command("start")
