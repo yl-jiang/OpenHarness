@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import json
 import logging
 from pathlib import Path
 
@@ -38,6 +39,58 @@ def test_standalone_solo_workspace_and_config_are_independent(tmp_path: Path):
     assert workspace_health(workspace)["skills_dir"] is True
     assert get_skills_dir(workspace) == workspace.resolve() / "skills"
     assert store.root == workspace.resolve() / "data"
+
+
+def test_default_solo_workspace_imports_legacy_self_log_jsonl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SOLO_WORKSPACE", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    legacy_data = tmp_path / ".self-log" / "data"
+    legacy_data.mkdir(parents=True)
+    legacy_entry = {
+        "id": "legacy-entry",
+        "content": "legacy raw entry",
+        "created_at": "2026-05-01T08:00:00+00:00",
+        "channel": "local",
+        "sender_id": "",
+        "chat_id": "",
+        "message_id": None,
+        "metadata": {},
+    }
+    legacy_record = {
+        "id": "legacy-record",
+        "entry_id": "legacy-entry",
+        "date": "2026-05-01",
+        "raw_content": "legacy raw entry",
+        "corrected_content": "legacy raw entry",
+        "summary": "legacy summary",
+        "tags": "legacy",
+        "emotion": "neutral",
+        "created_at": "2026-05-01T08:00:00+00:00",
+    }
+    (legacy_data / "entries.jsonl").write_text(
+        json.dumps(legacy_entry) + "\n",
+        encoding="utf-8",
+    )
+    (legacy_data / "records.jsonl").write_text(
+        json.dumps(legacy_record) + "\n",
+        encoding="utf-8",
+    )
+
+    store = SoloStore()
+    store.initialize()
+
+    assert store.workspace == (tmp_path / ".solo").resolve()
+    assert [entry.id for entry in store.list_entries()] == ["legacy-entry"]
+    assert [record.id for record in store.list_records()] == ["legacy-record"]
+    assert (legacy_data / "entries.jsonl").exists()
+    assert (legacy_data / "records.jsonl").exists()
+
+    reopened = SoloStore()
+    assert len(reopened.list_entries()) == 1
+    assert len(reopened.list_records()) == 1
 
 
 def test_standalone_solo_config_projects_channels(tmp_path: Path):

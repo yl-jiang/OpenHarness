@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Added
 
+- `onboard` unified WebUI dashboard for `solo` and `wolo`, with FastAPI APIs, React/Vite frontend, charted stats, local chat, gateway controls, and `solo onboard` / `wolo onboard` CLI integration.
 - `solo` is now a standalone app/package with its own `~/.solo` workspace, config, CLI, gateway bridge/service, OpenHarness-backed domain agent, model-structured bulk import, zero-guess pending confirmations, reports, reminders, and solo-only tools.
 - `wolo` is now a standalone work-log app/package with its own `~/.wolo` workspace, CLI, gateway bridge/service, OpenHarness-backed domain agent, work-focused prompts, reports, reminders, and wolo-only tools.
 - `solo` and `wolo` now support the OpenHarness skills mechanism through workspace-local `~/.solo/skills` and `~/.wolo/skills` directories, expose `skill_manager` inside each app, and keep skill writes scoped to the active standalone workspace instead of the global OpenHarness user skill directory.
@@ -48,6 +49,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- Default `solo` workspaces now import legacy `~/.self-log/data` and `~/.ohmo/self-log` JSONL history into `~/.solo/data/store.db`, so onboard and solo APIs show existing personal journal records after migration.
 - `solo` and `wolo` standalone apps now expose `solo_remind` / `wolo_remind` for one-shot future reminders, persist those requests as app-local scheduled jobs, and execute them through the app cron daemons so chat requests like "2分钟后提醒我喝水" can proactively DM the user later instead of falling back to a plain-text refusal.
 - `solo` and `wolo` standalone agent runtimes now register the built-in `bash` tool, so workspace-local OpenCLI/search skills can execute shell commands instead of failing with `unknown tool: bash`.
 - React TUI now manually wraps long tool command lines with continuation tree prefixes, keeping grouped tool connector lines visually continuous.
