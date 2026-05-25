@@ -1119,11 +1119,13 @@ def _tool_record() -> ToolDefinition:
     return _definition(
         "wolo_record",
         (
-            "Record a work log entry when the intent and core content are clear enough to understand. "
+            "Record a SINGLE-DATE work log entry when the intent and core content are clear enough to understand. "
             "Use for project progress, meetings, code changes, prompt/tool experiments, blockers, "
-            "decisions, reviews, incidents, and next actions. Do NOT call this when the user's intent "
-            "is ambiguous or the work record is unintelligible — call wolo_clarify instead. Fill in "
-            "structured fields (summary, tags, status/emotion, etc.) based on the content."
+            "decisions, reviews, incidents, and next actions. "
+            "IMPORTANT: This tool only accepts ONE date. If the user's message spans multiple dates "
+            "(e.g. '昨天做了X，今天做了Y'), use wolo_import_records to split into separate records per date. "
+            "Do NOT call this when the user's intent is ambiguous — call wolo_clarify instead. "
+            "Fill in structured fields (summary, tags, status/emotion, etc.) based on the content."
         ),
         [
             ("content", "string", "Original work-log content as the user wrote it.", True),
@@ -1148,7 +1150,13 @@ def _tool_record() -> ToolDefinition:
 def _tool_import_records() -> ToolDefinition:
     return ToolDefinition(
         name="wolo_import_records",
-        description="Import multiple structured work records parsed by the model from messy notes, meeting logs, report drafts, or prompt/tool experiment notes.",
+        description=(
+            "Import multiple structured work records, each with its own date. "
+            "Use when: (1) a single message contains events spanning MULTIPLE dates "
+            "(e.g. '昨天加班到12点，今天上午开了站会') — split by date, assign correct date to each; "
+            "(2) batch import from messy notes, meeting logs, or report drafts. "
+            "Each record's content should be written from that date's perspective (avoid '昨天' inside the content)."
+        ),
         input_schema=ToolParameterSchema(
             type="object",
             properties={
