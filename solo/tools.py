@@ -1026,7 +1026,9 @@ def _tool_record() -> ToolDefinition:
     return _definition(
         "solo_record",
         (
-            "Record a solo entry when the intent and core content are clear enough to understand. "
+            "Record a SINGLE-DATE solo entry when the intent and core content are clear enough to understand. "
+            "IMPORTANT: This tool only accepts ONE date. If the user's message spans multiple dates "
+            "(e.g. '昨天11点睡的，今天7点醒来'), use solo_import_records to split into separate records per date. "
             "Do NOT call this when the user's intent is ambiguous or the record is unintelligible — "
             "call solo_clarify instead. Fill in structured fields (summary, tags, emotion, etc.) "
             "based on your understanding of the content."
@@ -1051,7 +1053,13 @@ def _tool_record() -> ToolDefinition:
 def _tool_import_records() -> ToolDefinition:
     return ToolDefinition(
         name="solo_import_records",
-        description="Import multiple structured records parsed by the model from messy human input.",
+        description=(
+            "Import multiple structured records, each with its own date. "
+            "Use when: (1) a single message contains events spanning MULTIPLE dates "
+            "(e.g. '昨天11点睡的，今天7点醒来') — split by date, assign correct date to each; "
+            "(2) batch import from messy diary entries or chat logs. "
+            "Each record's content should be written from that date's perspective (avoid '昨天' inside the content)."
+        ),
         input_schema=ToolParameterSchema(
             type="object",
             properties={
