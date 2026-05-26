@@ -12,7 +12,7 @@ from openharness.config import load_settings
 from openharness.config.settings import PermissionSettings
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, sanitize_conversation_messages
 from openharness.engine.query_engine import QueryEngine
-from openharness.engine.stream_events import AssistantTurnComplete, ToolExecutionCompleted, ToolExecutionStarted
+from openharness.engine.stream_events import AssistantTextDelta, AssistantTurnComplete, ReasoningDelta, ToolExecutionCompleted, ToolExecutionStarted
 from openharness.engine.types import ToolMetadataKey
 from openharness.permissions.checker import PermissionChecker
 from openharness.permissions.modes import PermissionMode
@@ -310,7 +310,11 @@ class SoloQueryRunner:
         tool_outputs: list[str] = []
         try:
             async for event in engine.submit_message(user_message):
-                if isinstance(event, ToolExecutionStarted):
+                if isinstance(event, ReasoningDelta):
+                    yield ("reasoning", event.text)
+                elif isinstance(event, AssistantTextDelta):
+                    yield ("delta", event.text)
+                elif isinstance(event, ToolExecutionStarted):
                     yield ("tool_hint", f"🛠️ 正在调用 {event.tool_name}")
                 elif isinstance(event, AssistantTurnComplete):
                     candidate = event.message.text.strip()

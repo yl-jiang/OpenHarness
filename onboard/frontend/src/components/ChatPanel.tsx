@@ -6,7 +6,7 @@ import { MarkdownView } from './MarkdownView';
 
 interface ChatMessage {
   id: string;
-  role: 'user' | 'assistant' | 'tool';
+  role: 'user' | 'assistant' | 'tool' | 'reasoning';
   content: string;
   label: string;
   status: 'sent' | 'streaming' | 'running' | 'complete' | 'error';
@@ -34,7 +34,22 @@ export function ChatPanel({ appName }: { appName: AppName }) {
   }
 
   const socket = useWebSocket(appName, (message) => {
-    if (message.type === 'delta') {
+    if (message.type === 'reasoning') {
+      setStreaming(true);
+      setMessages((items) => {
+        const last = items.at(-1);
+        if (last?.role === 'reasoning' && last.status === 'streaming') {
+          return [
+            ...items.slice(0, -1),
+            { ...last, content: `${last.content}${message.content}` },
+          ];
+        }
+        return [
+          ...items,
+          createMessage({ role: 'reasoning', label: 'thinking', status: 'streaming', content: message.content }),
+        ];
+      });
+    } else if (message.type === 'delta') {
       setStreaming(true);
       setMessages((items) => {
         const last = items.at(-1);
@@ -44,16 +59,25 @@ export function ChatPanel({ appName }: { appName: AppName }) {
             { ...last, content: `${last.content}${message.content}` },
           ];
         }
+        // Mark any streaming reasoning as complete before starting assistant text
+        const updated = items.map((item) =>
+          item.role === 'reasoning' && item.status === 'streaming' ? { ...item, status: 'complete' as const } : item
+        );
         return [
-          ...items,
+          ...updated,
           createMessage({ role: 'assistant', label: 'assistant', status: 'streaming', content: message.content }),
         ];
       });
     } else if (message.type === 'tool_start') {
-      setMessages((items) => [
-        ...items,
-        createMessage({ role: 'tool', label: 'tool', status: 'running', content: message.tool }),
-      ]);
+      setMessages((items) => {
+        const updated = items.map((item) =>
+          item.role === 'reasoning' && item.status === 'streaming' ? { ...item, status: 'complete' as const } : item
+        );
+        return [
+          ...updated,
+          createMessage({ role: 'tool', label: 'tool', status: 'running', content: message.tool }),
+        ];
+      });
     } else if (message.type === 'tool_complete') {
       setMessages((items) => [
         ...items,
@@ -61,13 +85,17 @@ export function ChatPanel({ appName }: { appName: AppName }) {
       ]);
     } else if (message.type === 'complete') {
       setStreaming(false);
-      if (!message.content.trim()) return;
       setMessages((items) => {
-        const last = items.at(-1);
+        // Mark any remaining streaming reasoning as complete
+        let updated = items.map((item) =>
+          item.role === 'reasoning' && item.status === 'streaming' ? { ...item, status: 'complete' as const } : item
+        );
+        if (!message.content.trim()) return updated;
+        const last = updated.at(-1);
         if (last?.role === 'assistant' && last.status === 'streaming') {
-          return [...items.slice(0, -1), { ...last, content: message.content, status: 'complete' as const }];
+          return [...updated.slice(0, -1), { ...last, content: message.content, status: 'complete' as const }];
         }
-        return [...items, createMessage({ role: 'assistant', label: 'assistant', status: 'complete', content: message.content })];
+        return [...updated, createMessage({ role: 'assistant', label: 'assistant', status: 'complete', content: message.content })];
       });
     } else if (message.type === 'error') {
       setStreaming(false);
@@ -134,6 +162,22 @@ export function ChatPanel({ appName }: { appName: AppName }) {
         ) : null}
 
         {messages.map((msg) => (
+          msg.role === 'reasoning' ? (
+            <details
+              key={msg.id}
+              className="max-w-[720px] rounded-md border border-border/50 bg-surface-2/30 animate-[fade-in_0.2s_ease-out_both] group"
+              open={msg.status === 'streaming'}
+            >
+              <summary className="flex items-center gap-2 px-4 py-2 cursor-pointer text-[11px] font-mono text-text-muted select-none hover:text-text-secondary transition-colors">
+                <span className={`w-1.5 h-1.5 rounded-full ${msg.status === 'streaming' ? 'bg-purple-400 animate-[pulse-dot_1s_ease-in-out_infinite]' : 'bg-purple-400/50'}`} />
+                <span>thinking</span>
+                {msg.status === 'streaming' && <span className="text-[10px] opacity-60">streaming…</span>}
+              </summary>
+              <div className="px-4 pb-3 text-[12px] leading-relaxed text-text-muted/80 whitespace-pre-wrap font-mono max-h-[200px] overflow-y-auto">
+                {msg.content}
+              </div>
+            </details>
+          ) : (
           <article
             key={msg.id}
             className={`max-w-[720px] rounded-md px-4 py-3 animate-[fade-in_0.2s_ease-out_both] ${
@@ -157,6 +201,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
               {msg.role === 'assistant' ? <MarkdownView content={msg.content} /> : msg.content}
             </div>
           </article>
+          )
         ))}
 
         {streaming ? (

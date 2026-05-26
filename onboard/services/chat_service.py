@@ -33,6 +33,8 @@ async def stream_chat(
     async for kind, text in runner.stream_run(content, session_key=session_key):
         if kind == "tool_hint":
             yield {"type": "tool_start", "tool": text, "args": {}}
+        elif kind == "reasoning":
+            yield {"type": "reasoning", "content": text}
         elif kind == "final":
             yield {"type": "complete", "content": text}
         else:

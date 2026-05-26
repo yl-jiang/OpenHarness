@@ -20,9 +20,11 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 		const summaryToolName = item.tool_name ?? toolName;
 		const isShellLikeTool = isShellToolName(summaryToolName) || isShellToolName(toolName);
 		const summary = summarizeInput(summaryToolName, item.tool_input, item.text).replace(/\s+/g, ' ').trim();
+		const isAskUserTool = summaryToolName.toLowerCase() === 'ask_user_question';
 
 		let statusNode: React.ReactNode = null;
 		let errorLines: string[] | null = null;
+		let userAnswer: string | null = null;
 
 		if (resultItem) {
 			if (resultItem.is_error) {
@@ -34,6 +36,8 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 				errorLines = lines.length > maxErrLines
 					? [...lines.slice(0, maxErrLines), `... (${lines.length - maxErrLines} more lines)`]
 					: lines;
+			} else if (isAskUserTool && resultItem.text.trim()) {
+				userAnswer = resultItem.text.trim();
 			}
 		} else if (!isCodexStyle) {
 			// Tool is still in progress — no result yet
@@ -71,6 +75,12 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 							</Text>
 						);
 					})}
+					{userAnswer !== null ? (
+						<Text>
+							<Text dimColor>{'> '}</Text>
+							<Text>{userAnswer}</Text>
+						</Text>
+					) : null}
 				</Box>
 			);
 		}
@@ -120,9 +130,12 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 						<Text color={theme.colors.error}>{line}</Text>
 					</Box>
 				))}
+				{userAnswer !== null ? (
+					<AskUserAnswerRow answer={userAnswer} indent={stringWidth(continuationConnector)} theme={theme} availableWidth={contentWidth} />
+				) : null}
 			</Box>
-		);
-	}
+	);
+}
 
 	if (item.role === 'tool_result') {
 		const lines = item.text.length > 0
@@ -199,6 +212,39 @@ function ShellToolPanel({
 					))}
 				</>
 			) : null}
+		</Box>
+	);
+}
+
+function AskUserAnswerRow({
+	answer,
+	indent,
+	theme,
+	availableWidth,
+}: {
+	answer: string;
+	indent: number;
+	theme: ReturnType<typeof useTheme>['theme'];
+	availableWidth: number;
+}): React.JSX.Element {
+	const prefix = 'you · ';
+	const textWidth = Math.max(1, availableWidth - indent - stringWidth(prefix));
+	const lines = answer.split('\n');
+	const firstLine = lines[0] ?? '';
+	const restLines = lines.slice(1);
+	return (
+		<Box marginLeft={indent} flexDirection="column">
+			<Text>
+				<Text color={theme.colors.secondary} bold>you</Text>
+				<Text dimColor> · </Text>
+				<Text>{firstLine.slice(0, textWidth)}</Text>
+			</Text>
+			{restLines.map((line, i) => (
+				<Text key={i}>
+					<Text>{' '.repeat(stringWidth(prefix))}</Text>
+					<Text>{line.slice(0, textWidth) || ' '}</Text>
+				</Text>
+			))}
 		</Box>
 	);
 }
@@ -282,6 +328,10 @@ function summarizeInput(toolName: string, toolInput?: Record<string, unknown>, f
 		if (tool) {
 			return String(tool);
 		}
+	}
+	// ask_user_question — show just the question text
+	if (lower === 'ask_user_question' && toolInput.question) {
+		return String(toolInput.question).slice(0, 120);
 	}
 	// file read — actual tool uses `path`; also accept legacy `file_path`
 	if ((lower === 'read_file' || lower === 'read' || lower === 'fileread') && (toolInput.path || toolInput.file_path)) {

@@ -153,6 +153,7 @@ export type WsClientMessage = { type: 'message'; content: string } | { type: 'ca
 
 export type WsServerMessage =
   | { type: 'delta'; content: string }
+  | { type: 'reasoning'; content: string }
   | { type: 'tool_start'; tool: string; args: JsonObject }
   | { type: 'tool_complete'; tool: string; result: string }
   | { type: 'complete'; content: string }
