@@ -1,16 +1,20 @@
+import asyncio
+import contextlib
 from pathlib import Path
 
 import pytest
 
 from openharness.api.usage import UsageSnapshot
+from openharness.channels.bus.events import InboundMessage
+from openharness.channels.bus.queue import MessageBus
 from openharness.engine.messages import ConversationMessage, TextBlock
 from openharness.engine.stream_events import AssistantTurnComplete
 from openharness.tools.base import ToolExecutionContext
-from openharness.channels.bus.queue import MessageBus
 from openharness.tools.skill_manager_tool import SkillManagerToolInput
 
 from wolo.config import load_config, save_config
 from wolo.core.models import WoloConfig, WoloHighlight, WoloTodo
+from wolo.gateway.bridge import WoloGatewayBridge
 from wolo.runner import WoloQueryRunner
 from wolo.core.session import save_conversation
 from wolo.core.store import WoloStore
@@ -97,6 +101,58 @@ def test_wolo_load_config_does_not_rewrite_complete_config(tmp_path: Path):
     load_config(workspace)
 
     assert config_path.read_text(encoding="utf-8") == content_before
+
+
+@pytest.mark.asyncio
+async def test_wolo_gateway_does_not_publish_streaming_deltas(tmp_path: Path, monkeypatch):
+    workspace = tmp_path / ".wolo"
+    bus = MessageBus()
+
+    class FakeToolAgent:
+        def __init__(self, store, *, profile=None, **kw):
+            pass
+
+        async def stream_run(self, text, session_key="", **kwargs):
+            yield ("progress", "🤔 正在思考...")
+            yield ("tool_hint", "🛠️ 正在调用 wolo_record")
+            yield ("reasoning", "内部推理")
+            yield ("delta", "response")
+            yield ("delta", "已")
+            yield ("delta", "记录")
+            yield ("final", "已记录 ✅")
+
+    class FakeModelAgent:
+        def __init__(self, profile=None):
+            pass
+
+    monkeypatch.setattr("wolo.gateway.bridge.WoloQueryRunner", FakeToolAgent)
+    monkeypatch.setattr("wolo.gateway.bridge.OpenHarnessWoloAgent", FakeModelAgent)
+    bridge = WoloGatewayBridge(bus=bus, workspace=workspace, provider_profile="codex")
+    task = asyncio.create_task(bridge.run())
+    messages = []
+    try:
+        await bus.publish_inbound(
+            InboundMessage(
+                channel="feishu",
+                sender_id="ou_user",
+                chat_id="ou_user",
+                content="今晚处理了故障",
+                metadata={"chat_type": "p2p"},
+            )
+        )
+        while not messages or messages[-1].content != "已记录 ✅":
+            messages.append(await asyncio.wait_for(bus.consume_outbound(), timeout=1.0))
+    finally:
+        bridge.stop()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert [msg.content for msg in messages] == [
+        "🤔 正在思考...",
+        "🛠️ 正在调用 wolo_record",
+        "已记录 ✅",
+    ]
 
 
 def test_wolo_command_prefix_help_and_work_actions():

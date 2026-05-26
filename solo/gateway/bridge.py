@@ -296,6 +296,8 @@ class SoloGatewayBridge:
         ):
             if kind == "final":
                 return text
+            if kind not in {"progress", "tool_hint"}:
+                continue
             if text:
                 await self._bus.publish_outbound(
                     OutboundMessage(

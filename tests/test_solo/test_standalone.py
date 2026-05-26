@@ -172,6 +172,61 @@ async def test_standalone_solo_gateway_routes_bare_text_to_solo_tools(
     assert SoloStore(workspace).resolve_attachment_path(entry.attachments[0]).read_bytes() == image_path.read_bytes()
 
 
+@pytest.mark.asyncio
+async def test_standalone_solo_gateway_does_not_publish_streaming_deltas(
+    tmp_path: Path,
+    monkeypatch,
+):
+    workspace = tmp_path / ".solo"
+    bus = MessageBus()
+
+    class FakeToolAgent:
+        def __init__(self, store, *, profile=None, **kw):
+            pass
+
+        async def stream_run(self, text, session_key="", **kwargs):
+            yield ("progress", "🤔 正在思考...")
+            yield ("tool_hint", "🛠️ 正在调用 solo_record")
+            yield ("reasoning", "内部推理")
+            yield ("delta", "response")
+            yield ("delta", "已")
+            yield ("delta", "记录")
+            yield ("final", "已记录 ✅")
+
+    class FakeModelAgent:
+        def __init__(self, profile=None):
+            pass
+
+    monkeypatch.setattr("solo.gateway.bridge.SoloQueryRunner", FakeToolAgent)
+    monkeypatch.setattr("solo.gateway.bridge.OpenHarnessSoloAgent", FakeModelAgent)
+    bridge = SoloGatewayBridge(bus=bus, workspace=workspace, provider_profile="codex")
+    task = asyncio.create_task(bridge.run())
+    messages = []
+    try:
+        await bus.publish_inbound(
+            InboundMessage(
+                channel="feishu",
+                sender_id="ou_user",
+                chat_id="ou_user",
+                content="今晚加班了",
+                metadata={"chat_type": "p2p"},
+            )
+        )
+        while not messages or messages[-1].content != "已记录 ✅":
+            messages.append(await asyncio.wait_for(bus.consume_outbound(), timeout=1.0))
+    finally:
+        bridge.stop()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert [msg.content for msg in messages] == [
+        "🤔 正在思考...",
+        "🛠️ 正在调用 solo_record",
+        "已记录 ✅",
+    ]
+
+
 def test_standalone_solo_gateway_service_uses_standalone_config(tmp_path: Path):
     workspace = tmp_path / ".solo"
     save_config(
