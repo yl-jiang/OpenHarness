@@ -645,6 +645,7 @@ class Settings(BaseModel):
     api_format: str = "openai"  # "anthropic", "openai", or "copilot"
     provider: str = ""
     active_profile: str = "deepseek"
+    utility_profile: str | None = None
     profiles: dict[str, ProviderProfile] = Field(default_factory=default_provider_profiles)
     max_turns: int = 200
     max_children: int | float = Field(default=_DEFAULT_MAX_CHILDREN)
@@ -710,6 +711,31 @@ class Settings(BaseModel):
             profiles[fallback_name] = fallback
             profile_name = fallback_name
         return profile_name, profiles[profile_name].model_copy(deep=True)
+
+    def resolve_utility_profile(self) -> tuple[str, ProviderProfile] | None:
+        """Return the utility profile for background tasks, or None to use main.
+
+        Resolution order:
+        1. ``OPENHARNESS_UTILITY_PROFILE`` env var
+        2. ``utility_profile`` field in settings
+        3. None (caller should fall back to active profile)
+
+        If the resolved name equals the active profile or is not found in
+        the profile catalog, returns None so callers reuse the main client.
+        """
+        name = (
+            os.environ.get("OPENHARNESS_UTILITY_PROFILE", "").strip()
+            or (self.utility_profile or "").strip()
+        )
+        if not name:
+            return None
+        active_name, _ = self.resolve_profile()
+        if name == active_name:
+            return None
+        profiles = self.merged_profiles()
+        if name not in profiles:
+            return None
+        return name, profiles[name].model_copy(deep=True)
 
     def materialize_active_profile(self) -> Settings:
         """Project the active profile back onto legacy flat settings fields."""
@@ -1056,6 +1082,10 @@ def _apply_env_overrides(settings: Settings) -> Settings:
 
     if provider:
         updates["provider"] = provider
+
+    utility_profile_env = os.environ.get("OPENHARNESS_UTILITY_PROFILE")
+    if utility_profile_env:
+        updates["utility_profile"] = utility_profile_env.strip()
 
     sandbox_enabled = os.environ.get("OPENHARNESS_SANDBOX_ENABLED")
     sandbox_fail = os.environ.get("OPENHARNESS_SANDBOX_FAIL_IF_UNAVAILABLE")

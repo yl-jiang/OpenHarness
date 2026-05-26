@@ -297,6 +297,42 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
     )
 
 
+@dataclass(frozen=True)
+class _UtilityClientResolution:
+    """Resolved utility profile client and model for background tasks."""
+
+    api_client: SupportsStreamingMessages
+    model: str
+
+
+def _resolve_utility_client(settings) -> _UtilityClientResolution | None:
+    """Build a separate API client for the utility profile, or None to reuse main.
+
+    Reuses ``_resolve_api_client_from_settings`` by materializing the utility
+    profile as the active profile on a temporary Settings copy. Returns None
+    (caller falls back to main client) when the utility profile is not
+    configured, same as active, not found, or auth resolution fails.
+    """
+    from openharness.config.settings import _apply_env_overrides
+
+    result = settings.resolve_utility_profile()
+    if result is None:
+        return None
+    profile_name, _ = result
+
+    try:
+        # Materialize settings as if the utility profile were the active one
+        utility_settings = settings.model_copy(
+            update={"active_profile": profile_name}
+        ).materialize_active_profile()
+        utility_settings = _apply_env_overrides(utility_settings)
+        client = _resolve_api_client_from_settings(utility_settings)
+        return _UtilityClientResolution(api_client=client, model=utility_settings.model)
+    except (SystemExit, Exception) as exc:
+        logger.warning("Failed to resolve utility profile %r: %s; using main client.", profile_name, exc)
+        return None
+
+
 def _print_auth_resolution_error(settings, exc: Exception) -> None:
     """Render auth failures without collapsing subscription errors into API-key advice."""
     try:
@@ -383,6 +419,8 @@ async def build_runtime(
         resolved_api_client = api_client
     else:
         resolved_api_client = _resolve_api_client_from_settings(settings)
+    # Resolve utility profile client for background tasks (memory, compact, etc.)
+    utility_resolution = _resolve_utility_client(settings)
     mcp_manager = McpClientManager(load_mcp_server_configs(settings, plugins))
     await mcp_manager.connect_all()
     tool_registry = create_default_tool_registry(mcp_manager)
@@ -439,8 +477,8 @@ async def build_runtime(
         hook_reloader.current_registry() if api_client is None else load_hook_registry(settings, plugins),
         HookExecutionContext(
             cwd=Path(cwd).resolve(),
-            api_client=resolved_api_client,
-            default_model=settings.model,
+            api_client=utility_resolution.api_client if utility_resolution else resolved_api_client,
+            default_model=utility_resolution.model if utility_resolution else settings.model,
         ),
     )
     engine_max_turns = settings.max_turns if (enforce_max_turns or max_turns is not None) else None
@@ -520,14 +558,16 @@ async def build_runtime(
             current = app_state.get().reviews_completed
             app_state.set(reviews_completed=current + 1)
 
+        _evo_client = utility_resolution.api_client if utility_resolution else resolved_api_client
+        _evo_model = utility_resolution.model if utility_resolution else settings.model
         restored_metadata[ToolMetadataKey.SELF_EVOLUTION_CONTROLLER.value] = SelfEvolutionController(
             evolution_config,
             BackgroundSelfEvolutionRunner(
-                api_client=resolved_api_client,
+                api_client=_evo_client,
                 tool_registry=tool_registry,
                 permission_checker=permission_checker,
                 cwd=cwd,
-                model=settings.model,
+                model=_evo_model,
                 system_prompt=system_prompt_text,
                 max_tokens=settings.max_tokens,
                 config=evolution_config,
@@ -570,6 +610,7 @@ async def build_runtime(
             "todo_store": todo_store,
             ToolMetadataKey.VISION_MODEL_CONFIG.value: _resolve_vision_config(settings),
             ToolMetadataKey.IMAGE_GENERATION_CONFIG.value: _resolve_image_generation_config(settings),
+            ToolMetadataKey.UTILITY_CLIENT_RESOLUTION.value: utility_resolution,
             **restored_metadata,
         },
     )

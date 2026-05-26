@@ -561,10 +561,12 @@ class QueryEngine:
             return
         context = self._tool_metadata.get("autodream_context")
         kwargs = dict(context) if isinstance(context, dict) else {}
+        resolution = self._tool_metadata.get(ToolMetadataKey.UTILITY_CLIENT_RESOLUTION.value)
+        utility_model = resolution.model if resolution else None
         schedule_auto_dream(
             cwd=self._cwd,
             settings=self._settings,
-            model=self._model,
+            model=utility_model or self._model,
             current_session_id=str(self._tool_metadata.get("session_id") or ""),
             **kwargs,
         )
@@ -609,11 +611,12 @@ class QueryEngine:
             return
         from openharness.services.memory_extract import extract_memories_from_turn
 
+        resolution = self._tool_metadata.get(ToolMetadataKey.UTILITY_CLIENT_RESOLUTION.value)
         try:
             result = await extract_memories_from_turn(
                 cwd=self._cwd,
-                api_client=self._api_client,
-                model=self._model,
+                api_client=resolution.api_client if resolution else self._api_client,
+                model=resolution.model if resolution else self._model,
                 messages=list(self._messages),
                 max_records=self._settings.memory.auto_extract_max_records,
             )

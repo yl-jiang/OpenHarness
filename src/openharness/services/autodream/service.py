@@ -153,11 +153,13 @@ async def start_dream_now(
     prompt = build_consolidation_prompt(resolved_memory_dir, resolved_session_dir, extra, preview=preview)
     src_root = Path(__file__).resolve().parents[3]
     existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    # Use utility_profile for subprocess if configured (cheaper background model)
+    effective_profile = (settings.utility_profile or "").strip() or settings.active_profile
     env = {
         _CHILD_ENV: "1",
         "OPENHARNESS_AUTODREAM_MEMORY_DIR": str(resolved_memory_dir),
         "OPENHARNESS_CONFIG_DIR": str(Path.home() / ".openharness"),
-        "OPENHARNESS_PROFILE": settings.active_profile,
+        "OPENHARNESS_PROFILE": effective_profile,
         "PYTHONPATH": str(src_root) + ((os.pathsep + existing_pythonpath) if existing_pythonpath else ""),
     }
     try:
@@ -171,11 +173,19 @@ async def start_dream_now(
         if runner_module == "ohmo":
             workspace = resolved_memory_dir.parent
             argv.extend(["--workspace", str(workspace)])
-            if settings.active_profile:
-                argv.extend(["--profile", settings.active_profile])
+            if effective_profile:
+                argv.extend(["--profile", effective_profile])
         if model:
             argv.extend(["--model", model])
-        if runner_module == "openharness" and settings.provider != "anthropic_claude":
+        # Resolve profile-specific settings for subprocess
+        utility_result = settings.resolve_utility_profile()
+        if utility_result is not None and runner_module == "openharness":
+            _, util_profile = utility_result
+            if util_profile.base_url:
+                argv.extend(["--base-url", util_profile.base_url])
+            if util_profile.api_format:
+                argv.extend(["--api-format", util_profile.api_format])
+        elif runner_module == "openharness" and settings.provider != "anthropic_claude":
             if settings.base_url:
                 argv.extend(["--base-url", settings.base_url])
             if settings.api_format:

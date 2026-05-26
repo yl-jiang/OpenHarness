@@ -141,11 +141,17 @@ async def compact_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, Us
     async def _progress(event: CompactProgressEvent) -> None:
         await progress_queue.put(event)
 
+    # Prefer utility client for compaction (cheaper summarization model)
+    metadata = context.tool_metadata or {}
+    resolution = metadata.get(ToolMetadataKey.UTILITY_CLIENT_RESOLUTION.value)
+    compact_client = resolution.api_client if resolution else context.api_client
+    compact_model = resolution.model if resolution else context.model
+
     task = asyncio.create_task(
         auto_compact_if_needed(
             state.messages,
-            api_client=context.api_client,
-            model=context.model,
+            api_client=compact_client,
+            model=compact_model,
             system_prompt=context.system_prompt,
             state=state.compact_state,
             progress_callback=_progress,
@@ -349,11 +355,17 @@ async def api_call_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, U
             async def _progress(evt: CompactProgressEvent) -> None:
                 await progress_queue.put(evt)
 
+            # Prefer utility client for compaction
+            metadata = context.tool_metadata or {}
+            resolution = metadata.get(ToolMetadataKey.UTILITY_CLIENT_RESOLUTION.value)
+            compact_client = resolution.api_client if resolution else context.api_client
+            compact_model = resolution.model if resolution else context.model
+
             task = asyncio.create_task(
                 auto_compact_if_needed(
                     state.messages,
-                    api_client=context.api_client,
-                    model=context.model,
+                    api_client=compact_client,
+                    model=compact_model,
                     system_prompt=context.system_prompt,
                     state=state.compact_state,
                     progress_callback=_progress,
