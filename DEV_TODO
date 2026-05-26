@@ -67,6 +67,6 @@
     )
 ```
 
-- 用户会话轮数达到指定数量，且距离上次触发memory沉淀工具调用后到达一定次数，触发一次后台Agent调用(使用_MOMORY_REVIEW_PROMPT)，决定是否需要进行memory级别的沉淀，如果需要，则调用memory相关工具重新整理MEMOMORY.md(memory沉淀是基于用户对话轮次决定);
-- skill沉淀触发条件有待商榷，如果满足条件，触发一次后台Agent调用(使用_SKILL_REVIEW_PROMPT)，决定是否需要进行skill级别的沉淀，如果需要，则调用skill相关工具新建一个skill;
-- 同时满足memory和skill沉淀条件时，触发一次后台Agent调用(使用_COMBINED_REVIEW_PROMPT)，同时评估是否需要进行memory级别和skill级别的沉淀，如果需要，则分别调用相关工具进行整理;
+[x] 用户会话轮数达到指定数量，且距离上次触发memory沉淀工具调用后到达一定次数，触发一次后台Agent调用(使用_MOMORY_REVIEW_PROMPT)，决定是否需要进行memory级别的沉淀，如果需要，则调用memory相关工具重新整理MEMOMORY.md(memory沉淀是基于用户对话轮次决定);
+[x] skill沉淀触发条件有待商榷，如果满足条件，触发一次后台Agent调用(使用_SKILL_REVIEW_PROMPT)，决定是否需要进行skill级别的沉淀，如果需要，则调用skill相关工具新建一个skill;
+[x] 同时满足memory和skill沉淀条件时，触发一次后台Agent调用(使用_COMBINED_REVIEW_PROMPT)，同时评估是否需要进行memory级别和skill级别的沉淀，如果需要，则分别调用相关工具进行整理;
