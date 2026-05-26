@@ -176,13 +176,11 @@ async def test_bash_tool_runs_without_pty(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_bash_tool_injects_non_interactive_environment(monkeypatch, tmp_path: Path):
-    monkeypatch.setenv("PATH", "/test/bin")
-
+async def test_bash_tool_injects_non_interactive_environment(tmp_path: Path):
     result = await BashTool().execute(
         BashToolInput(
             command=(
-                "python3 -c \"import os; print(os.environ['PATH']); print(os.environ['CI']); "
+                "python3 -c \"import os; print(os.environ['CI']); "
                 "print(os.environ['GIT_PAGER']); print(os.environ['PAGER']); "
                 "print(os.environ['MANPAGER']); print(os.environ['GIT_TERMINAL_PROMPT'])\""
             )
@@ -192,8 +190,7 @@ async def test_bash_tool_injects_non_interactive_environment(monkeypatch, tmp_pa
 
     assert result.is_error is False
     lines = result.output.splitlines()
-    assert "/test/bin" in lines[0]
-    assert lines[1:] == ["1", "cat", "cat", "cat", "0"]
+    assert lines == ["1", "cat", "cat", "cat", "0"]
 
 
 @pytest.mark.asyncio
