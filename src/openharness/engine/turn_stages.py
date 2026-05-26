@@ -520,6 +520,8 @@ async def response_routing_stage(state: TurnState) -> AsyncIterator[tuple[Stream
         state.action = TurnAction.STOP
         return
 
+    # Model cooperated — reset done-reminder budget for future text-only stops.
+    state.done_reminder_count = 0
     state.tool_calls = final_message.tool_uses
 
 
