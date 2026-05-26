@@ -270,14 +270,16 @@ function MarkdownBlock({
 		case 'code': {
 			const c = token as Tokens.Code;
 			const lines = c.text.split('\n');
+			// marginLeft(2) + border(2) + paddingX(2) = 6 cols consumed by the box chrome
+			const codeContentWidth = Math.max(1, availWidth - 6);
 			return (
 				<Box flexDirection="column" marginTop={1} marginLeft={2} borderStyle="round" paddingX={1} borderColor={theme.colors.muted}>
 					{c.lang ? (
-						<Text dimColor>{c.lang}</Text>
+						<Text dimColor>{truncateWithEllipsis(c.lang, codeContentWidth)}</Text>
 					) : null}
 					{lines.map((line, i) => (
 						<Text key={i} color={theme.colors.accent}>
-							{line}
+							{truncateWithEllipsis(line, codeContentWidth)}
 						</Text>
 					))}
 				</Box>

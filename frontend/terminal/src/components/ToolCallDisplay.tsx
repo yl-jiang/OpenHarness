@@ -95,7 +95,8 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 			: ' '.repeat(stringWidth(connectorIcon));
 		const toolColor = isUserShellTool ? theme.colors.warning : theme.colors.accent;
 		const connectorColor = isParallel ? theme.colors.muted : toolColor;
-		const contentWidth = Math.max(1, (availableWidth ?? DEFAULT_AVAILABLE_WIDTH) - 2);
+		// availableWidth = raw terminal cols; subtract App paddingX(1)*2 + own marginLeft(2)
+		const contentWidth = Math.max(1, (availableWidth ?? DEFAULT_AVAILABLE_WIDTH) - 4);
 		const summaryLines = wrapToolSummary({
 			summary,
 			firstPrefixWidth: stringWidth(connectorIcon) + stringWidth(toolName) + 1,

@@ -377,7 +377,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 								{reasoningBuffer ? <ReasoningBlock text={reasoningBuffer} theme={theme} expanded={reasoningExpanded} cols={cols} /> : null}
 								{assistantBuffer ? (
 									<Box marginLeft={2} flexDirection="column">
-										<MarkdownText content={assistantBuffer} availableWidth={cols - 2} />
+										<MarkdownText content={assistantBuffer} availableWidth={cols - 4} />
 									</Box>
 								) : null}
 							</Box>
@@ -597,7 +597,7 @@ function MessageRow({
 						<CompletedReasoningBlock text={item.reasoning} theme={theme} cols={cols} />
 					) : null}
 					<Box marginLeft={2} flexDirection="column">
-						<MarkdownText content={item.text} availableWidth={cols - 2} />
+						<MarkdownText content={item.text} availableWidth={cols - 4} />
 					</Box>
 				</Box>
 			);
