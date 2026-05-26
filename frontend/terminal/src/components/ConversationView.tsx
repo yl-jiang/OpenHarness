@@ -346,7 +346,21 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 					{groups.map((group, i) => {
 						const showAssistantHeader = shouldRenderAssistantHeaderBeforeGroup(groups, i, outputStyle);
 						const showTurnDivider = shouldRenderTurnDividerBeforeGroup(groups, i, outputStyle);
-						const marginTop = showAssistantHeader || showTurnDivider ? 1 : 0;
+						// Add breathing room between consecutive non-tool message blocks
+						// (e.g. assistant text → question prompt) to reduce visual fatigue,
+						// while keeping tool-call clusters tightly packed.
+						const prevGroup = i > 0 ? groups[i - 1] : null;
+						const isNonEmptyAssistantMessage =
+							group.kind === 'message' &&
+							group.item.role === 'assistant' &&
+							group.item.text.trim().length > 0;
+						const prevIsToolOrMessage =
+							prevGroup?.kind === 'pair' ||
+							prevGroup?.kind === 'tool' ||
+							(prevGroup?.kind === 'message' && prevGroup.item.role === 'assistant');
+						const needsBreathingRoom =
+							!isCodexStyle && isNonEmptyAssistantMessage && prevIsToolOrMessage;
+						const marginTop = showAssistantHeader || showTurnDivider || needsBreathingRoom ? 1 : 0;
 
 						return (
 							<Box key={`g-${group.index}`} flexShrink={0} flexDirection="column" marginTop={marginTop}>
