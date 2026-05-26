@@ -1629,7 +1629,7 @@ async def test_execute_tool_call_blocks_repeated_identical_failures(tmp_path: Pa
 
 @pytest.mark.asyncio
 async def test_query_engine_executes_ask_user_tool(tmp_path: Path):
-    async def _answer(question: str) -> str:
+    async def _answer(question: str, choices: list[str] | None = None) -> str:
         assert question == "Which color?"
         return "green"
 

@@ -10,20 +10,31 @@ from pydantic import BaseModel, Field
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
 
-AskUserPrompt = Callable[[str], Awaitable[str]]
+AskUserPrompt = Callable[[str, list[str] | None], Awaitable[str]]
 
 
 class AskUserQuestionToolInput(BaseModel):
     """Arguments for asking the user a question."""
 
     question: str = Field(description="The question to show the user.")
+    choices: list[str] | None = Field(
+        default=None,
+        description=(
+            "Optional list of choices for the user to select from. "
+            "When provided, the user can pick one via arrow keys. "
+            "They can also type a freeform answer instead."
+        ),
+    )
 
 
 class AskUserQuestionTool(BaseTool):
     """Ask the interactive user a question and return the answer."""
 
     name = "ask_user_question"
-    description = "Ask the user a question and return their answer."
+    description = (
+        "Ask the user a question and return their answer. "
+        "Supports optional choices for structured selection."
+    )
     input_model = AskUserQuestionToolInput
 
     def to_api_schema(self) -> dict[str, Any]:
@@ -36,6 +47,14 @@ class AskUserQuestionTool(BaseTool):
                     "question": {
                         "type": "string",
                         "description": "The question to show the user.",
+                    },
+                    "choices": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Optional list of choices for the user to select from. "
+                            "When provided, the user can pick via arrow keys or type freeform."
+                        ),
                     },
                 },
                 "required": ["question"],
@@ -57,7 +76,7 @@ class AskUserQuestionTool(BaseTool):
                 output="ask_user_question is unavailable in this session",
                 is_error=True,
             )
-        answer = str(await prompt(arguments.question)).strip()
+        answer = str(await prompt(arguments.question, arguments.choices)).strip()
         if not answer:
             return ToolResult(output="(no response)")
         return ToolResult(output=answer)

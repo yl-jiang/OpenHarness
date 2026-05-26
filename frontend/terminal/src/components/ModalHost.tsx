@@ -2,6 +2,7 @@ import React, {useState} from 'react';
 import {Box, Text, useInput} from 'ink';
 import stringWidth from 'string-width';
 import ScrollableTextInput from './ScrollableTextInput.js';
+import {MarkdownText} from './MarkdownText.js';
 import {useTerminalSize} from '../hooks/useTerminalSize.js';
 import {truncateWithEllipsis} from '../textLayout.js';
 
@@ -100,11 +101,45 @@ function QuestionModal({
 	setModalInput: (value: string) => void;
 	onSubmit: (value: string) => void;
 }): React.JSX.Element {
+	const choices = Array.isArray(modal.choices) ? (modal.choices as string[]) : null;
+	const [selectedIndex, setSelectedIndex] = useState(0);
+	const [freeformMode, setFreeformMode] = useState(false);
 	const [extraLines, setExtraLines] = useState<string[]>([]);
 
-	useInput((_chunk, key) => {
+	const hasChoices = choices !== null && choices.length > 0;
+
+	useInput((chunk, key) => {
+		if (hasChoices && !freeformMode) {
+			if (key.downArrow) {
+				setSelectedIndex((i) => Math.min(i + 1, choices.length));
+				return;
+			}
+			if (key.upArrow) {
+				setSelectedIndex((i) => Math.max(i - 1, 0));
+				return;
+			}
+			if (key.return) {
+				if (selectedIndex < choices.length) {
+					onSubmit(choices[selectedIndex]!);
+				} else {
+					setFreeformMode(true);
+				}
+				return;
+			}
+			// Any printable character switches to freeform
+			if (chunk && !key.ctrl && !key.meta && !key.escape) {
+				setFreeformMode(true);
+				setModalInput(chunk);
+			}
+			return;
+		}
+		// Freeform / no-choices mode
 		if (key.shift && key.return) {
 			setExtraLines((lines) => [...lines, modalInput]);
+			setModalInput('');
+		}
+		if (key.escape && hasChoices) {
+			setFreeformMode(false);
 			setModalInput('');
 		}
 	});
@@ -115,51 +150,58 @@ function QuestionModal({
 		onSubmit(allLines.join('\n'));
 	};
 
-	const toolName = modal.tool_name ? String(modal.tool_name) : null;
-	const reason = modal.reason ? String(modal.reason) : null;
 	const question = String(modal.question ?? 'Question');
-
 	const {cols} = useTerminalSize();
-	const modalPrefix = '> ';
-	// cols - App paddingX(1)*2 - doubleBorder*2 - boxPaddingX(1)*2 - prefixWidth
+	const modalPrefix = '› ';
+	// cols - paddingX(1)*2 - border*2 - prefixWidth
 	const modalInputWidth = cols - 6 - stringWidth(modalPrefix);
+	// question rendering width: cols - border*2 - paddingX(1)*2 - prefix(2)
+	const questionWidth = cols - 6 - stringWidth('\u276F ');
 
 	return (
-		<Box flexDirection="column" marginTop={1} borderStyle="double" borderColor="magenta" paddingX={1} overflow="hidden">
-			<WaitingAnimation />
-			<Box marginTop={1}>
-				<Text color="magenta" bold>{'\u2753 '}</Text>
+		<Box flexDirection="column" marginTop={1} borderStyle="round" borderColor="cyan" paddingX={1} overflow="hidden">
+			<Box>
+				<Text color="cyan" bold>{'\u276F '}</Text>
 				<Box flexGrow={1} flexShrink={1}>
-					<Text bold>{question}</Text>
+					<MarkdownText content={question} availableWidth={questionWidth} />
 				</Box>
 			</Box>
-			{toolName ? (
-				<Text dimColor>
-					{'  '}Tool: <Text color="cyan">{toolName}</Text>
-				</Text>
-			) : null}
-			{reason ? (
-				<Text dimColor>{'  '}Reason: {reason}</Text>
-			) : null}
-			{extraLines.length > 0 && (
-				<Box flexDirection="column" marginTop={1} marginLeft={2}>
-					{extraLines.map((line, i) => (
-						<Text key={i} dimColor>
-							{line}
-						</Text>
-					))}
+			{hasChoices && !freeformMode ? (
+				<Box flexDirection="column" marginTop={1}>
+					{choices.map((choice, i) => {
+						const isSelected = i === selectedIndex;
+						return (
+							<Text key={i} color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+								{isSelected ? '  ❯ ' : '    '}{choice}
+							</Text>
+						);
+					})}
+					<Text color={selectedIndex === choices.length ? 'cyan' : undefined} bold={selectedIndex === choices.length} dimColor={selectedIndex !== choices.length}>
+						{selectedIndex === choices.length ? '  ❯ ' : '    '}Other (type answer)
+					</Text>
+					<Text dimColor>{'  ↑↓ select  ⏎ confirm  or type to answer freely'}</Text>
 				</Box>
+			) : (
+				<>
+					{extraLines.length > 0 && (
+						<Box flexDirection="column" marginTop={1} marginLeft={2}>
+							{extraLines.map((line, i) => (
+								<Text key={i} dimColor>{line}</Text>
+							))}
+						</Box>
+					)}
+					<Box marginTop={1}>
+						<Text color="cyan">{modalPrefix}</Text>
+						<ScrollableTextInput
+							value={modalInput}
+							onChange={setModalInput}
+							onSubmit={handleSubmit}
+							availableWidth={modalInputWidth}
+						/>
+					</Box>
+					<Text dimColor>{'  '}{hasChoices ? 'esc: back to choices | ' : ''}shift+enter: newline | enter: submit</Text>
+				</>
 			)}
-			<Box marginTop={1}>
-				<Text color="cyan">{modalPrefix}</Text>
-				<ScrollableTextInput
-					value={modalInput}
-					onChange={setModalInput}
-					onSubmit={handleSubmit}
-					availableWidth={modalInputWidth}
-				/>
-			</Box>
-			<Text dimColor>{'  '}shift+enter: newline | enter: submit</Text>
 		</Box>
 	);
 }

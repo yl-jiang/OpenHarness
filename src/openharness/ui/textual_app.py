@@ -12,7 +12,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Button, Footer, Header, Input, RichLog, Static
+from textual.widgets import Button, Footer, Header, Input, Markdown, RadioButton, RadioSet, RichLog, Static
 
 from openharness.api.client import SupportsStreamingMessages
 from openharness.config.settings import load_settings, save_settings
@@ -92,34 +92,60 @@ class QuestionScreen(ModalScreen[str]):
         Binding("enter", "submit", "Submit"),
     ]
 
-    def __init__(self, question: str) -> None:
+    _OTHER_LABEL = "Other (type answer)…"
+
+    def __init__(self, question: str, choices: list[str] | None = None) -> None:
         super().__init__()
         self._question = question
+        self._choices = choices or []
 
     def compose(self) -> ComposeResult:
-        yield Container(
-            Static(
-                Panel.fit(
-                    self._question,
-                    title="Question",
+        widgets: list[object] = [
+            Markdown(self._question, id="question-markdown"),
+        ]
+        if self._choices:
+            widgets.append(
+                RadioSet(
+                    *[RadioButton(c) for c in self._choices],
+                    RadioButton(self._OTHER_LABEL),
+                    id="choices-radio",
                 )
-            ),
+            )
+        widgets.extend([
             Input(placeholder="Type your answer", id="question-input"),
             Horizontal(
                 Button("Submit", id="submit", variant="primary"),
                 Button("Cancel", id="cancel", variant="default"),
                 classes="permission-actions",
             ),
-            id="permission-dialog",
-        )
+        ])
+        yield Container(*widgets, id="permission-dialog")
 
     def on_mount(self) -> None:
-        self.query_one("#question-input", Input).focus()
+        if self._choices:
+            self.query_one("#choices-radio", RadioSet).focus()
+        else:
+            self.query_one("#question-input", Input).focus()
+
+    @on(RadioSet.Changed, "#choices-radio")
+    def handle_radio_changed(self, event: RadioSet.Changed) -> None:
+        is_other = str(event.pressed.label) == self._OTHER_LABEL
+        self.query_one("#question-input", Input).display = is_other
+        if is_other:
+            self.query_one("#question-input", Input).focus()
+
+    def _get_answer(self) -> str:
+        if self._choices:
+            radio_set = self.query_one("#choices-radio", RadioSet)
+            selected = radio_set.pressed_button
+            if selected is not None and str(selected.label) != self._OTHER_LABEL:
+                return str(selected.label).strip()
+        return self.query_one("#question-input", Input).value.strip()
 
     @on(Button.Pressed)
     def handle_button_press(self, event: Button.Pressed) -> None:
         if event.button.id == "submit":
-            self.dismiss(self.query_one("#question-input", Input).value.strip())
+            self.dismiss(self._get_answer())
             return
         self.dismiss("")
 
@@ -128,7 +154,7 @@ class QuestionScreen(ModalScreen[str]):
         self.dismiss(event.value.strip())
 
     def action_submit(self) -> None:
-        self.dismiss(self.query_one("#question-input", Input).value.strip())
+        self.dismiss(self._get_answer())
 
     def action_cancel(self) -> None:
         self.dismiss("")
@@ -269,8 +295,8 @@ class OpenHarnessTerminalApp(App[None]):
     async def _ask_permission(self, tool_name: str, reason: str) -> bool:
         return bool(await self._open_modal(PermissionScreen(tool_name, reason)))
 
-    async def _ask_question(self, question: str) -> str:
-        return str(await self._open_modal(QuestionScreen(question)) or "")
+    async def _ask_question(self, question: str, choices: list[str] | None = None) -> str:
+        return str(await self._open_modal(QuestionScreen(question, choices)) or "")
 
     async def _open_modal(self, screen: ModalScreen) -> object:
         loop = asyncio.get_running_loop()

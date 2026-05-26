@@ -101,7 +101,7 @@ async def test_textual_app_handles_ask_user_tool(tmp_path, monkeypatch):
         )
     )
 
-    async def _answer(question: str) -> str:
+    async def _answer(question: str, choices: list[str] | None = None) -> str:
         assert question == "Pick a color"
         return "green"
 

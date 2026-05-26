@@ -204,8 +204,9 @@ def test_ask_user_question_tool_schema_guides_models_to_use_the_tool() -> None:
     schema = tool.to_api_schema()
     question_description = schema["parameters"]["properties"]["question"]["description"]
 
-    assert schema["description"] == "Ask the user a question and return their answer."
+    assert "Ask the user a question" in schema["description"]
     assert question_description == "The question to show the user."
+    assert "choices" in schema["parameters"]["properties"]
 
 
 def test_tool_registry_caches_api_schema_and_returns_defensive_copy() -> None:
