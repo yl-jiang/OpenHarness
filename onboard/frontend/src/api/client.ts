@@ -51,6 +51,8 @@ export const api = {
   reports: (app: AppName, params: Record<string, QueryValue> = {}) =>
     request<Report[]>(`/api/${app}/reports${query(params)}`),
   report: (app: AppName, id: string) => request<Report>(`/api/${app}/reports/${id}`),
+  deleteReport: (app: AppName, id: string) =>
+    request<{ deleted: boolean }>(`/api/${app}/reports/${id}`, { method: 'DELETE' }),
   generateReport: (app: AppName, type: string) =>
     request<Report>(`/api/${app}/reports/generate`, {
       method: 'POST',

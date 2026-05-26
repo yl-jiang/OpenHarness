@@ -616,6 +616,24 @@ class WoloStore:
         cur = self._db.execute("SELECT * FROM reports ORDER BY rowid")
         return [self._row_to_report(row) for row in cur.fetchall()]
 
+    def delete_report(self, report_id: str) -> bool:
+        """Permanently delete a report by ID."""
+        cur = self._db.execute("DELETE FROM reports WHERE id = ?", (report_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def update_report(self, report_id: str, content: str) -> bool:
+        """Update the content of an existing report."""
+        cur = self._db.execute("UPDATE reports SET content = ? WHERE id = ?", (content, report_id))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def get_report(self, report_id: str) -> WoloReport | None:
+        """Get a single report by ID."""
+        cur = self._db.execute("SELECT * FROM reports WHERE id = ?", (report_id,))
+        row = cur.fetchone()
+        return self._row_to_report(row) if row else None
+
     def add_todo(self, todo: WoloTodo) -> None:
         cols, vals = self._todo_to_row(todo)
         placeholders = ", ".join("?" * len(vals))

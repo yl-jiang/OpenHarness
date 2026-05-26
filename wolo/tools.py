@@ -110,6 +110,11 @@ class WoloToolRegistry:
             WoloDomainTool(_tool_jobs(), self._handle_jobs),
             WoloDomainTool(_tool_cancel(), self._handle_cancel),
             WoloDomainTool(_tool_report(), self._handle_report),
+            WoloDomainTool(_tool_report_list(), self._handle_report_list),
+            WoloDomainTool(_tool_report_show(), self._handle_report_show),
+            WoloDomainTool(_tool_report_delete(), self._handle_report_delete),
+            WoloDomainTool(_tool_report_update(), self._handle_report_update),
+            WoloDomainTool(_tool_report_search(), self._handle_report_search),
             WoloDomainTool(_tool_view(), self._handle_view),
             WoloDomainTool(_tool_search(), self._handle_search),
             WoloDomainTool(_tool_show(), self._handle_show),
@@ -489,6 +494,50 @@ class WoloToolRegistry:
         report_type = str(arguments.get("report_type") or arguments.get("type") or "weekly")
         report = await self._processor().generate_report(report_type)
         return {"ok": True, "report_type": report_type, "content": report.content, "message": report.content}
+
+    async def _handle_report_list(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        report_type = _optional_text(arguments, "type")
+        reports = self.store.list_reports()
+        if report_type:
+            reports = [r for r in reports if r.report_type == report_type]
+        reports.sort(key=lambda r: r.created_at, reverse=True)
+        if not reports:
+            return {"ok": True, "reports": [], "message": "No reports found."}
+        lines = [f"[{r.id}] {r.report_type} — {r.created_at}" for r in reports]
+        return {"ok": True, "reports": [{"id": r.id, "type": r.report_type, "created_at": r.created_at} for r in reports], "message": "\n".join(lines)}
+
+    async def _handle_report_show(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        report_id = _required_text(arguments, "report_id")
+        report = self.store.get_report(report_id)
+        if not report:
+            return {"ok": False, "message": f"Report {report_id} not found."}
+        return {"ok": True, "report_type": report.report_type, "created_at": report.created_at, "content": report.content, "message": f"# {report.report_type} report ({report.created_at})\n\n{report.content or '(empty)'}"}
+
+    async def _handle_report_delete(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        report_id = _required_text(arguments, "report_id")
+        deleted = self.store.delete_report(report_id)
+        if not deleted:
+            return {"ok": False, "message": f"Report {report_id} not found."}
+        return {"ok": True, "message": f"Deleted report {report_id}."}
+
+    async def _handle_report_update(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        report_id = _required_text(arguments, "report_id")
+        content = _required_text(arguments, "content")
+        report = self.store.get_report(report_id)
+        if not report:
+            return {"ok": False, "message": f"Report {report_id} not found."}
+        self.store.update_report(report_id, content)
+        return {"ok": True, "message": f"Updated report {report_id}."}
+
+    async def _handle_report_search(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        keyword = _required_text(arguments, "keyword")
+        reports = self.store.list_reports()
+        matches = [r for r in reports if keyword.lower() in (r.content or "").lower()]
+        matches.sort(key=lambda r: r.created_at, reverse=True)
+        if not matches:
+            return {"ok": True, "reports": [], "message": f"No reports matching '{keyword}'."}
+        lines = [f"[{r.id}] {r.report_type} — {r.created_at}" for r in matches]
+        return {"ok": True, "reports": [{"id": r.id, "type": r.report_type, "created_at": r.created_at} for r in matches], "message": "\n".join(lines)}
 
     async def _handle_view(self, arguments: dict[str, Any]) -> dict[str, Any]:
         limit = int(arguments.get("limit") or 10)
@@ -1235,6 +1284,49 @@ def _tool_report() -> ToolDefinition:
         "wolo_report",
         "Generate weekly, monthly, or yearly wolo work report with progress, decisions, blockers, prompt/tool lessons, and next actions.",
         [("type", "string", "weekly/monthly/yearly.", True)],
+    )
+
+
+def _tool_report_list() -> ToolDefinition:
+    return _definition(
+        "wolo_report_list",
+        "List all existing reports, optionally filtered by type. Returns id, type, and created_at for each.",
+        [("type", "string", "Optional filter: weekly/monthly/yearly.", False)],
+    )
+
+
+def _tool_report_show() -> ToolDefinition:
+    return _definition(
+        "wolo_report_show",
+        "Show the full content of a specific report by its ID.",
+        [("report_id", "string", "The report ID to show.", True)],
+    )
+
+
+def _tool_report_delete() -> ToolDefinition:
+    return _definition(
+        "wolo_report_delete",
+        "Permanently delete a report by its ID.",
+        [("report_id", "string", "The report ID to delete.", True)],
+    )
+
+
+def _tool_report_update() -> ToolDefinition:
+    return _definition(
+        "wolo_report_update",
+        "Update/replace the content of an existing report.",
+        [
+            ("report_id", "string", "The report ID to update.", True),
+            ("content", "string", "New markdown content for the report.", True),
+        ],
+    )
+
+
+def _tool_report_search() -> ToolDefinition:
+    return _definition(
+        "wolo_report_search",
+        "Search reports by keyword in their content. Returns matching report IDs and metadata.",
+        [("keyword", "string", "Search keyword.", True)],
     )
 
 

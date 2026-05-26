@@ -281,10 +281,123 @@ def report_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     profile: str | None = typer.Option(None, "--profile", help="OpenHarness provider profile"),
 ) -> None:
+    """Generate a new report."""
     store = WoloStore(workspace)
     agent = OpenHarnessWoloAgent(profile=profile or load_config(workspace).provider_profile)
     report = asyncio.run(WoloProcessor(store, agent).generate_report(report_type))
     print(report.content)
+
+
+@app.command("report-list")
+def report_list_cmd(
+    report_type: str | None = typer.Option(None, "--type", help="Filter by type: weekly, monthly, yearly"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """List all reports."""
+    store = WoloStore(workspace)
+    reports = store.list_reports()
+    if report_type:
+        reports = [r for r in reports if r.report_type == report_type]
+    reports.sort(key=lambda r: r.created_at, reverse=True)
+    if not reports:
+        print("No reports found.")
+        return
+    for r in reports:
+        preview = r.content[:60].replace("\n", " ") if r.content else "(empty)"
+        print(f"[{r.id}] {r.report_type:8s} {r.created_at}  {preview}")
+
+
+@app.command("report-show")
+def report_show_cmd(
+    report_id: str = typer.Argument(..., help="Report ID"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Show full content of a report."""
+    store = WoloStore(workspace)
+    report = store.get_report(report_id)
+    if not report:
+        print(f"Report {report_id} not found.")
+        raise typer.Exit(1)
+    print(f"# {report.report_type} report ({report.created_at})\n")
+    print(report.content or "(empty)")
+
+
+@app.command("report-delete")
+def report_delete_cmd(
+    report_id: str = typer.Argument(..., help="Report ID"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation"),
+) -> None:
+    """Delete a report permanently."""
+    store = WoloStore(workspace)
+    report = store.get_report(report_id)
+    if not report:
+        print(f"Report {report_id} not found.")
+        raise typer.Exit(1)
+    if not force:
+        confirm = typer.confirm(f"Delete {report.report_type} report ({report.created_at})?")
+        if not confirm:
+            raise typer.Abort()
+    store.delete_report(report_id)
+    print(f"Deleted report {report_id}.")
+
+
+@app.command("report-edit")
+def report_edit_cmd(
+    report_id: str = typer.Argument(..., help="Report ID"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Edit report content in $EDITOR."""
+    import os
+    import tempfile
+    import subprocess as sp
+
+    store = WoloStore(workspace)
+    report = store.get_report(report_id)
+    if not report:
+        print(f"Report {report_id} not found.")
+        raise typer.Exit(1)
+
+    editor = os.environ.get("EDITOR", "vi")
+    with tempfile.NamedTemporaryFile(suffix=".md", mode="w", delete=False) as f:
+        f.write(report.content or "")
+        tmp_path = f.name
+
+    try:
+        sp.run([editor, tmp_path], check=True)
+        new_content = Path(tmp_path).read_text(encoding="utf-8")
+        if new_content == report.content:
+            print("No changes.")
+            return
+        store.update_report(report_id, new_content)
+        print(f"Updated report {report_id}.")
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+@app.command("report-search")
+def report_search_cmd(
+    keyword: str = typer.Argument(..., help="Search keyword"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Search reports by keyword in content."""
+    store = WoloStore(workspace)
+    reports = store.list_reports()
+    matches = [r for r in reports if keyword.lower() in (r.content or "").lower()]
+    matches.sort(key=lambda r: r.created_at, reverse=True)
+    if not matches:
+        print(f"No reports matching '{keyword}'.")
+        return
+    for r in matches:
+        print(f"[{r.id}] {r.report_type:8s} {r.created_at}")
+        # Show context around match
+        lower_content = (r.content or "").lower()
+        idx = lower_content.find(keyword.lower())
+        start = max(0, idx - 40)
+        end = min(len(r.content or ""), idx + len(keyword) + 40)
+        snippet = (r.content or "")[start:end].replace("\n", " ")
+        print(f"    ...{snippet}...")
+        print()
 
 
 @app.command("status")
@@ -329,7 +442,7 @@ def doctor_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
 
 @onboard_app.command("run")
 def onboard_run_cmd(
-    host: str = typer.Option("127.0.0.1", "--host", help="Host interface to bind"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Host interface to bind"),
     port: int = typer.Option(8090, "--port", min=1, max=65535, help="Port to bind"),
     reload: bool = typer.Option(False, "--reload", help="Enable uvicorn reload"),
 ) -> None:
@@ -341,7 +454,7 @@ def onboard_run_cmd(
 
 @onboard_app.command("start")
 def onboard_start_cmd(
-    host: str = typer.Option("127.0.0.1", "--host", help="Host interface to bind"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Host interface to bind"),
     port: int = typer.Option(8090, "--port", min=1, max=65535, help="Port to bind"),
 ) -> None:
     """Start onboard WebUI in the background."""

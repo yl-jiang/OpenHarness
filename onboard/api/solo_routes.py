@@ -127,6 +127,14 @@ def report(report_id: str, workspace: str | None = None) -> dict[str, Any]:
     return result
 
 
+@router.delete("/reports/{report_id}")
+def delete_report(report_id: str, workspace: str | None = None) -> dict[str, bool]:
+    deleted = _service(workspace).delete_report(report_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Report not found")
+    return {"deleted": True}
+
+
 @router.post("/reports/generate")
 async def generate_report(request: ReportRequest, workspace: str | None = None) -> dict[str, Any]:
     return await _service(workspace).generate_report(request.type, profile=request.profile)

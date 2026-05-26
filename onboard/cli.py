@@ -22,7 +22,7 @@ app = typer.Typer(
 
 @app.command("run")
 def run_cmd(
-    host: str = typer.Option("127.0.0.1", "--host", help="Host interface to bind"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Host interface to bind"),
     port: int = typer.Option(8090, "--port", min=1, max=65535, help="Port to bind"),
     reload: bool = typer.Option(False, "--reload", help="Enable uvicorn reload"),
 ) -> None:
@@ -36,7 +36,7 @@ def run_cmd(
 
 @app.command("start")
 def start_cmd(
-    host: str = typer.Option("127.0.0.1", "--host", help="Host interface to bind"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Host interface to bind"),
     port: int = typer.Option(8090, "--port", min=1, max=65535, help="Port to bind"),
 ) -> None:
     """Start onboard in the background."""

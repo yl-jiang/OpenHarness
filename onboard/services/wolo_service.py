@@ -139,6 +139,9 @@ class WoloService:
         report = find_by_id(self.store.list_reports(), report_id)
         return to_jsonable(report) if report else None
 
+    def delete_report(self, report_id: str) -> bool:
+        return self.store.delete_report(report_id)
+
     async def generate_report(self, report_type: str, profile: str | None = None) -> dict[str, Any]:
         config = load_config(self.workspace)
         agent = OpenHarnessWoloAgent(profile=profile or config.provider_profile)

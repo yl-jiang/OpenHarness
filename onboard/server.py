@@ -33,6 +33,19 @@ class OnboardServerError(RuntimeError):
     """Raised when onboard cannot start cleanly."""
 
 
+def _build_frontend() -> None:
+    """Run frontend build if node_modules exists (i.e. deps are installed)."""
+    frontend_dir = Path(__file__).resolve().parent / "frontend"
+    if not (frontend_dir / "node_modules").exists():
+        return
+    subprocess.run(
+        ["npm", "run", "build"],
+        cwd=frontend_dir,
+        check=True,
+        capture_output=True,
+    )
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Onboard", version="0.1.0")
     app.include_router(solo_routes.router)
@@ -93,6 +106,8 @@ def run_server(
 ) -> None:
     import uvicorn
 
+    _build_frontend()
+
     with _reserve_listener(host=host, port=port) as listener:
         _write_state(host=host, port=port, pid=os.getpid(), started_at=time())
         try:
@@ -112,6 +127,8 @@ def start_background(
     current = server_status()
     if current["status"] == "running" and current.get("pid"):
         return int(current["pid"])
+
+    _build_frontend()
 
     _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
     env = os.environ.copy()
