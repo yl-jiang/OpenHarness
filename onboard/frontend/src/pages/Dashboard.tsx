@@ -4,10 +4,10 @@ import { api } from '../api/client';
 import type { AppName } from '../api/types';
 import { ActivityHeatmap, EmotionPieChart } from '../components/Charts';
 import { StatsCard } from '../components/StatsCard';
-import { useApi } from '../hooks/useApi';
+import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
 export function Dashboard({ appName }: { appName: AppName }) {
-  const { data, error, loading } = useApi(() => api.stats(appName), [appName]);
+  const { data, error, loading } = useApi(() => api.stats(appName), [appName], { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS });
 
   if (loading) {
     return <div className="h-60 rounded-lg bg-gradient-to-r from-surface-1 via-surface-2 to-surface-1 bg-[length:200%_auto] animate-[shimmer_1.5s_linear_infinite]" />;

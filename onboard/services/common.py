@@ -50,6 +50,10 @@ def paginate(items: list[T], *, limit: int, offset: int) -> dict[str, Any]:
     }
 
 
+def newest_first(items: Iterable[T]) -> list[T]:
+    return list(reversed(list(items)))
+
+
 def split_csv(value: str | None) -> list[str] | None:
     if not value:
         return None

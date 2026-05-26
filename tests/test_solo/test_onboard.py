@@ -5,6 +5,8 @@ import pytest
 from typer.testing import CliRunner
 
 import onboard.server as onboard_server
+from onboard.services.solo_service import SoloService
+from solo.core.models import SoloRecord, SoloReport
 
 
 def _patch_onboard_workspace(monkeypatch: pytest.MonkeyPatch, workspace: Path) -> None:
@@ -12,6 +14,58 @@ def _patch_onboard_workspace(monkeypatch: pytest.MonkeyPatch, workspace: Path) -
     monkeypatch.setattr(onboard_server, "_PID_PATH", workspace / "onboard.pid")
     monkeypatch.setattr(onboard_server, "_STATE_PATH", workspace / "state.json")
     monkeypatch.setattr(onboard_server, "_LOG_PATH", workspace / "logs" / "server.log")
+
+
+def test_solo_onboard_lists_latest_items_first(tmp_path: Path) -> None:
+    service = SoloService(tmp_path)
+    old_entry = service.store.record("old entry", created_at="2026-05-25T00:00:00+00:00")
+    new_entry = service.store.record("new entry", created_at="2026-05-26T00:00:00+00:00")
+    service.store.add_record(
+        SoloRecord(
+            id="old-record",
+            entry_id=old_entry.id,
+            date="2026-05-25",
+            raw_content="old",
+            corrected_content="old",
+            summary="old",
+            tags="",
+            emotion="neutral",
+            created_at="2026-05-25T00:00:01+00:00",
+        )
+    )
+    service.store.add_record(
+        SoloRecord(
+            id="new-record",
+            entry_id=new_entry.id,
+            date="2026-05-26",
+            raw_content="new",
+            corrected_content="new",
+            summary="new",
+            tags="",
+            emotion="neutral",
+            created_at="2026-05-26T00:00:01+00:00",
+        )
+    )
+    service.store.add_report(
+        SoloReport(
+            id="old-report",
+            report_type="weekly",
+            content="old",
+            created_at="2026-05-25T00:00:02+00:00",
+        )
+    )
+    service.store.add_report(
+        SoloReport(
+            id="new-report",
+            report_type="weekly",
+            content="new",
+            created_at="2026-05-26T00:00:02+00:00",
+        )
+    )
+
+    assert service.list_entries(limit=1, offset=0)["items"][0]["id"] == new_entry.id
+    assert service.list_records(limit=1, offset=0)["items"][0]["id"] == "new-record"
+    assert service.list_reports()[0]["id"] == "new-report"
 
 
 def test_run_server_does_not_overwrite_state_when_port_is_busy(

@@ -18,6 +18,7 @@ from onboard.services.common import (
     filter_entries,
     filter_records,
     find_by_id,
+    newest_first,
     paginate,
     split_csv,
     to_jsonable,
@@ -61,7 +62,7 @@ class WoloService:
         offset: int,
         channel: str | None = None,
     ) -> dict[str, Any]:
-        entries = filter_entries(self.store.list_entries(), channel=channel)
+        entries = newest_first(filter_entries(self.store.list_entries(), channel=channel))
         return paginate([to_jsonable(entry) for entry in entries], limit=limit, offset=offset)
 
     def get_entry(self, entry_id: str) -> dict[str, Any] | None:
@@ -78,12 +79,14 @@ class WoloService:
         date_from: str | None = None,
         date_to: str | None = None,
     ) -> dict[str, Any]:
-        records = filter_records(
-            self.store.list_records(),
-            tag=tag,
-            emotion=emotion,
-            date_from=date_from,
-            date_to=date_to,
+        records = newest_first(
+            filter_records(
+                self.store.list_records(),
+                tag=tag,
+                emotion=emotion,
+                date_from=date_from,
+                date_to=date_to,
+            )
         )
         return paginate([to_jsonable(record) for record in records], limit=limit, offset=offset)
 
@@ -130,7 +133,7 @@ class WoloService:
         return self.store.complete_todo(todo_id)
 
     def list_reports(self, report_type: str | None = None) -> list[dict[str, Any]]:
-        reports = self.store.list_reports()
+        reports = newest_first(self.store.list_reports())
         if report_type:
             reports = [report for report in reports if report.report_type == report_type]
         return [to_jsonable(report) for report in reports]

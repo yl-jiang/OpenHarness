@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 
 import { api } from '../api/client';
 import type { AppName, Report, ReportType } from '../api/types';
-import { useApi } from '../hooks/useApi';
+import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
 function formatTime(raw: string): string {
   const d = new Date(raw);
@@ -27,7 +27,7 @@ function sortByNewest(reports: Report[]): Report[] {
 }
 
 export function Reports({ appName }: { appName: AppName }) {
-  const { data, error, loading, reload } = useApi(() => api.reports(appName), [appName]);
+  const { data, error, loading, reload } = useApi(() => api.reports(appName), [appName], { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS });
   const [generating, setGenerating] = useState<ReportType | null>(null);
   const [genError, setGenError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);

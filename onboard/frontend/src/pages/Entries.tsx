@@ -1,7 +1,7 @@
 import { api } from '../api/client';
 import type { AppName, Entry } from '../api/types';
 import { DataTable } from '../components/DataTable';
-import { useApi } from '../hooks/useApi';
+import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
 function formatTime(raw: string): { date: string; time: string } {
   const d = new Date(raw);
@@ -25,7 +25,7 @@ function formatTime(raw: string): { date: string; time: string } {
 }
 
 export function Entries({ appName }: { appName: AppName }) {
-  const { data, error, loading } = useApi(() => api.entries(appName, { limit: 100 }), [appName]);
+  const { data, error, loading } = useApi(() => api.entries(appName, { limit: 100 }), [appName], { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS });
   if (loading) {
     return <div className="h-60 rounded-lg bg-gradient-to-r from-surface-1 via-surface-2 to-surface-1 bg-[length:200%_auto] animate-[shimmer_1.5s_linear_infinite]" />;
   }

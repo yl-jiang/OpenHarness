@@ -48,6 +48,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- Onboard solo/wolo record, entry, report, stats, todo, decision, and highlight pages now auto-refresh and paginate newest items first, so data written through gateways or other CLIs appears in the open WebUI without a manual browser reload.
 - `solo` and `wolo` standalone apps now expose `solo_remind` / `wolo_remind` for one-shot future reminders, persist those requests as app-local scheduled jobs, and execute them through the app cron daemons so chat requests like "2分钟后提醒我喝水" can proactively DM the user later instead of falling back to a plain-text refusal.
 - `solo` and `wolo` standalone agent runtimes now register the built-in `bash` tool, so workspace-local OpenCLI/search skills can execute shell commands instead of failing with `unknown tool: bash`.
 - React TUI now manually wraps long tool command lines with continuation tree prefixes, keeping grouped tool connector lines visually continuous.
