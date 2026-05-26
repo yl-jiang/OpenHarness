@@ -149,6 +149,20 @@ export interface SearchResult {
   query: string;
 }
 
+export interface ChatSession {
+  session_key: string;
+  session_id: string | null;
+  message_count: number;
+  updated_at: string;
+  preview: string;
+}
+
+export interface ChatSessionDetail {
+  session_key: string;
+  session_id: string | null;
+  messages: { role: string; content: string }[];
+}
+
 export type WsClientMessage = { type: 'message'; content: string } | { type: 'cancel' };
 
 export type WsServerMessage =
@@ -157,4 +171,5 @@ export type WsServerMessage =
   | { type: 'tool_start'; tool: string; args: JsonObject }
   | { type: 'tool_complete'; tool: string; result: string }
   | { type: 'complete'; content: string }
+  | { type: 'session_key'; session_key: string }
   | { type: 'error'; message: string };

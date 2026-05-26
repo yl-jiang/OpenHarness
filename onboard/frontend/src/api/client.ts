@@ -1,6 +1,8 @@
 import type {
   AppName,
   AppStats,
+  ChatSession,
+  ChatSessionDetail,
   Decision,
   Entry,
   GatewayStatus,
@@ -75,4 +77,16 @@ export const api = {
     request<Highlight[]>(`/api/wolo/highlights${query(params)}`),
   search: (app: AppName, params: Record<string, QueryValue>) =>
     request<SearchResult>(`/api/${app}/search${query(params)}`),
+
+  // Chat sessions
+  chatSessions: (app: AppName, params: Record<string, QueryValue> = {}) =>
+    request<ChatSession[]>(`/api/${app}/chat/sessions${query(params)}`),
+  chatSession: (app: AppName, sessionKey: string) =>
+    request<ChatSessionDetail>(`/api/${app}/chat/sessions/${sessionKey}`),
+  deleteChatSession: (app: AppName, sessionKey: string) =>
+    request<{ deleted: boolean }>(`/api/${app}/chat/sessions/${sessionKey}`, { method: 'DELETE' }),
+  exportChatMarkdown: (app: AppName, sessionKey: string) =>
+    `/api/${app}/chat/sessions/${sessionKey}/export/markdown`,
+  exportChatHtml: (app: AppName, sessionKey: string) =>
+    `/api/${app}/chat/sessions/${sessionKey}/export/html`,
 };
