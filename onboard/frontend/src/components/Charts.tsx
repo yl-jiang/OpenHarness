@@ -15,17 +15,29 @@ import {
 
 import type { CountPoint, EmotionPoint, TagPoint } from '../api/types';
 
-const colors = ['#6c5ce7', '#00b894', '#74b9ff', '#fdcb6e', '#e17055', '#fd79a8'];
+const palette = ['#d4a574', '#5eead4', '#a78bfa', '#fbbf24', '#f87171', '#34d399'];
+
+const tooltipStyle = {
+  background: '#1c1c21',
+  border: '1px solid #2e2e33',
+  borderRadius: '6px',
+  fontSize: '12px',
+  fontFamily: 'var(--font-mono)',
+  color: '#e4e4e7',
+};
+
+const tooltipLabelStyle = { color: '#a1a1aa' };
+const tooltipItemStyle = { color: '#e4e4e7' };
 
 export function DailyLineChart({ data }: { data: CountPoint[] }) {
   return (
-    <ResponsiveContainer width="100%" height={240}>
+    <ResponsiveContainer width="100%" height={200}>
       <LineChart data={data}>
-        <CartesianGrid stroke="rgba(255,255,255,0.08)" />
-        <XAxis dataKey="date" stroke="#8888a0" />
-        <YAxis stroke="#8888a0" allowDecimals={false} />
-        <Tooltip contentStyle={{ background: '#12121a', border: '1px solid #333' }} />
-        <Line type="monotone" dataKey="count" stroke="#74b9ff" strokeWidth={2} dot={false} />
+        <CartesianGrid stroke="#1f1f24" strokeDasharray="2 4" />
+        <XAxis dataKey="date" stroke="#63636e" tick={{ fontSize: 11 }} />
+        <YAxis stroke="#63636e" tick={{ fontSize: 11 }} allowDecimals={false} width={30} />
+        <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+        <Line type="monotone" dataKey="count" stroke="#d4a574" strokeWidth={1.5} dot={false} />
       </LineChart>
     </ResponsiveContainer>
   );
@@ -33,14 +45,14 @@ export function DailyLineChart({ data }: { data: CountPoint[] }) {
 
 export function EmotionPieChart({ data }: { data: EmotionPoint[] }) {
   return (
-    <ResponsiveContainer width="100%" height={240}>
+    <ResponsiveContainer width="100%" height={200}>
       <PieChart>
-        <Pie data={data} dataKey="count" nameKey="emotion" outerRadius={84} label>
+        <Pie data={data} dataKey="count" nameKey="emotion" outerRadius={72} innerRadius={40} strokeWidth={0}>
           {data.map((item, index) => (
-            <Cell key={item.emotion} fill={colors[index % colors.length]} />
+            <Cell key={item.emotion} fill={palette[index % palette.length]} />
           ))}
         </Pie>
-        <Tooltip contentStyle={{ background: '#12121a', border: '1px solid #333' }} />
+        <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
       </PieChart>
     </ResponsiveContainer>
   );
@@ -48,13 +60,13 @@ export function EmotionPieChart({ data }: { data: EmotionPoint[] }) {
 
 export function TagBarChart({ data }: { data: TagPoint[] }) {
   return (
-    <ResponsiveContainer width="100%" height={260}>
+    <ResponsiveContainer width="100%" height={220}>
       <BarChart data={data.slice(0, 12)}>
-        <CartesianGrid stroke="rgba(255,255,255,0.08)" />
-        <XAxis dataKey="tag" stroke="#8888a0" />
-        <YAxis stroke="#8888a0" allowDecimals={false} />
-        <Tooltip contentStyle={{ background: '#12121a', border: '1px solid #333' }} />
-        <Bar dataKey="count" fill="#00b894" radius={[8, 8, 0, 0]} />
+        <CartesianGrid stroke="#1f1f24" strokeDasharray="2 4" />
+        <XAxis dataKey="tag" stroke="#63636e" tick={{ fontSize: 11 }} />
+        <YAxis stroke="#63636e" tick={{ fontSize: 11 }} allowDecimals={false} width={30} />
+        <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+        <Bar dataKey="count" fill="#5eead4" radius={[3, 3, 0, 0]} barSize={20} />
       </BarChart>
     </ResponsiveContainer>
   );
@@ -69,13 +81,16 @@ export function ActivityHeatmap({ data }: { data: CountPoint[] }) {
     const key = date.toISOString().slice(0, 10);
     return { date: key, count: byDate.get(key) ?? 0 };
   });
+
+  const levels = ['bg-surface-2', 'bg-accent-solo/30', 'bg-accent-solo/50', 'bg-accent-solo/70', 'bg-accent-solo'];
+
   return (
-    <div className="heatmap">
+    <div className="grid grid-cols-13 gap-[3px]">
       {days.map((day) => (
         <span
           key={day.date}
           title={`${day.date}: ${day.count}`}
-          className={`heat heat-${Math.min(day.count, 4)}`}
+          className={`aspect-square rounded-[3px] ${levels[Math.min(day.count, 4)]}`}
         />
       ))}
     </div>

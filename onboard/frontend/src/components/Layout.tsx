@@ -14,18 +14,18 @@ interface LayoutProps {
 export function Layout({ appName, gatewayStatus, onAppChange }: LayoutProps) {
   const navigate = useNavigate();
   return (
-    <div className={`app-shell theme-${appName}`}>
+    <div className="grid grid-cols-[220px_minmax(0,1fr)] min-h-screen" data-theme={appName}>
       <Sidebar appName={appName} onAppChange={onAppChange} gatewayStatus={gatewayStatus} />
-      <main className="main">
-        <header className="topbar">
-          <div>
-            <span className="eyebrow">{appName}</span>
-            <h1>Onboard</h1>
+      <main className="min-w-0 flex flex-col">
+        <header className="sticky top-0 z-10 flex items-center gap-6 h-14 px-8 border-b border-border bg-bg/80 backdrop-blur-sm">
+          <div className="flex items-center gap-3 mr-auto">
+            <h1 className="text-base font-medium text-text m-0">Onboard</h1>
+            <span className="text-[11px] font-mono uppercase tracking-wider text-text-muted">{appName}</span>
           </div>
           <SearchBar onSearch={(value) => navigate(`/search?q=${encodeURIComponent(value)}`)} />
           <StatusBadge status={gatewayStatus} />
         </header>
-        <section className="content">
+        <section className="flex-1 w-full max-w-[1320px] mx-auto px-8 py-6">
           <Outlet />
         </section>
       </main>

@@ -10,17 +10,25 @@ export function Search({ appName }: { appName: AppName }) {
   const q = params.get('q') ?? '';
   const { data, error, loading } = useApi(() => api.search(appName, { q, limit: 50 }), [appName, q]);
   return (
-    <div className="page-stack">
-      <SearchBar initialValue={q} onSearch={(value) => setParams(value ? { q: value } : {})} />
-      {loading ? <div className="skeleton-grid" /> : null}
-      {error ? <div className="error-state">{error}</div> : null}
-      <div className="record-grid">
+    <div className="space-y-5">
+      <div className="flex items-center gap-4">
+        <h2 className="font-serif text-2xl text-text m-0">Search</h2>
+        <SearchBar initialValue={q} onSearch={(value) => setParams(value ? { q: value } : {})} />
+      </div>
+      {loading ? <div className="h-40 rounded-lg bg-gradient-to-r from-surface-1 via-surface-2 to-surface-1 bg-[length:200%_auto] animate-[shimmer_1.5s_linear_infinite]" /> : null}
+      {error ? <div className="border border-danger/30 rounded-lg bg-danger/5 p-5 text-sm text-text">{error}</div> : null}
+      {data && data.records.length === 0 && q ? (
+        <div className="border border-border rounded-lg bg-surface-1 p-8 text-center text-text-muted text-sm">
+          No results for "{q}"
+        </div>
+      ) : null}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3">
         {(data?.records ?? []).map((record) => (
-          <article key={record.id} className="record-card glass-card">
-            <h3>{record.summary}</h3>
-            <p>{record.corrected_content}</p>
-            <Link className="card-link" to={`/records/${record.id}`}>
-              Details
+          <article key={record.id} className="p-4 border border-border rounded-lg bg-surface-1 hover:bg-surface-2 hover:border-text-muted/30 transition-all">
+            <h3 className="text-sm font-medium text-text m-0 mb-1 line-clamp-1">{record.summary}</h3>
+            <p className="text-[13px] text-text-secondary m-0 line-clamp-2 mb-2">{record.corrected_content}</p>
+            <Link className="text-[12px] text-accent-solo hover:underline no-underline" to={`/records/${record.id}`}>
+              View →
             </Link>
           </article>
         ))}

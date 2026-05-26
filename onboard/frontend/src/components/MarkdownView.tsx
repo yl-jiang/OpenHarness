@@ -7,7 +7,7 @@ interface MarkdownViewProps {
 
 export function MarkdownView({ content }: MarkdownViewProps) {
   return (
-    <div className="markdown-view">
+    <div className="prose-dark">
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{content || '_No content._'}</ReactMarkdown>
     </div>
   );
