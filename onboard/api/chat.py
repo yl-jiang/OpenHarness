@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,17 @@ from fastapi.responses import HTMLResponse, PlainTextResponse
 from onboard.services.chat_service import stream_chat
 
 router = APIRouter(tags=["chat"])
+
+# Regex to strip the volatile time-context prefix injected by the runner
+_TIME_CONTEXT_RE = re.compile(
+    r"^## Current Local Time\n(?:- [^\n]+\n)+\n.*?\n+---\n+",
+    re.DOTALL,
+)
+
+
+def _strip_time_context(text: str) -> str:
+    """Remove the runner's time-context header from a user message."""
+    return _TIME_CONTEXT_RE.sub("", text, count=1)
 
 
 def _get_workspace(app_name: str) -> Path:
@@ -68,10 +80,13 @@ def list_sessions(
     limit: int = Query(50, ge=1, le=200),
     search: str | None = Query(None),
 ) -> list[dict[str, Any]]:
-    """List recent chat sessions (within 30 days)."""
+    """List recent chat sessions (within 30 days, web-originated only)."""
     session_mod = _get_session_module(app_name)
     workspace = _get_workspace(app_name)
     sessions = session_mod.list_conversations(workspace, limit=limit)
+
+    # Only show sessions created by the web UI (session_key starts with "web-")
+    sessions = [s for s in sessions if s.get("session_key", "").startswith("web-")]
 
     # Filter to last 30 days
     cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
@@ -83,7 +98,7 @@ def list_sessions(
         filtered = []
         for s in sessions:
             messages, _ = session_mod.load_conversation(workspace, s["session_key"])
-            preview = next((m.text[:100] for m in messages if m.role == "user" and m.text.strip()), "")
+            preview = next((_strip_time_context(m.text)[:100] for m in messages if m.role == "user" and m.text.strip()), "")
             if keyword in preview.lower():
                 s["preview"] = preview
                 filtered.append(s)
@@ -99,7 +114,7 @@ def list_sessions(
         # Add preview (first user message) for display
         for s in sessions:
             messages, _ = session_mod.load_conversation(workspace, s["session_key"])
-            s["preview"] = next((m.text[:100] for m in messages if m.role == "user" and m.text.strip()), "")
+            s["preview"] = next((_strip_time_context(m.text)[:100] for m in messages if m.role == "user" and m.text.strip()), "")
 
     return sessions
 
@@ -114,7 +129,7 @@ def get_session(app_name: str, session_key: str) -> dict[str, Any]:
         "session_key": session_key,
         "session_id": session_id,
         "messages": [
-            {"role": m.role, "content": m.text}
+            {"role": m.role, "content": _strip_time_context(m.text) if m.role == "user" else m.text}
             for m in messages
             if m.role in ("user", "assistant") and m.text.strip()
         ],

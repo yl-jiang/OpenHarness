@@ -37,5 +37,7 @@ async def stream_chat(
             yield {"type": "reasoning", "content": text}
         elif kind == "final":
             yield {"type": "complete", "content": text}
+        elif kind == "progress":
+            pass  # transient status hints; not forwarded to WebSocket UI
         else:
             yield {"type": "delta", "content": text}

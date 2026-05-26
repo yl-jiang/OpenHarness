@@ -125,6 +125,18 @@ export function ChatPanel({ appName }: { appName: AppName }) {
   const canSend = useMemo(() => socket.connected && input.trim().length > 0, [socket.connected, input]);
   const displayName = appName === 'solo' ? 'Solo' : 'Wolo';
 
+  // Reset streaming state when WebSocket disconnects mid-stream
+  useEffect(() => {
+    if (!socket.connected && streaming) {
+      setStreaming(false);
+      streamingCache.set(appName, false);
+      // Mark any streaming messages as complete
+      setMessages((items) => items.map((item) =>
+        item.status === 'streaming' ? { ...item, status: 'complete' as const } : item
+      ));
+    }
+  }, [socket.connected, streaming, appName]);
+
   // Sync messages to module-level cache
   useEffect(() => { messageCache.set(appName, messages); }, [appName, messages]);
   useEffect(() => { streamingCache.set(appName, streaming); }, [appName, streaming]);
@@ -145,6 +157,13 @@ export function ChatPanel({ appName }: { appName: AppName }) {
   useEffect(() => {
     if (showHistory) loadSessions(searchQuery || undefined);
   }, [showHistory, loadSessions, searchQuery]);
+
+  // Refresh session list when streaming completes (new conversation saved)
+  useEffect(() => {
+    if (!streaming && messages.length > 0 && showHistory) {
+      loadSessions(searchQuery || undefined);
+    }
+  }, [streaming]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Resume a previous session
   const resumeSession = useCallback(async (sessionKey: string) => {
@@ -199,7 +218,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
   }
 
   return (
-    <div className="flex h-[calc(100vh-120px)] border border-border rounded-lg bg-surface-1 overflow-hidden">
+    <div className="flex h-full overflow-hidden">
       {/* Session History Sidebar */}
       {showHistory && (
         <aside className="w-72 border-r border-border bg-surface-2/50 flex flex-col shrink-0">
@@ -303,6 +322,14 @@ export function ChatPanel({ appName }: { appName: AppName }) {
                 {socket.sessionKey.slice(0, 12)}…
               </span>
             )}
+            <button
+              onClick={newConversation}
+              className="inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 rounded-md border border-border text-text-muted hover:text-text hover:border-text-muted transition-colors"
+              title="New conversation"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 5v14M5 12h14"/></svg>
+              New
+            </button>
             <div className={`inline-flex items-center gap-2 text-[11px] font-mono px-2.5 py-1 rounded-md border ${
               socket.connected ? 'border-success/30 text-success' : 'border-warning/30 text-warning'
             }`}>
@@ -379,32 +406,20 @@ export function ChatPanel({ appName }: { appName: AppName }) {
         </section>
 
         {/* Input */}
-        <form className="border-t border-border p-4 bg-surface-2/30" onSubmit={submit} aria-label="Chat composer">
-          <div className="flex items-center justify-between mb-2 text-[11px] font-mono text-text-muted">
-            <span>{socket.connected ? 'Ready' : 'Waiting for connection...'}</span>
-            <kbd className="px-1.5 py-0.5 border border-border rounded text-[10px] bg-surface-2">Enter</kbd>
-          </div>
-          <div className="flex gap-2 items-end">
-            <textarea
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder={socket.connected ? `Message ${displayName}...` : 'Connecting...'}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' && !event.shiftKey) {
-                  event.preventDefault();
-                  submit(event);
-                }
-              }}
-              className="flex-1 min-h-[80px] px-3.5 py-2.5 text-[13px] bg-surface-1 border border-border rounded-md text-text placeholder:text-text-muted outline-none focus:border-text-muted resize-y transition-colors"
-            />
-            <button
-              type="submit"
-              disabled={!canSend}
-              className="px-4 py-2.5 text-[13px] font-medium rounded-md border border-accent-solo/30 bg-accent-solo-dim text-accent-solo cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed hover:bg-accent-solo/20 active:scale-[0.97] transition-all"
-            >
-              Send
-            </button>
-          </div>
+        <form className="border-t border-border px-5 py-3" onSubmit={submit} aria-label="Chat composer">
+          <textarea
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            placeholder={socket.connected ? `Message ${displayName}... (Enter to send)` : 'Connecting...'}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                submit(event);
+              }
+            }}
+            className="w-full min-h-[44px] max-h-[160px] px-3 py-2.5 text-[13px] bg-transparent border-none text-text placeholder:text-text-muted outline-none resize-none"
+            rows={1}
+          />
         </form>
       </div>
     </div>

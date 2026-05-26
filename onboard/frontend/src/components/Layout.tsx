@@ -1,4 +1,4 @@
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 
 import type { AppName } from '../api/types';
 import { SearchBar } from './SearchBar';
@@ -13,6 +13,8 @@ interface LayoutProps {
 
 export function Layout({ appName, gatewayStatus, onAppChange }: LayoutProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isFullBleed = location.pathname === '/chat';
   return (
     <div className="grid grid-cols-[220px_minmax(0,1fr)] min-h-screen" data-theme={appName}>
       <Sidebar appName={appName} onAppChange={onAppChange} gatewayStatus={gatewayStatus} />
@@ -25,7 +27,7 @@ export function Layout({ appName, gatewayStatus, onAppChange }: LayoutProps) {
           <SearchBar onSearch={(value) => navigate(`/search?q=${encodeURIComponent(value)}`)} />
           <StatusBadge status={gatewayStatus} />
         </header>
-        <section className="flex-1 w-full max-w-[1320px] mx-auto px-8 py-6">
+        <section className={`flex-1 w-full ${isFullBleed ? '' : 'max-w-[1320px] mx-auto px-8 py-6'}`}>
           <Outlet />
         </section>
       </main>
