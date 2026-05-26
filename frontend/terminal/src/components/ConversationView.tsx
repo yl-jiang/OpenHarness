@@ -251,8 +251,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		const [measuredContentMode, setMeasuredContentMode] = useState<ContentMode | null>(null);
 		const [scrollFromTop, setScrollFromTop] = useState(0);
 		const [paused, setPaused] = useState(false);
-		const lastRevealHeadKeyRef = useRef<number | undefined>(undefined);
-		const pendingRevealHeadAnchorRef = useRef<number | null>(null);
+		const lastRevealHeadKeyRef = useRef<number | undefined>(revealHeadKey);
 
 		const groups = buildGroups(transcript);
 		const treePositions = assignTreePositions(groups);
@@ -280,37 +279,22 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		const measuredHeightForCurrentContent = measuredContentMode === contentMode ? contentHeight : 0;
 		const maxScroll = Math.max(0, measuredHeightForCurrentContent - viewportHeight);
 
+		// Track revealHeadKey changes but do NOT auto-pause.  The view only
+		// enters paused state when the user explicitly scrolls up (wheel/PgUp).
 		useEffect(() => {
 			if (revealHeadKey == null || revealHeadKey === lastRevealHeadKeyRef.current) {
 				return;
 			}
 			lastRevealHeadKeyRef.current = revealHeadKey;
-			pendingRevealHeadAnchorRef.current = measuredHeightForCurrentContent;
-		}, [measuredHeightForCurrentContent, revealHeadKey]);
+		}, [revealHeadKey]);
 
 		// In follow mode keep `scrollFromTop` mirrored to the live tail so
 		// that the moment the user scrolls up we have a sensible base.
-		// Must run BEFORE the reveal-trigger effect so that when both fire in
-		// the same commit, the reveal's setScrollFromTop wins (last setState
-		// call wins in React 18 automatic batching across effects).
 		useEffect(() => {
-			if (pendingRevealHeadAnchorRef.current != null) {
-				return;
-			}
 			if (!paused && scrollFromTop !== maxScroll) {
 				setScrollFromTop(maxScroll);
 			}
 		}, [paused, maxScroll, scrollFromTop]);
-
-		useEffect(() => {
-			const anchor = pendingRevealHeadAnchorRef.current;
-			if (anchor == null || measuredHeightForCurrentContent <= anchor) {
-				return;
-			}
-			pendingRevealHeadAnchorRef.current = null;
-			setPaused(true);
-			setScrollFromTop(Math.max(0, Math.min(anchor, maxScroll)));
-		}, [maxScroll, measuredHeightForCurrentContent]);
 
 		// Keep the empty welcome screen pinned to the top. Once conversation
 		// content exists, keep the banner in scrollback and follow the live tail.
