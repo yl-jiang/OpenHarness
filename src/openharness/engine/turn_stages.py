@@ -493,9 +493,12 @@ async def response_routing_stage(state: TurnState) -> AsyncIterator[tuple[Stream
             state.messages.append(
                 ConversationMessage.from_user_text(
                     "<openharness-internal:done-reminder>\n"
-                    "You stopped without calling the done() tool. "
-                    "If the task is complete, you MUST call done(message=...) to signal completion. "
-                    "If you still have work to do, continue using tools."
+                    "You responded with plain text but did NOT call any tool. "
+                    "In auto mode, every response MUST include a tool call. Choose one:\n"
+                    "- Task complete → call done(message=...)\n"
+                    "- Need user input/confirmation → call ask_user_question(question=...)\n"
+                    "- Still have work → call the appropriate tool to continue.\n"
+                    "Plain text without a tool call is not accepted."
                 )
             )
             state.action = TurnAction.NEXT_TURN
