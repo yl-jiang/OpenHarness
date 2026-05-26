@@ -627,6 +627,16 @@ class QueryEngine:
             "written_paths": [str(path) for path in result.written_paths],
         }
 
+    def _schedule_extract_memories(self) -> None:
+        """Fire-and-forget durable memory extraction after a user turn."""
+        import asyncio
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._extract_durable_memories())
+
     def has_pending_continuation(self) -> bool:
         """Return True when the conversation ends with tool results awaiting a follow-up model turn."""
         if not self._messages:
@@ -697,7 +707,7 @@ class QueryEngine:
                 yield event
         finally:
             await self._update_session_memory()
-            await self._extract_durable_memories()
+            self._schedule_extract_memories()
             self._schedule_auto_dream()
         self._maybe_spawn_self_evolution_review(
             user_message.text,
@@ -782,7 +792,7 @@ class QueryEngine:
         async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):
             yield event
         await self._update_session_memory()
-        await self._extract_durable_memories()
+        self._schedule_extract_memories()
         logger.event(
             "continue_pending_end",
             session_id=self._tool_metadata.get("session_id"),
