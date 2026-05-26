@@ -34,6 +34,7 @@ import {useBackendSession} from './hooks/useBackendSession.js';
 import {useElapsedTimer} from './hooks/useElapsedTimer.js';
 import {useMouseWheel} from './hooks/useMouseWheel.js';
 import {useTerminalMouse} from './hooks/useTerminalMouse.js';
+import {useCopyMode} from './hooks/useCopyMode.js';
 import {useTerminalSize} from './hooks/useTerminalSize.js';
 import {applyVimNormalMode, nextWordBoundary, prevWordBoundary, toChars, type VimInputMode} from './input/vim.js';
 import {discoverMentionFiles, filterMentionCandidates, findMentionQuery, replaceMentionQuery} from './input/mentions.js';
@@ -224,7 +225,7 @@ export function App({config}: {config: FrontendConfig}): React.JSX.Element {
 }
 
 function AppShell({config}: {config: FrontendConfig}): React.JSX.Element {
-	const [mouseTracking, setMouseTracking] = useState(true);
+	const [mouseTracking, setMouseTracking] = useState<boolean | 'select'>(true);
 	return (
 		<AlternateScreen mouseTracking={mouseTracking}>
 			<AppInner config={config} mouseTracking={mouseTracking} setMouseTracking={setMouseTracking} />
@@ -238,8 +239,8 @@ function AppInner({
 	setMouseTracking,
 }: {
 	config: FrontendConfig;
-	mouseTracking: boolean;
-	setMouseTracking: (value: boolean | ((prev: boolean) => boolean)) => void;
+	mouseTracking: boolean | 'select';
+	setMouseTracking: (value: (boolean | 'select') | ((prev: boolean | 'select') => boolean | 'select')) => void;
 }): React.JSX.Element {
 	const {exit} = useApp();
 	const {stdin: _stdin} = useStdin();
@@ -481,7 +482,11 @@ function AppInner({
 		conversationRef.current?.scrollToTop();
 	}, []);
 
+	// Copy mode (app-level text selection with mouse drag + wheel scroll)
+	const copyMode = useCopyMode(scrollUp, scrollDown, cols);
+
 	useMouseWheel((delta) => {
+		if (copyMode.state.active) return; // handled by copy mode's own mouse handler
 		if (selectModal) {
 			setSelectIndex((i) => nextSelectIndexForWheel(i, delta, visibleSelectOptions.length));
 			return;
@@ -938,6 +943,11 @@ function AppInner({
 		})();
 	}, [session.status.cwd, setInputValue, setShellCompletionCycleValue, shellCommands]);
 	useTerminalMouse(useCallback((event) => {
+		// In copy mode, all mouse events are handled by the copy mode hook
+		if (copyMode.state.active) {
+			copyMode.handleMouseEvent(event);
+			return;
+		}
 		if (event.kind !== 'button' || event.action !== 'release' || event.buttonCode !== 0) {
 			return;
 		}
@@ -953,7 +963,7 @@ function AppInner({
 		if (hitboxContainsPoint(getPromptExpandTriggerHitbox(cols, rows), event.column, event.row)) {
 			openExpandedComposer();
 		}
-	}, [cols, expandedComposer, openExpandedComposer, rows, selectModal, session.busy, session.modal, session.ready, submitExpandedComposer]));
+	}, [cols, copyMode, expandedComposer, openExpandedComposer, rows, selectModal, session.busy, session.modal, session.ready, submitExpandedComposer]));
 
 	useInput((chunk, key) => {
 		const isPaste = chunk.length > 1 && !key.ctrl && !key.meta;
@@ -1141,12 +1151,16 @@ function AppInner({
 			return;
 		}
 
-		// Ctrl+X toggles mouse capture so the user can drag-select text in
-		// their terminal to copy.  When disabled, in-app wheel scrolling is
-		// unavailable until re-enabled (PgUp/PgDn still work).
+		// Ctrl+X toggles copy mode: app-level text selection with drag + wheel
+		// scroll.  In copy mode, mouse mode 1002 tracks drag events so both
+		// selection and scrolling work simultaneously.
 		if (key.ctrl && chunk === 'x') {
 			suppressNextCharRef.current = 'x';
-			setMouseTracking((prev) => !prev);
+			copyMode.toggle();
+			setMouseTracking((prev) => {
+				if (prev === 'select') return true;
+				return 'select';
+			});
 			return;
 		}
 
@@ -1648,6 +1662,15 @@ function AppInner({
 	const showWelcome = session.ready && outputStyle !== 'codex';
 	const isPaused = paused;
 
+	// Re-render selection highlight after each Ink paint cycle
+	useEffect(() => {
+		if (copyMode.state.active && copyMode.state.selection) {
+			// Schedule highlight after Ink's render is flushed to stdout
+			const timer = setImmediate(() => copyMode.renderHighlight());
+			return () => clearImmediate(timer);
+		}
+	});
+
 	if (expandedComposer) {
 		return (
 			<Box flexDirection="column" height={rows} paddingX={1}>
@@ -1685,10 +1708,11 @@ function AppInner({
 				</Box>
 			) : null}
 
-			{!mouseTracking ? (
+			{mouseTracking === 'select' ? (
 				<Box flexShrink={0} flexDirection="column">
 					<Text color={theme.colors.warning} dimColor>
-						— select mode: drag to copy · ctrl+x to re-enable wheel scroll —
+						— copy mode: drag to select · wheel to scroll · ctrl+x to exit —
+						{copyMode.state.copiedNotice ? ` [${copyMode.state.copiedNotice}]` : ''}
 					</Text>
 				</Box>
 			) : null}

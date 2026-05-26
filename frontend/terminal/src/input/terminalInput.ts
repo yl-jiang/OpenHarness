@@ -14,6 +14,12 @@ export type TerminalMouseEvent =
 		buttonCode: number;
 		column: number;
 		row: number;
+	}
+	| {
+		kind: 'drag';
+		buttonCode: number;
+		column: number;
+		row: number;
 	};
 
 type DecodedTerminalInput = {
@@ -349,6 +355,10 @@ function toMouseEvent(buttonCode: number, terminator: string, column: number, ro
 	}
 	if (buttonCode === 65) {
 		return {kind: 'wheel', direction: 'down', buttonCode, column, row};
+	}
+	// Bit 32 indicates motion (drag) in mode 1002/1003
+	if (buttonCode & 32) {
+		return {kind: 'drag', buttonCode: buttonCode & ~32, column, row};
 	}
 	return {
 		kind: 'button',

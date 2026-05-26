@@ -9,6 +9,11 @@ const LEAVE_ALT = '\x1b[?1049l';
 // click-and-drag to select / copy text in their terminal.
 const ENTER_MOUSE = '\x1b[?1000h\x1b[?1006h';
 const LEAVE_MOUSE = '\x1b[?1006l\x1b[?1000l';
+// Mode 1002 (button-event tracking) reports press, release, wheel, AND
+// motion-while-button-held (drag).  Used in copy mode to let the app track
+// selection while keeping wheel scroll working.
+const ENTER_MOUSE_BTN_EVENT = '\x1b[?1002h\x1b[?1006h';
+const LEAVE_MOUSE_BTN_EVENT = '\x1b[?1006l\x1b[?1002l';
 const HIDE_CURSOR = '\x1b[?25l';
 const SHOW_CURSOR = '\x1b[?25h';
 
@@ -57,13 +62,17 @@ function installSignalCleanup(cleanup: () => void): () => void {
  * separately via the `mouseTracking` prop.  Disabling it lets the user
  * click-and-drag to select / copy text in their terminal — at the cost of
  * losing in-app wheel scrolling.
+ *
+ * When set to `'select'`, mode 1002 (button-event tracking) is used so the
+ * app receives press, drag, release, and wheel events — enabling app-level
+ * text selection with simultaneous wheel scrolling.
  */
 export function AlternateScreen({
 	children,
 	mouseTracking = true,
 }: {
 	children: React.ReactNode;
-	mouseTracking?: boolean;
+	mouseTracking?: boolean | 'select';
 }): React.JSX.Element {
 	const {stdout} = useStdout();
 
@@ -72,7 +81,7 @@ export function AlternateScreen({
 		stdout.write(ENTER_ALT + HIDE_CURSOR);
 		const cleanup = (): void => {
 			try {
-				stdout.write(LEAVE_MOUSE + LEAVE_ALT + SHOW_CURSOR);
+				stdout.write(LEAVE_MOUSE + LEAVE_MOUSE_BTN_EVENT + LEAVE_ALT + SHOW_CURSOR);
 			} catch {
 				/* ignore */
 			}
@@ -86,8 +95,20 @@ export function AlternateScreen({
 
 	useEffect(() => {
 		if (!stdout) return;
+		if (mouseTracking === 'select') {
+			// Disable normal mode first, then enable button-event mode
+			stdout.write(LEAVE_MOUSE + ENTER_MOUSE_BTN_EVENT);
+			return () => {
+				try {
+					stdout.write(LEAVE_MOUSE_BTN_EVENT);
+				} catch {
+					/* ignore */
+				}
+			};
+		}
 		if (mouseTracking) {
-			stdout.write(ENTER_MOUSE);
+			// Disable button-event mode first, then enable normal mode
+			stdout.write(LEAVE_MOUSE_BTN_EVENT + ENTER_MOUSE);
 			return () => {
 				try {
 					stdout.write(LEAVE_MOUSE);
@@ -96,7 +117,7 @@ export function AlternateScreen({
 				}
 			};
 		}
-		stdout.write(LEAVE_MOUSE);
+		stdout.write(LEAVE_MOUSE + LEAVE_MOUSE_BTN_EVENT);
 		return undefined;
 	}, [stdout, mouseTracking]);
 

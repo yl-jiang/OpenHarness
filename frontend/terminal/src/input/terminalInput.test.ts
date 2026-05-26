@@ -27,6 +27,17 @@ test('buffers partial mouse escape sequences across chunks', () => {
 	]);
 });
 
+test('decodes motion events (mode 1002 drag) with button bit 32 set', () => {
+	const decoder = createTerminalInputDecoder();
+	// buttonCode 32 = motion with left button held (0 + 32)
+	const result = decoder.push(`\u001b[<32;15;7M`);
+
+	assert.equal(result.text, '');
+	assert.deepEqual(result.mouseEvents, [
+		{kind: 'drag', buttonCode: 0, column: 15, row: 7},
+	]);
+});
+
 test('splits repeated backspace controls into separate chunks for Ink consumers', () => {
 	assert.deepEqual(chunkTerminalTextForInk('\b\b\b'), ['\b', '\b', '\b']);
 	assert.deepEqual(chunkTerminalTextForInk('\x7f\x7f'), ['\b', '\b']);
