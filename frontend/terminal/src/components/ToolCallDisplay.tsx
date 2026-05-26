@@ -125,11 +125,16 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 						</Text>
 					</Text>
 				))}
-				{errorLines?.map((line, i) => (
-					<Box key={i} marginLeft={4}>
-						<Text color={theme.colors.error}>{line}</Text>
-					</Box>
-				))}
+				{errorLines?.map((line, i) => {
+					const isLast = i === errorLines.length - 1;
+					const errPrefix = isLast ? '└ ' : '│ ';
+					return (
+						<Text key={i}>
+							<Text color={connectorColor}>{continuationConnector}</Text>
+							<Text color={theme.colors.error}>{errPrefix}{line}</Text>
+						</Text>
+					);
+				})}
 				{userAnswer !== null ? (
 					<AskUserAnswerRow answer={userAnswer} connector={continuationConnector} connectorColor={connectorColor} theme={theme} availableWidth={contentWidth} />
 				) : null}
