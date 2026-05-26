@@ -131,7 +131,7 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 					</Box>
 				))}
 				{userAnswer !== null ? (
-					<AskUserAnswerRow answer={userAnswer} indent={stringWidth(continuationConnector)} theme={theme} availableWidth={contentWidth} />
+					<AskUserAnswerRow answer={userAnswer} connector={continuationConnector} connectorColor={connectorColor} theme={theme} availableWidth={contentWidth} />
 				) : null}
 			</Box>
 	);
@@ -218,29 +218,34 @@ function ShellToolPanel({
 
 function AskUserAnswerRow({
 	answer,
-	indent,
+	connector,
+	connectorColor,
 	theme,
 	availableWidth,
 }: {
 	answer: string;
-	indent: number;
+	connector: string;
+	connectorColor: string;
 	theme: ReturnType<typeof useTheme>['theme'];
 	availableWidth: number;
 }): React.JSX.Element {
+	const connectorWidth = stringWidth(connector);
 	const prefix = 'you · ';
-	const textWidth = Math.max(1, availableWidth - indent - stringWidth(prefix));
+	const textWidth = Math.max(1, availableWidth - connectorWidth - stringWidth(prefix));
 	const lines = answer.split('\n');
 	const firstLine = lines[0] ?? '';
 	const restLines = lines.slice(1);
 	return (
-		<Box marginLeft={indent} flexDirection="column">
+		<Box flexDirection="column">
 			<Text>
+				<Text color={connectorColor}>{connector}</Text>
 				<Text color={theme.colors.secondary} bold>you</Text>
 				<Text dimColor> · </Text>
 				<Text>{firstLine.slice(0, textWidth)}</Text>
 			</Text>
 			{restLines.map((line, i) => (
 				<Text key={i}>
+					<Text color={connectorColor}>{connector}</Text>
 					<Text>{' '.repeat(stringWidth(prefix))}</Text>
 					<Text>{line.slice(0, textWidth) || ' '}</Text>
 				</Text>
