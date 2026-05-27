@@ -104,10 +104,14 @@ class OpenHarnessWoloAgent:
         if stats_summary:
             user_prompt_parts.append(f"\n\n## 数据统计摘要\n{stats_summary}")
         user_prompt_parts.append(f"\n\n## 记录数据（共 {len(records)} 条）\n{records_text}")
-        return await self._complete(
+        content = await self._complete(
             system_prompt=_report_system_prompt(report_type),
             user_prompt="".join(user_prompt_parts),
+            max_tokens=self._settings.max_tokens,
         )
+        if not content.strip():
+            raise RuntimeError("report generation returned empty response")
+        return content
 
     async def generate_daily_question(self, profile_context: str) -> str:
         logger.info("generate_daily_question start")
@@ -135,12 +139,12 @@ class OpenHarnessWoloAgent:
             user_prompt=user_prompt + "\n\n请生成 3 个深度复盘问题。",
         )
 
-    async def _complete(self, *, system_prompt: str, user_prompt: str) -> str:
+    async def _complete(self, *, system_prompt: str, user_prompt: str, max_tokens: int | None = None) -> str:
         request = ApiMessageRequest(
             model=self._settings.model,
             messages=[ConversationMessage.from_user_text(user_prompt)],
             system_prompt=system_prompt,
-            max_tokens=min(self._settings.max_tokens, 4096),
+            max_tokens=max_tokens or min(self._settings.max_tokens, 4096),
             tools=[],
         )
         chunks: list[str] = []

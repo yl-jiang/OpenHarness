@@ -81,6 +81,11 @@ class _FailingArtifactAgent(_WorkAgent):
         raise RuntimeError("artifact extraction temporarily failed")
 
 
+class _EmptyReportAgent(_WorkAgent):
+    async def generate_report(self, report_type, records, profile_context, **kwargs):
+        return ""
+
+
 class _JsonClient:
     def __init__(self, outputs: list[str]) -> None:
         self.outputs = outputs
@@ -276,6 +281,20 @@ async def test_report_context_includes_work_artifact_evidence(tmp_path: Path):
     assert "补齐 wolo 周报证据链" in agent.report_context
     assert "派生 artifact 不塞进主 record" in agent.report_context
     assert "先列边界再 patch" in agent.report_context
+
+
+@pytest.mark.asyncio
+async def test_wolo_report_rejects_empty_body_before_appending_stats(tmp_path: Path):
+    store = WoloStore(tmp_path / ".wolo")
+    agent = _EmptyReportAgent()
+    processor = WoloProcessor(store, agent=agent)
+    store.record("今天做 wolo 工作日志结构化，遇到 pytest 同名模块冲突")
+    await processor.process_pending()
+
+    with pytest.raises(RuntimeError, match="empty response"):
+        await processor.generate_report("weekly")
+    assert store.list_reports() == []
+    assert store.list_reports() == []
 
 
 @pytest.mark.asyncio

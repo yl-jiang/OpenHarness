@@ -349,11 +349,14 @@ class WoloProcessor:
             content = await self.agent.generate_report(
                 report_type, records_dicts, context, stats_summary=stats_summary,
             )
+            content = content.strip()
+            if not content:
+                raise RuntimeError("report generation returned empty response")
 
             # Append precise visual data appendix (code-generated, not LLM)
             visual_appendix = _build_report_visual_appendix(filtered, start, end)
             if visual_appendix:
-                content = content.rstrip() + visual_appendix
+                content = content + visual_appendix
 
         report = WoloReport(
             id=uuid4().hex[:12],
