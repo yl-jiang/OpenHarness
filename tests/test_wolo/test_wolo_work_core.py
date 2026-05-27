@@ -71,7 +71,7 @@ class _WorkAgent:
     async def generate_daily_question(self, context):
         return ""
 
-    async def generate_report(self, report_type, records, profile_context):
+    async def generate_report(self, report_type, records, profile_context, **kwargs):
         self.report_context = profile_context
         return "report"
 

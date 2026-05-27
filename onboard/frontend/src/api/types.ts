@@ -67,6 +67,8 @@ export interface Report {
   report_type: ReportType;
   content: string;
   created_at: string;
+  period_start: string;
+  period_end: string;
 }
 
 export interface Decision {

@@ -128,9 +128,11 @@ class SoloService:
         return self.store.complete_todo(todo_id)
 
     def list_reports(self, report_type: str | None = None) -> list[dict[str, Any]]:
-        reports = newest_first(self.store.list_reports())
+        reports = self.store.list_reports()
         if report_type:
             reports = [report for report in reports if report.report_type == report_type]
+        # Sort by content period (period_start desc), fallback to created_at desc
+        reports.sort(key=lambda r: r.period_start or r.created_at, reverse=True)
         return [to_jsonable(report) for report in reports]
 
     def get_report(self, report_id: str) -> dict[str, Any] | None:
@@ -140,10 +142,14 @@ class SoloService:
     def delete_report(self, report_id: str) -> bool:
         return self.store.delete_report(report_id)
 
-    async def generate_report(self, report_type: str, profile: str | None = None) -> dict[str, Any]:
+    async def generate_report(
+        self, report_type: str, profile: str | None = None, start_date: str | None = None, end_date: str | None = None,
+    ) -> dict[str, Any]:
         config = load_config(self.workspace)
         agent = OpenHarnessSoloAgent(profile=profile or config.provider_profile)
-        report = await SoloProcessor(self.store, agent).generate_report(report_type)
+        report = await SoloProcessor(self.store, agent).generate_report(
+            report_type, start_date=start_date, end_date=end_date,
+        )
         return to_jsonable(report)
 
     async def process_pending(self, limit: int = 20) -> dict[str, Any]:

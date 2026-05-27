@@ -5,7 +5,7 @@ import { api } from '../api/client';
 import type { AppName, Report, ReportType } from '../api/types';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
-function formatTime(raw: string): string {
+function formatGeneratedTime(raw: string): string {
   const d = new Date(raw);
   if (isNaN(d.getTime())) return raw;
   const now = new Date();
@@ -22,8 +22,44 @@ function formatTime(raw: string): string {
   return `${date} ${time}`;
 }
 
-function sortByNewest(reports: Report[]): Report[] {
-  return [...reports].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+function formatPeriod(report: Report): string {
+  const { period_start, period_end, report_type } = report;
+  if (!period_start && !period_end) return '';
+  const fmtDate = (s: string) => {
+    const d = new Date(s + 'T00:00:00');
+    if (isNaN(d.getTime())) return s;
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  };
+  if (report_type === 'yearly') {
+    const startYear = period_start.slice(0, 4);
+    const endYear = period_end.slice(0, 4);
+    return startYear === endYear ? startYear : `${startYear} – ${endYear}`;
+  }
+  if (report_type === 'monthly') {
+    // Same month → show single month; cross-month → show range
+    const startMonth = period_start.slice(0, 7); // "2026-04"
+    const endMonth = period_end.slice(0, 7);
+    const fmtYM = (s: string) => {
+      const d = new Date(s + 'T00:00:00');
+      if (isNaN(d.getTime())) return s;
+      return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short' });
+    };
+    if (startMonth === endMonth) {
+      return fmtYM(period_start);
+    }
+    return `${fmtYM(period_start)} – ${fmtYM(period_end)}`;
+  }
+  // weekly
+  return `${fmtDate(period_start)} – ${fmtDate(period_end)}`;
+}
+
+function sortByPeriod(reports: Report[]): Report[] {
+  return [...reports].sort((a, b) => {
+    // Sort by period_start desc; fallback to created_at desc
+    const pa = a.period_start || a.created_at;
+    const pb = b.period_start || b.created_at;
+    return pb.localeCompare(pa);
+  });
 }
 
 export function Reports({ appName }: { appName: AppName }) {
@@ -65,9 +101,9 @@ export function Reports({ appName }: { appName: AppName }) {
     return <div className="border border-danger/30 rounded-lg bg-danger/5 p-5 text-sm text-text">{error ?? 'Failed to load reports.'}</div>;
   }
 
-  const weekly = sortByNewest(data.filter((r) => r.report_type === 'weekly'));
-  const monthly = sortByNewest(data.filter((r) => r.report_type === 'monthly'));
-  const yearly = sortByNewest(data.filter((r) => r.report_type === 'yearly'));
+  const weekly = sortByPeriod(data.filter((r) => r.report_type === 'weekly'));
+  const monthly = sortByPeriod(data.filter((r) => r.report_type === 'monthly'));
+  const yearly = sortByPeriod(data.filter((r) => r.report_type === 'yearly'));
 
   const sections: { type: ReportType; label: string; items: Report[] }[] = [
     { type: 'weekly', label: 'Weekly Reports', items: weekly },
@@ -118,21 +154,31 @@ export function Reports({ appName }: { appName: AppName }) {
             <p className="text-[13px] text-text-muted italic m-0 pl-1">No {type} reports yet.</p>
           ) : (
             <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
-              {items.map((report) => (
-                <div key={report.id} className="flex items-center justify-between px-4 py-3 bg-surface-1 hover:bg-surface-2/60 transition-colors">
-                  <span className="font-mono text-[12px] text-text-secondary">{formatTime(report.created_at)}</span>
-                  <span className="inline-flex items-center gap-3">
-                    <Link to={`/reports/${report.id}`} className="text-[12px] text-accent-solo hover:underline no-underline">Open →</Link>
-                    <button
-                      onClick={() => deleteReport(report.id)}
-                      disabled={deleting === report.id}
-                      className="text-[12px] text-text-muted hover:text-danger cursor-pointer bg-transparent border-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {deleting === report.id ? '…' : '✕'}
-                    </button>
-                  </span>
-                </div>
-              ))}
+              {items.map((report) => {
+                const period = formatPeriod(report);
+                return (
+                  <div key={report.id} className="flex items-center justify-between px-4 py-3 bg-surface-1 hover:bg-surface-2/60 transition-colors">
+                    <div className="flex items-center gap-3">
+                      {period && (
+                        <span className="font-mono text-[12px] text-text">{period}</span>
+                      )}
+                      <span className="font-mono text-[11px] text-text-muted">
+                        {period ? `generated ${formatGeneratedTime(report.created_at)}` : formatGeneratedTime(report.created_at)}
+                      </span>
+                    </div>
+                    <span className="inline-flex items-center gap-3">
+                      <Link to={`/reports/${report.id}`} className="text-[12px] text-accent-solo hover:underline no-underline">Open →</Link>
+                      <button
+                        onClick={() => deleteReport(report.id)}
+                        disabled={deleting === report.id}
+                        className="text-[12px] text-text-muted hover:text-danger cursor-pointer bg-transparent border-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {deleting === report.id ? '…' : '✕'}
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           )}
         </section>

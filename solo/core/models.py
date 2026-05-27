@@ -236,10 +236,15 @@ class SoloReport:
     report_type: str
     content: str
     created_at: str
+    period_start: str = ""
+    period_end: str = ""
 
     @classmethod
     def from_json(cls, line: str) -> "SoloReport":
-        return cls(**json.loads(line))
+        data = json.loads(line)
+        data.setdefault("period_start", "")
+        data.setdefault("period_end", "")
+        return cls(**data)
 
     def to_json(self) -> str:
         return json.dumps(self.__dict__, ensure_ascii=False)

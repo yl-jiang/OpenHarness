@@ -17,6 +17,8 @@ router = APIRouter(prefix="/api/wolo", tags=["wolo"])
 class ReportRequest(BaseModel):
     type: str
     profile: str | None = None
+    start_date: str | None = None
+    end_date: str | None = None
 
 
 class ProcessRequest(BaseModel):
@@ -137,7 +139,9 @@ def delete_report(report_id: str, workspace: str | None = None) -> dict[str, boo
 
 @router.post("/reports/generate")
 async def generate_report(request: ReportRequest, workspace: str | None = None) -> dict[str, Any]:
-    return await _service(workspace).generate_report(request.type, profile=request.profile)
+    return await _service(workspace).generate_report(
+        request.type, profile=request.profile, start_date=request.start_date, end_date=request.end_date,
+    )
 
 
 @router.post("/process")

@@ -24,6 +24,147 @@ from wolo.core.utils import (
 logger = get_logger(__name__)
 
 
+def _build_report_stats(records: list, start_date: str, end_date: str) -> str:
+    """Build a statistical summary of records for report context (fed to LLM)."""
+    from collections import Counter
+
+    if not records:
+        return f"- 周期: {start_date} ~ {end_date}\n- 记录条数: 0\n- 数据不足，无法生成统计"
+
+    # Active days
+    dates = [r.date for r in records]
+    unique_dates = set(dates)
+    total_days = max(1, (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days)
+
+    # Emotion distribution
+    emotions = Counter(r.emotion for r in records if r.emotion)
+    emotion_lines = ", ".join(f"{emo}({cnt})" for emo, cnt in emotions.most_common(8))
+
+    # Tag distribution
+    all_tags: list[str] = []
+    for r in records:
+        all_tags.extend(t.strip() for t in r.tags.split(",") if t.strip())
+    tag_counts = Counter(all_tags).most_common(10)
+    tag_lines = ", ".join(f"{tag}({cnt})" for tag, cnt in tag_counts)
+
+    # Sample type distribution
+    sample_types = Counter(r.sample_type for r in records if r.sample_type)
+    sample_lines = ", ".join(f"{st}({cnt})" for st, cnt in sample_types.most_common(5))
+
+    # Day-of-week activity
+    day_activity = Counter(dates)
+    busiest = max(day_activity.items(), key=lambda x: x[1]) if day_activity else ("N/A", 0)
+
+    lines = [
+        f"- **周期**: {start_date} ~ {end_date}",
+        f"- **记录总条数**: {len(records)}",
+        f"- **活跃天数**: {len(unique_dates)}/{total_days} 天",
+        f"- **情绪分布**: {emotion_lines or '无数据'}",
+        f"- **高频标签 Top 10**: {tag_lines or '无数据'}",
+        f"- **样本类型分布**: {sample_lines or '无数据'}",
+        f"- **最高产日**: {busiest[0]} ({busiest[1]} 条)",
+    ]
+    return "\n".join(lines)
+
+
+def _build_report_visual_appendix(records: list, start_date: str, end_date: str) -> str:
+    """Build a rich visual data appendix appended to the final report output."""
+    from collections import Counter
+
+    if not records:
+        return ""
+
+    sections: list[str] = []
+    sections.append("\n\n---\n\n## 📊 数据可视化附录\n")
+
+    dates = [r.date for r in records]
+    unique_dates = set(dates)
+    total_days = max(1, (datetime.strptime(end_date, "%Y-%m-%d") - datetime.strptime(start_date, "%Y-%m-%d")).days)
+
+    # Overview banner
+    sections.append(
+        f"> 📅 **{start_date} ~ {end_date}** | "
+        f"活跃 **{len(unique_dates)}/{total_days}** 天 | "
+        f"共 **{len(records)}** 条记录 | "
+        f"日均 **{len(records) / max(1, len(unique_dates)):.1f}** 条\n"
+    )
+
+    # Emotion distribution table
+    emotions = Counter(r.emotion for r in records if r.emotion)
+    if emotions:
+        total_emo = sum(emotions.values())
+        sections.append("### 情绪分布\n")
+        sections.append("| 情绪 | 次数 | 占比 | 分布 |")
+        sections.append("|------|------|------|------|")
+        for emo, count in emotions.most_common():
+            pct = count * 100 // total_emo
+            bar_len = max(1, count * 15 // max(emotions.values()))
+            bar = "▓" * bar_len + "░" * (15 - bar_len)
+            sections.append(f"| {emo} | {count} | {pct}% | `{bar}` |")
+        sections.append("")
+
+    # Tag Top 10 table
+    all_tags: list[str] = []
+    for r in records:
+        all_tags.extend(t.strip() for t in r.tags.split(",") if t.strip())
+    tag_counts = Counter(all_tags).most_common(10)
+    if tag_counts:
+        sections.append("### 高频标签 Top 10\n")
+        sections.append("| # | 标签 | 次数 | 热度 |")
+        sections.append("|---|------|------|------|")
+        for i, (tag, count) in enumerate(tag_counts, 1):
+            heat = "🔥" * min(count, 5)
+            sections.append(f"| {i} | `{tag}` | {count} | {heat} |")
+        sections.append("")
+
+    # Activity heatmap (week grid)
+    day_counts = Counter(dates)
+    sections.append("### 活动热力图\n")
+    sections.append("| 周 | 一 | 二 | 三 | 四 | 五 | 六 | 日 |")
+    sections.append("|---|---|---|---|---|---|---|---|")
+    current = datetime.strptime(start_date, "%Y-%m-%d").date()
+    end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+    start_dt = current
+    # Align to Monday
+    while current.weekday() != 0:
+        current = current - timedelta(days=1)
+    week_num = 1
+    while current <= end_dt:
+        row = [f"W{week_num}"]
+        for _ in range(7):
+            d = current.isoformat()
+            count = day_counts.get(d, 0)
+            if current > end_dt or current < start_dt:
+                row.append("·")
+            elif count == 0:
+                row.append("░")
+            elif count == 1:
+                row.append("▒")
+            elif count == 2:
+                row.append("▓")
+            else:
+                row.append("█")
+            current = current + timedelta(days=1)
+        sections.append("| " + " | ".join(row) + " |")
+        week_num += 1
+    sections.append("\n> 图例: · 非周期 | ░ 无记录 | ▒ 1条 | ▓ 2条 | █ 3+条")
+    sections.append("")
+
+    # Sample type distribution
+    sample_types = Counter(r.sample_type for r in records if r.sample_type)
+    if sample_types:
+        total_st = sum(sample_types.values())
+        sections.append("### 样本类型分布\n")
+        sections.append("| 类型 | 次数 | 占比 |")
+        sections.append("|------|------|------|")
+        for kind, count in sample_types.most_common():
+            pct = count * 100 // total_st
+            sections.append(f"| {kind} | {count} | {pct}% |")
+        sections.append("")
+
+    return "\n".join(sections)
+
+
 class WoloProcessor:
     """Process raw entries into structured records."""
 
@@ -163,19 +304,64 @@ class WoloProcessor:
             if isinstance(update, dict) and str(update.get("confidence") or "").lower() != "low":
                 self.store.add_profile_update(self._profile_update(record.id, update))
 
-    async def generate_report(self, report_type: str) -> WoloReport:
-        records = [record.to_dict() for record in self.store.list_records()]
-        logger.info("generate_report start type=%s records=%d", report_type, len(records))
-        context = self._profile_context()
-        artifacts_context = self._work_artifacts_context()
-        if artifacts_context:
-            context = f"{context}\n\n{artifacts_context}"
-        content = await self.agent.generate_report(report_type, records, context)
+    async def generate_report(
+        self,
+        report_type: str,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> WoloReport:
+        # Time window: use explicit dates if provided, otherwise infer from report_type
+        now = datetime.now(timezone.utc)
+        if start_date and end_date:
+            start, end = start_date, end_date
+        elif start_date:
+            start, end = start_date, now.strftime("%Y-%m-%d")
+        else:
+            if report_type == "weekly":
+                start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+            elif report_type == "monthly":
+                start = (now - timedelta(days=30)).strftime("%Y-%m-%d")
+            else:  # yearly
+                start = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+            end = now.strftime("%Y-%m-%d")
+
+        all_records = self.store.list_records()
+        filtered = [r for r in all_records if start <= r.date <= end]
+
+        records_dicts = [record.to_dict() for record in filtered]
+        logger.info("generate_report start type=%s records=%d (filtered from %d) range=%s~%s", report_type, len(filtered), len(all_records), start, end)
+
+        if not filtered:
+            content = (
+                f"# {report_type.capitalize()} Report\n\n"
+                f"> 📅 {start} ~ {end}\n\n"
+                f"该时间段内没有工作记录，无法生成报告。"
+            )
+        else:
+            # Build statistics summary
+            stats_summary = _build_report_stats(filtered, start, end)
+
+            context = self._profile_context()
+            artifacts_context = self._work_artifacts_context()
+            if artifacts_context:
+                context = f"{context}\n\n{artifacts_context}"
+            content = await self.agent.generate_report(
+                report_type, records_dicts, context, stats_summary=stats_summary,
+            )
+
+            # Append precise visual data appendix (code-generated, not LLM)
+            visual_appendix = _build_report_visual_appendix(filtered, start, end)
+            if visual_appendix:
+                content = content.rstrip() + visual_appendix
+
         report = WoloReport(
             id=uuid4().hex[:12],
             report_type=report_type,
             content=content,
             created_at=_now(),
+            period_start=start,
+            period_end=end,
         )
         self.store.add_report(report)
         logger.info("generate_report done id=%s type=%s", report.id, report.report_type)

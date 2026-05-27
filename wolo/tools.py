@@ -492,7 +492,11 @@ class WoloToolRegistry:
 
     async def _handle_report(self, arguments: dict[str, Any]) -> dict[str, Any]:
         report_type = str(arguments.get("report_type") or arguments.get("type") or "weekly")
-        report = await self._processor().generate_report(report_type)
+        start_date = _optional_text(arguments, "start_date")
+        end_date = _optional_text(arguments, "end_date")
+        report = await self._processor().generate_report(
+            report_type, start_date=start_date, end_date=end_date,
+        )
         return {"ok": True, "report_type": report_type, "content": report.content, "message": report.content}
 
     async def _handle_report_list(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -941,45 +945,88 @@ class WoloToolRegistry:
 
         # Filter records by date
         start_date = (datetime.now(timezone.utc).date() - timedelta(days=days)).isoformat()
-        records = self.store.search_records(start_date=start_date, limit=100)
+        end_date = datetime.now(timezone.utc).date().isoformat()
+        records = self.store.search_records(start_date=start_date, limit=200)
 
         if not records:
             return {"ok": False, "message": f"最近 {days} 天暂无记录，无法可视化。"}
 
         from collections import Counter
+
         if viz_type == "emotion_distribution":
-            emotions = [r.emotion for r in records]
+            emotions = [r.emotion for r in records if r.emotion]
             counts = Counter(emotions)
-            chart = "\n".join([f"{emo}: {'█' * count}" for emo, count in counts.items()])
-            return {"ok": True, "message": f"最近 {days} 天的情绪分布：\n{chart}"}
+            total = sum(counts.values())
+            # Table format for better card rendering
+            header = f"## 📊 情绪分布 ({start_date} ~ {end_date})\n\n"
+            table = "| 情绪 | 次数 | 占比 | 分布 |\n|------|------|------|------|\n"
+            for emo, count in counts.most_common():
+                pct = count * 100 // total if total else 0
+                bar = "▓" * min(count, 20) + "░" * max(0, 20 - count)
+                table += f"| {emo} | {count} | {pct}% | `{bar}` |\n"
+            return {"ok": True, "message": header + table}
 
         if viz_type == "tag_cloud":
-            all_tags = []
+            all_tags: list[str] = []
             for r in records:
                 all_tags.extend([t.strip() for t in r.tags.split(",") if t.strip()])
             counts = Counter(all_tags).most_common(15)
-            cloud = "\n".join([f"{tag}: {count}" for tag, count in counts])
-            return {"ok": True, "message": f"最近 {days} 天的高频标签 Top 15：\n{cloud}"}
+            total = sum(c for _, c in counts)
+            header = f"## 🏷️ 高频标签 Top 15 ({start_date} ~ {end_date})\n\n"
+            table = "| # | 标签 | 次数 | 占比 | 热度 |\n|---|------|------|------|------|\n"
+            for i, (tag, count) in enumerate(counts, 1):
+                pct = count * 100 // total if total else 0
+                heat = "🔥" * min(count, 5)
+                table += f"| {i} | `{tag}` | {count} | {pct}% | {heat} |\n"
+            return {"ok": True, "message": header + table}
 
         if viz_type == "activity_heatmap":
             dates = [r.date for r in records]
             counts = Counter(dates)
-            # Simple list-based "heatmap"
-            heatmap = []
-            for i in range(days, -1, -1):
-                d = (datetime.now(timezone.utc).date() - timedelta(days=i)).isoformat()
-                count = counts.get(d, 0)
-                heatmap.append("█" if count > 0 else "░")
-
-            chunk_size = 7
-            rows = [" ".join(heatmap[i:i + chunk_size]) for i in range(0, len(heatmap), chunk_size)]
-            return {"ok": True, "message": f"最近 {days} 天的活动热力图 (每行 7 天)：\n" + "\n".join(rows)}
+            header = f"## 📅 活动热力图 ({start_date} ~ {end_date})\n\n"
+            # Week-based grid with day labels
+            lines = ["| 周 | 一 | 二 | 三 | 四 | 五 | 六 | 日 |", "|---|---|---|---|---|---|---|---|"]
+            # Build week rows
+            current = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d").date()
+            # Align to Monday
+            while current.weekday() != 0:
+                current = current - timedelta(days=1)
+            week_num = 1
+            while current <= end_dt:
+                row = [f"W{week_num}"]
+                for _ in range(7):
+                    d = current.isoformat()
+                    count = counts.get(d, 0)
+                    if current > end_dt or current < datetime.strptime(start_date, "%Y-%m-%d").date():
+                        row.append("·")
+                    elif count == 0:
+                        row.append("░")
+                    elif count == 1:
+                        row.append("▒")
+                    elif count == 2:
+                        row.append("▓")
+                    else:
+                        row.append("█")
+                    current = current + timedelta(days=1)
+                lines.append("| " + " | ".join(row) + " |")
+                week_num += 1
+            legend = "\n\n> 图例: · 非周期 | ░ 无记录 | ▒ 1条 | ▓ 2条 | █ 3+条"
+            active_days = len(set(dates))
+            summary = f"\n\n**活跃天数**: {active_days}/{days} | **总记录**: {len(records)} 条 | **日均**: {len(records)/max(1,active_days):.1f} 条"
+            return {"ok": True, "message": header + "\n".join(lines) + legend + summary}
 
         if viz_type == "sample_type_distribution":
-            sample_types = [r.sample_type for r in records]
+            sample_types = [r.sample_type for r in records if r.sample_type]
             counts = Counter(sample_types)
-            chart = "\n".join([f"{kind}: {'█' * count}" for kind, count in counts.items()])
-            return {"ok": True, "message": f"最近 {days} 天的样本类型分布：\n{chart}"}
+            total = sum(counts.values())
+            header = f"## 🧬 样本类型分布 ({start_date} ~ {end_date})\n\n"
+            table = "| 类型 | 次数 | 占比 | 分布 |\n|------|------|------|------|\n"
+            for kind, count in counts.most_common():
+                pct = count * 100 // total if total else 0
+                bar = "▓" * min(count, 20) + "░" * max(0, 20 - count)
+                table += f"| {kind} | {count} | {pct}% | `{bar}` |\n"
+            return {"ok": True, "message": header + table}
 
         return {"ok": False, "message": f"不支持的可视化类型：{viz_type}。目前支持：emotion_distribution, tag_cloud, activity_heatmap, sample_type_distribution"}
 
@@ -1282,8 +1329,13 @@ def _tool_backfill() -> ToolDefinition:
 def _tool_report() -> ToolDefinition:
     return _definition(
         "wolo_report",
-        "Generate weekly, monthly, or yearly wolo work report with progress, decisions, blockers, prompt/tool lessons, and next actions.",
-        [("type", "string", "weekly/monthly/yearly.", True)],
+        "Generate weekly, monthly, or yearly wolo work report with progress, decisions, blockers, prompt/tool lessons, and next actions. "
+        "Supports custom date ranges to generate reports for any past period (e.g. '上周的周报', '3月份的月报').",
+        [
+            ("type", "string", "weekly/monthly/yearly.", True),
+            ("start_date", "string", "Optional start date (YYYY-MM-DD). If omitted, defaults to 7/30/365 days ago based on type.", False),
+            ("end_date", "string", "Optional end date (YYYY-MM-DD). If omitted, defaults to today.", False),
+        ],
     )
 
 

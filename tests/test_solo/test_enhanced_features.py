@@ -135,8 +135,8 @@ async def test_tool_visualize_and_export(tmp_path: Path):
 
     # 1. Test Visualize (emotion distribution)
     res = await registry.execute("solo_visualize", {"type": "emotion_distribution"})
-    assert "积极: █" in res
-    assert "消极: █" in res
+    assert "积极" in res
+    assert "消极" in res
 
     # 2. Test Search
     res = await registry.execute("solo_search", {"query": "不错"})

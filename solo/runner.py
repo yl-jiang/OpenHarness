@@ -308,6 +308,9 @@ class SoloQueryRunner:
         yield ("progress", "🤔 正在思考...")
         last_text = ""
         tool_outputs: list[str] = []
+        # Tools whose output should be sent verbatim (not summarized by LLM).
+        _PASSTHROUGH_TOOLS = {"solo_report", "solo_visualize"}
+        passthrough_output: str = ""
         try:
             async for event in engine.submit_message(user_message):
                 if isinstance(event, ReasoningDelta):
@@ -323,13 +326,21 @@ class SoloQueryRunner:
                 elif isinstance(event, ToolExecutionCompleted):
                     if not event.is_error and event.output.strip():
                         tool_outputs.append(event.output.strip())
+                        if event.tool_name in _PASSTHROUGH_TOOLS:
+                            passthrough_output = event.output.strip()
         except Exception:
             logger.exception("SoloQueryRunner engine error session_key=%r text=%r", session_key, user_text[:80])
 
         if session_key:
             save_conversation(workspace, session_key, engine.messages, session_id=session_id)
 
-        yield ("final", last_text or "\n".join(tool_outputs) or "这里是 solo 记录专用 bot，请发送想要记录的内容。")
+        # For passthrough tools (report/visualize), send the full tool output
+        # directly instead of the LLM's potentially abbreviated summary.
+        if passthrough_output:
+            final = passthrough_output
+        else:
+            final = last_text or "\n".join(tool_outputs) or "这里是 solo 记录专用 bot，请发送想要记录的内容。"
+        yield ("final", final)
 
     async def run(
         self,
