@@ -58,6 +58,11 @@ class _SoloIterationAgent:
         return "report"
 
 
+class _EmptyReportAgent(_SoloIterationAgent):
+    async def generate_report(self, report_type, records, profile_context, **kwargs):
+        return ""
+
+
 @pytest.mark.asyncio
 async def test_processor_persists_iteration_fields_and_experiments(tmp_path: Path):
     store = SoloStore(tmp_path / ".solo")
@@ -109,3 +114,17 @@ async def test_solo_report_context_includes_iteration_artifacts(tmp_path: Path):
     assert "Iteration Artifacts" in agent.report_context
     assert "晚间手机规避实验" in agent.report_context
     assert "把手机充电器移到书房" in agent.report_context
+
+
+@pytest.mark.asyncio
+async def test_solo_report_rejects_empty_body_before_appending_stats(tmp_path: Path):
+    store = SoloStore(tmp_path / ".solo")
+    agent = _EmptyReportAgent()
+    processor = SoloProcessor(store, agent=agent)
+    store.record("晚饭后差点又刷视频了，但我先去洗澡了")
+    await processor.process_pending()
+
+    with pytest.raises(RuntimeError, match="empty response"):
+        await processor.generate_report("weekly")
+
+    assert store.list_reports() == []
