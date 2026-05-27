@@ -637,7 +637,7 @@ class Settings(BaseModel):
     # API configuration
     api_key: str = ""
     model: str = "claude-sonnet-4-6"
-    max_tokens: int = 8192  # the default max tokens for the llm reponse
+    max_tokens: int = 32768  # the default max tokens for the llm reponse
     base_url: str | None = None
     timeout: float = 300.0
     context_window_tokens: int | None = None
