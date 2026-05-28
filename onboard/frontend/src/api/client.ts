@@ -32,6 +32,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     ...options,
   });
+  if (response.status === 401) {
+    // Session expired or not authenticated — redirect to gate
+    window.location.href = '/_gate';
+    throw new Error('Authentication required');
+  }
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Request failed: ${response.status}`);

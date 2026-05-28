@@ -40,8 +40,13 @@ def start_cmd(
     port: int = typer.Option(8090, "--port", min=1, max=65535, help="Port to bind"),
 ) -> None:
     """Start onboard in the background."""
+    from onboard.auth import get_token
+
     pid = start_background(host=host, port=port)
+    token = get_token()
     print(f"onboard started (pid={pid}, url=http://{host}:{port})")
+    print(f"  🔑 Access token: {token}")
+    print(f"  🔗 Direct link:  http://{host}:{port}?token={token}")
 
 
 @app.command("stop")
@@ -61,3 +66,18 @@ def status_cmd() -> None:
         f"onboard: {status['status']} | pid={status['pid']} | "
         f"url=http://{status['host']}:{status['port']} | log={status['log_file']}"
     )
+
+
+@app.command("token")
+def token_cmd(
+    reset: bool = typer.Option(False, "--reset", help="Generate a new token"),
+) -> None:
+    """Show or reset the access token."""
+    from onboard.auth import get_token, reset_token
+
+    if reset:
+        new_token = reset_token()
+        print(f"Token reset. New token: {new_token}")
+        print("(All existing sessions are now invalid.)")
+    else:
+        print(get_token())

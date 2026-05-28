@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from onboard.api import chat, lifecycle, solo_routes, stats, wolo_routes
+from onboard.auth import TokenGateMiddleware, auth_routes, get_token
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,11 @@ def _build_frontend() -> None:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Onboard", version="0.1.0")
+
+    # Auth: token-gate middleware + routes
+    app.add_middleware(TokenGateMiddleware)
+    app.include_router(auth_routes())
+
     app.include_router(solo_routes.router)
     app.include_router(wolo_routes.router)
     app.include_router(chat.router)
@@ -107,6 +113,11 @@ def run_server(
     import uvicorn
 
     _build_frontend()
+
+    # Display access token on startup
+    token = get_token()
+    print(f"\n  🔑 Access token: {token}")
+    print(f"  🔗 Direct link:  http://{host}:{port}?token={token}\n")
 
     with _reserve_listener(host=host, port=port) as listener:
         _write_state(host=host, port=port, pid=os.getpid(), started_at=time())
