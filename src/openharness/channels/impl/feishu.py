@@ -578,6 +578,53 @@ class FeishuChannel(BaseChannel):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._add_reaction_sync, message_id, emoji_type)
 
+    def _fetch_message_content_sync(self, message_id: str) -> str:
+        """Fetch the text content of a message by ID (runs in thread pool)."""
+        from lark_oapi.api.im.v1 import GetMessageRequest
+        try:
+            request = GetMessageRequest.builder().message_id(message_id).build()
+            response = self._client.im.v1.message.get(request)
+            if not response.success():
+                logger.warning("Failed to fetch quoted message %s: code=%s, msg=%s", message_id, response.code, response.msg)
+                return ""
+            items = getattr(response.data, "items", None)
+            if not items:
+                return ""
+            msg = items[0]
+            msg_type = getattr(msg, "msg_type", "text")
+            body_raw = getattr(msg, "body", None)
+            body_content = getattr(body_raw, "content", None) if body_raw else None
+            if not body_content:
+                return ""
+            try:
+                content_json = json.loads(body_content)
+            except (json.JSONDecodeError, TypeError):
+                return ""
+            if msg_type == "text":
+                return content_json.get("text", "")
+            if msg_type == "post":
+                text, _ = _extract_post_content(content_json)
+                return text
+            if msg_type == "interactive":
+                return _extract_share_card_content(content_json, msg_type) or ""
+            return content_json.get("text", "")
+        except Exception as e:
+            logger.warning("Error fetching quoted message %s: %s", message_id, e)
+            return ""
+
+    async def _fetch_quoted_context(self, message_id: str) -> str:
+        """Fetch quoted message content, return formatted context string or empty."""
+        if not self._client or not message_id:
+            return ""
+        loop = asyncio.get_running_loop()
+        text = await loop.run_in_executor(None, self._fetch_message_content_sync, message_id)
+        if not text:
+            return ""
+        # Truncate overly long quotes
+        if len(text) > 500:
+            text = text[:500] + "…"
+        return text
+
     # Regex to match markdown tables (header + separator + data rows)
     _TABLE_RE = re.compile(
         r"((?:^[ \t]*\|.+\|[ \t]*\n)(?:^[ \t]*\|[-:\s|]+\|[ \t]*\n)(?:^[ \t]*\|.+\|[ \t]*\n?)+)",
@@ -1319,6 +1366,14 @@ class FeishuChannel(BaseChannel):
             # Add reaction only after policy says this message will be handled.
             await self._add_reaction(message_id, self.config.react_emoji)
 
+            # If this is a reply (quote), fetch the quoted message content
+            parent_id = getattr(message, "parent_id", None)
+            quoted_context = ""
+            if parent_id:
+                quoted_context = await self._fetch_quoted_context(parent_id)
+            if quoted_context:
+                content = f"[引用消息] {quoted_context}\n[回复] {content}"
+
             # Forward to message bus
             reply_to = chat_id if chat_type == "group" else sender_id
 
@@ -1334,6 +1389,7 @@ class FeishuChannel(BaseChannel):
                     "message_id": message_id,
                     "thread_id": thread_id,
                     "root_id": getattr(message, "root_id", None),
+                    "parent_id": parent_id,
                     "chat_type": chat_type,
                     "msg_type": msg_type,
                     "mentions": mentions,
