@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from openharness.utils.log import get_logger
 import uuid
 from dataclasses import dataclass, field
@@ -24,7 +25,7 @@ from openharness.auth.external import (
     get_claude_code_session_id,
 )
 from openharness.api.usage import UsageSnapshot
-from openharness.engine.messages import ConversationMessage, assistant_message_from_api
+from openharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock, assistant_message_from_api
 
 logger = get_logger(__name__)
 
@@ -238,8 +239,17 @@ class AnthropicApiClient:
         try:
             stream_api = self._client.beta.messages if self._claude_oauth else self._client.messages
             async with stream_api.stream(**params) as stream:
+                # Buffer text to strip <tool_call>...</tool_call> XML that some
+                # models (e.g. MiMo) embed in text content instead of using
+                # proper tool_use input fields.
+                _tc_buf = ""
+
                 async for event in stream:
                     event_type = getattr(event, "type", None)
+                    # The Anthropic SDK (≥0.89) emits a processed ThinkingEvent
+                    # (type="thinking") for each thinking_delta SSE, in addition
+                    # to the raw content_block_delta. Handle only the processed
+                    # event to avoid yielding reasoning text twice.
                     if event_type == "thinking":
                         thinking_text = getattr(event, "thinking", "") or getattr(event, "text", "")
                         if thinking_text:
@@ -250,15 +260,20 @@ class AnthropicApiClient:
                     delta = getattr(event, "delta", None)
                     delta_type = getattr(delta, "type", None)
                     if delta_type == "thinking_delta":
-                        thinking_text = getattr(delta, "thinking", "")
-                        if thinking_text:
-                            yield ApiReasoningDeltaEvent(text=thinking_text)
+                        # Skip: already handled via the processed "thinking" event above.
                         continue
                     if delta_type != "text_delta":
                         continue
                     text = getattr(delta, "text", "")
                     if text:
-                        yield ApiTextDeltaEvent(text=text)
+                        _tc_buf += text
+                        visible, _tc_buf = _strip_xml_tool_calls(_tc_buf)
+                        if visible:
+                            yield ApiTextDeltaEvent(text=visible)
+
+                # Flush any remaining buffer that wasn't a tool_call.
+                if _tc_buf and not _TOOL_CALL_RE.search(_tc_buf):
+                    yield ApiTextDeltaEvent(text=_tc_buf)
 
                 final_message = await stream.get_final_message()
         except APIError as exc:
@@ -266,9 +281,13 @@ class AnthropicApiClient:
                 raise  # Let retry logic handle it
             raise _translate_api_error(exc) from exc
 
+        # Post-process: fill empty tool_use inputs from XML in text content.
+        msg = assistant_message_from_api(final_message)
+        _patch_empty_tool_inputs(msg)
+
         usage = getattr(final_message, "usage", None)
         yield ApiMessageCompleteEvent(
-            message=assistant_message_from_api(final_message),
+            message=msg,
             usage=UsageSnapshot(
                 input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
                 output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
@@ -284,3 +303,96 @@ def _translate_api_error(exc: APIError) -> OpenHarnessApiError:
     if name == "RateLimitError":
         return RateLimitFailure(str(exc))
     return RequestFailure(str(exc))
+
+
+# ---------------------------------------------------------------------------
+# XML tool-call extraction for models that embed tool calls as text.
+# Some models (e.g. MiMo) emit tool_use blocks with empty input AND put the
+# actual call in text as: <tool_call><function=name><parameter=k>v</parameter>
+# </function></tool_call>
+# ---------------------------------------------------------------------------
+
+_TOOL_CALL_OPEN = "<tool_call>"
+_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*<function=(\w+)>(.*?)</function>\s*</tool_call>",
+    re.DOTALL,
+)
+_PARAM_RE = re.compile(r"<parameter=(\w+)>(.*?)</parameter>", re.DOTALL)
+
+
+def _parse_xml_tool_calls(text: str) -> list[dict[str, Any]]:
+    """Extract tool calls from XML markup in text.
+
+    Returns a list of dicts: [{"name": ..., "input": {...}}, ...]
+    """
+    results: list[dict[str, Any]] = []
+    for match in _TOOL_CALL_RE.finditer(text):
+        name = match.group(1)
+        body = match.group(2)
+        params: dict[str, Any] = {}
+        for pm in _PARAM_RE.finditer(body):
+            params[pm.group(1)] = pm.group(2)
+        results.append({"name": name, "input": params})
+    return results
+
+
+def _strip_xml_tool_calls(buf: str) -> tuple[str, str]:
+    """Strip complete <tool_call>...</tool_call> blocks from buffered text.
+
+    Returns (visible_text, leftover_buffer).
+    The leftover is retained when an opening <tool_call> has no closing tag yet.
+    """
+    cleaned = _TOOL_CALL_RE.sub("", buf)
+
+    # Hold back any unclosed <tool_call> tag for the next chunk.
+    open_idx = cleaned.find(_TOOL_CALL_OPEN)
+    if open_idx != -1:
+        return cleaned[:open_idx], cleaned[open_idx:]
+
+    # Handle partial opening tag at the end of buffer.
+    max_prefix = min(len(cleaned), len(_TOOL_CALL_OPEN) - 1)
+    for prefix_len in range(max_prefix, 0, -1):
+        if _TOOL_CALL_OPEN.startswith(cleaned[-prefix_len:]):
+            return cleaned[:-prefix_len], cleaned[-prefix_len:]
+
+    return cleaned, ""
+
+
+def _patch_empty_tool_inputs(msg: ConversationMessage) -> None:
+    """Fill empty tool_use inputs from XML tool calls found in preceding text blocks.
+
+    Some models (e.g. MiMo) emit a tool_use block with empty input={} while putting
+    the actual parameters as XML text. This function extracts them and patches in-place.
+    """
+    # Collect all text content to look for XML tool calls.
+    full_text = ""
+    for block in msg.content:
+        if isinstance(block, TextBlock):
+            full_text += block.text
+
+    if not full_text or _TOOL_CALL_OPEN not in full_text:
+        return
+
+    parsed_calls = _parse_xml_tool_calls(full_text)
+    if not parsed_calls:
+        return
+
+    # Build a lookup: tool name → parsed input (use first match per name).
+    parsed_by_name: dict[str, dict[str, Any]] = {}
+    for pc in parsed_calls:
+        parsed_by_name.setdefault(pc["name"], pc["input"])
+
+    # Patch tool_use blocks with empty input.
+    for block in msg.content:
+        if isinstance(block, ToolUseBlock) and not block.input:
+            extracted = parsed_by_name.get(block.name)
+            if extracted:
+                block.input = extracted
+
+    # Strip the XML tool call text from text blocks so it doesn't persist in conversation.
+    for i, block in enumerate(msg.content):
+        if isinstance(block, TextBlock) and _TOOL_CALL_OPEN in block.text:
+            stripped = _TOOL_CALL_RE.sub("", block.text).strip()
+            # Use object.__setattr__ for frozen/validated models if needed,
+            # but Pydantic v2 BaseModel fields are mutable by default.
+            block.text = stripped

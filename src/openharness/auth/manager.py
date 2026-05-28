@@ -38,6 +38,7 @@ _KNOWN_PROVIDERS = [
     "gemini",
     "minimax",
     "deepseek",
+    "xiaomi",
 ]
 
 _AUTH_SOURCES = [
@@ -53,6 +54,7 @@ _AUTH_SOURCES = [
     "gemini_api_key",
     "minimax_api_key",
     "deepseek_api_key",
+    "xiaomi_api_key",
 ]
 
 _PROFILE_BY_PROVIDER = {
@@ -65,6 +67,7 @@ _PROFILE_BY_PROVIDER = {
     "gemini": "gemini",
     "minimax": "minimax",
     "deepseek": "deepseek",
+    "xiaomi": "xiaomi",
 }
 
 

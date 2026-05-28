@@ -301,6 +301,7 @@ _AUTH_SOURCE_LABELS: dict[str, str] = {
     "vertex_api_key": "Vertex credentials",
     "moonshot_api_key": "Moonshot API key",
     "gemini_api_key": "Gemini API key",
+    "xiaomi_api_key": "Xiaomi API key",
 }
 
 

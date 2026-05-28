@@ -351,6 +351,15 @@ def default_provider_profiles() -> dict[str, ProviderProfile]:
             default_model="qwen-plus",
             base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
         ),
+        "xiaomi": ProviderProfile(
+            label="Xiaomi (MiMo)",
+            provider="xiaomi",
+            api_format="anthropic",
+            auth_source="xiaomi_api_key",
+            default_model="mimo-v2.5-pro",
+            allowed_models=["mimo-v2.5-pro", "mimo-v2.5-flash"],
+            base_url="https://token-plan-cn.xiaomimimo.com/anthropic",
+        ),
     }
 
 
@@ -441,6 +450,7 @@ def auth_source_provider_name(auth_source: str) -> str:
         "minimax_api_key": "minimax",
         "nvidia_api_key": "nvidia",
         "deepseek_api_key": "deepseek",
+        "xiaomi_api_key": "xiaomi",
     }
     return mapping.get(auth_source, auth_source)
 
@@ -461,6 +471,7 @@ def auth_source_env_var_candidates(auth_source: str) -> tuple[str, ...]:
         "minimax_api_key": ("OPENHARNESS_MINIMAX_API_KEY", "MINIMAX_API_KEY"),
         "nvidia_api_key": ("OPENHARNESS_NVIDIA_API_KEY", "NVIDIA_API_KEY"),
         "deepseek_api_key": ("OPENHARNESS_DEEPSEEK_API_KEY", "DEEPSEEK_API_KEY"),
+        "xiaomi_api_key": ("OPENHARNESS_XIAOMI_API_KEY", "XIAOMI_API_KEY"),
     }
     return mapping.get(auth_source, ())
 
@@ -510,6 +521,8 @@ def default_auth_source_for_provider(provider: str, api_format: str | None = Non
         return "nvidia_api_key"
     if provider == "deepseek":
         return "deepseek_api_key"
+    if provider == "xiaomi":
+        return "xiaomi_api_key"
     if provider == "openai" or api_format == "openai":
         return "openai_api_key"
     return "anthropic_api_key"
