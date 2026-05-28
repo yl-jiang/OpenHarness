@@ -12,10 +12,14 @@ import hmac
 import os
 import secrets
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from fastapi import APIRouter
 
 from fastapi import Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 
@@ -248,18 +252,20 @@ def _gate_html() -> str:
 </html>"""
 
 
-def auth_routes() -> dict[str, Any]:
+class _TokenRequest(BaseModel):
+    """Request body for token verification."""
+
+    token: str
+
+
+def auth_routes() -> "APIRouter":
     """Return auth-related route handlers to be registered on the app."""
     from fastapi import APIRouter
-    from pydantic import BaseModel
 
     router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-    class TokenRequest(BaseModel):
-        token: str
-
     @router.post("/verify")
-    def verify(body: TokenRequest) -> JSONResponse:
+    def verify(body: _TokenRequest) -> JSONResponse:
         if verify_token(body.token):
             response = JSONResponse(content={"ok": True})
             set_session_cookie(response)
