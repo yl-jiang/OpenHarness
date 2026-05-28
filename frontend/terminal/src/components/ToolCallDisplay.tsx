@@ -68,12 +68,15 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 					</Text>
 					{errorLines?.map((line, i) => {
 						const prefix = i === errorLines.length - 1 ? '└ ' : '│ ';
-						return (
-							<Text key={i} color={theme.colors.error}>
-								{prefix}
-								{line}
+						const contPrefix = i === errorLines.length - 1 ? '  ' : '│ ';
+						const codexContentWidth = Math.max(1, (availableWidth ?? DEFAULT_AVAILABLE_WIDTH) - 4 - stringWidth(prefix));
+						const wrappedErrLines = wrapErrorLine(line, codexContentWidth);
+						return wrappedErrLines.map((wl, wi) => (
+							<Text key={`${i}-${wi}`} color={theme.colors.error}>
+								{wi === 0 ? prefix : contPrefix}
+								{wl}
 							</Text>
-						);
+						));
 					})}
 					{userAnswer !== null ? (
 						<Text>
@@ -129,12 +132,15 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 				{errorLines?.map((line, i) => {
 					const isLast = i === errorLines.length - 1;
 					const errPrefix = isLast ? '└ ' : '│ ';
-					return (
-						<Text key={i}>
+					const errContPrefix = isLast ? '  ' : '│ ';
+					const errLineWidth = Math.max(1, contentWidth - stringWidth(continuationConnector) - stringWidth(errPrefix));
+					const wrappedErrLines = wrapErrorLine(line, errLineWidth);
+					return wrappedErrLines.map((wl, wi) => (
+						<Text key={`${i}-${wi}`}>
 							<Text color={connectorColor}>{continuationConnector}</Text>
-							<Text color={theme.colors.error}>{errPrefix}{line}</Text>
+							<Text color={theme.colors.error}>{wi === 0 ? errPrefix : errContPrefix}{wl}</Text>
 						</Text>
-					);
+					));
 				})}
 				{userAnswer !== null ? (
 					<AskUserAnswerRow answer={userAnswer} connector={continuationConnector} connectorColor={connectorColor} theme={theme} availableWidth={contentWidth} />
@@ -292,6 +298,20 @@ function wrapToolSummary({
 		width = continuationWidth;
 	}
 
+	return lines;
+}
+
+function wrapErrorLine(line: string, maxWidth: number): string[] {
+	if (!line || stringWidth(line) <= maxWidth) {
+		return [line || ''];
+	}
+	const lines: string[] = [];
+	let remaining = line;
+	while (remaining) {
+		const [segment, rest] = takeWrappedLine(remaining, maxWidth);
+		lines.push(segment);
+		remaining = rest;
+	}
 	return lines;
 }
 
