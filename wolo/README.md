@@ -388,6 +388,26 @@ wolo heartbeat trigger
 wolo doctor
 ```
 
+### 5.14 `onboard` (WebUI)
+
+`wolo` 内置了 onboard WebUI 子命令，可以启动统一 Web 仪表盘来浏览工作记录、查看统计、生成报告和实时聊天。Onboard 同时展示 wolo 和 solo 两个应用的数据。
+
+```bash
+# 前台启动
+wolo onboard run
+
+# 后台启动
+wolo onboard start
+
+# 查看状态
+wolo onboard status
+
+# 停止
+wolo onboard stop
+```
+
+启动后终端输出 access token 和 direct link，在浏览器打开即可使用。详见 `onboard/README.md`。
+
 ## 6. 远程消息用法
 
 `wolo` 支持与 `solo` 相同的消息通道能力。通过 Feishu/Slack/Telegram/Discord 等通道接入后，可以发送：

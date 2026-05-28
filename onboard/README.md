@@ -4,6 +4,31 @@ Solo/Wolo 统一 Web 仪表盘 — 浏览日志、查看统计、生成报告、
 
 ## 快速开始
 
+Onboard 可以通过三种方式启动，它们启动的是同一个服务：
+
+### 方式 1：通过 wolo 或 solo 子命令（推荐）
+
+```bash
+# 通过 wolo 启动
+wolo onboard run
+
+# 通过 solo 启动
+solo onboard run
+
+# 后台启动
+wolo onboard start
+solo onboard start
+```
+
+### 方式 2：独立 onboard CLI
+
+```bash
+uv run python -m onboard run
+uv run python -m onboard start
+```
+
+### 方式 3：从源码安装并构建前端
+
 ```bash
 # 安装依赖
 cd onboard/frontend && npm ci && cd ../..
@@ -12,11 +37,8 @@ uv sync --extra dev
 # 构建前端
 cd onboard/frontend && npm run build && cd ../..
 
-# 前台启动
+# 启动
 uv run python -m onboard run
-
-# 或后台启动
-uv run python -m onboard start
 ```
 
 启动后终端会输出：
@@ -26,7 +48,44 @@ uv run python -m onboard start
   🔗 Direct link:  http://0.0.0.0:8090?token=aBcDeFgHiJkLmNoPqRsTuVwX
 ```
 
-在浏览器中打开 Direct link 即可自动认证进入应用。
+在浏览器中打开 **Direct link** 即可自动认证进入应用；也可以在打开的 Gate 页面手动输入 token。
+
+## 与 wolo / solo 的关系
+
+Onboard 是 wolo 和 solo 的**共享 WebUI 层**：
+
+- **wolo** 和 **solo** 是独立的 CLI 应用，各自有 gateway、workspace 和数据存储。
+- **onboard** 读取 `~/.wolo` 和 `~/.solo` 的数据（通过 service 层），提供统一的 Web 浏览、搜索、报告和聊天界面。
+- onboard 不存储业务数据，仅维护自身认证状态（`~/.onboard/secret`）和进程信息。
+
+```
+┌──────────┐     ┌──────────┐
+│  wolo    │     │  solo    │
+│ ~/.wolo  │     │ ~/.solo  │
+└────┬─────┘     └────┬─────┘
+     │                 │
+     └────────┬────────┘
+              │ reads data via service layer
+     ┌────────▼────────┐
+     │    onboard      │
+     │  WebUI + API    │
+     │  ~/.onboard     │
+     └─────────────────┘
+```
+
+你可以从任何一个 CLI 启动 onboard：
+
+| 命令 | 等效操作 |
+|------|---------|
+| `wolo onboard run` | 前台启动 onboard 服务 |
+| `wolo onboard start` | 后台启动 |
+| `wolo onboard stop` | 停止 |
+| `wolo onboard status` | 查看状态 |
+| `solo onboard run` | 同上，入口不同，服务相同 |
+| `solo onboard start/stop/status` | 同上 |
+| `python -m onboard run` | 独立 CLI 入口 |
+
+> **注意**：无论从哪个入口启动，onboard 同时展示 wolo 和 solo 两个应用的数据，前端页面左侧可以切换。
 
 ## CLI 命令
 

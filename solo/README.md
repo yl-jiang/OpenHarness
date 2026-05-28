@@ -364,6 +364,26 @@ solo gateway run
 solo start
 ```
 
+### 5.13 `onboard` (WebUI)
+
+`solo` 内置了 onboard WebUI 子命令，可以启动统一 Web 仪表盘来浏览日志记录、查看统计、生成报告和实时聊天。Onboard 同时展示 solo 和 wolo 两个应用的数据。
+
+```bash
+# 前台启动
+solo onboard run
+
+# 后台启动
+solo onboard start
+
+# 查看状态
+solo onboard status
+
+# 停止
+solo onboard stop
+```
+
+启动后终端输出 access token 和 direct link，在浏览器打开即可使用。详见 `onboard/README.md`。
+
 ## 6. 飞书接入
 
 ### 6.1 配置
