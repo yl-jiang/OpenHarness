@@ -954,7 +954,11 @@ class Settings(BaseModel):
                 state="configured",
             )
 
-        explicit_key = "" if profile.credential_slot else self.api_key
+        explicit_key = ""
+        if not profile.credential_slot:
+            # Prefer the profile's own api_key over the flat settings-level key,
+            # which may be stale after profile switches via merge_cli_overrides.
+            explicit_key = (profile.api_key or "").strip() or self.api_key
         if explicit_key:
             return ResolvedAuth(
                 provider=provider or storage_provider,
