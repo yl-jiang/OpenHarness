@@ -34,6 +34,7 @@ _PUBLIC_PATHS = frozenset({
     "/api/health",
     "/api/auth/verify",
     "/api/auth/status",
+    "/favicon.svg",
     "/_gate",
 })
 
@@ -143,6 +144,7 @@ def _gate_html() -> str:
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Onboard - Access</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {

@@ -64,6 +64,11 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/favicon.svg", include_in_schema=False)
+    def favicon() -> FileResponse:
+        icon_path = Path(__file__).resolve().parent / "frontend" / "public" / "favicon.svg"
+        return FileResponse(icon_path, media_type="image/svg+xml")
+
     dist_dir = Path(__file__).resolve().parent / "frontend" / "dist"
     if dist_dir.exists():
         app.mount("/assets", StaticFiles(directory=dist_dir / "assets"), name="assets")
@@ -91,7 +96,10 @@ def _dev_placeholder(full_path: str = "") -> HTMLResponse:
         """
         <!doctype html>
         <html>
-          <head><title>Onboard</title></head>
+          <head>
+            <title>Onboard</title>
+            <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+          </head>
           <body style="font-family: system-ui; background: #0a0a0f; color: #e8e8ed;">
             <main style="max-width: 720px; margin: 10vh auto; line-height: 1.6;">
               <h1>Onboard API is running</h1>
