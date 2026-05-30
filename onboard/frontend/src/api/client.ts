@@ -5,6 +5,7 @@ import type {
   ChatSessionDetail,
   Decision,
   Entry,
+  FeedDigest,
   GatewayStatus,
   Highlight,
   LogRecord,
@@ -60,6 +61,17 @@ export const api = {
   report: (app: AppName, id: string) => request<Report>(`/api/${app}/reports/${id}`),
   deleteReport: (app: AppName, id: string) =>
     request<{ deleted: boolean }>(`/api/${app}/reports/${id}`, { method: 'DELETE' }),
+  feedDigests: (app: AppName, params: Record<string, QueryValue> = {}) =>
+    request<FeedDigest[]>(`/api/${app}/feed-digests${query(params)}`),
+  feedDigest: (app: AppName, id: string) =>
+    request<FeedDigest>(`/api/${app}/feed-digests/${id}`),
+  deleteFeedDigest: (app: AppName, id: string) =>
+    request<{ deleted: boolean }>(`/api/${app}/feed-digests/${id}`, { method: 'DELETE' }),
+  runFeedDigest: (app: AppName, preset?: string) =>
+    request<FeedDigest>(`/api/${app}/feed-digests/run`, {
+      method: 'POST',
+      body: JSON.stringify({ preset: preset ?? null }),
+    }),
   generateReport: (app: AppName, type: string) =>
     request<Report>(`/api/${app}/reports/generate`, {
       method: 'POST',

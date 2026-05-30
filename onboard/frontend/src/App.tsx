@@ -8,6 +8,7 @@ import { Chat } from './pages/Chat';
 import { Dashboard } from './pages/Dashboard';
 import { Decisions } from './pages/Decisions';
 import { Entries } from './pages/Entries';
+import { FeedDigests } from './pages/FeedDigests';
 import { Highlights } from './pages/Highlights';
 import { RecordDetail } from './pages/RecordDetail';
 import { Records } from './pages/Records';
@@ -61,6 +62,8 @@ export function App() {
           <Route path="todos" element={<Todos appName={appName} />} />
           <Route path="reports" element={<Reports appName={appName} />} />
           <Route path="reports/:id" element={<ReportView appName={appName} />} />
+          <Route path="feeds" element={<FeedDigests appName={appName} />} />
+          <Route path="feeds/:id" element={<FeedDigests appName={appName} />} />
           <Route path="stats" element={<Stats appName={appName} />} />
           <Route path="search" element={<Search appName={appName} />} />
           <Route path="chat" element={<Chat appName={appName} />} />

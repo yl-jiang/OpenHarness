@@ -201,3 +201,33 @@ def gateway_stop(
     workspace: str | None = None,
 ) -> dict[str, Any]:
     return _service(workspace).stop_gateway(cwd)
+
+
+@router.get("/feed-digests")
+def feed_digests(workspace: str | None = None, preset: str | None = None) -> list[dict[str, Any]]:
+    return _service(workspace).list_feed_digests(preset=preset)
+
+
+@router.get("/feed-digests/{digest_id}")
+def feed_digest(digest_id: str, workspace: str | None = None) -> dict[str, Any]:
+    result = _service(workspace).get_feed_digest(digest_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Feed digest not found")
+    return result
+
+
+@router.delete("/feed-digests/{digest_id}")
+def delete_feed_digest(digest_id: str, workspace: str | None = None) -> dict[str, bool]:
+    deleted = _service(workspace).delete_feed_digest(digest_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Feed digest not found")
+    return {"deleted": True}
+
+
+class RunFeedDigestRequest(BaseModel):
+    preset: str | None = None
+
+
+@router.post("/feed-digests/run")
+async def run_feed_digest(request: RunFeedDigestRequest | None = None, workspace: str | None = None) -> dict[str, Any]:
+    return await _service(workspace).run_feed_digest(preset=request.preset if request else None)

@@ -64,11 +64,32 @@ export type ReportType = 'weekly' | 'monthly' | 'yearly';
 
 export interface Report {
   id: string;
-  report_type: ReportType;
+  report_type: string;
   content: string;
   created_at: string;
   period_start: string;
   period_end: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface FeedDigestMeta {
+  preset: string;
+  domain: string;
+  date: string;
+  is_empty: boolean;
+  selected_count: number;
+  source_stats: Array<{ source: string; fetched: number; selected: number; failed: boolean }>;
+  warnings: string[];
+}
+
+export interface FeedDigest {
+  id: string;
+  report_type: 'feed_digest';
+  content: string;
+  created_at: string;
+  period_start: string;
+  period_end: string;
+  metadata: FeedDigestMeta | null;
 }
 
 export interface Decision {

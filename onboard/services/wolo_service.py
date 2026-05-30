@@ -147,6 +147,31 @@ class WoloService:
     def delete_report(self, report_id: str) -> bool:
         return self.store.delete_report(report_id)
 
+    def list_feed_digests(self, preset: str | None = None) -> list[dict[str, Any]]:
+        reports = self.store.list_reports()
+        digests = [report for report in reports if report.report_type == "feed_digest"]
+        if preset:
+            digests = [report for report in digests if (report.metadata or {}).get("preset") == preset]
+        digests.sort(key=lambda report: report.period_start or report.created_at, reverse=True)
+        return [to_jsonable(report) for report in digests]
+
+    def get_feed_digest(self, digest_id: str) -> dict[str, Any] | None:
+        report = find_by_id(self.store.list_reports(), digest_id)
+        if report is None or report.report_type != "feed_digest":
+            return None
+        return to_jsonable(report)
+
+    def delete_feed_digest(self, digest_id: str) -> bool:
+        report = find_by_id(self.store.list_reports(), digest_id)
+        if report is None or report.report_type != "feed_digest":
+            return False
+        return self.store.delete_report(digest_id)
+
+    async def run_feed_digest(self, preset: str | None = None) -> dict[str, Any]:
+        from wolo.feed_digest import run_feed_digest
+        report = await run_feed_digest(workspace=self.workspace, preset_name=preset)
+        return to_jsonable(report)
+
     async def generate_report(
         self, report_type: str, profile: str | None = None, start_date: str | None = None, end_date: str | None = None,
     ) -> dict[str, Any]:
