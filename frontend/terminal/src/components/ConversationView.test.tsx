@@ -196,7 +196,8 @@ test('color-codes bash command without showing result previews', async () => {
 	assert.match(plainOutput, /bash ls -la/);
 	assert.doesNotMatch(plainOutput, /→ 1L/);
 	assert.doesNotMatch(plainOutput, /total 0/);
-	assert.match(output, /\u001B\[[0-9;]*33m(?:\u001B\[[0-9;]*m){0,3} ls -la/u);
+	// Verify the command is not rendered in yellow (warning) anymore
+	assert.doesNotMatch(output, /\u001B\[[0-9;]*33m(?:\u001B\[[0-9;]*m){0,3} ls -la/u);
 });
 
 test('keeps tree connector visible when long tool commands wrap', async () => {

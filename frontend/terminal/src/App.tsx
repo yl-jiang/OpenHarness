@@ -434,8 +434,6 @@ function AppInner({
 	const session = useBackendSession(config, () => exit());
 	const vimEnabled = Boolean(session.status.vim_enabled);
 	const deferredTranscript = useDeferredValue(session.transcript);
-	const deferredAssistantBuffer = useDeferredValue(session.assistantBuffer);
-	const deferredReasoningBuffer = useDeferredValue(session.reasoningBuffer);
 	const deferredStatus = useDeferredValue(session.status);
 	const deferredTasks = useDeferredValue(session.tasks);
 	const deferredTodoMarkdown = useDeferredValue(session.todoMarkdown);
@@ -1690,8 +1688,8 @@ function AppInner({
 			<ConversationView
 				ref={conversationRef}
 				transcript={deferredTranscript}
-				assistantBuffer={deferredAssistantBuffer}
-				reasoningBuffer={deferredReasoningBuffer}
+				assistantBuffer={session.assistantBuffer}
+				reasoningBuffer={session.reasoningBuffer}
 				reasoningExpanded={reasoningExpanded}
 				showWelcome={showWelcome}
 				welcomeVersion={config.version}

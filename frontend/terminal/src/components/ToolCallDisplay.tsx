@@ -60,7 +60,7 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 					<Text>
 						<Text dimColor>{`• Ran ${toolName}`}</Text>
 						{summary ? (
-							<Text color={isShellLikeTool ? theme.colors.warning : undefined} dimColor={!isShellLikeTool}>
+							<Text dimColor>
 								{` ${summary}`}
 							</Text>
 						) : null}
@@ -114,7 +114,7 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 				<Text>
 					<Text color={connectorColor}>{connectorIcon}</Text>
 					<Text color={toolColor} bold>{toolName}</Text>
-					<Text color={isShellLikeTool ? theme.colors.warning : undefined} dimColor={!isShellLikeTool}>
+					<Text dimColor>
 						{firstSummaryLine ? ` ${firstSummaryLine}` : ''}
 					</Text>
 					{statusNode}
@@ -124,7 +124,7 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 						<Text color={connectorColor}>{continuationConnector}</Text>
 						<Text>{' '.repeat(stringWidth(toolName))}</Text>
 						<Text>{' '}</Text>
-						<Text color={isShellLikeTool ? theme.colors.warning : undefined} dimColor={!isShellLikeTool}>
+						<Text dimColor>
 							{line || ' '}
 						</Text>
 					</Text>
@@ -208,7 +208,7 @@ function ShellToolPanel({
 				{command ? (
 					<>
 						<Text>{' '}</Text>
-						<Text color={theme.colors.warning}>{command}</Text>
+						<Text dimColor>{command}</Text>
 					</>
 				) : null}
 			</Text>

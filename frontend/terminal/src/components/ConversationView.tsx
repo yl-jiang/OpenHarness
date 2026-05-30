@@ -1,4 +1,4 @@
-import React, {forwardRef, useEffect, useImperativeHandle, useRef, useState} from 'react';
+import React, {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from 'react';
 import {Box, Text, measureElement} from 'ink';
 import type {DOMElement} from 'ink';
 import stringWidth from 'string-width';
@@ -6,7 +6,9 @@ import stringWidth from 'string-width';
 import {useTheme} from '../theme/ThemeContext.js';
 import type {TranscriptItem} from '../types.js';
 import {useTerminalSize} from '../hooks/useTerminalSize.js';
+import {useTerminalMouse} from '../hooks/useTerminalMouse.js';
 import {truncateWithEllipsis} from '../textLayout.js';
+import type {TerminalMouseEvent} from '../input/terminalInput.js';
 import {MarkdownText} from './MarkdownText.js';
 import {ToolCallDisplay, type TreePos} from './ToolCallDisplay.js';
 import {WelcomeBanner} from './WelcomeBanner.js';
@@ -101,6 +103,8 @@ function renderGroup(
 	outputStyle: string | undefined,
 	treePos: TreePos,
 	cols: number,
+	reasoningExpanded: boolean,
+	onToggleReasoning: (() => void) | undefined,
 ): React.JSX.Element {
 	if (group.kind === 'pair') {
 		return (
@@ -133,6 +137,8 @@ function renderGroup(
 			theme={theme}
 			outputStyle={outputStyle}
 			cols={cols}
+			reasoningExpanded={reasoningExpanded}
+			onToggleReasoning={onToggleReasoning}
 		/>
 	);
 }
@@ -251,7 +257,20 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		const [measuredContentMode, setMeasuredContentMode] = useState<ContentMode | null>(null);
 		const [scrollFromTop, setScrollFromTop] = useState(0);
 		const [paused, setPaused] = useState(false);
+		const [expandedReasoningIndices, setExpandedReasoningIndices] = useState<Set<number>>(new Set());
 		const lastRevealHeadKeyRef = useRef<number | undefined>(revealHeadKey);
+
+		const toggleReasoningAt = useCallback((index: number) => {
+			setExpandedReasoningIndices((prev) => {
+				const next = new Set(prev);
+				if (next.has(index)) {
+					next.delete(index);
+				} else {
+					next.add(index);
+				}
+				return next;
+			});
+		}, []);
 
 		const groups = buildGroups(transcript);
 		const treePositions = assignTreePositions(groups);
@@ -361,6 +380,9 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 						const needsBreathingRoom =
 							!isCodexStyle && isNonEmptyAssistantMessage && prevIsToolOrMessage;
 						const marginTop = showAssistantHeader || showTurnDivider || needsBreathingRoom ? 1 : 0;
+						const hasReasoning = group.kind === 'message' && group.item.role === 'assistant' && Boolean(group.item.reasoning);
+						const isExpanded = expandedReasoningIndices.has(group.index);
+						const onToggle = hasReasoning ? () => toggleReasoningAt(group.index) : undefined;
 
 						return (
 							<Box key={`g-${group.index}`} flexShrink={0} flexDirection="column" marginTop={marginTop}>
@@ -370,7 +392,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 									</Text>
 								) : null}
 								{showAssistantHeader ? <AssistantRunHeader theme={theme} /> : null}
-								{renderGroup(group, theme, outputStyle, treePositions[i], cols)}
+								{renderGroup(group, theme, outputStyle, treePositions[i], cols, isExpanded, onToggle)}
 							</Box>
 						);
 					})}
@@ -473,32 +495,75 @@ function CompletedReasoningBlock({
 	text,
 	theme,
 	cols = 80,
+	expanded = false,
+	onToggle,
 }: {
 	text: string;
 	theme: ReturnType<typeof useTheme>['theme'];
 	cols?: number;
+	expanded?: boolean;
+	onToggle?: () => void;
 }): React.JSX.Element {
+	const boxRef = useRef<DOMElement | null>(null);
+
+	const handleMouse = useCallback((event: TerminalMouseEvent) => {
+		if (event.kind !== 'button' || event.action !== 'release' || event.buttonCode !== 0) return;
+		const el = boxRef.current;
+		if (!el || !onToggle) return;
+		// Walk up Yoga parent nodes to get absolute terminal Y position
+		let y = 0;
+		let node: DOMElement | undefined = el;
+		while (node) {
+			y += node.yogaNode?.getComputedTop() ?? 0;
+			node = node.parentNode;
+		}
+		const height = measureElement(el).height;
+		if (event.row >= y && event.row < y + height) {
+			onToggle();
+		}
+	}, [onToggle]);
+
+	useTerminalMouse(handleMouse);
 	const allLines = text.split('\n');
 	if (allLines[allLines.length - 1] === '') {
 		allLines.pop();
 	}
 
 	const lineCount = allLines.length;
+	const foldLines = 3;
+	const needsFold = allLines.length > foldLines && !expanded;
+	const visibleLines = needsFold ? allLines.slice(-foldLines) : allLines;
+	const hiddenCount = Math.max(0, allLines.length - foldLines);
+
 	const header = `╭─ ✓ reasoning · ${lineCount} line${lineCount === 1 ? '' : 's'}`;
 	// Account for parent paddingX={1} (2 cols) + this Box marginLeft={2} (2 cols) + │+space prefix (2 cols)
 	const contentWidth = Math.max(1, cols - 6);
 	// Account for parent paddingX={1} (2 cols) + this Box marginLeft={2} (2 cols)
 	const borderLineWidth = Math.max(1, cols - 4);
 
+	let footer: string | null = null;
+	if (needsFold) {
+		footer = truncateWithEllipsis(
+			`╰─ ⬇ click · expand ${hiddenCount} line${hiddenCount === 1 ? '' : 's'}`,
+			borderLineWidth,
+		);
+	} else if (allLines.length > foldLines) {
+		footer = '╰─ ⬆ click · collapse';
+	}
+
 	return (
-		<Box marginLeft={2} flexDirection="column" marginBottom={0}>
+		<Box ref={boxRef} marginLeft={2} flexDirection="column" marginBottom={0}>
 			<Text color={theme.colors.muted} dimColor>{truncateWithEllipsis(header, borderLineWidth)}</Text>
-			{allLines.map((line, i) => (
+			{visibleLines.map((line, i) => (
 				<Text key={i} color={theme.colors.muted} dimColor>
 					{'│ '}{truncateWithEllipsis(line || ' ', contentWidth)}
 				</Text>
 			))}
-			<Text color={theme.colors.muted} dimColor>╰─</Text>
+			{footer ? (
+				<Text color={theme.colors.info} dimColor>{footer}</Text>
+			) : (
+				<Text color={theme.colors.muted} dimColor>╰─</Text>
+			)}
 		</Box>
 	);
 }
@@ -509,11 +574,15 @@ function MessageRow({
 	theme,
 	outputStyle,
 	cols,
+	reasoningExpanded = false,
+	onToggleReasoning,
 }: {
 	item: TranscriptItem;
 	theme: ReturnType<typeof useTheme>['theme'];
 	outputStyle?: string;
 	cols: number;
+	reasoningExpanded?: boolean;
+	onToggleReasoning?: () => void;
 }): React.JSX.Element {
 	const isCodexStyle = outputStyle === 'codex';
 	switch (item.role) {
@@ -608,7 +677,7 @@ function MessageRow({
 			return (
 				<Box marginTop={0} marginBottom={0} flexDirection="column">
 					{item.reasoning ? (
-						<CompletedReasoningBlock text={item.reasoning} theme={theme} cols={cols} />
+						<CompletedReasoningBlock text={item.reasoning} theme={theme} cols={cols} expanded={reasoningExpanded} onToggle={onToggleReasoning} />
 					) : null}
 					<Box marginLeft={2} flexDirection="column">
 						<MarkdownText content={item.text} availableWidth={cols - 4} />
