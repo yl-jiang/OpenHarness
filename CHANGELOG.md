@@ -48,6 +48,8 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- `fetch_digest` now pulls AI digest candidates from GitHub Trending HTML, IT之家 AI 标签页, NewsNow public JSON feeds, and SoPilot hot-tweet cards, so built-in `ai_news` covers those previously external-only sources without browser-only glue code.
+- `fetch_digest` now supports Hacker News `top` / `best` / `top_best` modes, NewsNow source-group expansion, SoPilot RSS-first fallback, non-destructive default source-config backfill, and an optional JSON-contract browser/OpenCLI command source for JS-only pages.
 - Onboard now ships a distinctive SVG favicon so browser tabs are easier to identify among many open pages.
 - Onboard solo/wolo record, entry, report, stats, todo, decision, and highlight pages now auto-refresh and paginate newest items first, so data written through gateways or other CLIs appears in the open WebUI without a manual browser reload.
 - `solo` and `wolo` standalone apps now expose `solo_remind` / `wolo_remind` for one-shot future reminders, persist those requests as app-local scheduled jobs, and execute them through the app cron daemons so chat requests like "2分钟后提醒我喝水" can proactively DM the user later instead of falling back to a plain-text refusal.
