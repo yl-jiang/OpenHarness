@@ -118,7 +118,12 @@ class FeedDigestAIPipeline:
     async def _complete(
         self, *, system_prompt: str, user_prompt: str, max_tokens: int = 4096
     ) -> str:
-        from openharness.api.client import ApiMessageCompleteEvent, ApiMessageRequest, ApiTextDeltaEvent
+        from openharness.api.client import (
+            ApiMessageCompleteEvent,
+            ApiMessageRequest,
+            ApiReasoningDeltaEvent,
+            ApiTextDeltaEvent,
+        )
         from openharness.engine.messages import ConversationMessage
 
         self._ensure_client()
@@ -130,14 +135,30 @@ class FeedDigestAIPipeline:
             tools=[],
         )
         chunks: list[str] = []
+        reasoning_parts: list[str] = []
         async for event in self._client.stream_message(request):
             if isinstance(event, ApiTextDeltaEvent):
                 chunks.append(event.text)
+            elif isinstance(event, ApiReasoningDeltaEvent):
+                reasoning_parts.append(event.text)
             elif isinstance(event, ApiMessageCompleteEvent):
                 final_text = event.message.text.strip()
                 if final_text:
                     return final_text
-        return "".join(chunks).strip()
+        result = "".join(chunks).strip()
+        if not result and reasoning_parts:
+            result = "".join(reasoning_parts).strip()
+            logger.info(
+                "_complete using reasoning content as fallback (%d chars)",
+                len(result),
+            )
+        if not result:
+            logger.warning(
+                "_complete returned empty (model=%s provider=%s)",
+                self._settings.model if self._settings else "unknown",
+                self._settings.provider if self._settings else "unknown",
+            )
+        return result
 
     async def score_and_filter(
         self,
@@ -398,6 +419,10 @@ class FeedDigestAIPipeline:
             )
         except Exception as exc:
             logger.warning("AI synthesis failed: %s", exc)
+            markdown = ""
+
+        if not markdown.strip():
+            logger.warning("AI synthesis returned empty — falling back to template")
             markdown = _fallback_markdown(title, top)
 
         trends: list[str] = []
