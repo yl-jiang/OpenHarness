@@ -273,6 +273,10 @@ class OpenAICompatibleClient:
         self._reasoning_effort = reasoning_effort
         self._thinking_extra_body = thinking_extra_body
 
+    async def close(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._client.close()
+
     async def stream_message(self, request: ApiMessageRequest) -> AsyncIterator[ApiStreamEvent]:
         """Yield text deltas and the final message, matching the Anthropic client interface."""
         last_error: Exception | None = None
