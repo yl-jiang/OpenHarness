@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Added
 
+- Hooks now support a `priority` field (default `0`). Within an event, hooks run highest-priority first, and hooks sharing a priority keep their registration order. This lets users order, for example, a security-check hook ahead of a logging hook regardless of where each is declared in settings or contributed by plugins.
 - `solo` is now a standalone app/package with its own `~/.solo` workspace, config, CLI, gateway bridge/service, OpenHarness-backed domain agent, model-structured bulk import, zero-guess pending confirmations, reports, reminders, and solo-only tools.
 - `wolo` is now a standalone work-log app/package with its own `~/.wolo` workspace, CLI, gateway bridge/service, OpenHarness-backed domain agent, work-focused prompts, reports, reminders, and wolo-only tools.
 - `solo` and `wolo` now support the OpenHarness skills mechanism through workspace-local `~/.solo/skills` and `~/.wolo/skills` directories, expose `skill_manager` inside each app, and keep skill writes scoped to the active standalone workspace instead of the global OpenHarness user skill directory.
