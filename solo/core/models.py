@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import json
 from typing import Any
 
+from feed_digest.config import FeedDigestConfig
 from solo.core.attachments import StoredAttachment
 from pydantic import BaseModel, Field
 
@@ -29,6 +30,7 @@ class SoloConfig(BaseModel):
     send_tool_hints: bool = True
     heartbeat: SoloHeartbeatConfig = Field(default_factory=SoloHeartbeatConfig)
     log_level: str = "INFO"
+    feed_digest: FeedDigestConfig = Field(default_factory=FeedDigestConfig)
 
 
 class SoloState(BaseModel):
@@ -238,16 +240,29 @@ class SoloReport:
     created_at: str
     period_start: str = ""
     period_end: str = ""
+    metadata: dict[str, Any] | None = None
 
     @classmethod
     def from_json(cls, line: str) -> "SoloReport":
         data = json.loads(line)
         data.setdefault("period_start", "")
         data.setdefault("period_end", "")
+        data.setdefault("metadata", None)
         return cls(**data)
 
     def to_json(self) -> str:
-        return json.dumps(self.__dict__, ensure_ascii=False)
+        return json.dumps(
+            {
+                "id": self.id,
+                "report_type": self.report_type,
+                "content": self.content,
+                "created_at": self.created_at,
+                "period_start": self.period_start,
+                "period_end": self.period_end,
+                "metadata": self.metadata,
+            },
+            ensure_ascii=False,
+        )
 
 
 @dataclass(frozen=True)

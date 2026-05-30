@@ -248,7 +248,7 @@ class WoloStore:
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status)")
 
-        # Migrate reports table: add period_start/period_end columns
+        # Migrate reports table: add period_start/period_end/metadata columns
         report_cols = {
             row[1]
             for row in self._conn.execute("PRAGMA table_info(reports)").fetchall()
@@ -257,6 +257,8 @@ class WoloStore:
             self._conn.execute("ALTER TABLE reports ADD COLUMN period_start TEXT NOT NULL DEFAULT ''")
         if "period_end" not in report_cols:
             self._conn.execute("ALTER TABLE reports ADD COLUMN period_end TEXT NOT NULL DEFAULT ''")
+        if "metadata" not in report_cols:
+            self._conn.execute("ALTER TABLE reports ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'" )
 
     def _maybe_migrate_jsonl(self) -> None:
         """Import existing JSONL data into SQLite on first run."""
@@ -394,8 +396,16 @@ class WoloStore:
 
     @staticmethod
     def _report_to_row(r: WoloReport):
-        cols = ("id", "report_type", "content", "created_at", "period_start", "period_end")
-        vals = (r.id, r.report_type, r.content, r.created_at, r.period_start, r.period_end)
+        cols = ("id", "report_type", "content", "created_at", "period_start", "period_end", "metadata")
+        vals = (
+            r.id,
+            r.report_type,
+            r.content,
+            r.created_at,
+            r.period_start,
+            r.period_end,
+            json.dumps(r.metadata or {}, ensure_ascii=False),
+        )
         return cols, vals
 
     @staticmethod
@@ -1069,10 +1079,13 @@ class WoloStore:
 
     @staticmethod
     def _row_to_report(row: tuple) -> WoloReport:
+        import json as _json
+
         return WoloReport(
             id=row[0], report_type=row[1], content=row[2], created_at=row[3],
             period_start=row[4] if len(row) > 4 else "",
             period_end=row[5] if len(row) > 5 else "",
+            metadata=_json.loads(row[6]) if len(row) > 6 and row[6] else None,
         )
 
     @staticmethod

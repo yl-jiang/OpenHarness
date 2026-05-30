@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import json
 from typing import Any
 
+from feed_digest.config import FeedDigestConfig
 from wolo.core.attachments import StoredAttachment
 from pydantic import BaseModel, Field
 
@@ -29,6 +30,7 @@ class WoloConfig(BaseModel):
     send_tool_hints: bool = True
     heartbeat: WoloHeartbeatConfig = Field(default_factory=WoloHeartbeatConfig)
     log_level: str = "INFO"
+    feed_digest: FeedDigestConfig = Field(default_factory=FeedDigestConfig)
 
 
 class WoloState(BaseModel):
@@ -236,17 +238,29 @@ class WoloReport:
     created_at: str
     period_start: str = ""
     period_end: str = ""
+    metadata: dict[str, Any] | None = None
 
     @classmethod
     def from_json(cls, line: str) -> "WoloReport":
         data = json.loads(line)
-        # Tolerate old JSONL without period fields
         data.setdefault("period_start", "")
         data.setdefault("period_end", "")
+        data.setdefault("metadata", None)
         return cls(**data)
 
     def to_json(self) -> str:
-        return json.dumps(self.__dict__, ensure_ascii=False)
+        return json.dumps(
+            {
+                "id": self.id,
+                "report_type": self.report_type,
+                "content": self.content,
+                "created_at": self.created_at,
+                "period_start": self.period_start,
+                "period_end": self.period_end,
+                "metadata": self.metadata,
+            },
+            ensure_ascii=False,
+        )
 
 
 @dataclass(frozen=True)

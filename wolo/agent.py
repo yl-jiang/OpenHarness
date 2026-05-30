@@ -86,8 +86,6 @@ class OpenHarnessWoloAgent:
         *,
         stats_summary: str = "",
     ) -> str:
-        if report_type not in {"weekly", "monthly", "yearly"}:
-            raise ValueError(f"Unknown report type: {report_type}")
         logger.info("generate_report start type=%s records=%d", report_type, len(records))
         records_text = "\n".join(
             f"### {record.get('date', '')} [{record.get('emotion', '')}] #{record.get('tags', '')}\n"
@@ -198,10 +196,10 @@ class OpenHarnessWoloAgent:
 
 def _parse_json_object(text: str) -> dict[str, Any]:
     stripped = text.strip()
-    if "```json" in stripped:
-        stripped = stripped.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif "```" in stripped:
-        stripped = stripped.split("```", 1)[1].split("```", 1)[0].strip()
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end > start:
+        stripped = stripped[start : end + 1]
     parsed = json.loads(stripped)
     if not isinstance(parsed, dict):
         raise ValueError("model output must be a JSON object")
@@ -331,7 +329,7 @@ _ARTIFACT_EXTRACTION_SYSTEM_PROMPT = """你是一位工作 artifacts 提取器�
   ],
   "highlights": [
     {
-      "kind": "important/prompt/tool/blocker/risk",
+      "kind": "类型标签",
       "title": "重要事项标题",
       "content": "可复用经验、阻塞、风险或关键上下文",
       "project": "项目名",
@@ -353,7 +351,7 @@ _ARTIFACT_EXTRACTION_SYSTEM_PROMPT = """你是一位工作 artifacts 提取器�
   "suggested_profile_updates": [
     {
       "category": "分类",
-      "entity_type": "项目/团队/仓库/工具/prompt/流程/偏好/负责人",
+      "entity_type": "实体类型",
       "entity_name": "名称",
       "suggested_value": "新发现或更新的工作事实",
       "confidence": "high/medium/low"
@@ -366,7 +364,7 @@ _ARTIFACT_EXTRACTION_SYSTEM_PROMPT = """你是一位工作 artifacts 提取器�
 
 def _report_system_prompt(report_type: str) -> str:
     labels = {"weekly": "周报", "monthly": "月报", "yearly": "年报"}
-    period_label = labels[report_type]
+    period_label = labels.get(report_type, report_type)
 
     return f"""你是一位资深工程/知识工作复盘助手。请基于用户的工作记录生成一份有深度、有洞察的工作{period_label}。
 

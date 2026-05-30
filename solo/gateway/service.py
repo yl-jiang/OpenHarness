@@ -117,6 +117,8 @@ class SoloGatewayService:
 
         # Auto-register todo reminder cron job
         _register_todo_cron(self._workspace, self._config)
+        # Auto-register feed digest cron job
+        _register_feed_digest_cron(self._workspace, self._config)
 
         bridge_task = asyncio.create_task(self._bridge.run(), name="solo-gateway-bridge")
         manager_task = asyncio.create_task(self._manager.start_all(), name="solo-gateway-channels")
@@ -411,3 +413,32 @@ def _register_todo_cron(
             logger.debug("Cron scheduler daemon already running")
     except Exception as exc:
         logger.warning("Failed to start cron scheduler daemon: %s", exc)
+
+
+def _register_feed_digest_cron(
+    workspace: str | Path | None,
+    config: object,
+) -> None:
+    """Best-effort registration of the solo feed digest cron job."""
+    fd_config = getattr(config, "feed_digest", None)
+    if fd_config is None or not getattr(fd_config, "enabled", False):
+        logger.debug("Solo feed digest disabled; skipping cron registration")
+        return
+    try:
+        from solo.gateway.feed_digest_cron import ensure_feed_digest_job
+
+        notify = (
+            _resolve_feishu_notify_target(config, workspace)
+            if getattr(fd_config, "im_push_enabled", True)
+            else None
+        )
+        ensure_feed_digest_job(
+            "solo",
+            workspace=workspace,
+            notify=notify,
+            schedule=fd_config.schedule,
+            tz=fd_config.timezone,
+            im_push_enabled=getattr(fd_config, "im_push_enabled", True),
+        )
+    except Exception as exc:
+        logger.warning("Failed to register solo feed digest cron job: %s", exc)

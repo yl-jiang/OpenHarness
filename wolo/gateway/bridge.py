@@ -288,11 +288,23 @@ class WoloGatewayBridge:
 
     async def _handle_record(self, message: InboundMessage, store: WoloStore, content: str) -> str:
         runner = WoloQueryRunner(store, profile=self._provider_profile)
+
+        async def _progress(text: str) -> None:
+            await self._bus.publish_outbound(
+                OutboundMessage(
+                    channel=message.channel,
+                    chat_id=message.chat_id,
+                    content=text,
+                    metadata={"_progress": True, "_session_key": message.session_key},
+                )
+            )
+
         async for kind, text in runner.stream_run(
             content,
             session_key=message.session_key,
             media=message.media,
             source_context=_build_source_context(message),
+            progress_callback=_progress,
         ):
             if kind == "final":
                 return text

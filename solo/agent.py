@@ -58,8 +58,6 @@ class OpenHarnessSoloAgent:
         *,
         stats_summary: str = "",
     ) -> str:
-        if report_type not in {"weekly", "monthly", "yearly"}:
-            raise ValueError(f"Unknown report type: {report_type}")
         logger.info("generate_report start type=%s records=%d", report_type, len(records))
         records_text = "\n".join(
             f"### {record.get('date', '')} [{record.get('emotion', '')}] #{record.get('tags', '')}\n"
@@ -152,10 +150,10 @@ class OpenHarnessSoloAgent:
 
 def _safe_parse_json(text: str) -> dict[str, Any]:
     stripped = text.strip()
-    if "```json" in stripped:
-        stripped = stripped.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif "```" in stripped:
-        stripped = stripped.split("```", 1)[1].split("```", 1)[0].strip()
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start != -1 and end > start:
+        stripped = stripped[start : end + 1]
     try:
         parsed = json.loads(stripped)
     except json.JSONDecodeError:
@@ -258,7 +256,7 @@ _PROCESS_RECORD_SYSTEM_PROMPT = """你是一位深度理解人性的 AI 个人�
 
 def _report_system_prompt(report_type: str) -> str:
     labels = {"weekly": "周报", "monthly": "月报", "yearly": "年报"}
-    period_label = labels[report_type]
+    period_label = labels.get(report_type, report_type)
 
     return f"""你是一位个人成长教练。请基于用户记录和迭代样本生成一份有深度、有洞察的个人{period_label}。
 
@@ -367,8 +365,8 @@ _ARTIFACT_EXTRACTION_SYSTEM_PROMPT = """你是一位个人事务与行为实验 
   "todos": [
     {
       "title": "明确可执行的待办",
-      "category": "健康/家庭/社交/购物/学习/其他",
-      "priority": "high/medium/low",
+      "category": "所属分类",
+      "priority": "优先级",
       "due_date": "YYYY-MM-DD 或空"
     }
   ],
@@ -386,7 +384,7 @@ _ARTIFACT_EXTRACTION_SYSTEM_PROMPT = """你是一位个人事务与行为实验 
   "suggested_profile_updates": [
     {
       "category": "分类",
-      "entity_type": "人物/关系/地点/偏好/习惯",
+      "entity_type": "实体类型",
       "entity_name": "名称",
       "suggested_value": "新发现或更新的个人事实",
       "confidence": "high/medium/low"

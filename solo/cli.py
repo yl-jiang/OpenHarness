@@ -34,9 +34,11 @@ app = typer.Typer(
 gateway_app = typer.Typer(name="gateway", help="Run the solo gateway")
 heartbeat_app = typer.Typer(name="heartbeat", help="Inspect or trigger solo heartbeat")
 onboard_app = typer.Typer(name="onboard", help="WebUI dashboard management")
+feed_digest_app = typer.Typer(name="feed-digest", help="Feed digest commands")
 app.add_typer(gateway_app)
 app.add_typer(heartbeat_app)
 app.add_typer(onboard_app)
+app.add_typer(feed_digest_app)
 
 _INTERACTIVE_CHANNELS = ("telegram", "slack", "discord", "feishu")
 _WORKSPACE_HELP = "Path to the solo workspace (defaults to ~/.solo)"
@@ -305,6 +307,33 @@ def report_search_cmd(
         snippet = (r.content or "")[start:end].replace("\n", " ")
         print(f"    ...{snippet}...")
         print()
+
+
+@feed_digest_app.command("run")
+def feed_digest_run_cmd(
+    preset: str = typer.Option("ai_news", "--preset", help="Preset name"),
+    date: str | None = typer.Option(None, "--date", help="Date YYYY-MM-DD (default: today)"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+    push: bool = typer.Option(False, "--push/--no-push", help="Push result to IM"),
+) -> None:
+    """Manually run a feed digest cycle (for debugging/backfill)."""
+
+    async def _run() -> None:
+        from solo.feed_digest import run_feed_digest
+        from solo.gateway.feed_digest_runner import _push_to_im
+
+        report = await run_feed_digest(workspace=workspace, preset_name=preset, date=date)
+        meta = report.metadata or {}
+        print(
+            f"Feed digest archived: id={report.id} preset={meta.get('preset')} "
+            f"date={meta.get('date')} is_empty={meta.get('is_empty')}"
+        )
+        if push and report.content:
+            print("Pushing to IM...")
+            await _push_to_im(workspace, report.content)
+            print("Pushed.")
+
+    asyncio.run(_run())
 
 
 @app.command("status")

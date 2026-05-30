@@ -84,11 +84,13 @@ class WoloToolRegistry:
         processor: WoloProcessor | None = None,
         agent_factory: Callable[[], Any] | None = None,
         source_context: dict[str, Any] | None = None,
+        progress_callback: Callable[[str], Any] | None = None,
     ) -> None:
         self.store = store
         self.processor = processor
         self._agent_factory = agent_factory
         self._source_context = dict(source_context or {})
+        self._progress_callback = progress_callback
 
     def _processor(self) -> WoloProcessor:
         if self.processor is None:
@@ -97,6 +99,18 @@ class WoloToolRegistry:
                 self._agent_factory() if self._agent_factory is not None else None,
             )
         return self.processor
+
+    async def _push_progress(self, text: str) -> None:
+        if self._progress_callback is None:
+            return
+        try:
+            import asyncio
+
+            coro = self._progress_callback(text)
+            if asyncio.iscoroutine(coro):
+                await coro
+        except Exception:
+            pass
 
     def tools(self) -> list[WoloDomainTool]:
         return [
@@ -139,6 +153,7 @@ class WoloToolRegistry:
             WoloDomainTool(_tool_visualize(), self._handle_visualize),
             WoloDomainTool(_tool_export(), self._handle_export),
             WoloDomainTool(_tool_heartbeat_task(), self._handle_heartbeat_task),
+            WoloDomainTool(_tool_fetch_digest(), self._handle_fetch_digest),
         ]
 
     def tool_schemas(self) -> list[dict[str, Any]]:
@@ -1154,6 +1169,40 @@ class WoloToolRegistry:
 
         return {"ok": False, "message": f"未知操作：{action}，支持 add/remove/update/list"}
 
+    async def _handle_fetch_digest(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """On-demand feed digest: collect, score, synthesize, archive and return Markdown."""
+        import asyncio
+
+        # Accept both "domain" (new) and "preset" (deprecated alias)
+        domain = str(arguments.get("domain") or arguments.get("preset") or "").strip() or None
+        date = str(arguments.get("date") or "").strip() or None
+
+        try:
+            from wolo.feed_digest import run_feed_digest
+
+            report = await asyncio.wait_for(
+                run_feed_digest(
+                    workspace=self.store.workspace,
+                    domain_name=domain,
+                    date=date,
+                    progress_callback=self._push_progress,
+                ),
+                timeout=180,
+            )
+        except asyncio.TimeoutError:
+            return {"ok": False, "message": "⏱ 新闻简报生成超时（>3分钟），请稍后重试。"}
+        except Exception as exc:
+            logger.error("fetch_digest failed: %s", exc, exc_info=True)
+            return {"ok": False, "message": f"❌ 新闻简报生成失败：{exc}"}
+
+        meta = report.metadata or {}
+        is_empty = meta.get("is_empty", False)
+        if is_empty:
+            label = meta.get("domain") or domain or "default"
+            return {"ok": True, "message": f"📭 今日无高信号新闻（domain={label}）。\n\n{report.content}"}
+
+        return {"ok": True, "message": report.content}
+
 
 class _AnyInput(BaseModel):
     """Permissive Pydantic model that accepts any tool arguments as extra fields."""
@@ -1759,6 +1808,25 @@ def _tool_heartbeat_task() -> ToolDefinition:
             ("action", "string", "One of: add, remove, update, list.", True),
             ("task", "string", "The task content (for add: new task text; for remove/update: keyword to match existing task).", False),
             ("new_task", "string", "New task text when action=update (replaces the matched task).", False),
+        ],
+    )
+
+
+def _tool_fetch_digest() -> ToolDefinition:
+    return _definition(
+        "wolo_fetch_digest",
+        (
+            "Fetch an on-demand feed digest (news briefing) immediately and return the full Markdown report. "
+            "Use when the user explicitly asks for a news briefing / 新闻报告 / AI热点 / 资讯简报 / feed digest. "
+            "The digest is collected from external sources (GitHub, HackerNews, RSS), scored and filtered by AI, "
+            "synthesized into a Markdown report, and archived. "
+            "When no domain is given, all enabled domains (enable_domains) are run and merged into one report. "
+            "Returns the full Markdown text of the digest directly to the user. "
+            "NOTE: This may take 1-3 minutes to complete."
+        ),
+        [
+            ("domain", "string", "Domain ID to fetch (e.g. 'ai_news', 'tech', 'finance', 'politics'). Omit to run all enabled domains.", False),
+            ("date", "string", "Target date YYYY-MM-DD. Defaults to today.", False),
         ],
     )
 

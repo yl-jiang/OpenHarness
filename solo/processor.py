@@ -328,12 +328,8 @@ class SoloProcessor:
         elif start_date:
             start, end = start_date, now.strftime("%Y-%m-%d")
         else:
-            if report_type == "weekly":
-                start = (now - timedelta(days=7)).strftime("%Y-%m-%d")
-            elif report_type == "monthly":
-                start = (now - timedelta(days=30)).strftime("%Y-%m-%d")
-            else:  # yearly
-                start = (now - timedelta(days=365)).strftime("%Y-%m-%d")
+            _window = {"weekly": 7, "monthly": 30, "yearly": 365}
+            start = (now - timedelta(days=_window.get(report_type, 30))).strftime("%Y-%m-%d")
             end = now.strftime("%Y-%m-%d")
 
         all_records = self.store.list_records()
@@ -595,7 +591,7 @@ class SoloProcessor:
     def _pending_reminder(self) -> str | None:
         pending_count = len(self.store.list_pending_confirmations())
         state = self.store.reminder_state()
-        if pending_count >= 5 and pending_count > state["last_pending_count"]:
+        if pending_count >= 1 and pending_count > state["last_pending_count"]:
             self.store.update_reminder_state(pending_count=pending_count)
             return f"还有 {pending_count} 条待确认 solo 需要你确认。"
         self.store.update_reminder_state(pending_count=pending_count)
@@ -612,7 +608,7 @@ class SoloProcessor:
             streak += 1
         state = self.store.reminder_state()
         reminder = None
-        if streak >= 3 and streak > state["last_missing_streak"]:
+        if streak >= 1 and streak > state["last_missing_streak"]:
             reminder = f"你已经连续 {streak} 天没有 solo 记录，要不要补一下？"
         self.store.update_reminder_state(missing_streak=streak)
         return streak, reminder
