@@ -91,6 +91,7 @@ class WoloToolRegistry:
         self._agent_factory = agent_factory
         self._source_context = dict(source_context or {})
         self._progress_callback = progress_callback
+        self._background_tasks: set[Any] = set()
 
     def _processor(self) -> WoloProcessor:
         if self.processor is None:
@@ -261,13 +262,13 @@ class WoloToolRegistry:
                 "ok": True,
                 "entry_id": entry.id,
                 "record_id": record.id,
-                "message": f"✅ 刚才的记录已经入库。record_id={record.id}",
+                "message": f"收到～已记下这条。record_id={record.id}",
             }
 
         # No structured fields provided — entry saved but not yet structured.
         # It will be processed by the next `wolo_process` / `process_pending()` call.
         backfill_hint = _backfill_hint(self.store, arguments.get("record_date") or arguments.get("date"))
-        message = "✅ 刚才的记录已经入库。"
+        message = "收到～已记下这条。"
         if backfill_hint:
             message += "\n" + backfill_hint
         logger.info("_handle_record entry_id=%s", entry.id)
@@ -329,7 +330,7 @@ class WoloToolRegistry:
             "ok": True,
             "record_ids": created,
             "imported": len(created),
-            "message": f"已批量入库 {len(created)} 条 wolo 记录{ids_hint}。",
+            "message": f"收到～已记下 {len(created)} 条{ids_hint}。",
         }
 
     async def _handle_clarify(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1170,38 +1171,68 @@ class WoloToolRegistry:
         return {"ok": False, "message": f"未知操作：{action}，支持 add/remove/update/list"}
 
     async def _handle_fetch_digest(self, arguments: dict[str, Any]) -> dict[str, Any]:
-        """On-demand feed digest: collect, score, synthesize, archive and return Markdown."""
+        """On-demand feed digest: start a background collection task and return immediately."""
         import asyncio
 
         # Accept both "domain" (new) and "preset" (deprecated alias)
         domain = str(arguments.get("domain") or arguments.get("preset") or "").strip() or None
         date = str(arguments.get("date") or "").strip() or None
 
-        try:
-            from wolo.feed_digest import run_feed_digest
+        logger.info("fetch_digest requested domain=%s date=%s", domain, date)
+        task = asyncio.create_task(
+            self._run_fetch_digest_background(domain=domain, date=date),
+            name="wolo-fetch-digest",
+        )
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        task.add_done_callback(self._log_fetch_digest_background_result)
+        label = domain or "enabled domains"
+        return {
+            "ok": True,
+            "message": f"🕒 新闻简报已在后台开始生成（domain={label}），完成后会自动推送报告。",
+        }
 
-            report = await asyncio.wait_for(
-                run_feed_digest(
-                    workspace=self.store.workspace,
-                    domain_name=domain,
-                    date=date,
-                    progress_callback=self._push_progress,
-                ),
-                timeout=180,
+    def _log_fetch_digest_background_result(self, task: Any) -> None:
+        import asyncio
+
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            logger.info("fetch_digest background task cancelled")
+        except Exception as exc:
+            logger.error("fetch_digest background task crashed: %s", exc, exc_info=True)
+
+    async def _run_fetch_digest_background(self, *, domain: str | None, date: str | None) -> None:
+        """Collect, score, synthesize, archive and push Markdown via progress callback."""
+        from wolo.feed_digest import run_feed_digest
+
+        try:
+            report = await run_feed_digest(
+                workspace=self.store.workspace,
+                domain_name=domain,
+                date=date,
+                progress_callback=self._push_progress,
             )
-        except asyncio.TimeoutError:
-            return {"ok": False, "message": "⏱ 新闻简报生成超时（>3分钟），请稍后重试。"}
         except Exception as exc:
             logger.error("fetch_digest failed: %s", exc, exc_info=True)
-            return {"ok": False, "message": f"❌ 新闻简报生成失败：{exc}"}
+            await self._push_progress(f"❌ 新闻简报生成失败：{exc}")
+            return
 
         meta = report.metadata or {}
         is_empty = meta.get("is_empty", False)
+        logger.info(
+            "fetch_digest succeeded domain=%s date=%s is_empty=%s selected=%d",
+            meta.get("domain"),
+            meta.get("date"),
+            is_empty,
+            meta.get("selected_count", 0),
+        )
         if is_empty:
             label = meta.get("domain") or domain or "default"
-            return {"ok": True, "message": f"📭 今日无高信号新闻（domain={label}）。\n\n{report.content}"}
+            await self._push_progress(f"📭 今日无高信号新闻（domain={label}）。\n\n{report.content}")
+            return
 
-        return {"ok": True, "message": report.content}
+        await self._push_progress(report.content)
 
 
 class _AnyInput(BaseModel):
@@ -1816,13 +1847,13 @@ def _tool_fetch_digest() -> ToolDefinition:
     return _definition(
         "wolo_fetch_digest",
         (
-            "Fetch an on-demand feed digest (news briefing) immediately and return the full Markdown report. "
+            "Start an on-demand feed digest (news briefing) in the background. "
             "Use when the user explicitly asks for a news briefing / 新闻报告 / AI热点 / 资讯简报 / feed digest. "
             "The digest is collected from external sources (GitHub, HackerNews, RSS), scored and filtered by AI, "
             "synthesized into a Markdown report, and archived. "
             "When no domain is given, all enabled domains (enable_domains) are run and merged into one report. "
-            "Returns the full Markdown text of the digest directly to the user. "
-            "NOTE: This may take 1-3 minutes to complete."
+            "Returns immediately with a background-started status; the final Markdown report is pushed when ready. "
+            "NOTE: The background task may take several minutes to complete."
         ),
         [
             ("domain", "string", "Domain ID to fetch (e.g. 'ai_news', 'tech', 'finance', 'politics'). Omit to run all enabled domains.", False),

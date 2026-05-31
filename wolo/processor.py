@@ -23,6 +23,9 @@ from wolo.core.utils import (
 
 logger = get_logger(__name__)
 
+_PENDING_REMINDER_TMPL = "还有 {count} 条待确认 wolo 工作记录需要你确认。"
+_MISSING_DAY_REMINDER_TMPL = "你已经连续 {streak} 天没有 wolo 工作记录，要不要补一下？"
+
 
 def _build_report_stats(records: list, start_date: str, end_date: str) -> str:
     """Build a statistical summary of records for report context (fed to LLM)."""
@@ -600,7 +603,7 @@ class WoloProcessor:
         state = self.store.reminder_state()
         if pending_count >= 1 and pending_count > state["last_pending_count"]:
             self.store.update_reminder_state(pending_count=pending_count)
-            return f"还有 {pending_count} 条待确认 wolo 工作记录需要你确认。"
+            return _PENDING_REMINDER_TMPL.format(count=pending_count)
         self.store.update_reminder_state(pending_count=pending_count)
         return None
 
@@ -616,6 +619,6 @@ class WoloProcessor:
         state = self.store.reminder_state()
         reminder = None
         if streak >= 1 and streak > state["last_missing_streak"]:
-            reminder = f"你已经连续 {streak} 天没有 wolo 工作记录，要不要补一下？"
+            reminder = _MISSING_DAY_REMINDER_TMPL.format(streak=streak)
         self.store.update_reminder_state(missing_streak=streak)
         return streak, reminder

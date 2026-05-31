@@ -153,28 +153,45 @@ def test_solo_feed_digest_disabled_config(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_solo_tool_fetch_digest_uses_registry_progress_callback(tmp_path) -> None:
+async def test_solo_tool_fetch_digest_runs_in_background_and_pushes_report(tmp_path) -> None:
     from solo.core.store import SoloStore
     from solo.tools import SoloToolRegistry
 
     store = SoloStore(tmp_path)
     progress: list[str] = []
+    unblock = asyncio.Event()
+    delivered = asyncio.Event()
 
     async def _progress(text: str) -> None:
         progress.append(text)
+        if text == "# Digest":
+            delivered.set()
 
     async def _fake_run_feed_digest(**kwargs):
+        await unblock.wait()
         callback = kwargs["progress_callback"]
         assert callback is not None
         await callback("🔍 AI 评分过滤，共 2 条候选…（预计 20-40 秒）")
-        return SimpleNamespace(content="# Digest", metadata={"is_empty": False})
+        return SimpleNamespace(
+            content="# Digest",
+            metadata={
+                "domain": "AI & Machine Learning",
+                "date": "2024-01-15",
+                "is_empty": False,
+                "selected_count": 1,
+            },
+        )
 
     registry = SoloToolRegistry(store, progress_callback=_progress)
     with patch("solo.feed_digest.run_feed_digest", side_effect=_fake_run_feed_digest):
         result = await registry.execute("solo_fetch_digest", {"preset": "ai_news"})
+        assert "后台" in result
+        assert progress == []
 
-    assert result == "# Digest"
-    assert progress == ["🔍 AI 评分过滤，共 2 条候选…（预计 20-40 秒）"]
+        unblock.set()
+        await asyncio.wait_for(delivered.wait(), timeout=1)
+
+    assert progress == ["🔍 AI 评分过滤，共 2 条候选…（预计 20-40 秒）", "# Digest"]
 
 
 @pytest.mark.asyncio

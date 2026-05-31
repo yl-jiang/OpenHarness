@@ -10,7 +10,7 @@ from openharness.api.usage import UsageSnapshot
 from openharness.channels.bus.events import InboundMessage
 from openharness.channels.bus.queue import MessageBus
 from openharness.engine.messages import ConversationMessage, TextBlock
-from openharness.engine.stream_events import AssistantTurnComplete
+from openharness.engine.stream_events import AssistantTurnComplete, ToolExecutionCompleted
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.skill_manager_tool import SkillManagerToolInput
 
@@ -467,6 +467,86 @@ async def test_solo_query_runner_passes_settings_and_autodream_context(tmp_path:
         "app_label": "solo personal memory",
         "runner_module": "ohmo",
     }
+
+
+@pytest.mark.asyncio
+async def test_solo_query_runner_trims_long_session_history(tmp_path: Path, monkeypatch):
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    session_key = "feishu:chat-long"
+    save_conversation(
+        workspace,
+        session_key,
+        [ConversationMessage.from_user_text(f"message {i}") for i in range(90)],
+        session_id="sid-long",
+    )
+    captured: dict[str, object] = {}
+
+    class FakeQueryEngine:
+        def __init__(self, **kwargs):
+            self.messages: list[ConversationMessage] = []
+            self.tool_metadata = kwargs["tool_metadata"]
+
+        def set_system_prompt(self, prompt: str):
+            del prompt
+
+        def load_messages(self, messages):
+            self.messages = list(messages)
+            captured["loaded_count"] = len(messages)
+            captured["first_loaded"] = messages[0].text
+
+        async def submit_message(self, prompt):
+            del prompt
+            yield AssistantTurnComplete(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="收到")]),
+                usage=UsageSnapshot(),
+            )
+
+    monkeypatch.setattr("solo.runner.QueryEngine", FakeQueryEngine)
+
+    result = await SoloQueryRunner(store, api_client=object()).run("今天状态不错", session_key=session_key)
+
+    assert result == "收到"
+    assert captured["loaded_count"] == 80
+    assert captured["first_loaded"] == "message 10"
+
+
+@pytest.mark.asyncio
+async def test_solo_query_runner_prefers_final_text_after_record_tool(tmp_path: Path, monkeypatch):
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+
+    class FakeQueryEngine:
+        def __init__(self, **kwargs):
+            self.messages: list[ConversationMessage] = []
+            self.tool_metadata = kwargs["tool_metadata"]
+
+        def set_system_prompt(self, prompt: str):
+            del prompt
+
+        def load_messages(self, messages):
+            del messages
+
+        async def submit_message(self, prompt):
+            del prompt
+            yield ToolExecutionCompleted(
+                tool_name="solo_record",
+                output="收到～已记下这条。record_id=abc123",
+                is_error=False,
+            )
+            yield AssistantTurnComplete(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="没消息就是好消息，这条先帮你记下来了。")],
+                ),
+                usage=UsageSnapshot(),
+            )
+
+    monkeypatch.setattr("solo.runner.QueryEngine", FakeQueryEngine)
+
+    result = await SoloQueryRunner(store, api_client=object()).run("今天P1000群里没消息")
+
+    assert result == "没消息就是好消息，这条先帮你记下来了。"
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,8 @@ from solo.core.workspace import get_memory_dir, get_sessions_dir, get_skills_dir
 
 logger = get_logger(__name__)
 
+_FALLBACK_MESSAGE = "这里是 solo 记录专用 bot，请发送想要记录的内容。"
+
 _SOLO_TOOL_ROUTER_PROMPT = """你是 solo app 的语义路由 agent。用户通过飞书等渠道发送日常记录、日志、补录等内容，由你决定如何处理。
 
 每条消息必须**调用工具**完成动作，不要只用文字回答。
@@ -136,11 +138,14 @@ _SOLO_TOOL_ROUTER_PROMPT = """你是 solo app 的语义路由 agent。用户通�
 ## 回复约束
 
 - 每次工具执行完毕后，你的文字回复**必须且只能**回应用户最近一条消息的内容。
-- 如果用户消息是日常记录（非提问），工具完成后只需简短确认，不要追加其他话题。
+- 语气自然温暖，像朋友之间的对话。可以自然表达已经记下，但不要只说「已记录」「已入库」「已保存」这类机械确认语；还要给出贴合情境的轻量反馈。
+- 如果用户消息上方出现了「Relevant Historical Records」区块，只在确实相关时顺带引用；不要为了引用而牵强跳回旧话题。
+- 确认收到记录时，可以简短表达共情或关注（如"听起来今天挺辛苦的""这个想法不错"），但不要啰嗦。
 - **严禁**在工具执行后跳回之前的历史讨论话题。
 """
 
 _MAX_TURNS = 10
+_SESSION_MAX_MESSAGES = 80
 
 
 def _read_file(path: Path) -> str | None:
@@ -176,6 +181,38 @@ def _is_image_file(path: str) -> bool:
     """Check if a file path refers to an image based on MIME type."""
     mime, _ = mimetypes.guess_type(path)
     return bool(mime and mime.startswith("image/"))
+
+
+def _build_similar_records_context(store: SoloStore, user_text: str, *, max_results: int = 5) -> str:
+    """Search historical records for BM25-similar entries and return a compact context block.
+
+    Kept out of the system prompt (like time context) so the static prompt
+    benefits from KV-Cache sharing across turns.
+    """
+    if not user_text.strip():
+        return ""
+    try:
+        records = store.search_records(query=user_text, limit=max_results)
+    except Exception:
+        logger.debug("_build_similar_records_context search failed, skipping")
+        return ""
+    if not records:
+        logger.debug("_build_similar_records_context no similar records found")
+        return ""
+    lines = [
+        "## Relevant Historical Records",
+        "",
+        "The following past records are semantically similar to the user's current message.",
+        "Use them to detect patterns, avoid contradictions, or reference related past events.",
+        "",
+    ]
+    for record in records:
+        summary = record.summary or record.corrected_content[:60]
+        tag_part = f" #{record.tags}" if record.tags else ""
+        lines.append(f"- [{record.date}] {summary} [{record.emotion}]{tag_part}")
+    lines.append("")
+    logger.debug("_build_similar_records_context found %d similar records", len(records))
+    return "\n".join(lines)
 
 
 def _build_user_message(text: str, media: list[str] | None) -> str | ConversationMessage:
@@ -290,6 +327,14 @@ class SoloQueryRunner:
         workspace = get_workspace_root(self._store.workspace)
         skill_dirs = (str(get_skills_dir(workspace)),)
         prior_messages, session_id = load_conversation(workspace, session_key) if session_key else ([], None)
+        # Limit session history to prevent topic drift and silent empty model
+        # stops in long-running gateway chats. Older facts remain searchable.
+        if len(prior_messages) > _SESSION_MAX_MESSAGES:
+            logger.info(
+                "session window trimmed session_key=%s total=%d kept=%d",
+                session_key, len(prior_messages), _SESSION_MAX_MESSAGES,
+            )
+            prior_messages = prior_messages[-_SESSION_MAX_MESSAGES:]
         if not session_id:
             session_id = uuid4().hex[:12]
 
@@ -316,16 +361,19 @@ class SoloQueryRunner:
         if prior_messages:
             engine.load_messages(sanitize_conversation_messages(prior_messages))
 
-        # Prefix the user message with a volatile time context so the *system prompt*
+        # Prefix the user message with volatile context so the *system prompt*
         # remains static and can be fully KV-Cache shared across turns.
-        user_message = _build_user_message(_build_time_context() + user_text, media)
+        similar_context = _build_similar_records_context(self._store, user_text)
+        user_message = _build_user_message(_build_time_context() + similar_context + user_text, media)
 
         yield ("progress", "🤔 正在思考...")
         last_text = ""
         tool_outputs: list[str] = []
+        tool_errors: list[str] = []
         # Tools whose output should be sent verbatim (not summarized by LLM).
         _PASSTHROUGH_TOOLS = {"solo_report", "solo_visualize"}
         passthrough_output: str = ""
+        engine_error: str = ""
         try:
             async for event in engine.submit_message(user_message):
                 if isinstance(event, ReasoningDelta):
@@ -339,11 +387,14 @@ class SoloQueryRunner:
                     if candidate and not event.message.tool_uses:
                         last_text = candidate
                 elif isinstance(event, ToolExecutionCompleted):
-                    if not event.is_error and event.output.strip():
+                    if event.is_error:
+                        tool_errors.append(f"{event.tool_name}: {event.output.strip()[:200]}")
+                    elif event.output.strip():
                         tool_outputs.append(event.output.strip())
                         if event.tool_name in _PASSTHROUGH_TOOLS:
                             passthrough_output = event.output.strip()
-        except Exception:
+        except Exception as exc:
+            engine_error = f"{type(exc).__name__}: {exc}"
             logger.exception("SoloQueryRunner engine error session_key=%r text=%r", session_key, user_text[:80])
 
         if session_key:
@@ -354,7 +405,21 @@ class SoloQueryRunner:
         if passthrough_output:
             final = passthrough_output
         else:
-            final = last_text or "\n".join(tool_outputs) or "这里是 solo 记录专用 bot，请发送想要记录的内容。"
+            # Prefer the model's final text for human tone after a successful
+            # record/import flow; tool output remains the fallback for silent
+            # final turns.
+            final = last_text or "\n".join(tool_outputs) or _FALLBACK_MESSAGE
+            if final.startswith(_FALLBACK_MESSAGE):
+                logger.warning(
+                    "solo fallback triggered — last_text=%r tool_outputs=%s "
+                    "tool_errors=%s engine_error=%s session_key=%s text_preview=%r",
+                    last_text,
+                    [o[:80] for o in tool_outputs],
+                    tool_errors,
+                    engine_error,
+                    session_key,
+                    user_text[:120],
+                )
         yield ("final", final)
 
     async def run(
@@ -373,4 +438,4 @@ class SoloQueryRunner:
         ):
             if kind == "final":
                 return text
-        return "这里是 solo 记录专用 bot，请发送想要记录的内容。"
+        return _FALLBACK_MESSAGE

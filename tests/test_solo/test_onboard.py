@@ -1,4 +1,7 @@
 import socket
+import sys
+import types
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -106,3 +109,61 @@ def test_solo_onboard_run_reports_bind_errors_cleanly(monkeypatch: pytest.Monkey
 
     assert result.exit_code == 1
     assert "onboard cannot bind http://127.0.0.1:8090: address already in use" in result.output
+
+
+def test_run_server_configures_openharness_logging(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / ".onboard"
+    workspace.mkdir()
+    _patch_onboard_workspace(monkeypatch, workspace)
+
+    captured: dict[str, object] = {}
+
+    def fake_configure_logging(*, level: str, **_: object) -> None:
+        captured["level"] = level
+
+    @contextmanager
+    def fake_reserve_listener(*, host: str, port: int):
+        captured["host"] = host
+        captured["port"] = port
+
+        class _Listener:
+            def fileno(self) -> int:
+                return 123
+
+        yield _Listener()
+
+    def fake_write_state(*, host: str, port: int, pid: int, started_at: float) -> None:
+        captured["state"] = {
+            "host": host,
+            "port": port,
+            "pid": pid,
+            "started_at": started_at,
+        }
+
+    def fake_run(target: object, *, factory: bool, fd: int, reload: bool) -> None:
+        captured["uvicorn"] = {
+            "target": target,
+            "factory": factory,
+            "fd": fd,
+            "reload": reload,
+        }
+
+    monkeypatch.setattr(onboard_server, "configure_logging", fake_configure_logging)
+    monkeypatch.setattr(onboard_server, "_build_frontend", lambda: None)
+    monkeypatch.setattr(onboard_server, "_write_state", fake_write_state)
+    monkeypatch.setattr(onboard_server, "_reserve_listener", fake_reserve_listener)
+    monkeypatch.setattr(onboard_server, "get_token", lambda: "test-token")
+    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(run=fake_run))
+    monkeypatch.setenv("OPENHARNESS_LOG_LEVEL", "DEBUG")
+
+    onboard_server.run_server(host="127.0.0.1", port=8091)
+
+    assert captured["level"] == "DEBUG"
+    uvicorn_call = captured["uvicorn"]
+    assert uvicorn_call["factory"] is False
+    assert uvicorn_call["fd"] == 123
+    assert uvicorn_call["reload"] is False
+    assert uvicorn_call["target"].title == "Onboard"
