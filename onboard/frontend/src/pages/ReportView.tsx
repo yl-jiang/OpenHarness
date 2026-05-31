@@ -5,6 +5,15 @@ import type { AppName } from '../api/types';
 import { MarkdownView } from '../components/MarkdownView';
 import { useApi } from '../hooks/useApi';
 
+function formatCreatedAt(raw: string): string {
+  const d = new Date(raw);
+  if (isNaN(d.getTime())) return raw;
+  return d.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+}
+
 export function ReportView({ appName }: { appName: AppName }) {
   const { id = '' } = useParams();
   const { data, error, loading } = useApi(() => api.report(appName, id), [appName, id]);
@@ -18,7 +27,7 @@ export function ReportView({ appName }: { appName: AppName }) {
     <article className="max-w-3xl border border-border rounded-lg bg-surface-1 p-6">
       <div className="flex items-center justify-between mb-5 pb-4 border-b border-border">
         <h2 className="font-serif text-xl text-text m-0 capitalize">{data.report_type} Report</h2>
-        <span className="text-[11px] font-mono text-text-muted">{data.created_at}</span>
+        <span className="text-[11px] font-mono text-text-muted">{formatCreatedAt(data.created_at)}</span>
       </div>
       {data.content ? (
         <MarkdownView content={data.content} />
