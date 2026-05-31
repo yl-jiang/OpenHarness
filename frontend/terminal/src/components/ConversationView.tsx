@@ -279,16 +279,30 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		const showWelcomeBanner = showWelcome;
 		const contentMode: ContentMode = hasConversation ? 'conversation' : 'welcome';
 
+		// Measure element heights and keep the follow-mode scroll position in
+		// sync — all in a single effect so that React 18 batches every setState
+		// call here into ONE re-render rather than triggering two cascading
+		// renders (measure → scroll-update).  Combined with the setTimeout-based
+		// BSU close in syncOutput.ts this eliminates the visible one-frame jump
+		// that caused flickering during streaming.
 		useEffect(() => {
+			let newViewportH = viewportHeight;
+			let newContentH = contentHeight;
+			let newMeasuredMode = measuredContentMode;
 			if (viewportRef.current) {
-				const h = measureElement(viewportRef.current).height;
-				if (h !== viewportHeight) setViewportHeight(h);
+				newViewportH = measureElement(viewportRef.current).height;
 			}
 			if (contentRef.current) {
-				const h = measureElement(contentRef.current).height;
-				if (h !== contentHeight) setContentHeight(h);
-				if (measuredContentMode !== contentMode) setMeasuredContentMode(contentMode);
+				newContentH = measureElement(contentRef.current).height;
+				newMeasuredMode = contentMode;
 			}
+			const newMeasuredH = newMeasuredMode === contentMode ? newContentH : 0;
+			const newMaxScroll = Math.max(0, newMeasuredH - newViewportH);
+
+			if (newViewportH !== viewportHeight) setViewportHeight(newViewportH);
+			if (newContentH !== contentHeight) setContentHeight(newContentH);
+			if (newMeasuredMode !== measuredContentMode) setMeasuredContentMode(newMeasuredMode);
+			if (!paused && scrollFromTop !== newMaxScroll) setScrollFromTop(newMaxScroll);
 		});
 
 		useEffect(() => {
@@ -306,14 +320,6 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 			}
 			lastRevealHeadKeyRef.current = revealHeadKey;
 		}, [revealHeadKey]);
-
-		// In follow mode keep `scrollFromTop` mirrored to the live tail so
-		// that the moment the user scrolls up we have a sensible base.
-		useEffect(() => {
-			if (!paused && scrollFromTop !== maxScroll) {
-				setScrollFromTop(maxScroll);
-			}
-		}, [paused, maxScroll, scrollFromTop]);
 
 		// Keep the empty welcome screen pinned to the top. Once conversation
 		// content exists, keep the banner in scrollback and follow the live tail.

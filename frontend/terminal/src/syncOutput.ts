@@ -99,7 +99,14 @@ export function installSyncOutput(stdout: NodeJS.WriteStream): void {
 		}
 		if (!closeScheduled) {
 			closeScheduled = true;
-			setImmediate(closeFrame);
+			// Use setTimeout(0) instead of setImmediate so the BSU frame stays
+			// open until ALL cascading React renders (scheduled via setImmediate
+			// by React's scheduler) have flushed.  setImmediate would fire
+			// before those renders, exposing an intermediate wrong-scroll frame.
+			// setTimeout(0) fires in the timers phase, after the check phase
+			// where all setImmediate callbacks run, so every cascading re-render
+			// is batched into the same synchronized update block.
+			setTimeout(closeFrame, 0);
 		}
 		return originalWrite(chunk, encodingOrCallback as any, callback);
 	} as any;
