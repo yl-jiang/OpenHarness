@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from onboard.api import chat, lifecycle, solo_routes, stats, wolo_routes
 from onboard.auth import TokenGateMiddleware, auth_routes, get_token
+from openharness.utils.log import configure_logging
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -121,6 +122,7 @@ def run_server(
     import uvicorn
 
     _build_frontend()
+    configure_logging(level=os.environ.get("OPENHARNESS_LOG_LEVEL", "INFO"))
 
     # Display access token on startup
     token = get_token()

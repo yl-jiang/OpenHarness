@@ -160,10 +160,33 @@ export function FeedDigests({ appName }: { appName: AppName }) {
     }
   }
 
+  function requestNotificationPermission(): void {
+    if ('Notification' in window && Notification.permission === 'default') {
+      void Notification.requestPermission();
+    }
+  }
+
+  function notifyDigestReady(digest: FeedDigest): void {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    const domain = digest.metadata?.domain ?? 'Feed Digest';
+    const selected = digest.metadata?.selected_count ?? 0;
+    const n = new Notification(`📰 ${domain} 简报已就绪`, {
+      body: `精选 ${selected} 条内容，点击查看`,
+      icon: '/favicon.ico',
+      tag: `feed-digest-${digest.id}`,
+    });
+    n.onclick = () => {
+      window.focus();
+      navigate(`/feeds/${digest.id}`);
+      n.close();
+    };
+  }
+
   async function runDigest() {
     setRunning(true);
     setRunStage(0);
     setActionError(null);
+    requestNotificationPermission();
 
     // Advance stage indicator on a timer (purely cosmetic — gives visual progress)
     const stageDurations = [4000, 20000, 8000, 25000];
@@ -180,6 +203,7 @@ export function FeedDigests({ appName }: { appName: AppName }) {
     try {
       const digest = await api.runFeedDigest(appName, runPreset);
       setRunStage(RUN_STAGES.length - 1);
+      notifyDigestReady(digest);
       await listState.reload();
       navigate(`/feeds/${digest.id}`);
     } catch (err) {
