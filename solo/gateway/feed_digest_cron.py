@@ -80,6 +80,14 @@ def ensure_feed_digest_job(
     job_name = f"{app}-feed-digest"
     existing = _get_cron_job(job_name, workspace)
     if existing is not None:
+        python = sys.executable
+        script = str(_APP_ROOT / "gateway" / "feed_digest_runner.py")
+        expected_command = f"{python} {script} --app {app}"
+        if workspace:
+            expected_command += f" --workspace {workspace}"
+        if not im_push_enabled:
+            expected_command += " --no-push"
+
         changed = False
         if notify and not existing.get("notify"):
             existing["notify"] = notify
@@ -89,6 +97,9 @@ def ensure_feed_digest_job(
             changed = True
         if existing.get("timezone") != tz:
             existing["timezone"] = tz
+            changed = True
+        if existing.get("command") != expected_command:
+            existing["command"] = expected_command
             changed = True
         if changed:
             _upsert_cron_job(existing, workspace)
