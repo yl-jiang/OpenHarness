@@ -6,7 +6,7 @@ import {render as renderInk} from 'ink';
 
 import type {TranscriptItem} from '../types.js';
 import {ThemeProvider} from '../theme/ThemeContext.js';
-import {ConversationView} from './ConversationView.js';
+import {ConversationView, type ConversationViewHandle} from './ConversationView.js';
 
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -22,7 +22,7 @@ type InkTestStdout = PassThrough & {
 };
 
 function createTestStdout(columns = 120, rows = 1000): InkTestStdout {
-	return Object.assign(new PassThrough(), {
+	const stdout = Object.assign(new PassThrough(), {
 		isTTY: true,
 		columns,
 		rows,
@@ -30,6 +30,8 @@ function createTestStdout(columns = 120, rows = 1000): InkTestStdout {
 		clearLine: () => true,
 		moveCursor: () => true,
 	});
+	stdout.setMaxListeners(1000);
+	return stdout;
 }
 
 async function waitForOutputToStabilize(getOutput: () => string): Promise<string> {
@@ -192,6 +194,7 @@ test('does not repaint live reasoning when no new content arrives', async () => 
 				reasoningBuffer="line1\nline2\nline3\nline4"
 				showWelcome={false}
 				outputStyle="default"
+				animateSpinner={false}
 			/>
 		</ThemeProvider>,
 		{stdout: stdout as unknown as NodeJS.WriteStream, debug: true, patchConsole: false},
@@ -207,6 +210,101 @@ test('does not repaint live reasoning when no new content arrives', async () => 
 	instance.cleanup();
 
 	assert.equal(afterIdleOutput, settledOutput);
+});
+
+test('animates the live reasoning spinner while streaming', async () => {
+	const stdout = createTestStdout(120, 20);
+	const frames: string[] = [];
+	stdout.on('data', (chunk) => {
+		frames.push(stripAnsi(chunk.toString()));
+	});
+
+	const instance = renderInk(
+		<ThemeProvider initialTheme="default">
+			<ConversationView
+				transcript={[{role: 'user', text: 'hi'}] satisfies TranscriptItem[]}
+				assistantBuffer=""
+				reasoningBuffer="thinking..."
+				showWelcome={false}
+				outputStyle="default"
+				animateSpinner
+			/>
+		</ThemeProvider>,
+		{stdout: stdout as unknown as NodeJS.WriteStream, debug: true, patchConsole: false},
+	);
+
+	const exitPromise = instance.waitUntilExit();
+	await waitForOutputToStabilize(() => frames.join(''));
+	frames.length = 0;
+	// Let the spinner advance through a few animation ticks (interval is 120ms).
+	await sleep(400);
+
+	instance.unmount();
+	await exitPromise;
+	instance.cleanup();
+
+	const reasoningHeaders = frames
+		.flatMap((frame) => frame.split('\n'))
+		.filter((line) => line.includes('reasoning'));
+	const distinctSpinners = new Set(
+		reasoningHeaders
+			.map((line) => /([⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏])\s*reasoning/u.exec(line)?.[1])
+			.filter((glyph): glyph is string => Boolean(glyph)),
+	);
+	assert.ok(distinctSpinners.size > 1, `expected the reasoning spinner to animate, saw ${distinctSpinners.size} frame(s)`);
+});
+
+test('renders only the live tail of long transcripts while streaming', async () => {
+	const output = await renderConversation(
+		Array.from({length: 120}, (_, index) => ({
+			role: index % 2 === 0 ? 'user' : 'assistant',
+			text: `history-${String(index).padStart(3, '0')}`,
+		})) satisfies TranscriptItem[],
+		{assistantBuffer: 'live answer', rows: 24},
+	);
+
+	assert.doesNotMatch(output, /history-000/u);
+	assert.match(output, /history-119/u);
+	assert.match(output, /live answer/u);
+});
+
+test('restores full history when scrolling up from a virtualized live tail', async () => {
+	const stdout = createTestStdout(120, 24);
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+	const ref = React.createRef<ConversationViewHandle>();
+	const transcript = Array.from({length: 120}, (_, index) => ({
+		role: index % 2 === 0 ? 'user' : 'assistant',
+		text: `history-${String(index).padStart(3, '0')}`,
+	})) satisfies TranscriptItem[];
+
+	const instance = renderInk(
+		<ThemeProvider initialTheme="default">
+			<ConversationView
+				ref={ref}
+				transcript={transcript}
+				assistantBuffer="live answer"
+				reasoningBuffer=""
+				showWelcome={false}
+				outputStyle="default"
+			/>
+		</ThemeProvider>,
+		{stdout: stdout as unknown as NodeJS.WriteStream, debug: true, patchConsole: false},
+	);
+
+	const exitPromise = instance.waitUntilExit();
+	await waitForOutputToStabilize(() => output);
+	output = '';
+	ref.current?.scrollToTop();
+	const scrolledOutput = await waitForOutputToStabilize(() => output);
+
+	instance.unmount();
+	await exitPromise;
+	instance.cleanup();
+
+	assert.match(scrolledOutput, /history-000/u);
 });
 
 test('omits non-error tool result previews', async () => {

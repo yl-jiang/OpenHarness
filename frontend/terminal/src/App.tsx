@@ -1697,6 +1697,7 @@ function AppInner({
 				outputStyle={outputStyle}
 				revealHeadKey={session.commandOutputStartCount}
 				onPauseChange={setPaused}
+				animateSpinner={spinnerAnimationEnabled}
 			/>
 
 			{isPaused ? (

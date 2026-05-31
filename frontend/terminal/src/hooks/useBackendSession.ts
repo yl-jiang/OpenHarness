@@ -15,8 +15,11 @@ import type {
 } from '../types.js';
 
 const PROTOCOL_PREFIX = 'OHJSON:';
-const ASSISTANT_DELTA_FLUSH_MS = 50;
-const ASSISTANT_DELTA_FLUSH_CHARS = 384;
+// Flush streamed deltas at roughly the terminal frame budget (~30fps). Ink
+// already throttles its own renders to 32ms, so flushing at this cadence keeps
+// streaming visibly smooth without scheduling renders the terminal can't draw.
+const ASSISTANT_DELTA_FLUSH_MS = 33;
+const ASSISTANT_DELTA_FLUSH_CHARS = 256;
 const TRANSCRIPT_EVENT_FLUSH_MS = 50;
 
 const stableStringify = (value: unknown): string => JSON.stringify(value);

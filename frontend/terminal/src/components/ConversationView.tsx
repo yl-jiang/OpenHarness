@@ -12,6 +12,7 @@ import type {TerminalMouseEvent} from '../input/terminalInput.js';
 import {MarkdownText} from './MarkdownText.js';
 import {ToolCallDisplay, type TreePos} from './ToolCallDisplay.js';
 import {WelcomeBanner} from './WelcomeBanner.js';
+import {shouldAnimateSpinner} from './PromptInput.js';
 
 export type ConversationViewHandle = {
 	scrollUp(lines: number): void;
@@ -26,6 +27,8 @@ type SoloMessage = {kind: 'message'; item: TranscriptItem; index: number};
 type RenderGroup = ToolPair | SoloTool | SoloMessage;
 type ContentMode = 'welcome' | 'conversation';
 type Theme = ReturnType<typeof useTheme>['theme'];
+
+const LIVE_FOLLOW_RENDER_GROUP_LIMIT = 48;
 
 const TURN_DIVIDER = '╌'.repeat(18);
 const USER_SHELL_ORIGIN = 'user_shell';
@@ -214,12 +217,12 @@ function AssistantRunHeader({
 /**
  * Smooth, line-level scrollable transcript panel.
  *
- * Approach: render the full transcript top-to-bottom in a tall content box
- * (no slicing, no column-reverse), wrap it in a fixed-height viewport with
- * `overflow: hidden`, then translate the content vertically by setting a
- * (possibly negative) `marginTop` on it.  After every render we measure the
- * actual viewport and content heights with `measureElement`, then clamp the
- * scroll offset and update the margin.
+ * Approach: render the transcript top-to-bottom in a tall content box, wrap it
+ * in a fixed-height viewport with `overflow: hidden`, then translate the
+ * content vertically by setting a (possibly negative) `marginTop` on it.  While
+ * following a live stream, only the tail of long transcripts is mounted; when
+ * the user scrolls up, the full history is mounted again before computing the
+ * historical scroll position.
  *
  * Scroll semantics (line offset from top of content):
  *   - paused = false → "follow tail":  marginTop tracks the live tail so the
@@ -240,11 +243,12 @@ type ConversationViewInnerProps = {
 	outputStyle?: string;
 	revealHeadKey?: number;
 	onPauseChange?: (paused: boolean) => void;
+	animateSpinner?: boolean;
 };
 
 const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationViewInnerProps>(
 	function ConversationViewInner(
-		{transcript, assistantBuffer, reasoningBuffer = '', reasoningExpanded = false, showWelcome, welcomeVersion, outputStyle, revealHeadKey, onPauseChange},
+		{transcript, assistantBuffer, reasoningBuffer = '', reasoningExpanded = false, showWelcome, welcomeVersion, outputStyle, revealHeadKey, onPauseChange, animateSpinner = shouldAnimateSpinner()},
 		forwardedRef,
 	): React.JSX.Element {
 		const {theme} = useTheme();
@@ -260,6 +264,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		const [paused, setPaused] = useState(false);
 		const [expandedReasoningIndices, setExpandedReasoningIndices] = useState<Set<number>>(new Set());
 		const lastRevealHeadKeyRef = useRef<number | undefined>(revealHeadKey);
+		const pendingScrollFromTailRef = useRef<number | null>(null);
 
 		const toggleReasoningAt = useCallback((index: number) => {
 			setExpandedReasoningIndices((prev) => {
@@ -277,6 +282,19 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 		const treePositions = useMemo(() => assignTreePositions(groups), [groups]);
 		const liveAssistantStartsNewRun = previousConversationOwner(groups, groups.length) !== 'assistant';
 		const hasConversation = groups.length > 0 || assistantBuffer.length > 0 || reasoningBuffer.length > 0;
+		const hasLiveBuffer = assistantBuffer.length > 0 || reasoningBuffer.length > 0;
+		const shouldVirtualizeLiveTail = !paused && hasLiveBuffer && groups.length > LIVE_FOLLOW_RENDER_GROUP_LIMIT;
+		const renderedGroupStart = shouldVirtualizeLiveTail
+			? Math.max(0, groups.length - LIVE_FOLLOW_RENDER_GROUP_LIMIT)
+			: 0;
+		const renderedGroups = useMemo(
+			() => groups.slice(renderedGroupStart),
+			[groups, renderedGroupStart],
+		);
+		const renderedTreePositions = useMemo(
+			() => treePositions.slice(renderedGroupStart),
+			[treePositions, renderedGroupStart],
+		);
 		const showWelcomeBanner = showWelcome;
 		const contentMode: ContentMode = hasConversation ? 'conversation' : 'welcome';
 
@@ -299,11 +317,18 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 			}
 			const newMeasuredH = newMeasuredMode === contentMode ? newContentH : 0;
 			const newMaxScroll = Math.max(0, newMeasuredH - newViewportH);
+			const pendingScrollFromTail = pendingScrollFromTailRef.current;
 
 			if (newViewportH !== viewportHeight) setViewportHeight(newViewportH);
 			if (newContentH !== contentHeight) setContentHeight(newContentH);
 			if (newMeasuredMode !== measuredContentMode) setMeasuredContentMode(newMeasuredMode);
-			if (!paused && scrollFromTop !== newMaxScroll) setScrollFromTop(newMaxScroll);
+			if (paused && pendingScrollFromTail != null) {
+				pendingScrollFromTailRef.current = null;
+				const nextScroll = Math.max(0, newMaxScroll - pendingScrollFromTail);
+				if (scrollFromTop !== nextScroll) setScrollFromTop(nextScroll);
+			} else if (!paused && scrollFromTop !== newMaxScroll) {
+				setScrollFromTop(newMaxScroll);
+			}
 		});
 
 		useEffect(() => {
@@ -335,10 +360,17 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 			forwardedRef,
 			() => ({
 				scrollUp(lines: number) {
+					const delta = Math.max(1, Math.floor(lines));
+					if (!paused) {
+						pendingScrollFromTailRef.current = delta;
+						setPaused(true);
+						setScrollFromTop(Number.MAX_SAFE_INTEGER);
+						return;
+					}
 					setPaused(true);
 					setScrollFromTop((s) => {
 						const base = paused ? s : maxScroll;
-						return Math.max(0, base - Math.max(1, Math.floor(lines)));
+						return Math.max(0, base - delta);
 					});
 				},
 				scrollDown(lines: number) {
@@ -354,10 +386,12 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 					});
 				},
 				scrollToTop() {
+					pendingScrollFromTailRef.current = null;
 					setPaused(true);
 					setScrollFromTop(0);
 				},
 				scrollToBottom() {
+					pendingScrollFromTailRef.current = null;
 					setPaused(false);
 					setScrollFromTop(maxScroll);
 				},
@@ -370,8 +404,10 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 				<Box ref={contentRef} flexShrink={0} flexDirection="column" marginTop={marginTop}>
 					{showWelcomeBanner ? <WelcomeBanner version={welcomeVersion} /> : null}
 					<TranscriptGroups
-						groups={groups}
-						treePositions={treePositions}
+						allGroups={groups}
+						groupOffset={renderedGroupStart}
+						groups={renderedGroups}
+						treePositions={renderedTreePositions}
 						theme={theme}
 						outputStyle={outputStyle}
 						isCodexStyle={isCodexStyle}
@@ -393,7 +429,7 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 								flexDirection="column"
 							>
 								{liveAssistantStartsNewRun ? <AssistantRunHeader theme={theme} /> : null}
-								{reasoningBuffer ? <ReasoningBlock text={reasoningBuffer} theme={theme} expanded={reasoningExpanded} cols={cols} /> : null}
+								{reasoningBuffer ? <ReasoningBlock text={reasoningBuffer} theme={theme} expanded={reasoningExpanded} cols={cols} animate={animateSpinner} /> : null}
 								{assistantBuffer ? (
 									<Box marginLeft={2} flexDirection="column">
 										<MarkdownText content={assistantBuffer} availableWidth={cols - 4} />
@@ -411,6 +447,8 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 export const ConversationView = React.memo(ConversationViewInner);
 
 type TranscriptGroupsProps = {
+	allGroups: RenderGroup[];
+	groupOffset: number;
 	groups: RenderGroup[];
 	treePositions: TreePos[];
 	theme: Theme;
@@ -422,6 +460,8 @@ type TranscriptGroupsProps = {
 };
 
 const TranscriptGroups = React.memo(function TranscriptGroups({
+	allGroups,
+	groupOffset,
 	groups,
 	treePositions,
 	theme,
@@ -434,12 +474,13 @@ const TranscriptGroups = React.memo(function TranscriptGroups({
 	return (
 		<>
 			{groups.map((group, i) => {
-				const showAssistantHeader = shouldRenderAssistantHeaderBeforeGroup(groups, i, outputStyle);
-				const showTurnDivider = shouldRenderTurnDividerBeforeGroup(groups, i, outputStyle);
+				const globalIndex = groupOffset + i;
+				const showAssistantHeader = shouldRenderAssistantHeaderBeforeGroup(allGroups, globalIndex, outputStyle);
+				const showTurnDivider = shouldRenderTurnDividerBeforeGroup(allGroups, globalIndex, outputStyle);
 				// Add breathing room between consecutive non-tool message blocks
 				// (e.g. assistant text -> question prompt) to reduce visual fatigue,
 				// while keeping tool-call clusters tightly packed.
-				const prevGroup = i > 0 ? groups[i - 1] : null;
+				const prevGroup = globalIndex > 0 ? allGroups[globalIndex - 1] : null;
 				const isNonEmptyAssistantMessage =
 					group.kind === 'message' &&
 					group.item.role === 'assistant' &&
@@ -476,11 +517,13 @@ function ReasoningBlock({
 	theme,
 	expanded = false,
 	cols = 80,
+	animate = false,
 }: {
 	text: string;
 	theme: ReturnType<typeof useTheme>['theme'];
 	expanded?: boolean;
 	cols?: number;
+	animate?: boolean;
 }): React.JSX.Element {
 	const allLines = text.split('\n');
 	if (allLines[allLines.length - 1] === '') {
@@ -492,7 +535,20 @@ function ReasoningBlock({
 	const visibleLines = needsFold ? allLines.slice(-foldLines) : allLines;
 	const hiddenCount = Math.max(0, allLines.length - foldLines);
 
-	const spinner = theme.icons.spinner[0] ?? '⠋';
+	const spinnerFrames = theme.icons.spinner.length > 0 ? theme.icons.spinner : ['⠋'];
+	const [spinnerIndex, setSpinnerIndex] = useState(0);
+	useEffect(() => {
+		if (!animate) {
+			setSpinnerIndex(0);
+			return;
+		}
+		const id = setInterval(() => {
+			setSpinnerIndex((i) => (i + 1) % spinnerFrames.length);
+		}, 120);
+		return () => clearInterval(id);
+	}, [animate, spinnerFrames.length]);
+
+	const spinner = spinnerFrames[spinnerIndex % spinnerFrames.length] ?? '⠋';
 	const header = `╭─ ${spinner} reasoning`;
 
 	// Account for parent paddingX={1} (2 cols) + this Box marginLeft={2} (2 cols) + │+space prefix (2 cols)

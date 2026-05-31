@@ -32,6 +32,7 @@ onboard/frontend/dist/
 # User data (never commit API keys or session data)
 .openharness/
 .antigravitycli/
+.context/
 react_tui_smoke.txt
 
 # OS

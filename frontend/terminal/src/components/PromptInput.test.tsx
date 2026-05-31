@@ -424,14 +424,16 @@ test('uses a static busy cue when animation is disabled', async () => {
 	assert.match(output, /⠋ bash/);
 });
 
-test('disables spinner animation on flicker-prone terminals', () => {
-	assert.equal(shouldAnimateSpinner('win32', {}), false);
-	assert.equal(shouldAnimateSpinner('win32', {WT_SESSION: 'abc'}), false);
-	assert.equal(shouldAnimateSpinner('win32', {TERM_PROGRAM: 'vscode'}), false);
-	assert.equal(shouldAnimateSpinner('win32', {MSYSTEM: 'MINGW64'}), false);
-	assert.equal(shouldAnimateSpinner('linux', {SSH_TTY: '/dev/pts/0'}), false);
-	assert.equal(shouldAnimateSpinner('darwin', {}), false);
-	assert.equal(shouldAnimateSpinner('linux', {}), false);
+test('animates the spinner on interactive terminals but not when output is non-interactive or CI', () => {
+	assert.equal(shouldAnimateSpinner('darwin', {}, true), true);
+	assert.equal(shouldAnimateSpinner('linux', {}, true), true);
+	assert.equal(shouldAnimateSpinner('win32', {}, true), true);
+	// Non-TTY (piped/redirected) output must stay static.
+	assert.equal(shouldAnimateSpinner('linux', {}, false), false);
+	// CI / dumb terminals cannot render animation atomically.
+	assert.equal(shouldAnimateSpinner('linux', {CI: '1'}, true), false);
+	assert.equal(shouldAnimateSpinner('linux', {TERM: 'dumb'}, true), false);
+	assert.equal(shouldAnimateSpinner('linux', {OPENHARNESS_NO_SPINNER_ANIMATION: '1'}, true), false);
 	assert.equal(shouldAnimateBackgroundCue('win32', {}), false);
 	assert.equal(shouldAnimateBackgroundCue('win32', {WT_SESSION: 'abc'}), true);
 	assert.equal(shouldAnimateBackgroundCue('linux', {SSH_TTY: '/dev/pts/0'}), false);

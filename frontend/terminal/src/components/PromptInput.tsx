@@ -39,15 +39,28 @@ export function clipPromptPreviewLine(line: string, availableWidth: number): str
 }
 
 /**
- * Timer-driven spinner redraws are intentionally disabled for all terminals.
- * Ink repaints the whole prompt on each state update, so even low-frequency
- * animation can produce visible flicker while long-running work is otherwise idle.
+ * Spinner animation is safe to run again: live transcript history is
+ * virtualized while streaming (see ConversationView) and stdout writes are
+ * wrapped in synchronized-update frames (see syncOutput.ts), so the prompt
+ * spinner no longer forces a flickery full-screen repaint.  We still disable it
+ * for non-interactive, CI, or dumb terminals where animation is meaningless or
+ * cannot render atomically.
  */
 export function shouldAnimateSpinner(
 	_platform: NodeJS.Platform = process.platform,
-	_env: NodeJS.ProcessEnv = process.env,
+	env: NodeJS.ProcessEnv = process.env,
+	isTTY: boolean = Boolean(process.stdout?.isTTY),
 ): boolean {
-	return false;
+	if (!isTTY) {
+		return false;
+	}
+	if (env.CI || env.OPENHARNESS_NO_SPINNER_ANIMATION) {
+		return false;
+	}
+	if (env.TERM === 'dumb') {
+		return false;
+	}
+	return true;
 }
 
 export function shouldAnimateBackgroundCue(
@@ -129,7 +142,7 @@ function PromptInputInner({
 		if (shouldAnimate) {
 			intervalRef.current = setInterval(() => {
 				setFrameIndex((i) => (i + 1) % SPINNER_FRAMES.length);
-			}, 220);
+			}, 120);
 		} else {
 			if (intervalRef.current) {
 				clearInterval(intervalRef.current);
