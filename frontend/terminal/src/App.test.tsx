@@ -7,7 +7,7 @@ import {render} from 'ink';
 import * as AppModule from './App.js';
 
 import {App, buildSubmittedValue, resolveSelectModalChoice, shouldEnterShellModeFromInput} from './App.js';
-import {shouldAnimateBackgroundCue} from './components/PromptInput.js';
+import {shouldAnimateBackgroundCue, shouldAnimateSpinner} from './components/PromptInput.js';
 
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -239,15 +239,21 @@ setInterval(() => {}, 1000);
 		await sleep(600);
 		await nextLoopTurn();
 		const text = stripAnsi(output);
-		assert.match(text, /⠋ \| \[bg\] running/u);
-		assert.match(text, /⠙ \| \[bg\] running/u);
 		assert.doesNotMatch(text, /⠙ \| \[bg\] running \d+s/u);
 		if (shouldAnimateBackgroundCue()) {
+			assert.match(text, /⠋ \| \[bg\] running/u);
+			assert.match(text, /⠙ \| \[bg\] running/u);
 			assert.match(text, /⚙ 1 · 00:00/u);
 			assert.doesNotMatch(text, /[◐◓◑◒]/u);
 			assert.doesNotMatch(text, /OpenHarness[^\n]*⚙/u);
 		} else {
 			assert.doesNotMatch(output, /\u001B\[s\u001B\[[0-9]+;4H/u);
+			assert.match(text, /⠋\s+Type your message or @path\/to\/file/u);
+			if (shouldAnimateSpinner()) {
+				assert.match(text, /⠙\s+Type your message or @path\/to\/file/u);
+			} else {
+				assert.doesNotMatch(text, /[⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+Type your message or @path\/to\/file/u);
+			}
 			assert.match(text, /OpenHarness[^\n]*⚙\s+1/u);
 		}
 	} finally {
@@ -400,8 +406,14 @@ setInterval(() => {}, 1000);
 		output = '';
 		await sleep(700);
 		await nextLoopTurn();
-		assert.match(stripAnsi(output), /⠋ {2}\| Processing\.\.\./u);
-		assert.doesNotMatch(stripAnsi(output), /Processing\.\.\. \d+s/u);
+		const text = stripAnsi(output);
+		assert.match(text, /⠋\s+Processing/u);
+		if (shouldAnimateSpinner()) {
+			assert.match(text, /[⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+Processing/u);
+		} else {
+			assert.doesNotMatch(text, /[⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s+Processing/u);
+		}
+		assert.doesNotMatch(text, /Processing\.\.\. \d+s/u);
 		assert.doesNotMatch(output, /\u001B\[s\u001B\[[0-9]+;4H[^\u001B]*.*Processing\.\.\./u);
 	} finally {
 		const exitPromise = instance.waitUntilExit();
@@ -500,9 +512,11 @@ setInterval(() => {}, 1000);
 
 		if (shouldAnimateBackgroundCue()) {
 			assert.doesNotMatch(stripAnsi(output), /OpenHarness|commands · @ files|PgUp\/Dn scroll|╭|╰/u);
-		} else {
+		} else if (shouldAnimateSpinner()) {
 			assert.match(stripAnsi(output), /OpenHarness|commands · @ files|╭|╰/u);
 			assert.match(stripAnsi(output), /[⠙⠹⠸⠼⠴⠦⠧⠇⠏] \| \[bg\] running/u);
+		} else {
+			assert.equal(output, '');
 		}
 	} finally {
 		// Restore SSH env vars

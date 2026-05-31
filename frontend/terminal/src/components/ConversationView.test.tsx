@@ -10,6 +10,7 @@ import {ConversationView} from './ConversationView.js';
 
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 type InkTestStdout = PassThrough & {
 	isTTY: boolean;
@@ -169,6 +170,43 @@ test('renders live reasoning as a rolling preview before assistant text', async 
 	assert.match(frame, /line5/);
 	assert.match(frame, /line6/);
 	assert.match(frame, /answer/);
+});
+
+test('does not repaint live reasoning when no new content arrives', async () => {
+	const stdout = createTestStdout(120, 20);
+	let output = '';
+	stdout.on('data', (chunk) => {
+		output += chunk.toString();
+	});
+
+	const items = Array.from({length: 12}, (_, index) => ({
+		role: index % 2 === 0 ? 'user' : 'assistant',
+		text: `history-${index}`,
+	})) satisfies TranscriptItem[];
+
+	const instance = renderInk(
+		<ThemeProvider initialTheme="default">
+			<ConversationView
+				transcript={items}
+				assistantBuffer=""
+				reasoningBuffer="line1\nline2\nline3\nline4"
+				showWelcome={false}
+				outputStyle="default"
+			/>
+		</ThemeProvider>,
+		{stdout: stdout as unknown as NodeJS.WriteStream, debug: true, patchConsole: false},
+	);
+
+	const exitPromise = instance.waitUntilExit();
+	const settledOutput = await waitForOutputToStabilize(() => output);
+	await sleep(180);
+	const afterIdleOutput = output;
+
+	instance.unmount();
+	await exitPromise;
+	instance.cleanup();
+
+	assert.equal(afterIdleOutput, settledOutput);
 });
 
 test('omits non-error tool result previews', async () => {

@@ -24,7 +24,7 @@ import {
 } from './components/ExpandedComposer.js';
 import {ModalHost} from './components/ModalHost.js';
 import {InlineActivityIndicator} from './components/InlineActivityIndicator.js';
-import {PromptInput, shouldAnimateBackgroundCue} from './components/PromptInput.js';
+import {PromptInput, shouldAnimateBackgroundCue, shouldAnimateSpinner} from './components/PromptInput.js';
 import {nextSelectIndex, nextSelectIndexForWheel, SelectModal, type SelectOption} from './components/SelectModal.js';
 import {StatusBar} from './components/StatusBar.js';
 import {SwarmPanel} from './components/SwarmPanel.js';
@@ -518,6 +518,7 @@ function AppInner({
 	}, [deferredTasks]);
 	const hasActiveWork = session.busy || activeBackgroundTaskCount > 0;
 	const inlineActivityEnabled = shouldAnimateBackgroundCue();
+	const spinnerAnimationEnabled = shouldAnimateSpinner();
 	const isFullAuto = String(deferredStatus.permission_mode ?? 'default') === 'Auto';
 	const elapsedSeconds = useElapsedTimer(
 		session.busy && isFullAuto && !inlineActivityEnabled,
@@ -1797,7 +1798,7 @@ function AppInner({
 						hasBackgroundTasks={activeBackgroundTaskCount > 0}
 						suppressSubmit={showPicker}
 						inputKey={completionKey}
-						animateSpinner={!inlineActivityEnabled}
+						animateSpinner={spinnerAnimationEnabled && !inlineActivityEnabled}
 						inputMode={inputMode}
 						vimEnabled={vimEnabled}
 						vimInputMode={vimInputMode}

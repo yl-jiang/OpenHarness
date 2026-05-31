@@ -82,6 +82,7 @@ export type BackendEventType =
 	| 'state_snapshot'
 	| 'tasks_snapshot'
 	| 'transcript_item'
+	| 'command_output_start'
 	| 'compact_progress'
 	| 'assistant_delta'
 	| 'reasoning_delta'

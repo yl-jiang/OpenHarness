@@ -1,4 +1,4 @@
-import React, {forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState} from 'react';
+import React, {forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState} from 'react';
 import {Box, Text, measureElement} from 'ink';
 import type {DOMElement} from 'ink';
 import stringWidth from 'string-width';
@@ -25,6 +25,7 @@ type SoloTool = {kind: 'tool'; item: TranscriptItem; index: number};
 type SoloMessage = {kind: 'message'; item: TranscriptItem; index: number};
 type RenderGroup = ToolPair | SoloTool | SoloMessage;
 type ContentMode = 'welcome' | 'conversation';
+type Theme = ReturnType<typeof useTheme>['theme'];
 
 const TURN_DIVIDER = '╌'.repeat(18);
 const USER_SHELL_ORIGIN = 'user_shell';
@@ -272,8 +273,8 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 			});
 		}, []);
 
-		const groups = buildGroups(transcript);
-		const treePositions = assignTreePositions(groups);
+		const groups = useMemo(() => buildGroups(transcript), [transcript]);
+		const treePositions = useMemo(() => assignTreePositions(groups), [groups]);
 		const liveAssistantStartsNewRun = previousConversationOwner(groups, groups.length) !== 'assistant';
 		const hasConversation = groups.length > 0 || assistantBuffer.length > 0 || reasoningBuffer.length > 0;
 		const showWelcomeBanner = showWelcome;
@@ -368,40 +369,16 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 			<Box ref={viewportRef} flexGrow={1} flexShrink={1} flexDirection="column" overflow="hidden">
 				<Box ref={contentRef} flexShrink={0} flexDirection="column" marginTop={marginTop}>
 					{showWelcomeBanner ? <WelcomeBanner version={welcomeVersion} /> : null}
-					{groups.map((group, i) => {
-						const showAssistantHeader = shouldRenderAssistantHeaderBeforeGroup(groups, i, outputStyle);
-						const showTurnDivider = shouldRenderTurnDividerBeforeGroup(groups, i, outputStyle);
-						// Add breathing room between consecutive non-tool message blocks
-						// (e.g. assistant text → question prompt) to reduce visual fatigue,
-						// while keeping tool-call clusters tightly packed.
-						const prevGroup = i > 0 ? groups[i - 1] : null;
-						const isNonEmptyAssistantMessage =
-							group.kind === 'message' &&
-							group.item.role === 'assistant' &&
-							group.item.text.trim().length > 0;
-						const prevIsToolOrMessage =
-							prevGroup?.kind === 'pair' ||
-							prevGroup?.kind === 'tool' ||
-							(prevGroup?.kind === 'message' && prevGroup.item.role === 'assistant');
-						const needsBreathingRoom =
-							!isCodexStyle && isNonEmptyAssistantMessage && prevIsToolOrMessage;
-						const marginTop = showAssistantHeader || showTurnDivider || needsBreathingRoom ? 1 : 0;
-						const hasReasoning = group.kind === 'message' && group.item.role === 'assistant' && Boolean(group.item.reasoning);
-						const isExpanded = expandedReasoningIndices.has(group.index);
-						const onToggle = hasReasoning ? () => toggleReasoningAt(group.index) : undefined;
-
-						return (
-							<Box key={`g-${group.index}`} flexShrink={0} flexDirection="column" marginTop={marginTop}>
-								{showTurnDivider ? (
-									<Text color={theme.colors.muted} dimColor>
-										{TURN_DIVIDER}
-									</Text>
-								) : null}
-								{showAssistantHeader ? <AssistantRunHeader theme={theme} /> : null}
-								{renderGroup(group, theme, outputStyle, treePositions[i], cols, isExpanded, onToggle)}
-							</Box>
-						);
-					})}
+					<TranscriptGroups
+						groups={groups}
+						treePositions={treePositions}
+						theme={theme}
+						outputStyle={outputStyle}
+						isCodexStyle={isCodexStyle}
+						cols={cols}
+						expandedReasoningIndices={expandedReasoningIndices}
+						onToggleReasoning={toggleReasoningAt}
+					/>
 					{reasoningBuffer || assistantBuffer ? (
 						isCodexStyle ? (
 							<Box flexShrink={0} flexDirection="column" marginTop={0}>
@@ -433,6 +410,67 @@ const ConversationViewInner = forwardRef<ConversationViewHandle, ConversationVie
 
 export const ConversationView = React.memo(ConversationViewInner);
 
+type TranscriptGroupsProps = {
+	groups: RenderGroup[];
+	treePositions: TreePos[];
+	theme: Theme;
+	outputStyle?: string;
+	isCodexStyle: boolean;
+	cols: number;
+	expandedReasoningIndices: Set<number>;
+	onToggleReasoning: (index: number) => void;
+};
+
+const TranscriptGroups = React.memo(function TranscriptGroups({
+	groups,
+	treePositions,
+	theme,
+	outputStyle,
+	isCodexStyle,
+	cols,
+	expandedReasoningIndices,
+	onToggleReasoning,
+}: TranscriptGroupsProps): React.JSX.Element {
+	return (
+		<>
+			{groups.map((group, i) => {
+				const showAssistantHeader = shouldRenderAssistantHeaderBeforeGroup(groups, i, outputStyle);
+				const showTurnDivider = shouldRenderTurnDividerBeforeGroup(groups, i, outputStyle);
+				// Add breathing room between consecutive non-tool message blocks
+				// (e.g. assistant text -> question prompt) to reduce visual fatigue,
+				// while keeping tool-call clusters tightly packed.
+				const prevGroup = i > 0 ? groups[i - 1] : null;
+				const isNonEmptyAssistantMessage =
+					group.kind === 'message' &&
+					group.item.role === 'assistant' &&
+					group.item.text.trim().length > 0;
+				const prevIsToolOrMessage =
+					prevGroup?.kind === 'pair' ||
+					prevGroup?.kind === 'tool' ||
+					(prevGroup?.kind === 'message' && prevGroup.item.role === 'assistant');
+				const needsBreathingRoom =
+					!isCodexStyle && isNonEmptyAssistantMessage && prevIsToolOrMessage;
+				const marginTop = showAssistantHeader || showTurnDivider || needsBreathingRoom ? 1 : 0;
+				const hasReasoning = group.kind === 'message' && group.item.role === 'assistant' && Boolean(group.item.reasoning);
+				const isExpanded = expandedReasoningIndices.has(group.index);
+				const onToggle = hasReasoning ? () => onToggleReasoning(group.index) : undefined;
+
+				return (
+					<Box key={`g-${group.index}`} flexShrink={0} flexDirection="column" marginTop={marginTop}>
+						{showTurnDivider ? (
+							<Text color={theme.colors.muted} dimColor>
+								{TURN_DIVIDER}
+							</Text>
+						) : null}
+						{showAssistantHeader ? <AssistantRunHeader theme={theme} /> : null}
+						{renderGroup(group, theme, outputStyle, treePositions[i], cols, isExpanded, onToggle)}
+					</Box>
+				);
+			})}
+		</>
+	);
+});
+
 function ReasoningBlock({
 	text,
 	theme,
@@ -444,14 +482,6 @@ function ReasoningBlock({
 	expanded?: boolean;
 	cols?: number;
 }): React.JSX.Element {
-	const [spinnerFrame, setSpinnerFrame] = useState(0);
-	useEffect(() => {
-		const interval = setInterval(() => {
-			setSpinnerFrame((f) => (f + 1) % theme.icons.spinner.length);
-		}, 80);
-		return () => clearInterval(interval);
-	}, [theme.icons.spinner.length]);
-
 	const allLines = text.split('\n');
 	if (allLines[allLines.length - 1] === '') {
 		allLines.pop();
@@ -462,7 +492,7 @@ function ReasoningBlock({
 	const visibleLines = needsFold ? allLines.slice(-foldLines) : allLines;
 	const hiddenCount = Math.max(0, allLines.length - foldLines);
 
-	const spinner = theme.icons.spinner[spinnerFrame] ?? '⠋';
+	const spinner = theme.icons.spinner[0] ?? '⠋';
 	const header = `╭─ ${spinner} reasoning`;
 
 	// Account for parent paddingX={1} (2 cols) + this Box marginLeft={2} (2 cols) + │+space prefix (2 cols)
