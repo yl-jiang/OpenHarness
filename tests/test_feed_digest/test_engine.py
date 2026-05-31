@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from feed_digest.config import DomainConfig, FeedDigestConfig
 from feed_digest.engine import FeedDigestEngine
-from feed_digest.models import FeedDigestResult, FeedItem
+from feed_digest.models import FeedDigestResult, FeedItem, SourceStats
 from feed_digest.presets import get_preset
 
 
@@ -23,16 +25,28 @@ def _make_item(source: str, url: str, title: str = "Test", content: str = "conte
     )
 
 
-class MockSource:
-    def __init__(self, items: list[FeedItem], fail: bool = False) -> None:
-        self._items = items
-        self._fail = fail
+def _make_researcher_result(
+    items: list[FeedItem],
+    *,
+    source_stats: list[SourceStats] | None = None,
+    warnings: list[str] | None = None,
+) -> SimpleNamespace:
+    if source_stats is None:
+        sources = sorted({item.source for item in items})
+        source_stats = [
+            SourceStats(source=s, fetched=sum(1 for it in items if it.source == s))
+            for s in sources
+        ]
+    return SimpleNamespace(items=items, source_stats=source_stats, warnings=warnings or [])
 
-    async def collect(self, **kwargs: object) -> list[FeedItem]:
+
+class MockResearcher:
+    def __init__(self, result: SimpleNamespace) -> None:
+        self._result = result
+
+    async def collect(self, **kwargs: object) -> SimpleNamespace:
         del kwargs
-        if self._fail:
-            raise RuntimeError("mock source failure")
-        return self._items
+        return self._result
 
 
 class MockAIPipeline:
@@ -49,6 +63,16 @@ class MockAIPipeline:
         return f"# {title}\n\n## 今日总览\nTest digest.", ["Trend 1"]
 
 
+@contextlib.contextmanager
+def _patch_researcher_and_pipeline(researcher_result: SimpleNamespace):
+    researcher_instance = MockResearcher(researcher_result)
+    with patch("feed_digest.engine.FeedDigestResearcher", return_value=researcher_instance), patch(
+        "feed_digest.engine.FeedDigestAIPipeline"
+    ) as mock_pipe:
+        mock_pipe.return_value = MockAIPipeline()
+        yield researcher_instance
+
+
 @pytest.fixture
 def config() -> FeedDigestConfig:
     return FeedDigestConfig(
@@ -56,7 +80,7 @@ def config() -> FeedDigestConfig:
         domains={
             "ai_news": DomainConfig(
                 title="AI 热点",
-                sources=["github", "hackernews"],
+                objective="Collect AI news.",
             )
         },
         enable_domains=["ai_news"],
@@ -75,18 +99,7 @@ def test_basic_run(config: FeedDigestConfig) -> None:
     items_gh = [_make_item("github", f"https://github.com/repo{i}") for i in range(3)]
     items_hn = [_make_item("hackernews", f"https://hn.algolia.com/item{i}") for i in range(3)]
 
-    with patch("feed_digest.engine.get_source") as mock_get_source, patch(
-        "feed_digest.engine.FeedDigestAIPipeline"
-    ) as mock_pipe:
-        def _source_factory(name: str, cfg: dict | None = None) -> MockSource:
-            del cfg
-            if name == "github":
-                return MockSource(items_gh)
-            return MockSource(items_hn)
-
-        mock_get_source.side_effect = _source_factory
-        mock_pipe.return_value = MockAIPipeline()
-
+    with _patch_researcher_and_pipeline(_make_researcher_result(items_gh + items_hn)):
         engine = FeedDigestEngine(config=config, provider_profile="test")
         result = run(engine.run())
 
@@ -102,12 +115,7 @@ def test_url_dedup(config: FeedDigestConfig) -> None:
     dup_url = "https://github.com/org/same-repo"
     items = [_make_item("github", dup_url, title=f"Title {i}") for i in range(3)]
 
-    with patch("feed_digest.engine.get_source") as mock_get_source, patch(
-        "feed_digest.engine.FeedDigestAIPipeline"
-    ) as mock_pipe:
-        mock_get_source.side_effect = lambda n, c=None: MockSource(items)
-        mock_pipe.return_value = MockAIPipeline()
-
+    with _patch_researcher_and_pipeline(_make_researcher_result(items)):
         engine = FeedDigestEngine(config=config, provider_profile="test")
         result = run(engine.run())
 
@@ -118,28 +126,25 @@ def test_url_dedup(config: FeedDigestConfig) -> None:
 def test_max_candidates(config: FeedDigestConfig) -> None:
     config.max_candidates = 3
     items = [_make_item("github", f"https://github.com/repo{i}") for i in range(10)]
+    captured_input: list[FeedItem] = []
 
-    with patch("feed_digest.engine.get_source") as mock_get_source, patch(
+    class CapturePipeline:
+        async def score_and_filter(self, inp: list[FeedItem], **kwargs: object) -> list[FeedItem]:
+            del kwargs
+            captured_input.extend(inp)
+            return inp
+
+        async def deduplicate(self, items: list[FeedItem]) -> list[FeedItem]:
+            return items
+
+        async def synthesize(self, items: list[FeedItem], **kwargs: object) -> tuple[str, list[str]]:
+            del items, kwargs
+            return "# Test\n## 今日总览\nok", []
+
+    with patch("feed_digest.engine.FeedDigestResearcher", return_value=MockResearcher(_make_researcher_result(items))), patch(
         "feed_digest.engine.FeedDigestAIPipeline"
     ) as mock_pipe:
-        captured_input: list[FeedItem] = []
-
-        class CapturePipeline:
-            async def score_and_filter(self, inp: list[FeedItem], **kwargs: object) -> list[FeedItem]:
-                del kwargs
-                captured_input.extend(inp)
-                return inp
-
-            async def deduplicate(self, items: list[FeedItem]) -> list[FeedItem]:
-                return items
-
-            async def synthesize(self, items: list[FeedItem], **kwargs: object) -> tuple[str, list[str]]:
-                del items, kwargs
-                return "# Test\n## 今日总览\nok", []
-
-        mock_get_source.side_effect = lambda n, c=None: MockSource(items[:5])
         mock_pipe.return_value = CapturePipeline()
-
         engine = FeedDigestEngine(config=config, provider_profile="test")
         run(engine.run())
 
@@ -147,31 +152,62 @@ def test_max_candidates(config: FeedDigestConfig) -> None:
 
 
 def test_empty_feed_when_no_candidates(config: FeedDigestConfig) -> None:
-    with patch("feed_digest.engine.get_source") as mock_get_source:
-        mock_get_source.side_effect = lambda n, c=None: MockSource([])
-
+    with _patch_researcher_and_pipeline(_make_researcher_result([])):
         engine = FeedDigestEngine(config=config, provider_profile="test")
         result = run(engine.run())
 
     assert result.is_empty
-    assert "无高信号简报" in result.markdown or "无" in result.markdown
+    assert "无" in result.markdown
+
+
+def test_default_strategy_uses_opencli_llm_research() -> None:
+    item = _make_item("hackernews", "https://news.ycombinator.com/item?id=42", title="AI fallback")
+
+    class AssertingResearcher:
+        def __init__(self, *, pipeline: object) -> None:
+            self.pipeline = pipeline
+
+        async def collect(self, **kwargs: object) -> SimpleNamespace:
+            assert kwargs["objective"] == "Collect high-signal AI news."
+            return _make_researcher_result([item])
+
+    cfg = FeedDigestConfig(
+        domains={
+            "ai_news": DomainConfig(
+                title="AI 热点",
+                domain="AI & Machine Learning",
+                objective="Collect high-signal AI news.",
+            )
+        },
+        enable_domains=["ai_news"],
+        max_candidates=10,
+        max_items=5,
+    )
+
+    with patch("feed_digest.engine.FeedDigestResearcher", AssertingResearcher), patch(
+        "feed_digest.engine.FeedDigestAIPipeline"
+    ) as mock_pipe:
+        mock_pipe.return_value = MockAIPipeline()
+        engine = FeedDigestEngine(config=cfg, provider_profile="test")
+        result = run(engine.run())
+
+    assert result.items == [item]
+    assert result.source_stats[0].source == "hackernews"
+    assert result.source_stats[0].fetched == 1
 
 
 def test_source_failure_warning(config: FeedDigestConfig) -> None:
     items_gh = [_make_item("github", f"https://github.com/repo{i}") for i in range(2)]
+    result_ns = SimpleNamespace(
+        items=items_gh,
+        source_stats=[
+            SourceStats(source="github", fetched=2),
+            SourceStats(source="hackernews", fetched=0, failed=True, warning="connection error"),
+        ],
+        warnings=["hackernews failed"],
+    )
 
-    with patch("feed_digest.engine.get_source") as mock_get_source, patch(
-        "feed_digest.engine.FeedDigestAIPipeline"
-    ) as mock_pipe:
-        def _src(name: str, cfg: dict | None = None) -> MockSource:
-            del cfg
-            if name == "github":
-                return MockSource(items_gh)
-            return MockSource([], fail=True)
-
-        mock_get_source.side_effect = _src
-        mock_pipe.return_value = MockAIPipeline()
-
+    with _patch_researcher_and_pipeline(result_ns):
         engine = FeedDigestEngine(config=config, provider_profile="test")
         result = run(engine.run())
 
@@ -184,14 +220,7 @@ def test_source_stats_in_result(config: FeedDigestConfig) -> None:
     items_gh = [_make_item("github", f"https://github.com/repo{i}") for i in range(2)]
     items_hn = [_make_item("hackernews", f"https://news.ycombinator.com/item{i}") for i in range(2)]
 
-    with patch("feed_digest.engine.get_source") as mock_get_source, patch(
-        "feed_digest.engine.FeedDigestAIPipeline"
-    ) as mock_pipe:
-        mock_get_source.side_effect = (
-            lambda n, c=None: MockSource(items_gh) if n == "github" else MockSource(items_hn)
-        )
-        mock_pipe.return_value = MockAIPipeline()
-
+    with _patch_researcher_and_pipeline(_make_researcher_result(items_gh + items_hn)):
         engine = FeedDigestEngine(config=config, provider_profile="test")
         result = run(engine.run())
 
@@ -208,24 +237,15 @@ def test_progress_callback_reports_pipeline_stages(config: FeedDigestConfig) -> 
     async def _progress(text: str) -> None:
         progress.append(text)
 
-    with patch("feed_digest.engine.get_source") as mock_get_source, patch(
-        "feed_digest.engine.FeedDigestAIPipeline"
-    ) as mock_pipe:
-        mock_get_source.side_effect = (
-            lambda n, c=None: MockSource(items_gh) if n == "github" else MockSource(items_hn)
-        )
-        mock_pipe.return_value = MockAIPipeline()
-
+    with _patch_researcher_and_pipeline(_make_researcher_result(items_gh + items_hn)):
         engine = FeedDigestEngine(config=config, provider_profile="test")
         result = run(engine.run(progress_callback=_progress))
 
     assert not result.is_empty
-    assert progress == [
-        "📡 正在采集新闻源…（2 个来源，预计 5-15 秒）",
-        "🔍 AI 评分过滤，共 3 条候选…（预计 20-40 秒）",
-        "🔄 AI 语义去重，已筛选 3 条…",
-        "✍️ AI 综合撰写简报，3 条精选内容…（预计 20-40 秒）",
-    ]
+    assert progress[0] == "📡 AI 正在使用 OpenCLI 调研新闻源…（多轮检索，预计 1-3 分钟）"
+    assert any("评分" in msg for msg in progress)
+    assert any("去重" in msg for msg in progress)
+    assert any("撰写" in msg for msg in progress)
 
 
 def test_preset_selection() -> None:
@@ -241,7 +261,6 @@ def test_preset_unknown_raises() -> None:
 
 
 def test_boundary_records_not_feed_items() -> None:
-    """Records, todos, decisions, blockers cannot be FeedItem sources."""
     forbidden_sources = {"record", "todo", "decision", "highlight", "blocker", "entry"}
     item = FeedItem(
         source="github",
@@ -255,27 +274,25 @@ def test_boundary_records_not_feed_items() -> None:
 
 def test_empty_digest_allow_empty(config: FeedDigestConfig) -> None:
     config.allow_empty_digest = True
-    with patch("feed_digest.engine.get_source") as mock_get_source, patch(
+    items = [_make_item("github", f"https://x.com/{i}") for i in range(3)]
+
+    class EmptyPipeline:
+        async def score_and_filter(self, items: list[FeedItem], **kwargs: object) -> list[FeedItem]:
+            del items, kwargs
+            return []
+
+        async def deduplicate(self, items: list[FeedItem]) -> list[FeedItem]:
+            del items
+            return []
+
+        async def synthesize(self, items: list[FeedItem], **kwargs: object) -> tuple[str, list[str]]:
+            del items, kwargs
+            return "# Empty", []
+
+    with patch("feed_digest.engine.FeedDigestResearcher", return_value=MockResearcher(_make_researcher_result(items))), patch(
         "feed_digest.engine.FeedDigestAIPipeline"
     ) as mock_pipe:
-        class EmptyPipeline:
-            async def score_and_filter(self, items: list[FeedItem], **kwargs: object) -> list[FeedItem]:
-                del items, kwargs
-                return []
-
-            async def deduplicate(self, items: list[FeedItem]) -> list[FeedItem]:
-                del items
-                return []
-
-            async def synthesize(self, items: list[FeedItem], **kwargs: object) -> tuple[str, list[str]]:
-                del items, kwargs
-                return "# Empty", []
-
-        mock_get_source.side_effect = (
-            lambda n, c=None: MockSource([_make_item("github", f"https://x.com/{i}") for i in range(3)])
-        )
         mock_pipe.return_value = EmptyPipeline()
-
         engine = FeedDigestEngine(config=config, provider_profile="test")
         result = run(engine.run())
 

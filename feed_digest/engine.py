@@ -1,7 +1,6 @@
 """Feed digest engine: orchestrates collect → normalize → AI pipeline → render → archive."""
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -13,7 +12,7 @@ from feed_digest.config import FeedDigestConfig
 from feed_digest.models import FeedDigestResult, FeedItem, SourceStats
 from feed_digest.presets import FeedPreset, get_preset
 from feed_digest.render import format_digest_title, render_empty_digest, render_source_stats
-from feed_digest.sources import get_source
+from feed_digest.research import FeedDigestResearcher, ResearchAction
 
 logger = get_logger(__name__)
 
@@ -24,6 +23,33 @@ def _utcnow() -> datetime:
 
 def _normalize_url(url: str) -> str:
     return url.split("#")[0].rstrip("/").lower()
+
+
+def _restore_eliminated_sources(
+    scored: list[FeedItem],
+    deduped: list[FeedItem],
+) -> list[FeedItem]:
+    """Restore the best item for any source that dedup completely removed.
+
+    Dedup can over-aggressively discard whole sources when it marks every item
+    from a source as a duplicate of a "more authoritative" source.  This step
+    ensures each active source keeps at least one representative item.
+    """
+    surviving = {item.source for item in deduped}
+    best_by_source: dict[str, FeedItem] = {}
+    for item in sorted(scored, key=lambda x: x.score, reverse=True):
+        if item.source not in best_by_source:
+            best_by_source[item.source] = item
+
+    restored: list[FeedItem] = list(deduped)
+    for source, item in best_by_source.items():
+        if source not in surviving:
+            restored.append(item)
+            logger.info(
+                "Restored source %r after dedup (best item score=%.2f): %r",
+                source, item.score, item.title[:60],
+            )
+    return restored
 
 
 def _allocate_slots(
@@ -83,11 +109,9 @@ class FeedDigestEngine:
         *,
         config: FeedDigestConfig,
         provider_profile: str,
-        source_configs: dict[str, Any] | None = None,
     ) -> None:
         self._config = config
         self._provider_profile = provider_profile
-        self._source_configs = source_configs or {}
 
     def _resolve_domain(self, domain_name: str) -> FeedPreset:
         """Resolve a domain name to a FeedPreset.
@@ -97,24 +121,14 @@ class FeedDigestEngine:
         """
         user_domain = self._config.domains.get(domain_name)
         if user_domain is not None:
-            # Use the English domain descriptor for search quality; fall back to title.
             search_domain = user_domain.domain or user_domain.title
             return FeedPreset(
                 name=domain_name,
                 domain=search_domain,
                 title_template=user_domain.title + "简报 {date}",
                 description="",
-                sources=user_domain.sources,
-                source_weights=user_domain.source_weights,
             )
         return get_preset(domain_name)
-
-    def _get_domain_source_configs(self, domain_name: str) -> dict[str, dict]:
-        """Return per-source config overrides for the given domain."""
-        user_domain = self._config.domains.get(domain_name)
-        if user_domain is not None:
-            return user_domain.source_configs
-        return {}
 
     async def run(
         self,
@@ -143,7 +157,6 @@ class FeedDigestEngine:
             effective_name = self._config.enable_domains[0] if self._config.enable_domains else "ai_news"
 
         preset = self._resolve_domain(effective_name)
-        domain_source_configs = self._get_domain_source_configs(effective_name)
         now = _utcnow()
         run_date = date or now.strftime("%Y-%m-%d")
         since = (now - timedelta(hours=self._config.lookback_hours)).isoformat()
@@ -151,52 +164,49 @@ class FeedDigestEngine:
 
         logger.info("FeedDigestEngine.run domain=%s date=%s", preset.name, run_date)
 
-        source_names = preset.sources
         all_items: list[FeedItem] = []
         source_stats: list[SourceStats] = []
-
-        async def _collect_one(name: str) -> tuple[str, list[FeedItem], str]:
-            try:
-                # Merge engine-level source config with domain-level overrides
-                merged_cfg = {
-                    **self._source_configs.get(name, {}),
-                    **domain_source_configs.get(name, {}),
-                }
-                source = get_source(name, merged_cfg)
-                items = await source.collect(
-                    since=since,
-                    until=until,
-                    domain=preset.domain,
-                    query=preset.domain,
-                    max_items=self._config.max_candidates // max(len(source_names), 1) + 5,
-                )
-                return name, items, ""
-            except Exception as exc:
-                logger.warning("Source %r collect failed: %s", name, exc)
-                return name, [], str(exc)
-
-        await _notify(f"📡 正在采集新闻源…（{len(source_names)} 个来源，预计 5-15 秒）")
-        results = await asyncio.gather(
-            *[_collect_one(name) for name in source_names],
-            return_exceptions=False,
+        warnings: list[str] = []
+        pipeline = FeedDigestAIPipeline(
+            profile=self._provider_profile,
         )
-        for name, items, err in results:
-            weight = preset.source_weights.get(name, 1.0)
-            for item in items:
-                item.domain = preset.domain
-                item.preset = preset.name
-                if weight != 1.0:
-                    item.score = item.score * weight
-            all_items.extend(items)
-            source_stats.append(
-                SourceStats(
-                    source=name,
-                    fetched=len(items),
-                    failed=bool(err),
-                    warning=err[:200] if err else "",
-                )
-            )
 
+        domain_cfg = self._config.domains.get(effective_name)
+        research_config = self._config.research.model_copy(deep=True)
+        objective = (
+            domain_cfg.objective
+            if domain_cfg is not None and domain_cfg.objective
+            else self._config.research.objective
+        )
+        await _notify("📡 AI 正在使用 OpenCLI 调研新闻源…（多轮检索，预计 1-3 分钟）")
+        logger.info("# Stage 0: Research configuration and objective\n%s", research_config.model_dump_json(indent=2))
+        seed_actions: list[ResearchAction] = []
+        if domain_cfg is not None:
+            for sa in domain_cfg.seed_actions:
+                if not isinstance(sa, dict):
+                    continue
+                site = str(sa.get("site") or "")
+                command = str(sa.get("command") or "")
+                args = [str(a) for a in (sa.get("args") or [])]
+                source = str(sa.get("source") or site)
+                if site and command:
+                    seed_actions.append(
+                        ResearchAction(source=source, site=site, command=command, args=args)
+                    )
+        research_result = await FeedDigestResearcher(pipeline=pipeline).collect(
+            objective=objective,
+            domain=preset.domain,
+            config=research_config,
+            seed_actions=seed_actions or None,
+        )
+        all_items = research_result.items
+        source_stats = research_result.source_stats
+        warnings.extend(research_result.warnings)
+        for item in all_items:
+            item.domain = preset.domain
+            item.preset = preset.name
+
+        logger.info("# Stage 4: Dedup and slot allocation")
         seen_urls: set[str] = set()
         deduped: list[FeedItem] = []
         for item in all_items:
@@ -206,7 +216,11 @@ class FeedDigestEngine:
                 deduped.append(item)
 
         candidates = deduped[: self._config.max_candidates]
-        warnings: list[str] = []
+        if candidates and not source_stats:
+            source_stats = [
+                SourceStats(source=source, fetched=sum(1 for item in candidates if item.source == source))
+                for source in sorted({item.source for item in candidates})
+            ]
 
         if not candidates:
             for stat in source_stats:
@@ -225,11 +239,8 @@ class FeedDigestEngine:
                 markdown=render_empty_digest(title, warnings),
             )
 
-        pipeline = FeedDigestAIPipeline(
-            profile=self._provider_profile,
-        )
-
         await _notify(f"🔍 AI 评分过滤，共 {len(candidates)} 条候选…（预计 20-40 秒）")
+        logger.info("#Stage 5: AI scoring and filtering of %d candidates", len(candidates))
         try:
             scored = await pipeline.score_and_filter(
                 candidates,
@@ -246,7 +257,8 @@ class FeedDigestEngine:
 
         # Fallback: if AI scoring filtered everything, take top candidates by
         # heuristic score so the digest is never empty when items exist.
-        if not scored and candidates:
+        logger.info("# Stage 6: Fallback to heuristic scoring if AI filtered all candidates")
+        if not scored and candidates and not self._config.allow_empty_digest:
             from feed_digest.ai_pipeline import _heuristic_score
 
             logger.warning(
@@ -274,7 +286,7 @@ class FeedDigestEngine:
                 markdown=render_empty_digest(title, warnings + ["今日无高信号内容，未推送简报"]),
             )
 
-        await _notify(f"🔄 AI 语义去重，已筛选 {len(scored)} 条…")
+        await _notify(f"🔄 AI 语义去重，已筛选 {len(scored)} 条…（预计 20-40 秒）")
         try:
             final_items = await pipeline.deduplicate(scored)
             logger.info("After dedup: %d items", len(final_items))
@@ -282,6 +294,11 @@ class FeedDigestEngine:
             logger.warning("AI dedup failed: %s", exc)
             final_items = scored
             warnings.append(f"AI dedup failed: {exc}")
+
+        # Source restoration: if dedup completely eliminated a source, restore its
+        # best-scoring item from the pre-dedup pool so no active source is silenced.
+        final_items = _restore_eliminated_sources(scored, final_items)
+        logger.info("After source restoration: %d items", len(final_items))
 
         allocated_items = _allocate_slots(
             final_items,
@@ -295,6 +312,7 @@ class FeedDigestEngine:
 
         title = format_digest_title(preset.title_template, run_date)
         await _notify(f"✍️ AI 综合撰写简报，{len(allocated_items)} 条精选内容…（预计 20-40 秒）")
+        logger.info("# Stage 7: AI synthesis of final report")
         try:
             markdown, trends = await pipeline.synthesize(
                 allocated_items,

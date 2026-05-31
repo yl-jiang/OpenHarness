@@ -8,7 +8,7 @@ from openharness.api.usage import UsageSnapshot
 from openharness.channels.bus.events import InboundMessage
 from openharness.channels.bus.queue import MessageBus
 from openharness.engine.messages import ConversationMessage, TextBlock
-from openharness.engine.stream_events import AssistantTurnComplete
+from openharness.engine.stream_events import AssistantTurnComplete, ToolExecutionCompleted
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.skill_manager_tool import SkillManagerToolInput
 
@@ -379,6 +379,44 @@ def test_wolo_save_conversation_roundtrip(tmp_path: Path):
     messages, loaded_sid = load_conversation(workspace, session_key)
     assert loaded_sid == "sid-2"
     assert len(messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_wolo_query_runner_prefers_final_text_after_record_tool(tmp_path: Path, monkeypatch):
+    workspace = initialize_workspace(tmp_path / ".wolo")
+    store = WoloStore(workspace)
+
+    class FakeQueryEngine:
+        def __init__(self, **kwargs):
+            self.messages: list[ConversationMessage] = []
+            self.tool_metadata = kwargs["tool_metadata"]
+
+        def set_system_prompt(self, prompt: str):
+            del prompt
+
+        def load_messages(self, messages):
+            del messages
+
+        async def submit_message(self, prompt):
+            del prompt
+            yield ToolExecutionCompleted(
+                tool_name="wolo_record",
+                output="收到～已记下这条。record_id=abc123",
+                is_error=False,
+            )
+            yield AssistantTurnComplete(
+                message=ConversationMessage(
+                    role="assistant",
+                    content=[TextBlock(text="这个进展挺关键，先帮你放进工作记录里了。")],
+                ),
+                usage=UsageSnapshot(),
+            )
+
+    monkeypatch.setattr("wolo.runner.QueryEngine", FakeQueryEngine)
+
+    result = await WoloQueryRunner(store, api_client=object()).run("P1000 场地群今天没消息")
+
+    assert result == "这个进展挺关键，先帮你放进工作记录里了。"
 
 
 @pytest.mark.asyncio

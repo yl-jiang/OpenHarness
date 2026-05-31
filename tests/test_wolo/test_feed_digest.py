@@ -134,28 +134,45 @@ def test_wolo_feed_digest_cron_idempotent(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_wolo_tool_fetch_digest_uses_registry_progress_callback(tmp_path) -> None:
+async def test_wolo_tool_fetch_digest_runs_in_background_and_pushes_report(tmp_path) -> None:
     from wolo.core.store import WoloStore
     from wolo.tools import WoloToolRegistry
 
     store = WoloStore(tmp_path)
     progress: list[str] = []
+    unblock = asyncio.Event()
+    delivered = asyncio.Event()
 
     async def _progress(text: str) -> None:
         progress.append(text)
+        if text == "# Digest":
+            delivered.set()
 
     async def _fake_run_feed_digest(**kwargs):
+        await unblock.wait()
         callback = kwargs["progress_callback"]
         assert callback is not None
         await callback("✍️ AI 综合撰写简报，2 条精选内容…（预计 20-40 秒）")
-        return SimpleNamespace(content="# Digest", metadata={"is_empty": False})
+        return SimpleNamespace(
+            content="# Digest",
+            metadata={
+                "domain": "AI & Machine Learning",
+                "date": "2024-01-15",
+                "is_empty": False,
+                "selected_count": 1,
+            },
+        )
 
     registry = WoloToolRegistry(store, progress_callback=_progress)
     with patch("wolo.feed_digest.run_feed_digest", side_effect=_fake_run_feed_digest):
         result = await registry.execute("wolo_fetch_digest", {"preset": "ai_news"})
+        assert "后台" in result
+        assert progress == []
 
-    assert result == "# Digest"
-    assert progress == ["✍️ AI 综合撰写简报，2 条精选内容…（预计 20-40 秒）"]
+        unblock.set()
+        await asyncio.wait_for(delivered.wait(), timeout=1)
+
+    assert progress == ["✍️ AI 综合撰写简报，2 条精选内容…（预计 20-40 秒）", "# Digest"]
 
 
 @pytest.mark.asyncio

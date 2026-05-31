@@ -88,6 +88,8 @@ async def run_feed_digest(
     that domain is run.  Otherwise all ``enable_domains`` from the config are
     run in parallel and their reports are merged.
     """
+    import time
+
     config = load_config(workspace)
     fd_config = config.feed_digest
 
@@ -98,6 +100,14 @@ async def run_feed_digest(
 
     effective_domain = domain_name or preset_name
     domains_to_run = [effective_domain] if effective_domain else list(fd_config.enable_domains or ["ai_news"])
+
+    logger.info(
+        "run_feed_digest start domains=%s date=%s workspace=%s",
+        domains_to_run,
+        date,
+        workspace,
+    )
+    _t0 = time.monotonic()
 
     if len(domains_to_run) == 1:
         result = await engine.run(
@@ -111,6 +121,24 @@ async def run_feed_digest(
             return_exceptions=False,
         )
         result = _combine_results(list(raw))
+
+    _elapsed = time.monotonic() - _t0
+    if result.warnings:
+        logger.warning(
+            "run_feed_digest warnings domain=%s count=%d warnings=%s",
+            result.domain,
+            len(result.warnings),
+            result.warnings,
+        )
+    logger.info(
+        "run_feed_digest done domain=%s date=%s items=%d selected=%d is_empty=%s elapsed_s=%.1f",
+        result.domain,
+        result.date,
+        len(getattr(result, "items", None) or []),
+        len(result.selected_items),
+        result.is_empty,
+        _elapsed,
+    )
 
     report = WoloReport(
         id=uuid4().hex[:12],

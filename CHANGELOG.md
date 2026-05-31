@@ -49,6 +49,8 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- Feed digest synthesis now discards reasoning-only model deltas instead of saving them as the final Markdown report, preventing Onboard Feed Digests from showing internal planning text.
+- `fetch_digest` now defaults to an LLM-managed OpenCLI research pipeline: the model discovers available OpenCLI adapters, plans bounded collection rounds, extracts evidence into digest items, and keeps on-demand solo/wolo digest generation in the background so chat sessions are not cancelled while the report is still being built.
 - `fetch_digest` now pulls AI digest candidates from GitHub Trending HTML, IT之家 AI 标签页, NewsNow public JSON feeds, and SoPilot hot-tweet cards, so built-in `ai_news` covers those previously external-only sources without browser-only glue code.
 - `fetch_digest` now supports Hacker News `top` / `best` / `top_best` modes, NewsNow source-group expansion, SoPilot RSS-first fallback, non-destructive default source-config backfill, and an optional JSON-contract browser/OpenCLI command source for JS-only pages.
 - Onboard now ships a distinctive SVG favicon so browser tabs are easier to identify among many open pages.

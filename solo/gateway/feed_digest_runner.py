@@ -22,14 +22,19 @@ async def _main(app: str, workspace: str | None, domain: str | None, push: bool)
     logger = get_logger(__name__)
 
     try:
+        import time
+
         from solo.feed_digest import run_feed_digest
 
+        t0 = time.monotonic()
         report = await run_feed_digest(workspace=workspace, domain_name=domain)
+        elapsed = time.monotonic() - t0
         logger.info(
-            "Feed digest complete app=%s id=%s is_empty=%s",
+            "Feed digest complete app=%s id=%s is_empty=%s elapsed_s=%.1f",
             app,
             report.id,
             (report.metadata or {}).get("is_empty"),
+            elapsed,
         )
 
         if push and report.content:
