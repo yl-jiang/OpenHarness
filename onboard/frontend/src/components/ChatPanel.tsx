@@ -33,6 +33,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
   const [messages, setMessages] = useState<ChatMessage[]>(() => messageCache.get(appName) ?? []);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(() => streamingCache.get(appName) ?? false);
+  const [progressText, setProgressText] = useState<string | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -52,6 +53,11 @@ export function ChatPanel({ appName }: { appName: AppName }) {
 
   const socket = useWebSocket(appName, (message) => {
     if (message.type === 'session_key') return; // handled by hook
+    if (message.type === 'progress') {
+      setStreaming(true);
+      setProgressText(message.content);
+      return;
+    }
     if (message.type === 'reasoning') {
       setStreaming(true);
       setMessages((items) => {
@@ -86,6 +92,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
         ];
       });
     } else if (message.type === 'tool_start') {
+      setProgressText(null);
       setMessages((items) => {
         const updated = items.map((item) =>
           item.role === 'reasoning' && item.status === 'streaming' ? { ...item, status: 'complete' as const } : item
@@ -102,6 +109,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
       ]);
     } else if (message.type === 'complete') {
       setStreaming(false);
+      setProgressText(null);
       setMessages((items) => {
         let updated = items.map((item) =>
           item.role === 'reasoning' && item.status === 'streaming' ? { ...item, status: 'complete' as const } : item
@@ -115,6 +123,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
       });
     } else if (message.type === 'error') {
       setStreaming(false);
+      setProgressText(null);
       setMessages((items) => [
         ...items,
         createMessage({ role: 'tool', label: 'error', status: 'error', content: message.message }),
@@ -129,6 +138,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
   useEffect(() => {
     if (!socket.connected && streaming) {
       setStreaming(false);
+      setProgressText(null);
       streamingCache.set(appName, false);
       // Mark any streaming messages as complete
       setMessages((items) => items.map((item) =>
@@ -397,10 +407,16 @@ export function ChatPanel({ appName }: { appName: AppName }) {
           ))}
 
           {streaming ? (
-            <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-surface-2 text-[11px] text-text-muted font-mono">
-              <span className="w-1 h-1 rounded-full bg-accent-wolo animate-[pulse-dot_1s_ease-in-out_infinite]" />
-              <span className="w-1 h-1 rounded-full bg-accent-wolo animate-[pulse-dot_1s_ease-in-out_infinite_0.15s]" />
-              <span className="w-1 h-1 rounded-full bg-accent-wolo animate-[pulse-dot_1s_ease-in-out_infinite_0.3s]" />
+            <div className="inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-surface-2 text-[11px] text-text-muted font-mono max-w-sm animate-[fade-in_0.15s_ease-out_both]">
+              <span className="w-1.5 h-1.5 rounded-full bg-accent-wolo shrink-0 animate-[pulse-dot_1s_ease-in-out_infinite]" />
+              {progressText ? (
+                <span className="truncate">{progressText}</span>
+              ) : (
+                <>
+                  <span className="w-1 h-1 rounded-full bg-accent-wolo animate-[pulse-dot_1s_ease-in-out_infinite_0.15s]" />
+                  <span className="w-1 h-1 rounded-full bg-accent-wolo animate-[pulse-dot_1s_ease-in-out_infinite_0.3s]" />
+                </>
+              )}
             </div>
           ) : null}
         </section>

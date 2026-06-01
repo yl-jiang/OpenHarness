@@ -50,6 +50,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- Onboard Chat now forwards solo/wolo runner progress and tool-internal backend progress to the WebSocket UI, so long-running chat actions show the same detailed operation updates that channel-triggered runs already send.
 - Onboard Feed Digests "Fetch Now" now streams real engine progress (e.g. research/scoring/synthesis stages) over a Server-Sent Events endpoint for both `solo` and `wolo`, replacing the previous cosmetic timer that only emitted solo-style stage labels and left `wolo` without a live progress indicator during long runs.
 
 - Feed digest synthesis now discards reasoning-only model deltas instead of saving them as the final Markdown report, preventing Onboard Feed Digests from showing internal planning text.

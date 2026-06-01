@@ -193,6 +193,7 @@ export type WsServerMessage =
   | { type: 'reasoning'; content: string }
   | { type: 'tool_start'; tool: string; args: JsonObject }
   | { type: 'tool_complete'; tool: string; result: string }
+  | { type: 'progress'; content: string }
   | { type: 'complete'; content: string }
   | { type: 'session_key'; session_key: string }
   | { type: 'error'; message: string };

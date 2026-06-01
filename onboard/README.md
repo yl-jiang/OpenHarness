@@ -144,6 +144,7 @@ onboard stop && onboard start
 
 ### 💬 Chat
 - WebSocket 实时对话，流式输出
+- 展示工具调用提示与后端进度（如搜索、生成报告、新闻简报抓取）
 - 聊天会话历史浏览与导出（Markdown/HTML）
 
 ### 🔍 Search
