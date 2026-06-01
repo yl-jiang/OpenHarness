@@ -142,6 +142,126 @@ _WOLO_TOOL_ROUTER_PROMPT = """你是 wolo app 的语义路由 agent。用户通�
 _MAX_TURNS = 10
 _SESSION_MAX_MESSAGES = 80
 
+# Friendly Chinese labels for tool actions, keyed by the name suffix after the
+# ``solo_`` / ``wolo_`` prefix (both apps share the same action vocabulary).
+_TOOL_LABELS: dict[str, str] = {
+    "record": "📝 记录内容",
+    "import_records": "📝 批量记录",
+    "backfill": "📝 补录记录",
+    "view": "📖 浏览记录",
+    "search": "🔍 搜索记录",
+    "work_query": "🔍 综合回顾",
+    "decisions": "🧭 查看决策",
+    "highlights": "✨ 查看高光",
+    "blockers": "🚧 查看阻塞",
+    "playbook": "📘 查看打法",
+    "show": "🖼️ 查看来源",
+    "status": "📊 查看状态",
+    "get_now": "🕐 查询时间",
+    "remind": "⏰ 设置提醒",
+    "schedule": "📅 定时任务",
+    "heartbeat_task": "🔁 周期任务",
+    "jobs": "📋 查看任务",
+    "cancel": "🚫 取消任务",
+    "report": "📑 生成报告",
+    "report_list": "📑 报告列表",
+    "report_show": "📑 查看报告",
+    "report_search": "📑 搜索报告",
+    "fetch_digest": "📡 获取资讯简报",
+    "export": "📤 导出记录",
+    "visualize": "📈 生成可视化",
+    "process": "⚙️ 整理记录",
+    "sync_context": "🔄 同步上下文",
+    "todos": "✅ 待办清单",
+    "done": "✅ 完成待办",
+    "update_todo": "✏️ 更新待办",
+    "update_record": "✏️ 更新记录",
+    "delete_record": "🗑️ 删除记录",
+    "clarify": "💬 请你补充",
+    "remember": "🧠 记入长期记忆",
+    "profile_update": "🪪 更新资料",
+    "suggest_reflection": "💡 复盘建议",
+    "experiments": "🧪 查看实验",
+    "patterns": "🧩 查看模式",
+}
+
+# Friendly labels for common argument keys.
+_ARG_LABELS: dict[str, str] = {
+    "content": "内容",
+    "corrected_content": "整理后内容",
+    "summary": "摘要",
+    "query": "关键词",
+    "keyword": "关键词",
+    "domain": "领域",
+    "date": "日期",
+    "tags": "标签",
+    "tag": "标签",
+    "status": "状态",
+    "limit": "数量",
+    "report_type": "报告类型",
+    "message": "提醒内容",
+    "task": "任务内容",
+    "delay_minutes": "延迟(分钟)",
+    "when": "时间",
+    "cron": "周期",
+    "interval_minutes": "间隔(分钟)",
+    "job_name": "任务名",
+    "title": "标题",
+    "todo_id": "待办",
+    "record_id": "记录",
+    "project": "项目",
+    "format": "格式",
+    "kind": "类型",
+    "name": "名称",
+}
+
+# Arguments that are noise for end-users and should never be shown.
+_HIDDEN_ARGS: frozenset[str] = frozenset({"source_context", "metadata", "session_key"})
+
+_MAX_HINT_ARGS = 3
+_MAX_ARG_LEN = 60
+
+
+def _stringify_arg(value: Any) -> str:
+    if isinstance(value, str):
+        text = " ".join(value.split())
+    elif isinstance(value, (list, tuple)):
+        text = "、".join(_stringify_arg(v) for v in value if v not in (None, ""))
+    elif isinstance(value, dict):
+        text = "、".join(f"{k}:{_stringify_arg(v)}" for k, v in value.items())
+    else:
+        text = str(value)
+    text = text.strip()
+    if len(text) > _MAX_ARG_LEN:
+        text = text[: _MAX_ARG_LEN - 1] + "…"
+    return text
+
+
+def _format_tool_hint(tool_name: str, tool_input: dict[str, Any] | None) -> str:
+    """Render a human-friendly tool-call hint with key arguments.
+
+    Shows the friendly action label plus the most relevant arguments so the
+    Feishu user sees *what* is being executed, not just the tool name.
+    """
+    suffix = tool_name.split("_", 1)[1] if "_" in tool_name else tool_name
+    header = _TOOL_LABELS.get(suffix, f"🛠️ {tool_name}")
+
+    lines: list[str] = []
+    for key, value in (tool_input or {}).items():
+        if key in _HIDDEN_ARGS or value in (None, "", [], {}):
+            continue
+        text = _stringify_arg(value)
+        if not text:
+            continue
+        label = _ARG_LABELS.get(key, key)
+        lines.append(f"  · {label}：{text}")
+        if len(lines) >= _MAX_HINT_ARGS:
+            break
+
+    if lines:
+        return header + "\n" + "\n".join(lines)
+    return header
+
 
 def _read_file(path: Path) -> str | None:
     if not path.exists():
@@ -377,7 +497,7 @@ class WoloQueryRunner:
                 elif isinstance(event, AssistantTextDelta):
                     yield ("delta", event.text)
                 elif isinstance(event, ToolExecutionStarted):
-                    yield ("tool_hint", f"🛠️ 正在调用 {event.tool_name}")
+                    yield ("tool_hint", _format_tool_hint(event.tool_name, event.tool_input))
                 elif isinstance(event, AssistantTurnComplete):
                     candidate = event.message.text.strip()
                     if candidate and not event.message.tool_uses:
