@@ -21,6 +21,7 @@ from onboard.services.common import (
     newest_first,
     paginate,
     split_csv,
+    stream_feed_digest_run,
     to_jsonable,
     top_tags,
 )
@@ -166,6 +167,10 @@ class SoloService:
         from solo.feed_digest import run_feed_digest
         report = await run_feed_digest(workspace=self.workspace, preset_name=preset)
         return to_jsonable(report)
+
+    def run_feed_digest_stream(self, preset: str | None = None):
+        from solo.feed_digest import run_feed_digest
+        return stream_feed_digest_run(run_feed_digest, workspace=self.workspace, preset=preset)
 
     async def generate_report(
         self, report_type: str, profile: str | None = None, start_date: str | None = None, end_date: str | None = None,

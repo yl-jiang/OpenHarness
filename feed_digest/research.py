@@ -7,6 +7,7 @@ import os
 import shlex
 import subprocess
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -195,6 +196,34 @@ class OpenCliRunner:
         )
 
 
+def _action_label(action: "ResearchAction") -> str:
+    """Human-readable label for a research action (source + command)."""
+    source = (action.source or action.site or "").strip()
+    cmd = "/".join(part for part in (action.site, action.command) if part)
+    if source and cmd and source != action.site:
+        return f"{source}（{cmd}）"
+    return source or cmd or "未知信源"
+
+
+def _format_action_sources(actions: list["ResearchAction"], *, limit: int = 6) -> str:
+    labels = [_action_label(a) for a in actions]
+    shown = labels[:limit]
+    suffix = f" 等 {len(labels)} 个" if len(labels) > limit else ""
+    return "、".join(shown) + suffix
+
+
+def _format_evidence_summary(results: list["RawEvidence"]) -> str:
+    ok = [ev for ev in results if not ev.failed]
+    failed = [ev for ev in results if ev.failed]
+    parts: list[str] = []
+    if ok:
+        parts.append(f"成功 {len(ok)}")
+    if failed:
+        failed_sources = "、".join(sorted({ev.source for ev in failed}))
+        parts.append(f"失败 {len(failed)}（{failed_sources}）")
+    return "，".join(parts) if parts else "无结果"
+
+
 class FeedDigestResearcher:
     """Lets the AI pipeline actively plan, run, critique, and extract OpenCLI evidence."""
 
@@ -216,7 +245,17 @@ class FeedDigestResearcher:
         domain: str,
         config: ResearchConfig,
         seed_actions: list[ResearchAction] | None = None,
+        progress_callback: Callable[[str], Any] | None = None,
     ) -> ResearchResult:
+        async def _notify(text: str) -> None:
+            if progress_callback is None:
+                return
+            try:
+                if asyncio.iscoroutine(coro := progress_callback(text)):
+                    await coro
+            except Exception:
+                pass
+
         warnings: list[str] = []
         try:
             logger.info("# Stage 1: Load OpenCLI catalog")
@@ -242,6 +281,7 @@ class FeedDigestResearcher:
         # high-priority sources (e.g. GitHub Trending) are always collected.
         if seed_actions:
             logger.info("# Stage 2a: Running %d seed action(s)", len(seed_actions))
+            await _notify(f"📡 正在抓取种子信源：{_format_action_sources(seed_actions)}")
             seed_results = await asyncio.gather(
                 *[
                     self._runner.run(
@@ -259,6 +299,7 @@ class FeedDigestResearcher:
                     logger.warning("Seed action %s failed: %s", ev.command, ev.error)
                 else:
                     logger.info("Seed action %s: %d chars", ev.command, len(ev.content))
+            await _notify(f"✅ 种子信源完成：{_format_evidence_summary(seed_results)}")
 
         actions_used = 0
         empty_rounds = 0
@@ -284,6 +325,9 @@ class FeedDigestResearcher:
                     _round + 1,
                     [f"{a.site}/{a.command}" for a in actions],
                 )
+                await _notify(
+                    f"🔎 第 {_round + 1} 轮检索（{len(actions)} 个信源）：{_format_action_sources(actions)}"
+                )
                 results = await asyncio.gather(
                     *[
                         self._runner.run(
@@ -297,6 +341,7 @@ class FeedDigestResearcher:
                 )
                 evidence.extend(results)
                 actions_used += len(actions)
+                await _notify(f"✅ 第 {_round + 1} 轮完成：{_format_evidence_summary(results)}")
 
             if not actions:
                 logger.info("AI research returned no actions (round %d)", _round + 1)
@@ -330,6 +375,7 @@ class FeedDigestResearcher:
 
         try:
             logger.info("# Stage 3: AI evidence extraction and item scoring")
+            await _notify("🧠 正在从抓取结果中提取并筛选高信号内容…")
             items = await self._pipeline.extract_items_from_evidence(
                 evidence,
                 domain=domain,

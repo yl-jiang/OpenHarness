@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { api } from '../api/client';
@@ -111,21 +111,45 @@ const PRESETS = [
   { value: 'ai_news', label: 'AI News' },
 ] as const;
 
-const RUN_STAGES = [
-  'Collecting news sources…',
-  'AI scoring & filtering…',
-  'Deduplicating…',
-  'Synthesizing report…',
-  'Archiving…',
-];
+const INITIAL_RUN_MESSAGE = 'Starting…';
+
+// Module-level run state — survives component unmount (navigation away and back)
+type DigestRunState = { running: boolean; runMessage: string };
+const _digestRunStates = new Map<AppName, DigestRunState>();
+const _digestRunListeners = new Map<AppName, Set<() => void>>();
+
+function getDigestRunState(app: AppName): DigestRunState {
+  return _digestRunStates.get(app) ?? { running: false, runMessage: INITIAL_RUN_MESSAGE };
+}
+
+function setDigestRunState(app: AppName, update: Partial<DigestRunState>): void {
+  const next = { ...getDigestRunState(app), ...update };
+  _digestRunStates.set(app, next);
+  for (const listener of _digestRunListeners.get(app) ?? []) listener();
+}
+
+function useDigestRunState(app: AppName): [DigestRunState, (update: Partial<DigestRunState>) => void] {
+  const [state, setState] = useState<DigestRunState>(() => getDigestRunState(app));
+
+  useEffect(() => {
+    // Re-sync on mount — state may have changed while component was unmounted
+    setState(getDigestRunState(app));
+    const listener = () => setState(getDigestRunState(app));
+    if (!_digestRunListeners.has(app)) _digestRunListeners.set(app, new Set());
+    _digestRunListeners.get(app)!.add(listener);
+    return () => { _digestRunListeners.get(app)?.delete(listener); };
+  }, [app]);
+
+  const setter = useCallback((update: Partial<DigestRunState>) => setDigestRunState(app, update), [app]);
+  return [state, setter];
+}
 
 export function FeedDigests({ appName }: { appName: AppName }) {
   const navigate = useNavigate();
   const { id = '' } = useParams();
   const [actionError, setActionError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
-  const [running, setRunning] = useState(false);
-  const [runStage, setRunStage] = useState(0);
+  const [{ running, runMessage }, setRunState] = useDigestRunState(appName);
   const [runPreset, setRunPreset] = useState<string>('ai_news');
   const [showMeta, setShowMeta] = useState(false);
   const accent = appName === 'solo' ? 'text-accent-solo' : 'text-accent-wolo';
@@ -183,34 +207,21 @@ export function FeedDigests({ appName }: { appName: AppName }) {
   }
 
   async function runDigest() {
-    setRunning(true);
-    setRunStage(0);
+    setRunState({ running: true, runMessage: INITIAL_RUN_MESSAGE });
     setActionError(null);
     requestNotificationPermission();
 
-    // Advance stage indicator on a timer (purely cosmetic — gives visual progress)
-    const stageDurations = [4000, 20000, 8000, 25000];
-    let stageIdx = 0;
-    const advanceStage = () => {
-      stageIdx++;
-      if (stageIdx < RUN_STAGES.length - 1) {
-        setRunStage(stageIdx);
-        setTimeout(advanceStage, stageDurations[stageIdx] ?? 10000);
-      }
-    };
-    setTimeout(advanceStage, stageDurations[0]);
-
     try {
-      const digest = await api.runFeedDigest(appName, runPreset);
-      setRunStage(RUN_STAGES.length - 1);
+      const digest = await api.runFeedDigestStream(appName, runPreset, (message) => {
+        setRunState({ runMessage: message });
+      });
       notifyDigestReady(digest);
       await listState.reload();
       navigate(`/feeds/${digest.id}`);
     } catch (err) {
       setActionError(`Failed to fetch digest${err instanceof Error ? `: ${err.message}` : ''}`);
     } finally {
-      setRunning(false);
-      setRunStage(0);
+      setRunState({ running: false, runMessage: INITIAL_RUN_MESSAGE });
     }
   }
 
@@ -250,7 +261,7 @@ export function FeedDigests({ appName }: { appName: AppName }) {
             {running ? (
               <>
                 <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin shrink-0" />
-                <span className="max-w-[160px] truncate">{RUN_STAGES[runStage]}</span>
+                <span className="max-w-[220px] truncate" title={runMessage}>{runMessage}</span>
               </>
             ) : (
               <>⚡ Fetch Now</>

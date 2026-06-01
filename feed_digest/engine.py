@@ -198,6 +198,7 @@ class FeedDigestEngine:
             domain=preset.domain,
             config=research_config,
             seed_actions=seed_actions or None,
+            progress_callback=progress_callback,
         )
         all_items = research_result.items
         source_stats = research_result.source_stats

@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Added
 
+- `solo` / `wolo` Feishu (and other channel) tool-call hints now render a human-friendly action label plus the key arguments being executed (e.g. record content, search keyword, digest domain) instead of only the raw tool name, and `solo_fetch_digest` / `wolo_fetch_digest` now stream live backend research progress over the channel — which seed sources are being fetched, each AI research round's planned sources, per-round success/failure summaries, and the final extraction step.
 - Hooks now support a `priority` field (default `0`). Within an event, hooks run highest-priority first, and hooks sharing a priority keep their registration order. This lets users order, for example, a security-check hook ahead of a logging hook regardless of where each is declared in settings or contributed by plugins.
 - `solo` is now a standalone app/package with its own `~/.solo` workspace, config, CLI, gateway bridge/service, OpenHarness-backed domain agent, model-structured bulk import, zero-guess pending confirmations, reports, reminders, and solo-only tools.
 - `wolo` is now a standalone work-log app/package with its own `~/.wolo` workspace, CLI, gateway bridge/service, OpenHarness-backed domain agent, work-focused prompts, reports, reminders, and wolo-only tools.
@@ -48,6 +49,8 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 - **Approval architecture refactor**: Consolidated three scattered approval entry points into a single `ApprovalCoordinator` subsystem (`src/openharness/permissions/approvals.py`).  `PermissionChecker` is now a pure policy engine (no session memory); all remembered-approval state lives in `ApprovalState` inside `ApprovalCoordinator`.  Preview-capable tools (`edit_file`, `write_file`) defer the soft-confirmation check to the richer diff-preview prompt so users see exactly one approval modal per file write.  Approval state persists correctly across conversation turns via `QueryEngine._approval_coordinator`.
 
 ### Fixed
+
+- Onboard Feed Digests "Fetch Now" now streams real engine progress (e.g. research/scoring/synthesis stages) over a Server-Sent Events endpoint for both `solo` and `wolo`, replacing the previous cosmetic timer that only emitted solo-style stage labels and left `wolo` without a live progress indicator during long runs.
 
 - Feed digest synthesis now discards reasoning-only model deltas instead of saving them as the final Markdown report, preventing Onboard Feed Digests from showing internal planning text.
 - `fetch_digest` now defaults to an LLM-managed OpenCLI research pipeline: the model discovers available OpenCLI adapters, plans bounded collection rounds, extracts evidence into digest items, and keeps on-demand solo/wolo digest generation in the background so chat sessions are not cancelled while the report is still being built.

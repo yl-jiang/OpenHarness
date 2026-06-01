@@ -2,13 +2,61 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime, timedelta
 import json
-from typing import Any, Iterable, TypeVar
+from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, TypeVar
 
 
 T = TypeVar("T")
+
+
+async def stream_feed_digest_run(
+    run_callable: Callable[..., Awaitable[Any]],
+    *,
+    workspace: str | None,
+    preset: str | None,
+) -> AsyncIterator[dict[str, Any]]:
+    """Run a feed digest while yielding live progress events.
+
+    ``run_callable`` is the app-specific ``run_feed_digest`` coroutine, which
+    accepts a ``progress_callback``. Progress strings emitted by the engine are
+    forwarded as ``{"type": "progress", "message": ...}`` events, followed by a
+    terminal ``{"type": "done", "report": ...}`` or ``{"type": "error", ...}``.
+    """
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    done = object()
+
+    async def progress_callback(message: str) -> None:
+        await queue.put({"type": "progress", "message": message})
+
+    async def runner() -> None:
+        try:
+            report = await run_callable(
+                workspace=workspace,
+                preset_name=preset,
+                progress_callback=progress_callback,
+            )
+            await queue.put({"type": "done", "report": to_jsonable(report)})
+        except Exception as exc:  # noqa: BLE001 - surfaced to the client
+            await queue.put({"type": "error", "message": str(exc)})
+        finally:
+            await queue.put(done)  # type: ignore[arg-type]
+
+    task = asyncio.create_task(runner())
+    try:
+        while True:
+            event = await queue.get()
+            if event is done:
+                break
+            yield event
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
 
 
 def to_jsonable(item: Any) -> dict[str, Any]:

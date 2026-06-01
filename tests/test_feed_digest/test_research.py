@@ -245,3 +245,73 @@ async def test_researcher_stops_gracefully_when_ai_returns_no_actions() -> None:
 
     assert result.items == []
     assert result.source_stats == []
+
+
+@pytest.mark.asyncio
+async def test_collect_emits_per_source_progress() -> None:
+    """progress_callback should receive friendly per-source research updates."""
+    item = FeedItem(
+        source="hackernews",
+        title="An item",
+        url="https://example.com/a",
+        content="High-signal item.",
+        published_at="2024-01-01T00:00:00+00:00",
+    )
+
+    class FakeRegistry:
+        def load(self) -> list[OpenCliCommand]:
+            return [
+                OpenCliCommand(site="github", name="trending", strategy="public", browser=False),
+                OpenCliCommand(site="hackernews", name="top", strategy="public", browser=False),
+            ]
+
+    class FakeRunner:
+        async def run(self, action: ResearchAction, **kwargs: object) -> RawEvidence:
+            del kwargs
+            return RawEvidence(
+                source=action.source or action.site,
+                command=f"opencli {action.site} {action.command}",
+                content=f"title: item from {action.source or action.site}",
+            )
+
+    class FakePipeline:
+        calls = 0
+
+        async def plan_research_actions(self, **kwargs: object) -> ResearchDecision:
+            del kwargs
+            self.calls += 1
+            if self.calls > 1:
+                return ResearchDecision(done=True, rationale="enough")
+            return ResearchDecision(
+                actions=[ResearchAction(source="hackernews", site="hackernews", command="top")],
+            )
+
+        async def extract_items_from_evidence(self, evidence: list[RawEvidence], **kwargs: object) -> list[FeedItem]:
+            del kwargs
+            return [item]
+
+    messages: list[str] = []
+
+    async def _progress(text: str) -> None:
+        messages.append(text)
+
+    researcher = FeedDigestResearcher(
+        pipeline=FakePipeline(),
+        registry=FakeRegistry(),
+        runner=FakeRunner(),
+    )
+
+    result = await researcher.collect(
+        objective="Find important AI news",
+        domain="AI & Machine Learning",
+        config=ResearchConfig(budget=ResearchBudget(max_rounds=2, max_actions=4)),
+        seed_actions=[ResearchAction(source="GitHub Trending", site="github", command="trending")],
+        progress_callback=_progress,
+    )
+
+    assert result.items == [item]
+    joined = "\n".join(messages)
+    assert any("种子信源" in m for m in messages)
+    assert "GitHub Trending" in joined
+    assert any("第 1 轮检索" in m for m in messages)
+    assert any("提取" in m for m in messages)

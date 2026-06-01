@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { api } from '../api/client';
@@ -62,9 +62,38 @@ function sortByPeriod(reports: Report[]): Report[] {
   });
 }
 
+// Module-level generating state — survives component unmount (navigation away and back)
+const _reportGenerating = new Map<AppName, ReportType | null>();
+const _reportGenListeners = new Map<AppName, Set<() => void>>();
+
+function getReportGenerating(app: AppName): ReportType | null {
+  return _reportGenerating.get(app) ?? null;
+}
+
+function setReportGenerating(app: AppName, value: ReportType | null): void {
+  _reportGenerating.set(app, value);
+  for (const listener of _reportGenListeners.get(app) ?? []) listener();
+}
+
+function useReportGenerating(app: AppName): [ReportType | null, (value: ReportType | null) => void] {
+  const [generating, setLocalGenerating] = useState<ReportType | null>(() => getReportGenerating(app));
+
+  useEffect(() => {
+    // Re-sync on mount — state may have changed while component was unmounted
+    setLocalGenerating(getReportGenerating(app));
+    const listener = () => setLocalGenerating(getReportGenerating(app));
+    if (!_reportGenListeners.has(app)) _reportGenListeners.set(app, new Set());
+    _reportGenListeners.get(app)!.add(listener);
+    return () => { _reportGenListeners.get(app)?.delete(listener); };
+  }, [app]);
+
+  const setter = useCallback((value: ReportType | null) => setReportGenerating(app, value), [app]);
+  return [generating, setter];
+}
+
 export function Reports({ appName }: { appName: AppName }) {
   const { data, error, loading, reload } = useApi(() => api.reports(appName), [appName], { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS });
-  const [generating, setGenerating] = useState<ReportType | null>(null);
+  const [generating, setGenerating] = useReportGenerating(appName);
   const [genError, setGenError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
 

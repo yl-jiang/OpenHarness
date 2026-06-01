@@ -72,6 +72,61 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ preset: preset ?? null }),
     }),
+  runFeedDigestStream: async (
+    app: AppName,
+    preset: string | undefined,
+    onProgress: (message: string) => void,
+  ): Promise<FeedDigest> => {
+    const response = await fetch(`/api/${app}/feed-digests/run/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ preset: preset ?? null }),
+    });
+    if (response.status === 401) {
+      window.location.href = '/_gate';
+      throw new Error('Authentication required');
+    }
+    if (!response.ok || !response.body) {
+      const message = await response.text();
+      throw new Error(message || `Request failed: ${response.status}`);
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let result: FeedDigest | null = null;
+    let streamError: string | null = null;
+
+    const handleEvent = (raw: string) => {
+      const line = raw.split('\n').find((l) => l.startsWith('data:'));
+      if (!line) return;
+      const payload = line.slice(5).trim();
+      if (!payload) return;
+      const event = JSON.parse(payload) as
+        | { type: 'progress'; message: string }
+        | { type: 'done'; report: FeedDigest }
+        | { type: 'error'; message: string };
+      if (event.type === 'progress') onProgress(event.message);
+      else if (event.type === 'done') result = event.report;
+      else if (event.type === 'error') streamError = event.message;
+    };
+
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (value) buffer += decoder.decode(value, { stream: true });
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary !== -1) {
+        handleEvent(buffer.slice(0, boundary));
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf('\n\n');
+      }
+      if (done) break;
+    }
+    if (buffer.trim()) handleEvent(buffer);
+
+    if (streamError) throw new Error(streamError);
+    if (!result) throw new Error('Feed digest stream ended without a result');
+    return result;
+  },
   generateReport: (app: AppName, type: string) =>
     request<Report>(`/api/${app}/reports/generate`, {
       method: 'POST',

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Any
+from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from onboard.services.wolo_service import WoloService
@@ -231,3 +233,21 @@ class RunFeedDigestRequest(BaseModel):
 @router.post("/feed-digests/run")
 async def run_feed_digest(request: RunFeedDigestRequest | None = None, workspace: str | None = None) -> dict[str, Any]:
     return await _service(workspace).run_feed_digest(preset=request.preset if request else None)
+
+
+@router.post("/feed-digests/run/stream")
+async def run_feed_digest_stream(
+    request: RunFeedDigestRequest | None = None, workspace: str | None = None,
+) -> StreamingResponse:
+    preset = request.preset if request else None
+    events = _service(workspace).run_feed_digest_stream(preset=preset)
+
+    async def event_source() -> AsyncIterator[str]:
+        async for event in events:
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_source(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
