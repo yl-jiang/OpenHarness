@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shlex
 import signal
 import sys
@@ -248,8 +249,70 @@ async def _agent_reformat(raw_output: str, job_name: str) -> str:
         return raw_output
 
 
-async def _send_feishu_dm(*, user_open_id: str, content: str, workspace: str | Path | None = None) -> None:
-    """Send a Feishu DM using this app's own feishu channel config."""
+def _markdown_to_feishu_card(content: str) -> dict[str, Any]:
+    """Convert a markdown digest into a Feishu interactive card payload.
+
+    Feishu card markdown supports bold/italic/lists/links but NOT ATX headers,
+    so headers are converted to bold text and the first H1 becomes the card
+    title. ``---`` rules become ``hr`` dividers; simple inline HTML is stripped.
+    """
+    lines = content.strip().split("\n")
+    title = "简报"
+    body_lines = lines
+    for idx, line in enumerate(lines):
+        m = re.match(r"^#\s+(.*)$", line.strip())
+        if m:
+            title = m.group(1).strip()
+            body_lines = lines[:idx] + lines[idx + 1:]
+            break
+
+    elements: list[dict[str, Any]] = []
+    buffer: list[str] = []
+
+    def _flush() -> None:
+        text = "\n".join(buffer).strip()
+        buffer.clear()
+        if text:
+            elements.append({"tag": "markdown", "content": text})
+
+    for raw in body_lines:
+        stripped = raw.strip()
+        if stripped in {"---", "***", "___"}:
+            _flush()
+            elements.append({"tag": "hr"})
+            continue
+        header = re.match(r"^#{1,6}\s+(.*)$", stripped)
+        if header:
+            line = f"**{header.group(1).strip()}**"
+        elif stripped.startswith(">"):
+            line = stripped.lstrip(">").strip()
+        else:
+            line = raw.rstrip()
+        line = re.sub(r"</?[a-zA-Z][^>]*>", "", line)
+        buffer.append(line)
+    _flush()
+
+    if not elements:
+        elements.append({"tag": "markdown", "content": content.strip()})
+
+    return {
+        "config": {"wide_screen_mode": True},
+        "header": {
+            "title": {"tag": "plain_text", "content": title[:100]},
+            "template": "blue",
+        },
+        "elements": elements,
+    }
+
+
+async def _send_feishu_dm(
+    *, user_open_id: str, content: str, workspace: str | Path | None = None, markdown: bool = False
+) -> None:
+    """Send a Feishu DM using this app's own feishu channel config.
+
+    When ``markdown`` is True the content is rendered as a Feishu interactive
+    card (headers/bold/lists/links render properly) instead of plain text.
+    """
     import lark_oapi as lark
     from lark_oapi.api.im.v1 import CreateMessageRequest, CreateMessageRequestBody
 
@@ -264,7 +327,29 @@ async def _send_feishu_dm(*, user_open_id: str, content: str, workspace: str | P
 
     def _send_sync() -> None:
         client = lark.Client.builder().app_id(app_id).app_secret(app_secret).log_level(lark.LogLevel.INFO).build()
-        # Split long messages into chunks
+
+        if markdown:
+            card = _markdown_to_feishu_card(content)
+            request = (
+                CreateMessageRequest.builder()
+                .receive_id_type("open_id")
+                .request_body(
+                    CreateMessageRequestBody.builder()
+                    .receive_id(user_open_id)
+                    .msg_type("interactive")
+                    .content(json.dumps(card, ensure_ascii=False))
+                    .build()
+                )
+                .build()
+            )
+            response = client.im.v1.message.create(request)
+            if not response.success():
+                raise ValueError(
+                    f"Feishu card DM failed: code={response.code}, msg={response.msg}"
+                )
+            return
+
+        # Split long plain-text messages into chunks
         remaining = content.strip()
         while remaining:
             chunk = remaining[:1800]

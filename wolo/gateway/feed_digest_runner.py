@@ -14,7 +14,7 @@ sys.path.insert(0, str(_REPO_ROOT))
 async def _main(app: str, workspace: str | None, domain: str | None, push: bool) -> int:
     from openharness.utils.log import configure_logging, get_logger
 
-    configure_logging("INFO")
+    configure_logging(level="INFO")
     logger = get_logger(__name__)
 
     try:
@@ -74,7 +74,7 @@ async def _push_to_im(workspace: str | None, content: str) -> None:
         if not user_open_id:
             logger.warning("No IM push target found; digest archived but not pushed")
             return
-        await _send_feishu_dm(user_open_id=user_open_id, content=content, workspace=workspace)
+        await _send_feishu_dm(user_open_id=user_open_id, content=content, workspace=workspace, markdown=True)
         logger.info("Pushed wolo feed digest to feishu DM")
     except Exception as exc:
         logger.warning("IM push failed (digest still archived): %s", exc)
