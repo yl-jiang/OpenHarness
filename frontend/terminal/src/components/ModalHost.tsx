@@ -3,6 +3,7 @@ import {Box, Text, useInput} from 'ink';
 import stringWidth from 'string-width';
 import ScrollableTextInput from './ScrollableTextInput.js';
 import {MarkdownText} from './MarkdownText.js';
+import {getQuestionDisplayText} from './questionDisplayText.js';
 import {useTerminalSize} from '../hooks/useTerminalSize.js';
 import {truncateWithEllipsis} from '../textLayout.js';
 
@@ -150,7 +151,7 @@ function QuestionModal({
 		onSubmit(allLines.join('\n'));
 	};
 
-	const question = String(modal.question ?? 'Question');
+	const question = getQuestionDisplayText(String(modal.question ?? 'Question'), choices);
 	const {cols} = useTerminalSize();
 	const modalPrefix = '› ';
 	// cols - paddingX(1)*2 - border*2 - prefixWidth
