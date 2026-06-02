@@ -116,7 +116,13 @@ def this_week_start(today: date | None = None) -> date:
 
 def current_month_range(today: date | None = None) -> tuple[date, date]:
     current = today or datetime.now().astimezone().date()
-    return current.replace(day=1), current
+    month_start = current.replace(day=1)
+    # End of month: first day of next month minus one day
+    if current.month == 12:
+        month_end = current.replace(year=current.year + 1, month=1, day=1) - timedelta(days=1)
+    else:
+        month_end = current.replace(month=current.month + 1, day=1) - timedelta(days=1)
+    return month_start, month_end
 
 
 def count_this_week(records: Iterable[Any]) -> int:

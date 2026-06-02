@@ -1,6 +1,7 @@
 VENV_BIN ?= .venv/bin
+ONBOARD_ARGS ?=
 
-.PHONY: all install install-dev test test-cov cov-html lint format typecheck check build clean
+.PHONY: all install install-dev test test-cov cov-html lint format typecheck check build clean onboard solo-gw wolo-gw
 
 # 默认执行测试
 all: test
@@ -60,6 +61,19 @@ check: format lint typecheck
 # 构建 Python 安装包 (wheel/sdist)
 build:
 	python -m build
+
+# 一键构建前端并前台启动 onboard
+onboard:
+	npm --prefix onboard/frontend run build
+	uv run onboard run $(ONBOARD_ARGS)
+
+# 启动 solo gateway
+solo-gw:
+	uv run solo gateway run
+
+# 启动 wolo gateway
+wolo-gw:
+	uv run wolo gateway run
 
 # 清理缓存和构建产物
 clean:

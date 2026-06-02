@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Added
 
+- Root `Makefile` now provides `make onboard`, which builds `onboard/frontend` and then runs the onboard app in the foreground; optional CLI flags can be passed through with `ONBOARD_ARGS="..."`.
 - Onboard dashboard now shows cumulative solo/wolo LLM invocation counts plus input/output token totals, including a current-month per-model token trend chart, and standalone `solo` / `wolo` now expose matching `solo_llm_usage` / `wolo_llm_usage` tools plus `/solo llm-usage` / `/wolo llm-usage` slash commands with per-model token breakdowns.
 - React TUI slash picker now namespaces skills under a `skill:` prefix (e.g. `/skill:review`) so they are visually distinct from built-in commands; skills stay discoverable by bare name and the explicit `/skill:<name>` form is accepted both in the picker and when invoking a skill directly. `/skills list` output uses the same `/skill:<name>` form.
 - `/reload` slash command reloads configuration from disk (e.g. after editing `.openharness/settings.json`) and reapplies provider, model, system prompt, and UI state without restarting the TUI.
@@ -54,6 +55,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- Onboard dashboard's LLM Token Usage card now keeps the y-axis visible with an explicit token/day label, uses grouped per-model legends and compact K/M/B/T token units, renders the chart as a readable month-to-date view, and updates input/output series smoothly on the live 5s refresh without remounting the chart.
 - `edit_file` now also accepts `old_string` / `new_string` as aliases for its `old_str` / `new_str` parameters (via pydantic validation aliases), so models that follow the common Anthropic-style edit naming no longer fail input validation and retry; the API schema still advertises `old_str` / `new_str` as canonical.
 - Onboard Chat now forwards solo/wolo runner progress and tool-internal backend progress to the WebSocket UI, so long-running chat actions show the same detailed operation updates that channel-triggered runs already send.
 - Onboard Feed Digests "Fetch Now" now streams real engine progress (e.g. research/scoring/synthesis stages) over a Server-Sent Events endpoint for both `solo` and `wolo`, replacing the previous cosmetic timer that only emitted solo-style stage labels and left `wolo` without a live progress indicator during long runs.

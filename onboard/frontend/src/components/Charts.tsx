@@ -5,7 +5,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  Legend,
+  ComposedChart,
   Line,
   LineChart,
   Pie,
@@ -42,7 +42,7 @@ const tokenPalette = [
 
 // lodash.get (used by recharts) treats dots as path separators — sanitize model names.
 function sanitizeModelKey(model: string): string {
-  return model.replace(/[^a-zA-Z0-9_\-]/g, '_');
+  return model.replace(/[^a-zA-Z0-9_]/g, '_');
 }
 
 function inputKey(model: string): string {
@@ -53,23 +53,26 @@ function outputKey(model: string): string {
   return `out_${sanitizeModelKey(model)}`;
 }
 
-function formatTokens(value: number): string {
-  if (value >= 1e12) return `${(value / 1e12).toFixed(1)}T`;
-  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
-  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
-  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
-  return String(value);
+function formatFullNumber(value: number): string {
+  return value.toLocaleString();
 }
 
-function getCurrentMonthRange(): { start: string; end: string } {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
+export function formatTokenAmount(value: number): string {
+  const abs = Math.abs(value);
+  const compact = (divisor: number, suffix: string): string => {
+    const formatted = (value / divisor).toFixed(abs >= divisor * 100 ? 0 : 1).replace(/\.0$/, '');
+    return `${formatted}${suffix}`;
+  };
+  if (abs >= 1e12) return compact(1e12, 'T');
+  if (abs >= 1e9) return compact(1e9, 'B');
+  if (abs >= 1e6) return compact(1e6, 'M');
+  if (abs >= 1e3) return compact(1e3, 'K');
+  return formatFullNumber(value);
+}
+
+function formatLocalDateKey(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
-  const start = `${year}-${pad(month + 1)}-01`;
-  const lastDay = new Date(year, month + 1, 0).getDate();
-  const end = `${year}-${pad(month + 1)}-${pad(lastDay)}`;
-  return { start, end };
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
 function buildDateRange(startDate: string, endDate: string): string[] {
@@ -77,11 +80,14 @@ function buildDateRange(startDate: string, endDate: string): string[] {
     return [];
   }
   const days: string[] = [];
-  const cursor = new Date(`${startDate}T00:00:00Z`);
-  const last = new Date(`${endDate}T00:00:00Z`);
+  // Parse as local midnight to avoid UTC-offset cross-day shifts
+  const [sy, sm, sd] = startDate.split('-').map(Number);
+  const [ey, em, ed] = endDate.split('-').map(Number);
+  const cursor = new Date(sy, sm - 1, sd);
+  const last = new Date(ey, em - 1, ed);
   while (cursor <= last) {
-    days.push(cursor.toISOString().slice(0, 10));
-    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    days.push(formatLocalDateKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
   }
   return days;
 }
@@ -98,6 +104,13 @@ function renderTokenDot(props: {
     return <circle cx={props.cx ?? 0} cy={props.cy ?? 0} r={0} fill="transparent" />;
   }
   return <circle cx={props.cx} cy={props.cy} r={2.5} fill={props.fill ?? props.stroke ?? '#e4e4e7'} />;
+}
+
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false;
+  }
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
 export function DailyLineChart({ data }: { data: CountPoint[] }) {
@@ -145,108 +158,133 @@ export function TagBarChart({ data }: { data: TagPoint[] }) {
 
 export function ModelTokenUsageChart({
   data,
+  startDate,
+  endDate,
 }: {
   data: ModelTokenDailyPoint[];
   startDate: string;
   endDate: string;
 }) {
   const models = Array.from(new Set(data.map((item) => item.model))).sort();
-
-  if (models.length === 0) {
-    return (
-      <div className="h-[280px] flex items-center justify-center text-sm text-text-muted">
-        No token usage this month.
-      </div>
-    );
-  }
-
-  // Always span the full current month so future dates are visible.
-  const { start: monthStart, end: monthEnd } = getCurrentMonthRange();
-  const today = new Date().toISOString().slice(0, 10);
-
+  const visibleEndDate = endDate || startDate;
   const byDateAndModel = new Map(data.map((item) => [`${item.date}:${item.model}`, item] as const));
+  const allDates = buildDateRange(startDate, visibleEndDate);
+  const series = models.map((model, index) => ({
+    model,
+    colors: tokenPalette[index % tokenPalette.length],
+  }));
 
-  const allDates = buildDateRange(monthStart, monthEnd);
-
-  // Build one row per date. Future dates get null so the line stops at today.
   const chartData = allDates.map((date) => {
     const row: Record<string, number | string | null> = { date };
     models.forEach((model) => {
       const point = byDateAndModel.get(`${date}:${model}`);
-      const isFuture = date > today;
-      row[inputKey(model)] = isFuture ? null : (point?.input_tokens ?? 0);
-      row[outputKey(model)] = isFuture ? null : (point?.output_tokens ?? 0);
+      row[inputKey(model)] = point?.input_tokens ?? 0;
+      row[outputKey(model)] = point?.output_tokens ?? 0;
     });
     return row;
   });
 
-  // Show 1st, every 5th, and last day of month as X-axis labels.
-  const lastDay = parseInt(monthEnd.slice(8), 10);
+  // Show day-of-month numbers: 1st, every 5th, and the last visible day.
+  const lastDay = visibleEndDate ? parseInt(visibleEndDate.slice(8), 10) : 0;
   const tickDates = allDates.filter((d) => {
     const day = parseInt(d.slice(8), 10);
     return day === 1 || day % 5 === 0 || day === lastDay;
   });
 
-  const chartKey = data.map((d) => `${d.date}:${d.model}:${d.input_tokens}:${d.output_tokens}`).join('|');
+  const allValues = chartData.flatMap((row) =>
+    models.flatMap((m) => [row[inputKey(m)] as number, row[outputKey(m)] as number])
+  );
+  const dataMax = Math.max(0, ...allValues);
+  const yMax = dataMax <= 0 ? 10 : Math.ceil(dataMax * 1.1);
 
   return (
-    <ResponsiveContainer width="100%" height={300}>
-      <LineChart key={chartKey} data={chartData} margin={{ top: 8, right: 16, bottom: 4, left: 4 }}>
-        <CartesianGrid stroke="#1f1f24" strokeDasharray="2 4" />
-        <XAxis
-          dataKey="date"
-          stroke="#63636e"
-          tick={{ fontSize: 10 }}
-          ticks={tickDates}
-          tickFormatter={(v: string) => v.slice(8)}
-        />
-        <YAxis
-          stroke="#63636e"
-          tick={{ fontSize: 11 }}
-          width={52}
-          tickFormatter={formatTokens}
-          allowDecimals={false}
-        />
-        <Tooltip
-          contentStyle={tooltipStyle}
-          labelStyle={tooltipLabelStyle}
-          itemStyle={tooltipItemStyle}
-          formatter={(value: number | string) => formatTokens(Number(value))}
-          labelFormatter={(value: string) => value}
-        />
-        <Legend wrapperStyle={{ fontSize: '11px', color: '#a1a1aa', paddingTop: '6px' }} />
-        {models.map((model, index) => {
-          const colors = tokenPalette[index % tokenPalette.length];
-          return (
-            <Fragment key={model}>
-              <Line
-                type="monotone"
-                dataKey={inputKey(model)}
-                name={`${model} in`}
-                stroke={colors.input}
-                strokeWidth={1.5}
-                isAnimationActive={false}
-                dot={renderTokenDot}
-                activeDot={{ r: 4 }}
-                connectNulls={false}
-              />
-              <Line
-                type="monotone"
-                dataKey={outputKey(model)}
-                name={`${model} out`}
-                stroke={colors.output}
-                strokeWidth={1.5}
-                strokeDasharray="5 4"
-                isAnimationActive={false}
-                dot={renderTokenDot}
-                activeDot={{ r: 4 }}
-                connectNulls={false}
-              />
-            </Fragment>
-          );
-        })}
-      </LineChart>
-    </ResponsiveContainer>
+    <div className="space-y-3">
+      <div className="h-[300px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 8, right: 16, bottom: 4, left: 8 }}>
+            <CartesianGrid stroke="#1f1f24" strokeDasharray="2 4" />
+            <XAxis
+              dataKey="date"
+              stroke="#63636e"
+              tick={{ fontSize: 10, fill: '#a1a1aa' }}
+              ticks={tickDates}
+              tickFormatter={(v: string) => v.slice(8)}
+              tickLine={{ stroke: '#2e2e33' }}
+            />
+            <YAxis
+              orientation="left"
+              domain={[0, yMax]}
+              tick={{ fontSize: 11, fill: '#a1a1aa' }}
+              tickLine={{ stroke: '#2e2e33' }}
+              axisLine={{ stroke: '#2e2e33' }}
+              stroke="#63636e"
+              tickFormatter={formatTokenAmount}
+              allowDecimals={false}
+              width={64}
+              label={{ value: 'Tokens', angle: -90, position: 'insideLeft', offset: 12, fill: '#63636e', fontSize: 10 }}
+            />
+            <Tooltip
+              contentStyle={tooltipStyle}
+              labelStyle={tooltipLabelStyle}
+              itemStyle={tooltipItemStyle}
+              formatter={(value: number | string) => {
+                const n = Number(value);
+                return `${formatTokenAmount(n)} (${formatFullNumber(n)})`;
+              }}
+              labelFormatter={(value: string) => value}
+            />
+            {series.map(({ model, colors }) => (
+              <Fragment key={model}>
+                <Line
+                  type="linear"
+                  dataKey={inputKey(model)}
+                  name={`${model} input`}
+                  stroke={colors.input}
+                  strokeWidth={1.75}
+                  isAnimationActive={false}
+                  dot={{ r: 2.5, fill: colors.input, strokeWidth: 0 }}
+                  activeDot={{ r: 4 }}
+                />
+                <Line
+                  type="linear"
+                  dataKey={outputKey(model)}
+                  name={`${model} output`}
+                  stroke={colors.output}
+                  strokeWidth={1.75}
+                  strokeDasharray="6 4"
+                  isAnimationActive={false}
+                  dot={{ r: 2.5, fill: colors.output, strokeWidth: 0 }}
+                  activeDot={{ r: 4 }}
+                />
+              </Fragment>
+            ))}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      {series.length > 0 && (
+        <div className="flex flex-wrap gap-2 text-[11px] font-mono text-text-secondary">
+          {series.map(({ model, colors }) => (
+            <div
+              key={model}
+              className="inline-flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5"
+            >
+              <span className="text-text">{model}</span>
+              <span className="inline-flex items-center gap-1 text-text-muted">
+                <span className="h-0.5 w-4 rounded-full" style={{ backgroundColor: colors.input }} />
+                input
+              </span>
+              <span className="inline-flex items-center gap-1 text-text-muted">
+                <span
+                  className="h-0 w-4 border-t border-dashed"
+                  style={{ borderColor: colors.output, borderTopWidth: '2px' }}
+                />
+                output
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

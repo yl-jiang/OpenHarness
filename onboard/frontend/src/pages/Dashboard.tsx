@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 
 import { api } from '../api/client';
 import type { AppName } from '../api/types';
-import { ActivityHeatmap, EmotionPieChart, ModelTokenUsageChart } from '../components/Charts';
+import { ActivityHeatmap, EmotionPieChart, ModelTokenUsageChart, formatTokenAmount } from '../components/Charts';
 import { StatsCard } from '../components/StatsCard';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
@@ -15,6 +15,9 @@ export function Dashboard({ appName }: { appName: AppName }) {
   if (error || !data) {
     return <div className="border border-danger/30 rounded-lg bg-danger/5 p-5 text-sm text-text">{error ?? 'Failed to load dashboard.'}</div>;
   }
+
+  const monthlyInputTokens = data.llm_monthly_tokens.reduce((sum, item) => sum + item.input_tokens, 0);
+  const monthlyOutputTokens = data.llm_monthly_tokens.reduce((sum, item) => sum + item.output_tokens, 0);
 
   return (
     <div className="space-y-6">
@@ -37,16 +40,30 @@ export function Dashboard({ appName }: { appName: AppName }) {
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
             <h3 className="text-sm font-medium text-text m-0">LLM Token Usage</h3>
-            <div className="mt-1 text-[12px] text-text-muted">
-              Current month · {data.llm_monthly_start_date} → {data.llm_monthly_end_date}
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-text-muted">
+              <span>
+                Current month totals · month-to-date view
+              </span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-success animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
+                live · 5s
+              </span>
             </div>
           </div>
-          <div className="flex flex-wrap justify-end gap-2 text-[12px]">
-            <span className="rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text">
-              input {data.llm_total_input_tokens.toLocaleString()}
+          <div className="flex flex-wrap justify-end gap-2 text-[12px] font-mono">
+            <span
+              title={`${monthlyInputTokens.toLocaleString()} input tokens this month`}
+              className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text"
+            >
+              <span className="text-text-muted">input</span>
+              <span className="tabular-nums">{formatTokenAmount(monthlyInputTokens)}</span>
             </span>
-            <span className="rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text">
-              output {data.llm_total_output_tokens.toLocaleString()}
+            <span
+              title={`${monthlyOutputTokens.toLocaleString()} output tokens this month`}
+              className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text"
+            >
+              <span className="text-text-muted">output</span>
+              <span className="tabular-nums">{formatTokenAmount(monthlyOutputTokens)}</span>
             </span>
           </div>
         </div>
@@ -62,8 +79,8 @@ export function Dashboard({ appName }: { appName: AppName }) {
           <h3 className="text-sm font-medium text-text m-0">LLM Model Usage</h3>
           <div className="flex flex-wrap justify-end gap-2 text-[12px] font-mono text-text-muted">
             <span>calls {data.llm_total_calls.toLocaleString()}</span>
-            <span>input {data.llm_total_input_tokens.toLocaleString()}</span>
-            <span>output {data.llm_total_output_tokens.toLocaleString()}</span>
+            <span title={`${data.llm_total_input_tokens.toLocaleString()} input tokens`}>input {formatTokenAmount(data.llm_total_input_tokens)}</span>
+            <span title={`${data.llm_total_output_tokens.toLocaleString()} output tokens`}>output {formatTokenAmount(data.llm_total_output_tokens)}</span>
           </div>
         </div>
         {data.llm_usage_models.length > 0 ? (
@@ -75,8 +92,12 @@ export function Dashboard({ appName }: { appName: AppName }) {
               >
                 <span className="font-mono text-text">{item.model}</span>
                 <span className="text-text-muted">{item.count.toLocaleString()} calls</span>
-                <span className="text-text-muted">in {item.input_tokens.toLocaleString()}</span>
-                <span className="text-text-muted">out {item.output_tokens.toLocaleString()}</span>
+                <span className="text-text-muted" title={`${item.input_tokens.toLocaleString()} input tokens`}>
+                  in {formatTokenAmount(item.input_tokens)}
+                </span>
+                <span className="text-text-muted" title={`${item.output_tokens.toLocaleString()} output tokens`}>
+                  out {formatTokenAmount(item.output_tokens)}
+                </span>
               </div>
             ))}
           </div>

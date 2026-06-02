@@ -27,7 +27,16 @@ uv run python -m onboard run
 uv run python -m onboard start
 ```
 
-### 方式 3：从源码安装并构建前端
+### 方式 3：Makefile 一键构建并启动
+
+```bash
+make onboard
+
+# 可选：透传 run 参数
+make onboard ONBOARD_ARGS="--reload --port 8090"
+```
+
+### 方式 4：从源码安装并构建前端
 
 ```bash
 # 安装依赖
@@ -83,6 +92,7 @@ Onboard 是 wolo 和 solo 的**共享 WebUI 层**：
 | `wolo onboard status` | 查看状态 |
 | `solo onboard run` | 同上，入口不同，服务相同 |
 | `solo onboard start/stop/status` | 同上 |
+| `make onboard` | 先构建 onboard 前端，再前台启动服务 |
 | `python -m onboard run` | 独立 CLI 入口 |
 
 > **注意**：无论从哪个入口启动，onboard 同时展示 wolo 和 solo 两个应用的数据，前端页面左侧可以切换。

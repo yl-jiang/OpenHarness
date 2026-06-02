@@ -84,6 +84,10 @@ def test_onboard_stats_include_llm_usage_breakdown(service_cls, workspace_name: 
     service = service_cls(tmp_path / workspace_name)
     today = datetime.now().astimezone().date()
     month_start = today.replace(day=1)
+    if today.month == 12:
+        month_end = today.replace(year=today.year + 1, month=1, day=1) - timedelta(days=1)
+    else:
+        month_end = today.replace(month=today.month + 1, day=1) - timedelta(days=1)
     second_day = month_start if today == month_start else month_start + timedelta(days=1)
     previous_month_day = month_start - timedelta(days=1)
     service.store.record_llm_call(
@@ -117,7 +121,7 @@ def test_onboard_stats_include_llm_usage_breakdown(service_cls, workspace_name: 
     assert stats["llm_total_input_tokens"] == 1263
     assert stats["llm_total_output_tokens"] == 600
     assert stats["llm_monthly_start_date"] == month_start.isoformat()
-    assert stats["llm_monthly_end_date"] == today.isoformat()
+    assert stats["llm_monthly_end_date"] == month_end.isoformat()
     assert {item["model"]: item["count"] for item in stats["llm_usage_models"]} == {
         "legacy-model": 1,
         "gpt-5": 2,
