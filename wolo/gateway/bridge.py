@@ -13,6 +13,7 @@ from openharness.utils.log import get_logger
 
 from wolo.agent import OpenHarnessWoloAgent
 from wolo.commands import (
+    format_wolo_llm_usage,
     format_process_result,
     parse_backfill_argument,
     parse_wolo_command,
@@ -227,6 +228,12 @@ class WoloGatewayBridge:
             self._session_tasks.pop(session_key, None)
         self._session_cancel_reasons.pop(session_key, None)
 
+    def _agent(self, store: WoloStore) -> OpenHarnessWoloAgent:
+        return OpenHarnessWoloAgent(
+            profile=self._provider_profile,
+            record_model_call=store.record_llm_call,
+        )
+
     async def _process_message(self, message: InboundMessage) -> None:
         content = message.content.strip()
         content_hash = _hash_content(content)
@@ -241,17 +248,19 @@ class WoloGatewayBridge:
             elif command.action == "process":
                 result = await WoloProcessor(
                     store,
-                    OpenHarnessWoloAgent(profile=self._provider_profile),
+                    self._agent(store),
                 ).process_pending(backfill_missing_yesterday=True)
                 reply = format_process_result(result)
             elif command.action == "status":
                 reply = _status_wolo(store)
+            elif command.action == "llm_usage":
+                reply = _llm_usage_wolo(store)
             elif command.action == "view":
                 reply = _view_wolo(store, command.limit)
             elif command.action == "report":
                 processor = WoloProcessor(
                     store,
-                    OpenHarnessWoloAgent(profile=self._provider_profile),
+                    self._agent(store),
                 )
                 process_result = await processor.process_pending()
                 report = await processor.generate_report(command.report_type)
@@ -337,7 +346,7 @@ class WoloGatewayBridge:
         entry = store.record(content, metadata={"record_date": backfill_date, "source": "补录"})
         result = await WoloProcessor(
             store,
-            OpenHarnessWoloAgent(profile=self._provider_profile),
+            self._agent(store),
         ).process_pending(limit=20)
         return f"已补录 {backfill_date}。entry_id={entry.id}\n{format_process_result(result)}"
 
@@ -378,3 +387,7 @@ def _status_wolo(store: WoloStore) -> str:
         f"pending={status['pending_confirmations']} "
         f"path={status['path']}"
     )
+
+
+def _llm_usage_wolo(store: WoloStore) -> str:
+    return format_wolo_llm_usage(store.llm_usage_summary())

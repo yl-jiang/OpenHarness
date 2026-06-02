@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from solo.core.models import ProcessResult
 
-SoloAction = Literal["record", "process", "status", "view", "report", "backfill", "help"]
+SoloAction = Literal["record", "process", "status", "llm_usage", "view", "report", "backfill", "help"]
 
 
 @dataclass(frozen=True)
@@ -58,6 +58,8 @@ def parse_solo_command(text: str, *, default_record: bool = False) -> SoloComman
         return SoloCommand(action="process", backfill_missing_yesterday=True)
     if first in {"status", "状态"}:
         return SoloCommand(action="status")
+    if first in {"llm-usage", "llm_usage", "llm", "models", "模型", "模型调用"}:
+        return SoloCommand(action="llm_usage")
     if first in {"view", "list", "recent", "查看", "最近"}:
         return SoloCommand(action="view", limit=_parse_int(rest, default=10))
     if first in {"report", "周报", "月报", "年报"}:
@@ -86,6 +88,7 @@ def solo_help_text() -> str:
         "- /solo view [数量]：查看最近记录\n"
         "- /solo report weekly|monthly|yearly：生成报告\n"
         "- /solo status：查看状态\n"
+        "- /solo llm-usage：查看模型调用统计\n"
         "- /solo backfill [YYYY-MM-DD] 内容：补录"
     )
 
@@ -100,6 +103,23 @@ def format_process_result(result: ProcessResult) -> str:
     ):
         if item:
             lines.append(item)
+    return "\n".join(lines)
+
+
+def format_solo_llm_usage(summary: dict[str, Any]) -> str:
+    total = int(summary.get("total_calls") or 0)
+    models = summary.get("models")
+    if total <= 0 or not isinstance(models, list):
+        return "solo 还没有 LLM 调用记录。"
+
+    lines = [f"solo LLM 调用累计 {total} 次"]
+    for item in models:
+        if not isinstance(item, dict):
+            continue
+        model = str(item.get("model") or "").strip()
+        count = int(item.get("count") or 0)
+        if model and count > 0:
+            lines.append(f"- {model}: {count} 次")
     return "\n".join(lines)
 
 

@@ -167,13 +167,56 @@ def test_wolo_command_prefix_help_and_work_actions():
     assert report.action == "report"
     assert report.report_type == "monthly"
 
+    usage = parse_wolo_command("/wolo llm-usage")
+    assert usage is not None
+    assert usage.action == "llm_usage"
+
     default = parse_wolo_command("记录今天完成 PR review", default_record=True)
     assert default is not None
     assert default.action == "record"
 
     help_text = wolo_help_text()
     assert "/wolo process" in help_text
+    assert "/wolo llm-usage" in help_text
     assert "工作记录" in help_text
+
+
+@pytest.mark.asyncio
+async def test_standalone_wolo_gateway_slash_command_reports_llm_usage(tmp_path: Path, monkeypatch):
+    workspace = tmp_path / ".wolo"
+    store = WoloStore(workspace)
+    store.record_llm_call("gpt-5")
+    store.record_llm_call("gpt-5")
+    store.record_llm_call("claude-sonnet-4.5")
+    bus = MessageBus()
+
+    class FailRunner:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("query runner should not be used for /wolo llm-usage")
+
+    monkeypatch.setattr("wolo.gateway.bridge.WoloQueryRunner", FailRunner)
+    bridge = WoloGatewayBridge(bus=bus, workspace=workspace, provider_profile="codex")
+    task = asyncio.create_task(bridge.run())
+    try:
+        await bus.publish_inbound(
+            InboundMessage(
+                channel="feishu",
+                sender_id="ou_user",
+                chat_id="ou_user",
+                content="/wolo llm-usage",
+                metadata={"chat_type": "p2p"},
+            )
+        )
+        outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+    finally:
+        bridge.stop()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert "wolo LLM 调用累计 3 次" in outbound.content
+    assert "- gpt-5: 2 次" in outbound.content
+    assert "- claude-sonnet-4.5: 1 次" in outbound.content
 
 
 def test_wolo_tool_names_and_descriptions_are_work_focused(tmp_path: Path):

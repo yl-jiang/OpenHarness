@@ -256,6 +256,57 @@ def test_solo_prompt_routes_future_reminders():
     assert "solo_remind" in _SOLO_TOOL_ROUTER_PROMPT
 
 
+def test_solo_command_prefix_supports_llm_usage():
+    from solo.commands import extract_solo_content, parse_solo_command, solo_help_text
+
+    assert extract_solo_content("/solo record 今天补一条记录") == "今天补一条记录"
+
+    command = parse_solo_command("/solo llm-usage")
+    assert command is not None
+    assert command.action == "llm_usage"
+
+    help_text = solo_help_text()
+    assert "/solo llm-usage" in help_text
+
+
+@pytest.mark.asyncio
+async def test_standalone_solo_gateway_slash_command_reports_llm_usage(tmp_path: Path, monkeypatch):
+    workspace = tmp_path / ".solo"
+    store = SoloStore(workspace)
+    store.record_llm_call("gpt-5")
+    store.record_llm_call("gpt-5")
+    store.record_llm_call("claude-sonnet-4.5")
+    bus = MessageBus()
+
+    class FailRunner:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("query runner should not be used for /solo llm-usage")
+
+    monkeypatch.setattr("solo.gateway.bridge.SoloQueryRunner", FailRunner)
+    bridge = SoloGatewayBridge(bus=bus, workspace=workspace, provider_profile="codex")
+    task = asyncio.create_task(bridge.run())
+    try:
+        await bus.publish_inbound(
+            InboundMessage(
+                channel="feishu",
+                sender_id="ou_user",
+                chat_id="ou_user",
+                content="/solo llm-usage",
+                metadata={"chat_type": "p2p"},
+            )
+        )
+        outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+    finally:
+        bridge.stop()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert "solo LLM 调用累计 3 次" in outbound.content
+    assert "- gpt-5: 2 次" in outbound.content
+    assert "- claude-sonnet-4.5: 1 次" in outbound.content
+
+
 def test_standalone_solo_gateway_run_configures_foreground_logging(tmp_path: Path):
     import logging as stdlib_logging
 

@@ -27,6 +27,7 @@ from openharness.utils.log import get_logger
 from wolo.core.artifacts import persist_work_artifacts
 from wolo.core.memory import add_memory_entry
 from wolo.core.models import ProfileUpdate, WoloEntry, WoloRecord
+from wolo.commands import format_wolo_llm_usage
 from wolo.processor import WoloProcessor
 from wolo.core.store import WoloStore
 from wolo.core.utils import (
@@ -146,6 +147,7 @@ class WoloToolRegistry:
             WoloDomainTool(_tool_update_record(), self._handle_update_record),
             WoloDomainTool(_tool_delete_record(), self._handle_delete_record),
             WoloDomainTool(_tool_status(), self._handle_status),
+            WoloDomainTool(_tool_llm_usage(), self._handle_llm_usage),
             WoloDomainTool(_tool_get_now(), self._handle_get_now),
             WoloDomainTool(_tool_profile_update(), self._handle_profile_update),
             WoloDomainTool(_tool_remember(), self._handle_remember),
@@ -853,6 +855,10 @@ class WoloToolRegistry:
             f"path={status['path']}"
         )
         return {"ok": True, **status, "message": message}
+
+    async def _handle_llm_usage(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        summary = self.store.llm_usage_summary()
+        return {"ok": True, **summary, "message": format_wolo_llm_usage(summary)}
 
     async def _handle_get_now(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Get the current local date, time, and timezone information."""
@@ -1734,6 +1740,10 @@ def _tool_delete_record() -> ToolDefinition:
 
 def _tool_status() -> ToolDefinition:
     return _definition("wolo_status", "Show wolo status.", [])
+
+
+def _tool_llm_usage() -> ToolDefinition:
+    return _definition("wolo_llm_usage", "Show cumulative wolo LLM model usage counts grouped by model name.", [])
 
 
 def _tool_get_now() -> ToolDefinition:

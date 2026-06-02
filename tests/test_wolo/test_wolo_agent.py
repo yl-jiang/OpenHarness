@@ -5,6 +5,7 @@ from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import ConversationMessage, TextBlock
 
 from wolo.agent import OpenHarnessWoloAgent
+from wolo.core.store import WoloStore
 
 
 class _Settings:
@@ -40,3 +41,17 @@ async def test_report_generation_uses_full_configured_token_budget(monkeypatch):
 
     assert content == "insight report"
     assert client.requests[0].max_tokens == 8192
+
+
+@pytest.mark.asyncio
+async def test_agent_records_model_usage_summary(tmp_path, monkeypatch):
+    client = _TextClient("insight report")
+    store = WoloStore(tmp_path / ".wolo")
+    monkeypatch.setattr("wolo.agent.load_settings", lambda: _Settings())
+    agent = OpenHarnessWoloAgent(api_client=client, record_model_call=store.record_llm_call)
+
+    await agent.generate_report("monthly", [{"summary": "记录"}], "context")
+
+    usage = store.llm_usage_summary()
+    assert usage["total_calls"] == 1
+    assert usage["models"] == [{"model": "test-model", "count": 1}]

@@ -223,6 +223,23 @@ async def test_work_tools_query_todos_blockers_decisions_and_lessons(tmp_path: P
 
 
 @pytest.mark.asyncio
+async def test_wolo_tool_reports_llm_usage_by_model(tmp_path: Path):
+    store = WoloStore(tmp_path / ".wolo")
+    store.record_llm_call("gpt-5")
+    store.record_llm_call("gpt-5")
+    store.record_llm_call("claude-sonnet-4.5")
+
+    registry = WoloToolRegistry(store)
+    names = {schema["name"] for schema in registry.tool_schemas()}
+
+    assert "wolo_llm_usage" in names
+    result = await registry.execute("wolo_llm_usage", {})
+    assert "wolo LLM 调用累计 3 次" in result
+    assert "- gpt-5: 2 次" in result
+    assert "- claude-sonnet-4.5: 1 次" in result
+
+
+@pytest.mark.asyncio
 async def test_wolo_remind_tool_schedules_one_shot_feishu_reminder(tmp_path: Path, monkeypatch):
     from wolo.core.workspace import get_data_dir
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from typing import Any
 
 from openharness.api.client import (
@@ -12,6 +13,7 @@ from openharness.api.client import (
     ApiTextDeltaEvent,
     SupportsStreamingMessages,
 )
+from openharness.api.recording_client import wrap_with_model_call_recorder
 from openharness.config import load_settings
 from openharness.engine.messages import ConversationMessage
 from openharness.ui.runtime import _resolve_api_client_from_settings
@@ -33,10 +35,12 @@ class OpenHarnessWoloAgent:
         model: str | None = None,
         max_json_attempts: int = _DEFAULT_JSON_ATTEMPTS,
         retry_delay_seconds: float = _DEFAULT_RETRY_DELAY_SECONDS,
+        record_model_call: Callable[[str], None] | None = None,
     ) -> None:
         settings = load_settings().merge_cli_overrides(active_profile=profile, model=model)
         self._settings = settings
-        self._client = api_client or _resolve_api_client_from_settings(settings)
+        base_client = api_client or _resolve_api_client_from_settings(settings)
+        self._client = wrap_with_model_call_recorder(base_client, record_model_call)
         self._max_json_attempts = max(1, max_json_attempts)
         self._retry_delay_seconds = max(0.0, retry_delay_seconds)
 

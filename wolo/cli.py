@@ -128,7 +128,10 @@ def process_cmd(
     profile: str | None = typer.Option(None, "--profile", help="OpenHarness provider profile"),
 ) -> None:
     store = WoloStore(workspace)
-    agent = OpenHarnessWoloAgent(profile=profile or load_config(workspace).provider_profile)
+    agent = OpenHarnessWoloAgent(
+        profile=profile or load_config(workspace).provider_profile,
+        record_model_call=store.record_llm_call,
+    )
     result = asyncio.run(WoloProcessor(store, agent).process_pending(backfill_missing_yesterday=True))
     print(f"Processed {result.auto_processed} record(s), pending {result.pending_confirmations}.")
 
@@ -285,7 +288,10 @@ def report_cmd(
 ) -> None:
     """Generate a new report."""
     store = WoloStore(workspace)
-    agent = OpenHarnessWoloAgent(profile=profile or load_config(workspace).provider_profile)
+    agent = OpenHarnessWoloAgent(
+        profile=profile or load_config(workspace).provider_profile,
+        record_model_call=store.record_llm_call,
+    )
     report = asyncio.run(WoloProcessor(store, agent).generate_report(report_type))
     print(report.content)
 

@@ -26,6 +26,7 @@ from openharness.utils.log import get_logger
 
 from solo.core.memory import add_memory_entry
 from solo.core.models import ProfileUpdate, SoloEntry, SoloRecord
+from solo.commands import format_solo_llm_usage
 from solo.processor import SoloProcessor
 from solo.core.store import SoloStore
 from solo.core.utils import (
@@ -141,6 +142,7 @@ class SoloToolRegistry:
             SoloDomainTool(_tool_update_record(), self._handle_update_record),
             SoloDomainTool(_tool_delete_record(), self._handle_delete_record),
             SoloDomainTool(_tool_status(), self._handle_status),
+            SoloDomainTool(_tool_llm_usage(), self._handle_llm_usage),
             SoloDomainTool(_tool_get_now(), self._handle_get_now),
             SoloDomainTool(_tool_profile_update(), self._handle_profile_update),
             SoloDomainTool(_tool_remember(), self._handle_remember),
@@ -767,6 +769,10 @@ class SoloToolRegistry:
             f"pending={status['pending_confirmations']}，path={status['path']}"
         )
         return {"ok": True, **status, "message": message}
+
+    async def _handle_llm_usage(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        summary = self.store.llm_usage_summary()
+        return {"ok": True, **summary, "message": format_solo_llm_usage(summary)}
 
     async def _handle_get_now(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Get the current local date, time, and timezone information."""
@@ -1574,6 +1580,10 @@ def _tool_delete_record() -> ToolDefinition:
 
 def _tool_status() -> ToolDefinition:
     return _definition("solo_status", "Show solo status.", [])
+
+
+def _tool_llm_usage() -> ToolDefinition:
+    return _definition("solo_llm_usage", "Show cumulative solo LLM model usage counts grouped by model name.", [])
 
 
 def _tool_get_now() -> ToolDefinition:

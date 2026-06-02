@@ -13,6 +13,7 @@ from openharness.utils.log import get_logger
 
 from solo.agent import OpenHarnessSoloAgent
 from solo.commands import (
+    format_solo_llm_usage,
     format_process_result,
     parse_backfill_argument,
     parse_solo_command,
@@ -227,6 +228,12 @@ class SoloGatewayBridge:
             self._session_tasks.pop(session_key, None)
         self._session_cancel_reasons.pop(session_key, None)
 
+    def _agent(self, store: SoloStore) -> OpenHarnessSoloAgent:
+        return OpenHarnessSoloAgent(
+            profile=self._provider_profile,
+            record_model_call=store.record_llm_call,
+        )
+
     async def _process_message(self, message: InboundMessage) -> None:
         content = message.content.strip()
         content_hash = _hash_content(content)
@@ -241,17 +248,19 @@ class SoloGatewayBridge:
             elif command.action == "process":
                 result = await SoloProcessor(
                     store,
-                    OpenHarnessSoloAgent(profile=self._provider_profile),
+                    self._agent(store),
                 ).process_pending(backfill_missing_yesterday=True)
                 reply = format_process_result(result)
             elif command.action == "status":
                 reply = _status_solo(store)
+            elif command.action == "llm_usage":
+                reply = _llm_usage_solo(store)
             elif command.action == "view":
                 reply = _view_solo(store, command.limit)
             elif command.action == "report":
                 processor = SoloProcessor(
                     store,
-                    OpenHarnessSoloAgent(profile=self._provider_profile),
+                    self._agent(store),
                 )
                 process_result = await processor.process_pending()
                 report = await processor.generate_report(command.report_type)
@@ -337,7 +346,7 @@ class SoloGatewayBridge:
         entry = store.record(content, metadata={"record_date": backfill_date, "source": "补录"})
         result = await SoloProcessor(
             store,
-            OpenHarnessSoloAgent(profile=self._provider_profile),
+            self._agent(store),
         ).process_pending(limit=20)
         return f"已补录 {backfill_date}。entry_id={entry.id}\n{format_process_result(result)}"
 
@@ -376,3 +385,7 @@ def _status_solo(store: SoloStore) -> str:
         f"records={status['records']} pending={status['pending_confirmations']} "
         f"path={status['path']}"
     )
+
+
+def _llm_usage_solo(store: SoloStore) -> str:
+    return format_solo_llm_usage(store.llm_usage_summary())

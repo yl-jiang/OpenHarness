@@ -5,6 +5,7 @@ from openharness.api.usage import UsageSnapshot
 from openharness.engine.messages import ConversationMessage, TextBlock
 
 from solo.agent import OpenHarnessSoloAgent
+from solo.core.store import SoloStore
 
 
 class _Settings:
@@ -50,3 +51,17 @@ async def test_report_generation_rejects_empty_model_body(monkeypatch):
 
     with pytest.raises(RuntimeError, match="empty response"):
         await agent.generate_report("monthly", [{"summary": "记录"}], "context")
+
+
+@pytest.mark.asyncio
+async def test_agent_records_model_usage_summary(tmp_path, monkeypatch):
+    client = _TextClient("insight report")
+    store = SoloStore(tmp_path / ".solo")
+    monkeypatch.setattr("solo.agent.load_settings", lambda: _Settings())
+    agent = OpenHarnessSoloAgent(api_client=client, record_model_call=store.record_llm_call)
+
+    await agent.generate_report("monthly", [{"summary": "记录"}], "context")
+
+    usage = store.llm_usage_summary()
+    assert usage["total_calls"] == 1
+    assert usage["models"] == [{"model": "test-model", "count": 1}]

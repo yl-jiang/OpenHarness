@@ -41,6 +41,7 @@ class WoloService:
         blockers = self.store.list_highlights(kind="blocker")
         pending_todos = [todo for todo in todos if todo.status != "done"]
         open_blockers = [item for item in blockers if "resolved" not in item.tags.lower()]
+        llm_usage = self.store.llm_usage_summary()
         return {
             "total_entries": int(status["entries"]),
             "total_records": int(status["records"]),
@@ -51,6 +52,8 @@ class WoloService:
             "total_decisions": int(status["decisions"]),
             "total_highlights": int(status["highlights"]),
             "open_blockers": len(open_blockers),
+            "llm_total_calls": int(llm_usage["total_calls"]),
+            "llm_usage_models": llm_usage["models"],
             "emotion_distribution": emotion_distribution(records),
             "daily_counts": daily_counts(records),
             "top_tags": top_tags(records),
@@ -181,7 +184,10 @@ class WoloService:
         self, report_type: str, profile: str | None = None, start_date: str | None = None, end_date: str | None = None,
     ) -> dict[str, Any]:
         config = load_config(self.workspace)
-        agent = OpenHarnessWoloAgent(profile=profile or config.provider_profile)
+        agent = OpenHarnessWoloAgent(
+            profile=profile or config.provider_profile,
+            record_model_call=self.store.record_llm_call,
+        )
         report = await WoloProcessor(self.store, agent).generate_report(
             report_type, start_date=start_date, end_date=end_date,
         )
@@ -189,7 +195,10 @@ class WoloService:
 
     async def process_pending(self, limit: int = 20) -> dict[str, Any]:
         config = load_config(self.workspace)
-        agent = OpenHarnessWoloAgent(profile=config.provider_profile)
+        agent = OpenHarnessWoloAgent(
+            profile=config.provider_profile,
+            record_model_call=self.store.record_llm_call,
+        )
         result = await WoloProcessor(self.store, agent).process_pending(limit=limit)
         return to_jsonable(result)
 

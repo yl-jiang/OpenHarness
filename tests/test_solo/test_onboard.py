@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 import onboard.server as onboard_server
 from onboard.services.solo_service import SoloService
+from onboard.services.wolo_service import WoloService
 from solo.core.models import SoloRecord, SoloReport
 
 
@@ -69,6 +70,28 @@ def test_solo_onboard_lists_latest_items_first(tmp_path: Path) -> None:
     assert service.list_entries(limit=1, offset=0)["items"][0]["id"] == new_entry.id
     assert service.list_records(limit=1, offset=0)["items"][0]["id"] == "new-record"
     assert service.list_reports()[0]["id"] == "new-report"
+
+
+@pytest.mark.parametrize(
+    ("service_cls", "workspace_name"),
+    [
+        (SoloService, ".solo"),
+        (WoloService, ".wolo"),
+    ],
+)
+def test_onboard_stats_include_llm_usage_breakdown(service_cls, workspace_name: str, tmp_path: Path) -> None:
+    service = service_cls(tmp_path / workspace_name)
+    service.store.record_llm_call("gpt-5")
+    service.store.record_llm_call("gpt-5")
+    service.store.record_llm_call("claude-sonnet-4.5")
+
+    stats = service.stats()
+
+    assert stats["llm_total_calls"] == 3
+    assert {item["model"]: item["count"] for item in stats["llm_usage_models"]} == {
+        "gpt-5": 2,
+        "claude-sonnet-4.5": 1,
+    }
 
 
 def test_run_server_does_not_overwrite_state_when_port_is_busy(

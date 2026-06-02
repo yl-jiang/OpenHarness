@@ -29,7 +29,7 @@ from solo.core.workspace import get_attachments_dir, get_data_dir, initialize_wo
 from solo.core.utils import _now
 
 DB_FILENAME = "store.db"
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS entries (
@@ -138,6 +138,14 @@ CREATE TABLE IF NOT EXISTS experiments (
 );
 CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
 
+CREATE TABLE IF NOT EXISTS llm_calls (
+    id TEXT PRIMARY KEY,
+    model TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model);
+CREATE INDEX IF NOT EXISTS idx_llm_calls_created_at ON llm_calls(created_at);
+
 CREATE TABLE IF NOT EXISTS _meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -219,6 +227,15 @@ class SoloStore:
             )"""
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status)")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS llm_calls (
+                id TEXT PRIMARY KEY,
+                model TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_calls_created_at ON llm_calls(created_at)")
 
         # Migrate reports table: add period_start/period_end/metadata columns
         report_cols = {
@@ -453,6 +470,17 @@ class SoloStore:
         )
         self._db.commit()
         return entry
+
+    def record_llm_call(self, model: str) -> None:
+        model_name = model.strip()
+        if not model_name:
+            raise ValueError("solo model name cannot be empty")
+        self.initialize()
+        self._db.execute(
+            "INSERT INTO llm_calls (id, model, created_at) VALUES (?, ?, ?)",
+            (uuid4().hex[:12], model_name, _now()),
+        )
+        self._db.commit()
 
     def list_entries(self, *, limit: int | None = None) -> list[SoloEntry]:
         if limit is not None:
@@ -832,6 +860,16 @@ class SoloStore:
             "pending_confirmations": pending_count,
             "last_entry_at": last_row[0] if last_row else None,
             "path": str(self.root),
+        }
+
+    def llm_usage_summary(self) -> dict[str, object]:
+        cur = self._db.execute(
+            "SELECT model, COUNT(*) AS count FROM llm_calls GROUP BY model ORDER BY count DESC, model ASC"
+        )
+        models = [{"model": row[0], "count": int(row[1])} for row in cur.fetchall()]
+        return {
+            "total_calls": sum(item["count"] for item in models),
+            "models": models,
         }
 
     def dates_with_activity(self) -> set[str]:
