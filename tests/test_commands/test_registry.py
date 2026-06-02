@@ -65,6 +65,20 @@ def _make_context(tmp_path: Path) -> CommandContext:
     )
 
 
+@pytest.mark.asyncio
+async def test_reload_command_reloads_settings_and_refreshes_runtime(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/reload")
+    assert command is not None
+
+    result = await command.handler(args, _make_context(tmp_path))
+
+    assert result.refresh_runtime is True
+    assert "Reloaded configuration." in (result.message or "")
+
+
 def test_registry_reexports_split_command_modules() -> None:
     from openharness.commands import core, memory, skills
 
@@ -540,6 +554,31 @@ async def test_skill_alias_command_loads_skill_as_submit_prompt(tmp_path: Path, 
 
 
 @pytest.mark.asyncio
+async def test_skill_namespace_alias_command_loads_skill(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
+    skill_dir = tmp_path / "config" / "skills" / "weekly-report"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: weekly-report\ndescription: Summarize weekly work\n---\n\n# Weekly Report\nSummarize the week.",
+        encoding="utf-8",
+    )
+
+    context = _make_context(tmp_path)
+
+    result = await registry_module.resolve_skill_alias_command(
+        "/skill:weekly-report what shipped this week?", context
+    )
+
+    assert result is not None
+    assert result.message == "Loaded skill: weekly-report"
+    assert result.submit_prompt is not None
+    assert "# Weekly Report\nSummarize the week." in result.submit_prompt
+    assert result.submit_prompt.endswith("\n\nwhat shipped this week?")
+    assert context.engine.tool_metadata[ToolMetadataKey.INVOKED_SKILLS.value] == ["weekly-report"]
+
+
+@pytest.mark.asyncio
 async def test_non_user_invocable_skills_are_hidden_from_user_commands(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setattr(Path, "home", lambda: tmp_path / "home")
@@ -620,7 +659,7 @@ async def test_skills_command_lists_project_skill_cleanly(tmp_path: Path, monkey
     result = await command.handler(args, _make_context(repo))
 
     assert "Project skills (1)" in result.message
-    assert "/triage" in result.message
+    assert "/skill:triage" in result.message
     assert "Triage workflow." in result.message
     assert "path: .agents/skills/triage/SKILL.md" in result.message
     assert ".agents/skills/triage/SKILL.md" in result.message
@@ -639,7 +678,7 @@ def test_format_skills_list_uses_separate_lines_for_description_and_path(tmp_pat
     result = _format_skills_list([skill], tmp_path)
 
     assert "Project skills (1)" in result
-    assert "/triage" in result
+    assert "/skill:triage" in result
     assert "Triage workflow." in result
     assert "path: .agents/skills/triage/SKILL.md" in result
 

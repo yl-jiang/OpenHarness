@@ -177,7 +177,7 @@ class WoloProcessor:
         agent: OpenHarnessWoloAgent | None = None,
     ) -> None:
         self.store = store
-        self.agent = agent or OpenHarnessWoloAgent()
+        self.agent = agent or OpenHarnessWoloAgent(record_model_call=store.record_llm_call)
 
     async def process_pending(
         self,

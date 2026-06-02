@@ -17,6 +17,7 @@ from openharness.engine.stream_events import AssistantTextDelta, AssistantTurnCo
 from openharness.engine.types import ToolMetadataKey
 from openharness.permissions.checker import PermissionChecker
 from openharness.permissions.modes import PermissionMode
+from openharness.api.recording_client import wrap_with_model_call_recorder
 from openharness.skills import load_skill_registry
 from openharness.ui.runtime import _resolve_api_client_from_settings, _resolve_vision_config
 from openharness.utils.log import get_logger
@@ -52,6 +53,7 @@ _WOLO_TOOL_ROUTER_PROMPT = """你是 wolo app 的语义路由 agent。用户通�
 | 询问过往工作/做过什么/综合回顾（开放性问题） | → wolo_work_query（聚合 records + decisions + highlights） |
 | 查某条记录对应的原图 / 原文件 / 来源消息 | → wolo_show |
 | 查状态/数量/路径 | → wolo_status |
+| 查 LLM 调用次数 / 模型使用统计 | → wolo_llm_usage |
 | 查当前时间/日期/时区 | → wolo_get_now |
 | 查待办/完成项 | → wolo_todos 或 wolo_done |
 | 更新待办状态/信息 | → wolo_update_todo |
@@ -157,6 +159,7 @@ _TOOL_LABELS: dict[str, str] = {
     "playbook": "📘 查看打法",
     "show": "🖼️ 查看来源",
     "status": "📊 查看状态",
+    "llm_usage": "🤖 模型调用统计",
     "get_now": "🕐 查询时间",
     "remind": "⏰ 设置提醒",
     "schedule": "📅 定时任务",
@@ -413,8 +416,9 @@ class WoloQueryRunner:
     ) -> None:
         settings = load_settings().merge_cli_overrides(active_profile=profile, model=model)
         self._settings = settings
-        self._client = api_client or _resolve_api_client_from_settings(settings)
         self._store = store
+        base_client = api_client or _resolve_api_client_from_settings(settings)
+        self._client = wrap_with_model_call_recorder(base_client, self._store.record_llm_call)
 
     async def stream_run(
         self,

@@ -181,7 +181,7 @@ class SoloProcessor:
         agent: OpenHarnessSoloAgent | None = None,
     ) -> None:
         self.store = store
-        self.agent = agent or OpenHarnessSoloAgent()
+        self.agent = agent or OpenHarnessSoloAgent(record_model_call=store.record_llm_call)
 
     async def process_pending(
         self,

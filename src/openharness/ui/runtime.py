@@ -820,6 +820,16 @@ def refresh_runtime_client(bundle: RuntimeBundle) -> None:
             default_model=settings.model,
         )
     bundle.engine.set_model(settings.model)
+    # Rebuild the permission checker so that permission.mode changes in
+    # settings.json are actually enforced, not just reflected in the TUI.
+    apply_skill_path_rules(
+        settings.permission,
+        cwd=bundle.cwd,
+        extra_skill_dirs=bundle.extra_skill_dirs,
+        extra_plugin_roots=bundle.extra_plugin_roots,
+        settings=settings,
+    )
+    bundle.engine.set_permission_checker(PermissionChecker(settings.permission))
     refresher = bundle.engine.tool_metadata.get("system_prompt_refresher")
     if callable(refresher):
         refresher()
