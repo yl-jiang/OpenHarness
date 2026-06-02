@@ -1,5 +1,3 @@
-import { Fragment } from 'react';
-
 import {
   Bar,
   BarChart,
@@ -233,31 +231,31 @@ export function ModelTokenUsageChart({
               }}
               labelFormatter={(value: string) => value}
             />
-            {series.map(({ model, colors }) => (
-              <Fragment key={model}>
-                <Line
-                  type="linear"
-                  dataKey={inputKey(model)}
-                  name={`${model} input`}
-                  stroke={colors.input}
-                  strokeWidth={1.75}
-                  isAnimationActive={false}
-                  dot={{ r: 2.5, fill: colors.input, strokeWidth: 0 }}
-                  activeDot={{ r: 4 }}
-                />
-                <Line
-                  type="linear"
-                  dataKey={outputKey(model)}
-                  name={`${model} output`}
-                  stroke={colors.output}
-                  strokeWidth={1.75}
-                  strokeDasharray="6 4"
-                  isAnimationActive={false}
-                  dot={{ r: 2.5, fill: colors.output, strokeWidth: 0 }}
-                  activeDot={{ r: 4 }}
-                />
-              </Fragment>
-            ))}
+            {series.flatMap(({ model, colors }) => [
+              <Line
+                key={inputKey(model)}
+                type="linear"
+                dataKey={inputKey(model)}
+                name={`${model} input`}
+                stroke={colors.input}
+                strokeWidth={1.75}
+                isAnimationActive={false}
+                dot={{ r: 2.5, fill: colors.input, strokeWidth: 0 }}
+                activeDot={{ r: 4 }}
+              />,
+              <Line
+                key={outputKey(model)}
+                type="linear"
+                dataKey={outputKey(model)}
+                name={`${model} output`}
+                stroke={colors.output}
+                strokeWidth={1.75}
+                strokeDasharray="6 4"
+                isAnimationActive={false}
+                dot={{ r: 2.5, fill: colors.output, strokeWidth: 0 }}
+                activeDot={{ r: 4 }}
+              />,
+            ])}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
