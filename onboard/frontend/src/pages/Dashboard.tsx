@@ -25,12 +25,37 @@ export function Dashboard({ appName }: { appName: AppName }) {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         <StatsCard label="Entries" value={data.total_entries} />
         <StatsCard label="Records" value={data.total_records} />
         <StatsCard label="This week" value={data.this_week_records} />
         <StatsCard label="Pending todos" value={data.pending_todos} />
+        <StatsCard label="LLM calls" value={data.llm_total_calls} />
       </div>
+
+      <section className="p-5 border border-border rounded-lg bg-surface-1">
+        <div className="flex items-center justify-between gap-4 mb-4">
+          <h3 className="text-sm font-medium text-text m-0">LLM Model Usage</h3>
+          <span className="text-[12px] font-mono text-text-muted">
+            total {data.llm_total_calls.toLocaleString()}
+          </span>
+        </div>
+        {data.llm_usage_models.length > 0 ? (
+          <div className="flex flex-wrap gap-2">
+            {data.llm_usage_models.map((item) => (
+              <div
+                key={item.model}
+                className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-[12px]"
+              >
+                <span className="font-mono text-text">{item.model}</span>
+                <span className="text-text-muted">{item.count.toLocaleString()} calls</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="text-sm text-text-muted">No LLM calls yet.</div>
+        )}
+      </section>
 
       {/* Charts grid */}
       <div className="grid grid-cols-2 gap-4">

@@ -132,6 +132,11 @@ export interface TagPoint {
   count: number;
 }
 
+export interface ModelUsagePoint {
+  model: string;
+  count: number;
+}
+
 export interface AppStats {
   total_entries: number;
   total_records: number;
@@ -139,6 +144,8 @@ export interface AppStats {
   total_todos: number;
   pending_todos: number;
   this_week_records: number;
+  llm_total_calls: number;
+  llm_usage_models: ModelUsagePoint[];
   total_decisions?: number;
   total_highlights?: number;
   open_blockers?: number;

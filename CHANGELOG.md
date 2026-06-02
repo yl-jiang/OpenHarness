@@ -8,6 +8,9 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Added
 
+- Onboard dashboard now shows cumulative solo/wolo LLM invocation counts with per-model breakdown, and standalone `solo` / `wolo` now expose matching `solo_llm_usage` / `wolo_llm_usage` tools plus `/solo llm-usage` / `/wolo llm-usage` slash commands.
+- React TUI slash picker now namespaces skills under a `skill:` prefix (e.g. `/skill:review`) so they are visually distinct from built-in commands; skills stay discoverable by bare name and the explicit `/skill:<name>` form is accepted both in the picker and when invoking a skill directly. `/skills list` output uses the same `/skill:<name>` form.
+- `/reload` slash command reloads configuration from disk (e.g. after editing `.openharness/settings.json`) and reapplies provider, model, system prompt, and UI state without restarting the TUI.
 - `solo` / `wolo` Feishu (and other channel) tool-call hints now render a human-friendly action label plus the key arguments being executed (e.g. record content, search keyword, digest domain) instead of only the raw tool name, and `solo_fetch_digest` / `wolo_fetch_digest` now stream live backend research progress over the channel — which seed sources are being fetched, each AI research round's planned sources, per-round success/failure summaries, and the final extraction step.
 - Hooks now support a `priority` field (default `0`). Within an event, hooks run highest-priority first, and hooks sharing a priority keep their registration order. This lets users order, for example, a security-check hook ahead of a logging hook regardless of where each is declared in settings or contributed by plugins.
 - `solo` is now a standalone app/package with its own `~/.solo` workspace, config, CLI, gateway bridge/service, OpenHarness-backed domain agent, model-structured bulk import, zero-guess pending confirmations, reports, reminders, and solo-only tools.
@@ -44,12 +47,14 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Changed
 
+- `skill_manager` patch action now uses `old_str` / `new_str` parameters (was `old_string` / `new_string`) to match the `edit_file` tool, removing the dual edit-parameter naming convention that caused models to repeatedly mis-call `edit_file` with `old_string` / `new_string` and fail input validation.
 - `wolo` now separates main record structuring from work artifact extraction and retries malformed JSON responses, so long-running apps keep the primary log even when artifact extraction fails transiently.
 - `/export` now writes a timestamped Markdown session export into the current working directory by default, using a richer Kimi-style transcript format with frontmatter, overview, turns, tool calls, and tool results.
 - **Approval architecture refactor**: Consolidated three scattered approval entry points into a single `ApprovalCoordinator` subsystem (`src/openharness/permissions/approvals.py`).  `PermissionChecker` is now a pure policy engine (no session memory); all remembered-approval state lives in `ApprovalState` inside `ApprovalCoordinator`.  Preview-capable tools (`edit_file`, `write_file`) defer the soft-confirmation check to the richer diff-preview prompt so users see exactly one approval modal per file write.  Approval state persists correctly across conversation turns via `QueryEngine._approval_coordinator`.
 
 ### Fixed
 
+- `edit_file` now also accepts `old_string` / `new_string` as aliases for its `old_str` / `new_str` parameters (via pydantic validation aliases), so models that follow the common Anthropic-style edit naming no longer fail input validation and retry; the API schema still advertises `old_str` / `new_str` as canonical.
 - Onboard Chat now forwards solo/wolo runner progress and tool-internal backend progress to the WebSocket UI, so long-running chat actions show the same detailed operation updates that channel-triggered runs already send.
 - Onboard Feed Digests "Fetch Now" now streams real engine progress (e.g. research/scoring/synthesis stages) over a Server-Sent Events endpoint for both `solo` and `wolo`, replacing the previous cosmetic timer that only emitted solo-style stage labels and left `wolo` without a live progress indicator during long runs.
 

@@ -418,6 +418,7 @@ wolo onboard stop
 /wolo view 10
 /wolo report weekly
 /wolo status
+/wolo llm-usage
 /wolo backfill 2026-05-17 昨天主要在写 wolo 测试和 README
 ```
 
@@ -446,6 +447,7 @@ wolo onboard stop
 | `wolo_update_record` | 修正已有记录 |
 | `wolo_delete_record` | 删除明确指定的记录 |
 | `wolo_status` | 查看状态 |
+| `wolo_llm_usage` | 查看累计 LLM 模型调用次数（按模型分组） |
 | `wolo_get_now` | 获取当前本地时间 |
 | `wolo_profile_update` | 记录可审核的工作上下文更新建议 |
 | `wolo_remember` | 写入长期工作记忆 |

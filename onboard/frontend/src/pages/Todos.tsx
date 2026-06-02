@@ -8,6 +8,25 @@ const columns: { key: TodoStatus; label: string; dot: string }[] = [
   { key: 'done', label: 'Done', dot: 'bg-success' },
 ];
 
+// The most relevant timestamp for a todo depending on its status: done cards
+// surface completion time, others surface creation time.
+function todoTime(todo: Todo): string {
+  if (todo.status === 'done') return todo.completed_at || todo.created_at;
+  return todo.created_at;
+}
+
+function relativeTime(dateStr: string): string {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return '';
+  const diff = Date.now() - d.getTime();
+  if (diff < 60_000) return 'just now';
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 export function Todos({ appName }: { appName: AppName }) {
   const { data, error, loading, reload } = useApi(() => api.todos(appName), [appName], { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS });
   if (loading) {
@@ -37,6 +56,7 @@ export function Todos({ appName }: { appName: AppName }) {
             </div>
             {data
               .filter((todo) => todo.status === col.key)
+              .sort((a, b) => new Date(todoTime(b)).getTime() - new Date(todoTime(a)).getTime())
               .map((todo) => (
                 <article key={todo.id} className="p-3.5 border border-border rounded-md bg-surface-1 hover:bg-surface-2 transition-colors">
                   <div className="text-[13px] font-medium text-text mb-1">{todo.title}</div>
@@ -46,6 +66,14 @@ export function Todos({ appName }: { appName: AppName }) {
                     <span className={`${todo.priority === 'high' ? 'text-danger' : todo.priority === 'medium' ? 'text-warning' : ''}`}>
                       {todo.priority}
                     </span>
+                    {relativeTime(todoTime(todo)) ? (
+                      <>
+                        <span>·</span>
+                        <span title={col.key === 'done' ? 'Completed' : 'Created'}>
+                          {col.key === 'done' ? 'done ' : ''}{relativeTime(todoTime(todo))}
+                        </span>
+                      </>
+                    ) : null}
                   </div>
                   {todo.status !== 'done' ? (
                     <button
