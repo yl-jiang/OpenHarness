@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from typing import Any
 
 from openharness.api.client import (
@@ -12,7 +11,7 @@ from openharness.api.client import (
     ApiTextDeltaEvent,
     SupportsStreamingMessages,
 )
-from openharness.api.recording_client import wrap_with_model_call_recorder
+from openharness.api.recording_client import ModelCallRecorder, wrap_with_model_call_recorder
 from openharness.config import load_settings
 from openharness.engine.messages import ConversationMessage
 from openharness.ui.runtime import _resolve_api_client_from_settings
@@ -30,7 +29,7 @@ class OpenHarnessSoloAgent:
         profile: str | None = None,
         api_client: SupportsStreamingMessages | None = None,
         model: str | None = None,
-        record_model_call: Callable[[str], None] | None = None,
+        record_model_call: ModelCallRecorder | None = None,
     ) -> None:
         settings = load_settings().merge_cli_overrides(active_profile=profile, model=model)
         self._settings = settings

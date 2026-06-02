@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, tzinfo
 import json
 from pathlib import Path
 import shutil
@@ -31,7 +31,7 @@ from wolo.core.workspace import get_attachments_dir, get_data_dir, initialize_wo
 from wolo.core.utils import _now
 
 DB_FILENAME = "store.db"
-_SCHEMA_VERSION = 3
+_SCHEMA_VERSION = 4
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS entries (
@@ -167,7 +167,9 @@ CREATE INDEX IF NOT EXISTS idx_experiments_status ON experiments(status);
 CREATE TABLE IF NOT EXISTS llm_calls (
     id TEXT PRIMARY KEY,
     model TEXT NOT NULL,
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_created_at ON llm_calls(created_at);
@@ -259,11 +261,25 @@ class WoloStore:
             """CREATE TABLE IF NOT EXISTS llm_calls (
                 id TEXT PRIMARY KEY,
                 model TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0
             )"""
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_calls_created_at ON llm_calls(created_at)")
+        llm_call_columns = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(llm_calls)").fetchall()
+        }
+        if "input_tokens" not in llm_call_columns:
+            self._conn.execute(
+                "ALTER TABLE llm_calls ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0"
+            )
+        if "output_tokens" not in llm_call_columns:
+            self._conn.execute(
+                "ALTER TABLE llm_calls ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0"
+            )
 
         # Migrate reports table: add period_start/period_end/metadata columns
         report_cols = {
@@ -521,14 +537,29 @@ class WoloStore:
         self._db.commit()
         return entry
 
-    def record_llm_call(self, model: str) -> None:
+    def record_llm_call(
+        self,
+        model: str,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        created_at: str | None = None,
+    ) -> None:
         model_name = model.strip()
         if not model_name:
             raise ValueError("wolo model name cannot be empty")
         self.initialize()
+        prompt_tokens = max(0, int(input_tokens))
+        completion_tokens = max(0, int(output_tokens))
         self._db.execute(
-            "INSERT INTO llm_calls (id, model, created_at) VALUES (?, ?, ?)",
-            (uuid4().hex[:12], model_name, _now()),
+            "INSERT INTO llm_calls (id, model, created_at, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?)",
+            (
+                uuid4().hex[:12],
+                model_name,
+                created_at or _now(),
+                prompt_tokens,
+                completion_tokens,
+            ),
         )
         self._db.commit()
 
@@ -972,13 +1003,62 @@ class WoloStore:
 
     def llm_usage_summary(self) -> dict[str, object]:
         cur = self._db.execute(
-            "SELECT model, COUNT(*) AS count FROM llm_calls GROUP BY model ORDER BY count DESC, model ASC"
+            "SELECT model, COUNT(*) AS count, "
+            "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
+            "COALESCE(SUM(output_tokens), 0) AS output_tokens "
+            "FROM llm_calls GROUP BY model ORDER BY count DESC, model ASC"
         )
-        models = [{"model": row[0], "count": int(row[1])} for row in cur.fetchall()]
+        models = [
+            {
+                "model": row[0],
+                "count": int(row[1]),
+                "input_tokens": int(row[2] or 0),
+                "output_tokens": int(row[3] or 0),
+            }
+            for row in cur.fetchall()
+        ]
         return {
             "total_calls": sum(item["count"] for item in models),
+            "total_input_tokens": sum(item["input_tokens"] for item in models),
+            "total_output_tokens": sum(item["output_tokens"] for item in models),
             "models": models,
         }
+
+    def llm_token_daily_summary(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        target_tz: tzinfo | None = None,
+    ) -> list[dict[str, object]]:
+        zone = target_tz or datetime.now().astimezone().tzinfo or timezone.utc
+        cur = self._db.execute(
+            "SELECT model, created_at, input_tokens, output_tokens "
+            "FROM llm_calls ORDER BY created_at ASC, model ASC"
+        )
+        daily: dict[tuple[str, str], dict[str, object]] = {}
+        for row in cur.fetchall():
+            model = str(row[0] or "").strip()
+            created_at = str(row[1] or "").strip()
+            if not model or not created_at:
+                continue
+            try:
+                call_at = datetime.fromisoformat(created_at)
+            except ValueError:
+                continue
+            if call_at.tzinfo is None:
+                call_at = call_at.replace(tzinfo=timezone.utc)
+            day = call_at.astimezone(zone).date().isoformat()
+            if day < start_date or day > end_date:
+                continue
+            key = (day, model)
+            point = daily.setdefault(
+                key,
+                {"date": day, "model": model, "input_tokens": 0, "output_tokens": 0},
+            )
+            point["input_tokens"] += max(0, int(row[2] or 0))
+            point["output_tokens"] += max(0, int(row[3] or 0))
+        return sorted(daily.values(), key=lambda item: (str(item["date"]), str(item["model"])))
 
     def dates_with_activity(self) -> set[str]:
         dates: set[str] = set()

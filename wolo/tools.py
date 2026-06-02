@@ -1743,7 +1743,11 @@ def _tool_status() -> ToolDefinition:
 
 
 def _tool_llm_usage() -> ToolDefinition:
-    return _definition("wolo_llm_usage", "Show cumulative wolo LLM model usage counts grouped by model name.", [])
+    return _definition(
+        "wolo_llm_usage",
+        "Show cumulative wolo LLM model usage counts plus input/output token totals grouped by model name.",
+        [],
+    )
 
 
 def _tool_get_now() -> ToolDefinition:

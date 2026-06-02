@@ -482,7 +482,7 @@ solo 的模型路由 agent 会看到一组 solo 专用工具：
 | `solo_update_record` | 修改已入库记录的字段（如纠错） |
 | `solo_delete_record` | 永久删除一条记录（需慎重使用） |
 | `solo_status` | 查看状态 |
-| `solo_llm_usage` | 查看累计 LLM 模型调用次数（按模型分组） |
+| `solo_llm_usage` | 查看累计 LLM 模型调用次数、输入/输出 token 总量，以及按模型分组的用量明细 |
 | `solo_get_now` | 获取当前日期时间、星期及本地时区信息 |
 | `solo_profile_update` | 记录高价值用户画像更新建议 |
 | `solo_remember` | 将长期稳定的用户背景信息写入 memory 目录 |

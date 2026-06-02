@@ -8,7 +8,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Added
 
-- Onboard dashboard now shows cumulative solo/wolo LLM invocation counts with per-model breakdown, and standalone `solo` / `wolo` now expose matching `solo_llm_usage` / `wolo_llm_usage` tools plus `/solo llm-usage` / `/wolo llm-usage` slash commands.
+- Onboard dashboard now shows cumulative solo/wolo LLM invocation counts plus input/output token totals, including a current-month per-model token trend chart, and standalone `solo` / `wolo` now expose matching `solo_llm_usage` / `wolo_llm_usage` tools plus `/solo llm-usage` / `/wolo llm-usage` slash commands with per-model token breakdowns.
 - React TUI slash picker now namespaces skills under a `skill:` prefix (e.g. `/skill:review`) so they are visually distinct from built-in commands; skills stay discoverable by bare name and the explicit `/skill:<name>` form is accepted both in the picker and when invoking a skill directly. `/skills list` output uses the same `/skill:<name>` form.
 - `/reload` slash command reloads configuration from disk (e.g. after editing `.openharness/settings.json`) and reapplies provider, model, system prompt, and UI state without restarting the TUI.
 - `solo` / `wolo` Feishu (and other channel) tool-call hints now render a human-friendly action label plus the key arguments being executed (e.g. record content, search keyword, digest domain) instead of only the raw tool name, and `solo_fetch_digest` / `wolo_fetch_digest` now stream live backend research progress over the channel — which seed sources are being fetched, each AI research round's planned sources, per-round success/failure summaries, and the final extraction step.

@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 
 import { api } from '../api/client';
 import type { AppName } from '../api/types';
-import { ActivityHeatmap, EmotionPieChart } from '../components/Charts';
+import { ActivityHeatmap, EmotionPieChart, ModelTokenUsageChart } from '../components/Charts';
 import { StatsCard } from '../components/StatsCard';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
@@ -34,11 +34,37 @@ export function Dashboard({ appName }: { appName: AppName }) {
       </div>
 
       <section className="p-5 border border-border rounded-lg bg-surface-1">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-sm font-medium text-text m-0">LLM Token Usage</h3>
+            <div className="mt-1 text-[12px] text-text-muted">
+              Current month · {data.llm_monthly_start_date} → {data.llm_monthly_end_date}
+            </div>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2 text-[12px]">
+            <span className="rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text">
+              input {data.llm_total_input_tokens.toLocaleString()}
+            </span>
+            <span className="rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text">
+              output {data.llm_total_output_tokens.toLocaleString()}
+            </span>
+          </div>
+        </div>
+        <ModelTokenUsageChart
+          data={data.llm_monthly_tokens}
+          startDate={data.llm_monthly_start_date}
+          endDate={data.llm_monthly_end_date}
+        />
+      </section>
+
+      <section className="p-5 border border-border rounded-lg bg-surface-1">
         <div className="flex items-center justify-between gap-4 mb-4">
           <h3 className="text-sm font-medium text-text m-0">LLM Model Usage</h3>
-          <span className="text-[12px] font-mono text-text-muted">
-            total {data.llm_total_calls.toLocaleString()}
-          </span>
+          <div className="flex flex-wrap justify-end gap-2 text-[12px] font-mono text-text-muted">
+            <span>calls {data.llm_total_calls.toLocaleString()}</span>
+            <span>input {data.llm_total_input_tokens.toLocaleString()}</span>
+            <span>output {data.llm_total_output_tokens.toLocaleString()}</span>
+          </div>
         </div>
         {data.llm_usage_models.length > 0 ? (
           <div className="flex flex-wrap gap-2">
@@ -49,6 +75,8 @@ export function Dashboard({ appName }: { appName: AppName }) {
               >
                 <span className="font-mono text-text">{item.model}</span>
                 <span className="text-text-muted">{item.count.toLocaleString()} calls</span>
+                <span className="text-text-muted">in {item.input_tokens.toLocaleString()}</span>
+                <span className="text-text-muted">out {item.output_tokens.toLocaleString()}</span>
               </div>
             ))}
           </div>

@@ -273,9 +273,9 @@ def test_solo_command_prefix_supports_llm_usage():
 async def test_standalone_solo_gateway_slash_command_reports_llm_usage(tmp_path: Path, monkeypatch):
     workspace = tmp_path / ".solo"
     store = SoloStore(workspace)
-    store.record_llm_call("gpt-5")
-    store.record_llm_call("gpt-5")
-    store.record_llm_call("claude-sonnet-4.5")
+    store.record_llm_call("gpt-5", input_tokens=120, output_tokens=48)
+    store.record_llm_call("gpt-5", input_tokens=80, output_tokens=32)
+    store.record_llm_call("claude-sonnet-4.5", input_tokens=64, output_tokens=20)
     bus = MessageBus()
 
     class FailRunner:
@@ -303,8 +303,9 @@ async def test_standalone_solo_gateway_slash_command_reports_llm_usage(tmp_path:
             await task
 
     assert "solo LLM 调用累计 3 次" in outbound.content
-    assert "- gpt-5: 2 次" in outbound.content
-    assert "- claude-sonnet-4.5: 1 次" in outbound.content
+    assert "输入 token 累计 264，输出 token 累计 100" in outbound.content
+    assert "- gpt-5: 2 次，输入 200，输出 80" in outbound.content
+    assert "- claude-sonnet-4.5: 1 次，输入 64，输出 20" in outbound.content
 
 
 def test_standalone_solo_gateway_run_configures_foreground_logging(tmp_path: Path):

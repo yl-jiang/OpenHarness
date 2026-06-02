@@ -2,6 +2,7 @@ import socket
 import sys
 import types
 from contextlib import contextmanager
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -81,17 +82,65 @@ def test_solo_onboard_lists_latest_items_first(tmp_path: Path) -> None:
 )
 def test_onboard_stats_include_llm_usage_breakdown(service_cls, workspace_name: str, tmp_path: Path) -> None:
     service = service_cls(tmp_path / workspace_name)
-    service.store.record_llm_call("gpt-5")
-    service.store.record_llm_call("gpt-5")
-    service.store.record_llm_call("claude-sonnet-4.5")
+    today = datetime.now().astimezone().date()
+    month_start = today.replace(day=1)
+    second_day = month_start if today == month_start else month_start + timedelta(days=1)
+    previous_month_day = month_start - timedelta(days=1)
+    service.store.record_llm_call(
+        "gpt-5",
+        input_tokens=120,
+        output_tokens=48,
+        created_at=f"{month_start.isoformat()}T08:00:00+08:00",
+    )
+    service.store.record_llm_call(
+        "gpt-5",
+        input_tokens=80,
+        output_tokens=32,
+        created_at=f"{second_day.isoformat()}T08:00:00+08:00",
+    )
+    service.store.record_llm_call(
+        "claude-sonnet-4.5",
+        input_tokens=64,
+        output_tokens=20,
+        created_at=f"{second_day.isoformat()}T10:00:00+08:00",
+    )
+    service.store.record_llm_call(
+        "legacy-model",
+        input_tokens=999,
+        output_tokens=500,
+        created_at=f"{previous_month_day.isoformat()}T08:00:00+08:00",
+    )
 
     stats = service.stats()
 
-    assert stats["llm_total_calls"] == 3
+    assert stats["llm_total_calls"] == 4
+    assert stats["llm_total_input_tokens"] == 1263
+    assert stats["llm_total_output_tokens"] == 600
+    assert stats["llm_monthly_start_date"] == month_start.isoformat()
+    assert stats["llm_monthly_end_date"] == today.isoformat()
     assert {item["model"]: item["count"] for item in stats["llm_usage_models"]} == {
+        "legacy-model": 1,
         "gpt-5": 2,
         "claude-sonnet-4.5": 1,
     }
+    assert {item["model"]: item["input_tokens"] for item in stats["llm_usage_models"]} == {
+        "legacy-model": 999,
+        "gpt-5": 200,
+        "claude-sonnet-4.5": 64,
+    }
+    assert {item["model"]: item["output_tokens"] for item in stats["llm_usage_models"]} == {
+        "legacy-model": 500,
+        "gpt-5": 80,
+        "claude-sonnet-4.5": 20,
+    }
+    monthly_points = {
+        (item["date"], item["model"]): (item["input_tokens"], item["output_tokens"])
+        for item in stats["llm_monthly_tokens"]
+    }
+    assert monthly_points[(month_start.isoformat(), "gpt-5")] == (120, 48)
+    assert monthly_points[(second_day.isoformat(), "gpt-5")] == (80, 32)
+    assert monthly_points[(second_day.isoformat(), "claude-sonnet-4.5")] == (64, 20)
+    assert all(item["model"] != "legacy-model" for item in stats["llm_monthly_tokens"])
 
 
 def test_run_server_does_not_overwrite_state_when_port_is_busy(

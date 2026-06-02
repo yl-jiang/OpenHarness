@@ -114,6 +114,11 @@ def this_week_start(today: date | None = None) -> date:
     return current - timedelta(days=current.weekday())
 
 
+def current_month_range(today: date | None = None) -> tuple[date, date]:
+    current = today or datetime.now().astimezone().date()
+    return current.replace(day=1), current
+
+
 def count_this_week(records: Iterable[Any]) -> int:
     start = this_week_start()
     count = 0

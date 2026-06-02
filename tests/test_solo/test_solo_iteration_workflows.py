@@ -104,9 +104,9 @@ async def test_solo_tools_expose_patterns_experiments_and_rulebook(tmp_path: Pat
 @pytest.mark.asyncio
 async def test_solo_tool_reports_llm_usage_by_model(tmp_path: Path):
     store = SoloStore(tmp_path / ".solo")
-    store.record_llm_call("gpt-5")
-    store.record_llm_call("gpt-5")
-    store.record_llm_call("claude-sonnet-4.5")
+    store.record_llm_call("gpt-5", input_tokens=120, output_tokens=48)
+    store.record_llm_call("gpt-5", input_tokens=80, output_tokens=32)
+    store.record_llm_call("claude-sonnet-4.5", input_tokens=64, output_tokens=20)
 
     registry = SoloToolRegistry(store)
     names = {schema["name"] for schema in registry.tool_schemas()}
@@ -114,8 +114,9 @@ async def test_solo_tool_reports_llm_usage_by_model(tmp_path: Path):
     assert "solo_llm_usage" in names
     result = await registry.execute("solo_llm_usage", {})
     assert "solo LLM 调用累计 3 次" in result
-    assert "- gpt-5: 2 次" in result
-    assert "- claude-sonnet-4.5: 1 次" in result
+    assert "输入 token 累计 264，输出 token 累计 100" in result
+    assert "- gpt-5: 2 次，输入 200，输出 80" in result
+    assert "- claude-sonnet-4.5: 1 次，输入 64，输出 20" in result
 
 
 @pytest.mark.asyncio

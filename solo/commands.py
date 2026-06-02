@@ -112,14 +112,23 @@ def format_solo_llm_usage(summary: dict[str, Any]) -> str:
     if total <= 0 or not isinstance(models, list):
         return "solo 还没有 LLM 调用记录。"
 
-    lines = [f"solo LLM 调用累计 {total} 次"]
+    total_input_tokens = int(summary.get("total_input_tokens") or 0)
+    total_output_tokens = int(summary.get("total_output_tokens") or 0)
+    lines = [
+        f"solo LLM 调用累计 {total} 次",
+        f"输入 token 累计 {total_input_tokens}，输出 token 累计 {total_output_tokens}",
+    ]
     for item in models:
         if not isinstance(item, dict):
             continue
         model = str(item.get("model") or "").strip()
         count = int(item.get("count") or 0)
+        input_tokens = int(item.get("input_tokens") or 0)
+        output_tokens = int(item.get("output_tokens") or 0)
         if model and count > 0:
-            lines.append(f"- {model}: {count} 次")
+            lines.append(
+                f"- {model}: {count} 次，输入 {input_tokens}，输出 {output_tokens}"
+            )
     return "\n".join(lines)
 
 

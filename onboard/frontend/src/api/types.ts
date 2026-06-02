@@ -135,6 +135,15 @@ export interface TagPoint {
 export interface ModelUsagePoint {
   model: string;
   count: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface ModelTokenDailyPoint {
+  date: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
 }
 
 export interface AppStats {
@@ -145,7 +154,12 @@ export interface AppStats {
   pending_todos: number;
   this_week_records: number;
   llm_total_calls: number;
+  llm_total_input_tokens: number;
+  llm_total_output_tokens: number;
   llm_usage_models: ModelUsagePoint[];
+  llm_monthly_start_date: string;
+  llm_monthly_end_date: string;
+  llm_monthly_tokens: ModelTokenDailyPoint[];
   total_decisions?: number;
   total_highlights?: number;
   open_blockers?: number;

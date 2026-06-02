@@ -17,8 +17,10 @@ class _Settings:
 
 
 class _TextClient:
-    def __init__(self, output: str) -> None:
+    def __init__(self, output: str, *, input_tokens: int = 1, output_tokens: int = 1) -> None:
         self.output = output
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
         self.requests: list[ApiMessageRequest] = []
 
     async def stream_message(self, request):
@@ -26,7 +28,10 @@ class _TextClient:
         message = ConversationMessage(role="assistant", content=[TextBlock(text=self.output)])
         yield ApiMessageCompleteEvent(
             message=message,
-            usage=UsageSnapshot(input_tokens=1, output_tokens=1),
+            usage=UsageSnapshot(
+                input_tokens=self.input_tokens,
+                output_tokens=self.output_tokens,
+            ),
             stop_reason="end_turn",
         )
 
@@ -55,7 +60,7 @@ async def test_report_generation_rejects_empty_model_body(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_agent_records_model_usage_summary(tmp_path, monkeypatch):
-    client = _TextClient("insight report")
+    client = _TextClient("insight report", input_tokens=13, output_tokens=5)
     store = SoloStore(tmp_path / ".solo")
     monkeypatch.setattr("solo.agent.load_settings", lambda: _Settings())
     agent = OpenHarnessSoloAgent(api_client=client, record_model_call=store.record_llm_call)
@@ -64,4 +69,8 @@ async def test_agent_records_model_usage_summary(tmp_path, monkeypatch):
 
     usage = store.llm_usage_summary()
     assert usage["total_calls"] == 1
-    assert usage["models"] == [{"model": "test-model", "count": 1}]
+    assert usage["total_input_tokens"] == 13
+    assert usage["total_output_tokens"] == 5
+    assert usage["models"] == [
+        {"model": "test-model", "count": 1, "input_tokens": 13, "output_tokens": 5}
+    ]

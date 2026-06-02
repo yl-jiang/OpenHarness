@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
 from wolo.agent import OpenHarnessWoloAgent
@@ -13,6 +14,7 @@ from wolo.processor import WoloProcessor
 
 from onboard.services.common import (
     count_this_week,
+    current_month_range,
     daily_counts,
     emotion_distribution,
     filter_entries,
@@ -42,6 +44,13 @@ class WoloService:
         pending_todos = [todo for todo in todos if todo.status != "done"]
         open_blockers = [item for item in blockers if "resolved" not in item.tags.lower()]
         llm_usage = self.store.llm_usage_summary()
+        month_start, month_end = current_month_range()
+        target_tz = datetime.now().astimezone().tzinfo or timezone.utc
+        monthly_tokens = self.store.llm_token_daily_summary(
+            start_date=month_start.isoformat(),
+            end_date=month_end.isoformat(),
+            target_tz=target_tz,
+        )
         return {
             "total_entries": int(status["entries"]),
             "total_records": int(status["records"]),
@@ -53,7 +62,12 @@ class WoloService:
             "total_highlights": int(status["highlights"]),
             "open_blockers": len(open_blockers),
             "llm_total_calls": int(llm_usage["total_calls"]),
+            "llm_total_input_tokens": int(llm_usage["total_input_tokens"]),
+            "llm_total_output_tokens": int(llm_usage["total_output_tokens"]),
             "llm_usage_models": llm_usage["models"],
+            "llm_monthly_start_date": month_start.isoformat(),
+            "llm_monthly_end_date": month_end.isoformat(),
+            "llm_monthly_tokens": monthly_tokens,
             "emotion_distribution": emotion_distribution(records),
             "daily_counts": daily_counts(records),
             "top_tags": top_tags(records),
