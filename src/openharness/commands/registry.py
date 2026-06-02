@@ -14,6 +14,7 @@ import pyperclip
 from openharness.auth.manager import AuthManager
 from openharness.config.paths import (
     get_config_dir,
+    get_config_file_path,
     get_data_dir,
     get_feedback_log_path,
     get_project_config_dir,
@@ -755,6 +756,24 @@ def create_default_command_registry(
             save_settings(settings)
             return CommandResult(message=f"Updated {key}")
         return CommandResult(message="Usage: /config [show|set KEY VALUE]")
+
+    async def _reload_handler(_: str, context: CommandContext) -> CommandResult:
+        del context
+        try:
+            settings = load_settings()
+        except Exception as exc:  # noqa: BLE001 - surface config errors to the user
+            return CommandResult(message=f"Failed to reload configuration: {exc}")
+        config_path = get_config_file_path()
+        location = config_path if config_path.exists() else "built-in defaults"
+        message = (
+            "Reloaded configuration.\n"
+            f"- source: {location}\n"
+            f"- model: {settings.model}\n"
+            f"- provider: {detect_provider(settings).name}\n"
+            f"- permission: {settings.permission.mode.value}\n"
+            f"- theme: {settings.theme}"
+        )
+        return CommandResult(message=message, refresh_runtime=True)
 
     async def _login_handler(args: str, context: CommandContext) -> CommandResult:
         del context
@@ -1662,6 +1681,7 @@ def create_default_command_registry(
     registry.register(SlashCommand("onboarding", "Show the quickstart guide", _onboarding_handler))
     registry.register(SlashCommand("skills", "List or show available skills", _skills_handler, subcommands=["list", "show"]))
     registry.register(SlashCommand("config", "Show or update configuration", _config_handler, subcommands=["show", "set"]))
+    registry.register(SlashCommand("reload", "Reload configuration from disk without restarting", _reload_handler))
     registry.register(SlashCommand("mcp", "Show MCP status", _mcp_handler, subcommands=["show", "auth"]))
     registry.register(SlashCommand("plugin", "Manage plugins", _plugin_handler, remote_invocable=False, remote_admin_opt_in=True, subcommands=["list", "enable", "disable", "install", "uninstall"]))
     registry.register(SlashCommand("reload-plugins", "Reload plugin discovery for this workspace", _reload_plugins_handler, remote_invocable=False, remote_admin_opt_in=True))
