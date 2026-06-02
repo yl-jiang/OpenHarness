@@ -16,9 +16,6 @@ export function Dashboard({ appName }: { appName: AppName }) {
     return <div className="border border-danger/30 rounded-lg bg-danger/5 p-5 text-sm text-text">{error ?? 'Failed to load dashboard.'}</div>;
   }
 
-  const monthlyInputTokens = data.llm_monthly_tokens.reduce((sum, item) => sum + item.input_tokens, 0);
-  const monthlyOutputTokens = data.llm_monthly_tokens.reduce((sum, item) => sum + item.output_tokens, 0);
-
   return (
     <div className="space-y-6">
       {/* Section label */}
@@ -42,8 +39,9 @@ export function Dashboard({ appName }: { appName: AppName }) {
             <h3 className="text-sm font-medium text-text m-0">LLM Token Usage</h3>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-text-muted">
               <span>
-                Current month totals · month-to-date view
+                Daily totals · current month view
               </span>
+              <span>focus · {data.llm_daily_focus_date}</span>
               <span className="inline-flex items-center gap-1.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-success animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
                 live · 5s
@@ -52,18 +50,18 @@ export function Dashboard({ appName }: { appName: AppName }) {
           </div>
           <div className="flex flex-wrap justify-end gap-2 text-[12px] font-mono">
             <span
-              title={`${monthlyInputTokens.toLocaleString()} input tokens this month`}
+              title={`${data.llm_daily_input_tokens.toLocaleString()} input tokens on ${data.llm_daily_focus_date}`}
               className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text"
             >
               <span className="text-text-muted">input</span>
-              <span className="tabular-nums">{formatTokenAmount(monthlyInputTokens)}</span>
+              <span className="tabular-nums">{formatTokenAmount(data.llm_daily_input_tokens)}</span>
             </span>
             <span
-              title={`${monthlyOutputTokens.toLocaleString()} output tokens this month`}
+              title={`${data.llm_daily_output_tokens.toLocaleString()} output tokens on ${data.llm_daily_focus_date}`}
               className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text"
             >
               <span className="text-text-muted">output</span>
-              <span className="tabular-nums">{formatTokenAmount(monthlyOutputTokens)}</span>
+              <span className="tabular-nums">{formatTokenAmount(data.llm_daily_output_tokens)}</span>
             </span>
           </div>
         </div>
@@ -75,17 +73,26 @@ export function Dashboard({ appName }: { appName: AppName }) {
       </section>
 
       <section className="p-5 border border-border rounded-lg bg-surface-1">
-        <div className="flex items-center justify-between gap-4 mb-4">
-          <h3 className="text-sm font-medium text-text m-0">LLM Model Usage</h3>
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h3 className="text-sm font-medium text-text m-0">LLM Model Usage</h3>
+            <div className="mt-1 text-[12px] text-text-muted">
+              Daily breakdown · {data.llm_daily_focus_date}
+            </div>
+          </div>
           <div className="flex flex-wrap justify-end gap-2 text-[12px] font-mono text-text-muted">
-            <span>calls {data.llm_total_calls.toLocaleString()}</span>
-            <span title={`${data.llm_total_input_tokens.toLocaleString()} input tokens`}>input {formatTokenAmount(data.llm_total_input_tokens)}</span>
-            <span title={`${data.llm_total_output_tokens.toLocaleString()} output tokens`}>output {formatTokenAmount(data.llm_total_output_tokens)}</span>
+            <span>calls {data.llm_daily_total_calls.toLocaleString()}</span>
+            <span title={`${data.llm_daily_input_tokens.toLocaleString()} input tokens on ${data.llm_daily_focus_date}`}>
+              input {formatTokenAmount(data.llm_daily_input_tokens)}
+            </span>
+            <span title={`${data.llm_daily_output_tokens.toLocaleString()} output tokens on ${data.llm_daily_focus_date}`}>
+              output {formatTokenAmount(data.llm_daily_output_tokens)}
+            </span>
           </div>
         </div>
-        {data.llm_usage_models.length > 0 ? (
+        {data.llm_daily_usage_models.length > 0 ? (
           <div className="flex flex-wrap gap-2">
-            {data.llm_usage_models.map((item) => (
+            {data.llm_daily_usage_models.map((item) => (
               <div
                 key={item.model}
                 className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-[12px]"
@@ -102,7 +109,7 @@ export function Dashboard({ appName }: { appName: AppName }) {
             ))}
           </div>
         ) : (
-          <div className="text-sm text-text-muted">No LLM calls yet.</div>
+          <div className="text-sm text-text-muted">No LLM calls on {data.llm_daily_focus_date} yet.</div>
         )}
       </section>
 

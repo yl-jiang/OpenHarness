@@ -125,6 +125,15 @@ def current_month_range(today: date | None = None) -> tuple[date, date]:
     return month_start, month_end
 
 
+def latest_llm_usage_date(points: Iterable[dict[str, Any]], *, fallback: str) -> str:
+    latest = ""
+    for point in points:
+        day = str(point.get("date") or "")
+        if day and day > latest:
+            latest = day
+    return latest or fallback
+
+
 def count_this_week(records: Iterable[Any]) -> int:
     start = this_week_start()
     count = 0

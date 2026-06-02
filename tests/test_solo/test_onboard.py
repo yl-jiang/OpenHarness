@@ -88,7 +88,7 @@ def test_onboard_stats_include_llm_usage_breakdown(service_cls, workspace_name: 
         month_end = today.replace(year=today.year + 1, month=1, day=1) - timedelta(days=1)
     else:
         month_end = today.replace(month=today.month + 1, day=1) - timedelta(days=1)
-    second_day = month_start if today == month_start else month_start + timedelta(days=1)
+    second_day = month_start + timedelta(days=1)
     previous_month_day = month_start - timedelta(days=1)
     service.store.record_llm_call(
         "gpt-5",
@@ -145,6 +145,22 @@ def test_onboard_stats_include_llm_usage_breakdown(service_cls, workspace_name: 
     assert monthly_points[(second_day.isoformat(), "gpt-5")] == (80, 32)
     assert monthly_points[(second_day.isoformat(), "claude-sonnet-4.5")] == (64, 20)
     assert all(item["model"] != "legacy-model" for item in stats["llm_monthly_tokens"])
+    assert stats["llm_daily_focus_date"] == second_day.isoformat()
+    assert stats["llm_daily_total_calls"] == 2
+    assert stats["llm_daily_input_tokens"] == 144
+    assert stats["llm_daily_output_tokens"] == 52
+    assert {item["model"]: item["count"] for item in stats["llm_daily_usage_models"]} == {
+        "gpt-5": 1,
+        "claude-sonnet-4.5": 1,
+    }
+    assert {item["model"]: item["input_tokens"] for item in stats["llm_daily_usage_models"]} == {
+        "gpt-5": 80,
+        "claude-sonnet-4.5": 64,
+    }
+    assert {item["model"]: item["output_tokens"] for item in stats["llm_daily_usage_models"]} == {
+        "gpt-5": 32,
+        "claude-sonnet-4.5": 20,
+    }
 
 
 def test_run_server_does_not_overwrite_state_when_port_is_busy(

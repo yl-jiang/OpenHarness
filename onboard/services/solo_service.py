@@ -17,6 +17,7 @@ from onboard.services.common import (
     current_month_range,
     daily_counts,
     emotion_distribution,
+    latest_llm_usage_date,
     filter_entries,
     filter_records,
     find_by_id,
@@ -49,6 +50,15 @@ class SoloService:
             end_date=month_end.isoformat(),
             target_tz=target_tz,
         )
+        llm_daily_focus_date = latest_llm_usage_date(
+            monthly_tokens,
+            fallback=datetime.now(tz=target_tz).date().isoformat(),
+        )
+        daily_llm_usage = self.store.llm_usage_summary(
+            start_date=llm_daily_focus_date,
+            end_date=llm_daily_focus_date,
+            target_tz=target_tz,
+        )
         return {
             "total_entries": int(status["entries"]),
             "total_records": int(status["records"]),
@@ -63,6 +73,11 @@ class SoloService:
             "llm_monthly_start_date": month_start.isoformat(),
             "llm_monthly_end_date": month_end.isoformat(),
             "llm_monthly_tokens": monthly_tokens,
+            "llm_daily_focus_date": llm_daily_focus_date,
+            "llm_daily_total_calls": int(daily_llm_usage["total_calls"]),
+            "llm_daily_input_tokens": int(daily_llm_usage["total_input_tokens"]),
+            "llm_daily_output_tokens": int(daily_llm_usage["total_output_tokens"]),
+            "llm_daily_usage_models": daily_llm_usage["models"],
             "emotion_distribution": emotion_distribution(records),
             "daily_counts": daily_counts(records),
             "top_tags": top_tags(records),

@@ -160,6 +160,11 @@ export interface AppStats {
   llm_monthly_start_date: string;
   llm_monthly_end_date: string;
   llm_monthly_tokens: ModelTokenDailyPoint[];
+  llm_daily_focus_date: string;
+  llm_daily_total_calls: number;
+  llm_daily_input_tokens: number;
+  llm_daily_output_tokens: number;
+  llm_daily_usage_models: ModelUsagePoint[];
   total_decisions?: number;
   total_highlights?: number;
   open_blockers?: number;

@@ -893,22 +893,63 @@ class SoloStore:
             "path": str(self.root),
         }
 
-    def llm_usage_summary(self) -> dict[str, object]:
-        cur = self._db.execute(
-            "SELECT model, COUNT(*) AS count, "
-            "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
-            "COALESCE(SUM(output_tokens), 0) AS output_tokens "
-            "FROM llm_calls GROUP BY model ORDER BY count DESC, model ASC"
-        )
-        models = [
-            {
-                "model": row[0],
-                "count": int(row[1]),
-                "input_tokens": int(row[2] or 0),
-                "output_tokens": int(row[3] or 0),
-            }
-            for row in cur.fetchall()
-        ]
+    def llm_usage_summary(
+        self,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        target_tz: tzinfo | None = None,
+    ) -> dict[str, object]:
+        if start_date is None and end_date is None:
+            cur = self._db.execute(
+                "SELECT model, COUNT(*) AS count, "
+                "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
+                "COALESCE(SUM(output_tokens), 0) AS output_tokens "
+                "FROM llm_calls GROUP BY model ORDER BY count DESC, model ASC"
+            )
+            models = [
+                {
+                    "model": row[0],
+                    "count": int(row[1]),
+                    "input_tokens": int(row[2] or 0),
+                    "output_tokens": int(row[3] or 0),
+                }
+                for row in cur.fetchall()
+            ]
+        else:
+            zone = target_tz or datetime.now().astimezone().tzinfo or timezone.utc
+            cur = self._db.execute(
+                "SELECT model, created_at, input_tokens, output_tokens "
+                "FROM llm_calls ORDER BY created_at ASC, model ASC"
+            )
+            aggregated: dict[str, dict[str, Any]] = {}
+            for row in cur.fetchall():
+                model = str(row[0] or "").strip()
+                created_at = str(row[1] or "").strip()
+                if not model or not created_at:
+                    continue
+                try:
+                    call_at = datetime.fromisoformat(created_at)
+                except ValueError:
+                    continue
+                if call_at.tzinfo is None:
+                    call_at = call_at.replace(tzinfo=timezone.utc)
+                day = call_at.astimezone(zone).date().isoformat()
+                if start_date and day < start_date:
+                    continue
+                if end_date and day > end_date:
+                    continue
+                item = aggregated.setdefault(
+                    model,
+                    {"model": model, "count": 0, "input_tokens": 0, "output_tokens": 0},
+                )
+                item["count"] += 1
+                item["input_tokens"] += max(0, int(row[2] or 0))
+                item["output_tokens"] += max(0, int(row[3] or 0))
+            models = sorted(
+                aggregated.values(),
+                key=lambda item: (-int(item["count"]), str(item["model"])),
+            )
         return {
             "total_calls": sum(item["count"] for item in models),
             "total_input_tokens": sum(item["input_tokens"] for item in models),
