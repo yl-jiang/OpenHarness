@@ -6,7 +6,7 @@ import difflib
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from openharness.engine.types import ToolMetadataKey
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
@@ -17,9 +17,17 @@ _CACHE_KEY = ToolMetadataKey.FILE_READ_CACHE.value
 class FileEditToolInput(BaseModel):
     """Arguments for the file edit tool."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     path: str = Field(description="Path of the file to edit")
-    old_str: str = Field(description="Existing text to replace")
-    new_str: str = Field(description="Replacement text")
+    old_str: str = Field(
+        validation_alias=AliasChoices("old_str", "old_string"),
+        description="Existing text to replace",
+    )
+    new_str: str = Field(
+        validation_alias=AliasChoices("new_str", "new_string"),
+        description="Replacement text",
+    )
     replace_all: bool = Field(default=False)
 
 

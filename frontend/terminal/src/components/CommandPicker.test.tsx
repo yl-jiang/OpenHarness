@@ -176,6 +176,25 @@ test('includes direct skill aliases in slash-command hints', async () => {
 		'/skills',
 	], '/w', ['weekly-report', 'write']);
 
-	assert.deepEqual(model.hints, ['/weekly-report', '/write']);
+	assert.deepEqual(model.hints, ['/skill:weekly-report', '/skill:write']);
+	assert.deepEqual(model.subHintsByHint, {});
+});
+
+test('reveals every skill under the /skill: namespace prefix', async () => {
+	const module = await import('./CommandPicker.js') as {
+		createCommandPickerModel?: (
+			commands: string[],
+			input: string,
+			skills?: string[],
+		) => {hints: string[]; subHintsByHint: Record<string, string[]>};
+	};
+
+	assert.equal(typeof module.createCommandPickerModel, 'function');
+	const model = module.createCommandPickerModel([
+		'/memory',
+		'/skills',
+	], '/skill:', ['weekly-report', 'write']);
+
+	assert.deepEqual(model.hints, ['/skill:weekly-report', '/skill:write']);
 	assert.deepEqual(model.subHintsByHint, {});
 });

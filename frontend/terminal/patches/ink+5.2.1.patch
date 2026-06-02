@@ -1,0 +1,13 @@
+diff --git a/node_modules/ink/build/parse-keypress.js b/node_modules/ink/build/parse-keypress.js
+index 1e13e81..71d4638 100644
+--- a/node_modules/ink/build/parse-keypress.js
++++ b/node_modules/ink/build/parse-keypress.js
+@@ -215,7 +215,7 @@ const parseKeypress = (s = '') => {
+         key.meta = !!(modifier & 10);
+         key.shift = !!(modifier & 1);
+         key.code = code;
+-        key.name = keyName[code];
++        key.name = keyName[code] ?? '';
+         key.shift = isShiftKey(code) || key.shift;
+         key.ctrl = isCtrlKey(code) || key.ctrl;
+     }

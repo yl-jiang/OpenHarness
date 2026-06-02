@@ -42,8 +42,16 @@ export function createCommandPickerModel(commands: string[], input: string, skil
 	}
 
 	for (const skill of skills) {
-		const alias = `/${skill}`;
-		if (!alias.startsWith(value) || seen.has(alias)) {
+		const alias = `/skill:${skill}`;
+		const bareAlias = `/${skill}`;
+		if (seen.has(alias)) {
+			continue;
+		}
+		// Match either the namespaced ``/skill:name`` form (so typing
+		// ``/skill:`` reveals every skill) or the bare ``/name`` form (so
+		// skills stay discoverable by name), but always display the namespaced
+		// alias to set skills apart from built-in commands.
+		if (!alias.startsWith(value) && !bareAlias.startsWith(value)) {
 			continue;
 		}
 		seen.add(alias);

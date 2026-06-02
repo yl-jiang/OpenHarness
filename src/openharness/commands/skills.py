@@ -117,7 +117,7 @@ def _format_skills_list(skills: list[Any], cwd: str | Path) -> str:
         lines.append("-" * 48)
         for skill in source_skills:
             desc = skill.description or "No description"
-            lines.append(f"/{skill.name}")
+            lines.append(f"/skill:{skill.name}")
             lines.append(f"  description: {desc}")
             display_path = _format_skill_path(skill.path, cwd)
             if display_path:
@@ -158,6 +158,11 @@ async def resolve_skill_alias_command(
         return None
     name, _, args = raw_input[1:].partition(" ")
     skill_name = name.strip()
+    # Skills are surfaced in the slash picker with a ``skill:`` namespace
+    # (e.g. ``/skill:review``) to set them apart from built-in commands. Accept
+    # that explicit form here while keeping the bare ``/review`` alias working.
+    if skill_name.startswith("skill:"):
+        skill_name = skill_name[len("skill:"):].strip()
     if not skill_name or skill_name == "skills":
         return None
     registry = load_skill_registry(

@@ -267,14 +267,14 @@ class SkillManagerToolInput(BaseModel):
         default=False,
         description="For 'write': set true to replace an already-existing skill. Default false.",
     )
-    old_string: Optional[str] = Field(
+    old_str: Optional[str] = Field(
         default=None,
         description=(
             "For 'patch': exact text to find inside SKILL.md. "
             "Must match exactly once — add surrounding context if needed."
         ),
     )
-    new_string: Optional[str] = Field(
+    new_str: Optional[str] = Field(
         default=None,
         description=(
             "For 'patch': replacement text. "
@@ -345,11 +345,11 @@ class SkillManagerTool(BaseTool):
                         "description": "For 'write': set true to replace an existing skill.",
                         "default": False,
                     },
-                    "old_string": {
+                    "old_str": {
                         "type": "string",
                         "description": "For 'patch': unique text to find in SKILL.md.",
                     },
-                    "new_string": {
+                    "new_str": {
                         "type": "string",
                         "description": "For 'patch': replacement text (empty string to delete).",
                     },
@@ -496,14 +496,14 @@ class SkillManagerTool(BaseTool):
     def _patch(self, arguments: SkillManagerToolInput, context: ToolExecutionContext) -> ToolResult:
         if not arguments.name:
             return ToolResult(output="name is required for action='patch'.", is_error=True)
-        if not arguments.old_string:
+        if not arguments.old_str:
             return ToolResult(
-                output="old_string is required for action='patch'. Provide the exact text to find.",
+                output="old_str is required for action='patch'. Provide the exact text to find.",
                 is_error=True,
             )
-        if arguments.new_string is None:
+        if arguments.new_str is None:
             return ToolResult(
-                output="new_string is required for action='patch'. Use an empty string to delete matched text.",
+                output="new_str is required for action='patch'. Use an empty string to delete matched text.",
                 is_error=True,
             )
 
@@ -520,13 +520,13 @@ class SkillManagerTool(BaseTool):
             )
 
         content = skill_path.read_text(encoding="utf-8")
-        count = content.count(arguments.old_string)
+        count = content.count(arguments.old_str)
 
         if count == 0:
             preview = content[:400] + ("..." if len(content) > 400 else "")
             return ToolResult(
                 output=(
-                    f"old_string not found in SKILL.md for skill '{normalised}'.\n\n"
+                    f"old_str not found in SKILL.md for skill '{normalised}'.\n\n"
                     f"File preview:\n{preview}"
                 ),
                 is_error=True,
@@ -534,13 +534,13 @@ class SkillManagerTool(BaseTool):
         if count > 1:
             return ToolResult(
                 output=(
-                    f"old_string matches {count} locations in SKILL.md for '{normalised}'. "
+                    f"old_str matches {count} locations in SKILL.md for '{normalised}'. "
                     "Add more surrounding context to make it unique."
                 ),
                 is_error=True,
             )
 
-        new_content = content.replace(arguments.old_string, arguments.new_string, 1)
+        new_content = content.replace(arguments.old_str, arguments.new_str, 1)
 
         fm_err = _validate_frontmatter(new_content)
         if fm_err:
