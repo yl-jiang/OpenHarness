@@ -23,9 +23,9 @@ def test_opencli_registry_loads_machine_readable_catalog(monkeypatch) -> None:
         assert argv == ["opencli", "list", "-f", "json"]
         assert capture_output is True
         assert text is True
-        assert timeout == 8
+        assert timeout == 30  # process timeout is max(configured, 30)
         assert check is False
-        assert env["OPENCLI_BROWSER_COMMAND_TIMEOUT"] == "8"
+        assert env["OPENCLI_BROWSER_COMMAND_TIMEOUT"] == "8"  # min(configured, 10)
         return SimpleNamespace(
             returncode=0,
             stdout='[{"site":"hackernews","name":"search","strategy":"public","browser":false,"description":"Search HN"}]',

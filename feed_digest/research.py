@@ -92,12 +92,17 @@ class OpenCliRegistry:
 
     def load(self) -> list[OpenCliCommand]:
         env = os.environ.copy()
-        env["OPENCLI_BROWSER_COMMAND_TIMEOUT"] = str(self._timeout_seconds)
+        # opencli list is a local catalog operation that doesn't use browser
+        # commands, so keep the browser timeout short.  The process-level
+        # timeout must be generous because cron environments may need extra
+        # time for Node.js / fnm cold-start.
+        env["OPENCLI_BROWSER_COMMAND_TIMEOUT"] = str(min(self._timeout_seconds, 10))
+        process_timeout = max(self._timeout_seconds, 30)
         result = subprocess.run(
             ["opencli", "list", "-f", "json"],
             capture_output=True,
             text=True,
-            timeout=self._timeout_seconds,
+            timeout=process_timeout,
             check=False,
             env=env,
         )
