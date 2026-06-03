@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 import {
   Bar,
   BarChart,
@@ -115,6 +117,22 @@ function prefersReducedMotion(): boolean {
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 }
 
+function useOneShotLineAnimation(duration = 900): boolean {
+  const [isAnimationActive, setIsAnimationActive] = useState(() => !prefersReducedMotion());
+
+  useEffect(() => {
+    if (!isAnimationActive || typeof window === 'undefined') {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setIsAnimationActive(false);
+    }, duration);
+    return () => window.clearTimeout(timer);
+  }, [duration, isAnimationActive]);
+
+  return isAnimationActive;
+}
+
 export function DailyLineChart({ data }: { data: CountPoint[] }) {
   return (
     <ResponsiveContainer width="100%" height={200}>
@@ -198,6 +216,7 @@ export function ModelTokenUsageChart({
   );
   const dataMax = Math.max(0, ...allValues);
   const yMax = dataMax <= 0 ? 10 : Math.ceil(dataMax * 1.1);
+  const isAnimationActive = useOneShotLineAnimation();
 
   return (
     <div className="space-y-3">
@@ -243,7 +262,9 @@ export function ModelTokenUsageChart({
                 name={`${model} input`}
                 stroke={colors.input}
                 strokeWidth={1.75}
-                isAnimationActive={false}
+                isAnimationActive={isAnimationActive}
+                animationDuration={900}
+                animationEasing="ease-out"
                 dot={{ r: 2.5, fill: colors.input, strokeWidth: 0 }}
                 activeDot={{ r: 4 }}
               />,
@@ -255,7 +276,9 @@ export function ModelTokenUsageChart({
                 stroke={colors.output}
                 strokeWidth={1.75}
                 strokeDasharray="6 4"
-                isAnimationActive={false}
+                isAnimationActive={isAnimationActive}
+                animationDuration={900}
+                animationEasing="ease-out"
                 dot={{ r: 2.5, fill: colors.output, strokeWidth: 0 }}
                 activeDot={{ r: 4 }}
               />,
@@ -327,6 +350,7 @@ export function ModelCallUsageChart({
   const allValues = chartData.flatMap((row) => models.map((m) => row[callCountKey(m)] as number));
   const dataMax = Math.max(0, ...allValues);
   const yMax = dataMax <= 0 ? 10 : Math.ceil(dataMax * 1.1);
+  const isAnimationActive = useOneShotLineAnimation();
 
   return (
     <div className="space-y-3">
@@ -372,7 +396,9 @@ export function ModelCallUsageChart({
                 name={`${model} calls`}
                 stroke={color}
                 strokeWidth={1.75}
-                isAnimationActive={false}
+                isAnimationActive={isAnimationActive}
+                animationDuration={900}
+                animationEasing="ease-out"
                 dot={{ r: 2.5, fill: color, strokeWidth: 0 }}
                 activeDot={{ r: 4 }}
               />
