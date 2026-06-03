@@ -28,23 +28,23 @@ from wolo.core.workspace import get_config_path, get_logs_dir, get_workspace_roo
 
 app = typer.Typer(
     name="wolo",
-    help="wolo: a standalone work logging app built on OpenHarness.",
+    help="独立的工作记录应用，适合沉淀进展、决策、blocker 与报告素材。",
     add_completion=False,
 )
-gateway_app = typer.Typer(name="gateway", help="Run the wolo gateway")
-heartbeat_app = typer.Typer(name="heartbeat", help="Inspect or trigger wolo heartbeat")
-onboard_app = typer.Typer(name="onboard", help="WebUI dashboard management")
-feed_digest_app = typer.Typer(name="feed-digest", help="Feed digest commands")
+gateway_app = typer.Typer(name="gateway", help="管理 wolo 后台网关")
+heartbeat_app = typer.Typer(name="heartbeat", help="查看或触发 wolo heartbeat")
+onboard_app = typer.Typer(name="onboard", help="管理 onboard WebUI 仪表盘")
+feed_digest_app = typer.Typer(name="feed-digest", help="管理资讯简报任务")
 app.add_typer(gateway_app)
 app.add_typer(heartbeat_app)
 app.add_typer(onboard_app)
 app.add_typer(feed_digest_app)
 
 _INTERACTIVE_CHANNELS = ("telegram", "slack", "discord", "feishu")
-_WORKSPACE_HELP = "Path to the wolo workspace (defaults to ~/.wolo)"
+_WORKSPACE_HELP = "wolo 工作目录路径，默认 ~/.wolo"
 
 
-@app.command("init")
+@app.command("init", help="初始化 wolo 工作目录和默认数据文件")
 def init_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
     root = initialize_workspace(workspace)
     WoloStore(root).initialize()
@@ -73,7 +73,7 @@ def _maybe_install_service(workspace: str | Path) -> None:
             print("❌ 安装失败，请尝试手动运行 `wolo gateway install-service`。")
 
 
-@app.command("config")
+@app.command("config", help="交互式配置模型 profile 与消息通道")
 def config_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
     root = initialize_workspace(workspace)
     existing = load_config(root)
@@ -103,7 +103,7 @@ def config_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
     print(f"Saved wolo config to {get_config_path(root)}")
 
 
-@app.command("record")
+@app.command("record", help="写入一条原始工作记录")
 def record_cmd(
     content: str = typer.Argument(...),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -112,7 +112,7 @@ def record_cmd(
     print(f"Recorded wolo entry {entry.id}")
 
 
-@app.command("list")
+@app.command("list", help="查看原始输入列表")
 def list_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     limit: int = typer.Option(20, "--limit", min=1, help="Maximum entries to show"),
@@ -122,7 +122,7 @@ def list_cmd(
         print(f"{entry.created_at} [{entry.channel}]{attachment_hint} {entry.content}")
 
 
-@app.command("process")
+@app.command("process", help="整理待处理记录并生成结构化内容")
 def process_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     profile: str | None = typer.Option(None, "--profile", help="OpenHarness provider profile"),
@@ -136,7 +136,7 @@ def process_cmd(
     print(f"Processed {result.auto_processed} record(s), pending {result.pending_confirmations}.")
 
 
-@app.command("view")
+@app.command("view", help="查看结构化工作记录")
 def view_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     limit: int = typer.Option(20, "--limit", min=1, help="Maximum records to show"),
@@ -146,7 +146,7 @@ def view_cmd(
         print(f"{record.date} {record.emotion} [{record.source}] [{record.tags}]{attachment_hint} {record.summary}")
 
 
-@app.command("show")
+@app.command("show", help="查看单条工作记录详情")
 def show_cmd(
     record_id: str = typer.Argument(..., help="Record ID to inspect"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -160,7 +160,7 @@ def show_cmd(
     print(_format_record_trace(store, record, entry))
 
 
-@app.command("search")
+@app.command("search", help="按关键词、标签、情绪或日期搜索工作记录")
 def search_cmd(
     query: str = typer.Argument(None, help="Text search query"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -188,7 +188,7 @@ def search_cmd(
         print(f"{record.date} {record.emotion} [{record.tags}] {record.summary}")
 
 
-@app.command("todos")
+@app.command("todos", help="查看待办事项")
 def todos_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     status: str = typer.Option("pending", "--status", help="Todo status: pending/done"),
@@ -203,7 +203,7 @@ def todos_cmd(
         print(f"{todo.id} [{todo.status}] [{todo.priority}] [{todo.project}] {todo.title}")
 
 
-@app.command("done")
+@app.command("done", help="将待办标记为已完成")
 def done_cmd(
     todo_id: str = typer.Argument(..., help="Todo ID to mark done"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -214,7 +214,7 @@ def done_cmd(
     print(f"Todo not found or already done: {todo_id}")
 
 
-@app.command("decisions")
+@app.command("decisions", help="查看关键决策")
 def decisions_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     project: str | None = typer.Option(None, "--project", help="Project filter"),
@@ -229,7 +229,7 @@ def decisions_cmd(
         print(f"{decision.id} [{decision.project}] {decision.title}")
 
 
-@app.command("highlights")
+@app.command("highlights", help="查看重要事项、prompt 与 tool 经验")
 def highlights_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     kind: str | None = typer.Option(None, "--kind", help="important/prompt/tool/blocker/risk"),
@@ -250,7 +250,7 @@ def highlights_cmd(
         print(f"{item.id} [{item.kind}] [{item.project}] {item.title}: {item.content}")
 
 
-@app.command("blockers")
+@app.command("blockers", help="查看 blocker 和风险")
 def blockers_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     project: str | None = typer.Option(None, "--project", help="Project filter"),
@@ -260,7 +260,7 @@ def blockers_cmd(
     highlights_cmd(workspace=workspace, kind="blocker", project=project, query=query, limit=limit)
 
 
-@app.command("query")
+@app.command("query", help="对工作沉淀发起综合查询")
 def query_cmd(
     query: str = typer.Argument(..., help="Work history query"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -280,7 +280,7 @@ def query_cmd(
         print("No matching work history found.")
 
 
-@app.command("report")
+@app.command("report", help="生成新的周报、月报或年报")
 def report_cmd(
     report_type: str = typer.Argument(..., help="weekly, monthly, or yearly"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -296,7 +296,7 @@ def report_cmd(
     print(report.content)
 
 
-@app.command("report-list")
+@app.command("report-list", help="查看已生成的报告列表")
 def report_list_cmd(
     report_type: str | None = typer.Option(None, "--type", help="Filter by type: weekly, monthly, yearly"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -315,7 +315,7 @@ def report_list_cmd(
         print(f"[{r.id}] {r.report_type:8s} {r.created_at}  {preview}")
 
 
-@app.command("report-show")
+@app.command("report-show", help="查看报告全文")
 def report_show_cmd(
     report_id: str = typer.Argument(..., help="Report ID"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -330,7 +330,7 @@ def report_show_cmd(
     print(report.content or "(empty)")
 
 
-@app.command("report-delete")
+@app.command("report-delete", help="删除一份报告")
 def report_delete_cmd(
     report_id: str = typer.Argument(..., help="Report ID"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -350,7 +350,7 @@ def report_delete_cmd(
     print(f"Deleted report {report_id}.")
 
 
-@app.command("report-edit")
+@app.command("report-edit", help="在编辑器中修改报告内容")
 def report_edit_cmd(
     report_id: str = typer.Argument(..., help="Report ID"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -383,7 +383,7 @@ def report_edit_cmd(
         Path(tmp_path).unlink(missing_ok=True)
 
 
-@app.command("report-search")
+@app.command("report-search", help="按关键词搜索报告")
 def report_search_cmd(
     keyword: str = typer.Argument(..., help="Search keyword"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -435,7 +435,7 @@ def feed_digest_run_cmd(
     asyncio.run(_run())
 
 
-@app.command("status")
+@app.command("status", help="查看 wolo 运行状态与数据概览")
 def status_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
     status = WoloStore(workspace).status()
     gateway = gateway_status(workspace=workspace)
@@ -448,7 +448,7 @@ def status_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
     )
 
 
-@app.command("start")
+@app.command("start", help="启动 wolo 后台网关")
 def start_cmd(
     cwd: str = typer.Option(str(Path.cwd()), "--cwd", help="Project working directory"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -457,7 +457,7 @@ def start_cmd(
     print(f"wolo gateway started (pid={pid})")
 
 
-@app.command("stop")
+@app.command("stop", help="停止 wolo 后台网关")
 def stop_cmd(
     cwd: str = typer.Option(str(Path.cwd()), "--cwd", help="Project working directory"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -468,7 +468,7 @@ def stop_cmd(
     print("wolo gateway is not running.")
 
 
-@app.command("doctor")
+@app.command("doctor", help="检查工作目录与配置健康状况")
 def doctor_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
     health = workspace_health(get_workspace_root(workspace))
     for name, ok in health.items():

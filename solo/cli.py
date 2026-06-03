@@ -28,23 +28,23 @@ from solo.core.workspace import get_config_path, get_logs_dir, get_workspace_roo
 
 app = typer.Typer(
     name="solo",
-    help="solo: a standalone personal logging app built on OpenHarness.",
+    help="独立的个人记录应用，适合记录日常碎片、补录旧内容并生成回顾报告。",
     add_completion=False,
 )
-gateway_app = typer.Typer(name="gateway", help="Run the solo gateway")
-heartbeat_app = typer.Typer(name="heartbeat", help="Inspect or trigger solo heartbeat")
-onboard_app = typer.Typer(name="onboard", help="WebUI dashboard management")
-feed_digest_app = typer.Typer(name="feed-digest", help="Feed digest commands")
+gateway_app = typer.Typer(name="gateway", help="管理 solo 后台网关")
+heartbeat_app = typer.Typer(name="heartbeat", help="查看或触发 solo heartbeat")
+onboard_app = typer.Typer(name="onboard", help="管理 onboard WebUI 仪表盘")
+feed_digest_app = typer.Typer(name="feed-digest", help="管理资讯简报任务")
 app.add_typer(gateway_app)
 app.add_typer(heartbeat_app)
 app.add_typer(onboard_app)
 app.add_typer(feed_digest_app)
 
 _INTERACTIVE_CHANNELS = ("telegram", "slack", "discord", "feishu")
-_WORKSPACE_HELP = "Path to the solo workspace (defaults to ~/.solo)"
+_WORKSPACE_HELP = "solo 工作目录路径，默认 ~/.solo"
 
 
-@app.command("init")
+@app.command("init", help="初始化 solo 工作目录和默认数据文件")
 def init_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
     root = initialize_workspace(workspace)
     SoloStore(root).initialize()
@@ -73,7 +73,7 @@ def _maybe_install_service(workspace: str | Path) -> None:
             print("❌ 安装失败，请尝试手动运行 `solo gateway install-service`。")
 
 
-@app.command("config")
+@app.command("config", help="交互式配置模型 profile 与消息通道")
 def config_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
     root = initialize_workspace(workspace)
     existing = load_config(root)
@@ -103,7 +103,7 @@ def config_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
     print(f"Saved solo config to {get_config_path(root)}")
 
 
-@app.command("record")
+@app.command("record", help="写入一条原始日常记录")
 def record_cmd(
     content: str = typer.Argument(...),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -112,7 +112,7 @@ def record_cmd(
     print(f"Recorded solo entry {entry.id}")
 
 
-@app.command("list")
+@app.command("list", help="查看原始输入列表")
 def list_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     limit: int = typer.Option(20, "--limit", min=1, help="Maximum entries to show"),
@@ -122,7 +122,7 @@ def list_cmd(
         print(f"{entry.created_at} [{entry.channel}]{attachment_hint} {entry.content}")
 
 
-@app.command("process")
+@app.command("process", help="整理待处理记录并生成结构化内容")
 def process_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     profile: str | None = typer.Option(None, "--profile", help="OpenHarness provider profile"),
@@ -136,7 +136,7 @@ def process_cmd(
     print(f"Processed {result.auto_processed} record(s), pending {result.pending_confirmations}.")
 
 
-@app.command("view")
+@app.command("view", help="查看结构化记录")
 def view_cmd(
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
     limit: int = typer.Option(20, "--limit", min=1, help="Maximum records to show"),
@@ -146,7 +146,7 @@ def view_cmd(
         print(f"{record.date} {record.emotion} [{record.source}] [{record.tags}]{attachment_hint} {record.summary}")
 
 
-@app.command("show")
+@app.command("show", help="查看单条记录详情")
 def show_cmd(
     record_id: str = typer.Argument(..., help="Record ID to inspect"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -160,7 +160,7 @@ def show_cmd(
     print(_format_record_trace(store, record, entry))
 
 
-@app.command("search")
+@app.command("search", help="按关键词、标签、情绪或日期搜索记录")
 def search_cmd(
     query: str = typer.Argument(None, help="Text search query"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -188,7 +188,7 @@ def search_cmd(
         print(f"{record.date} {record.emotion} [{record.tags}] {record.summary}")
 
 
-@app.command("report")
+@app.command("report", help="生成新的周报、月报或年报")
 def report_cmd(
     report_type: str = typer.Argument(..., help="weekly, monthly, or yearly"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -204,7 +204,7 @@ def report_cmd(
     print(report.content)
 
 
-@app.command("report-list")
+@app.command("report-list", help="查看已生成的报告列表")
 def report_list_cmd(
     report_type: str | None = typer.Option(None, "--type", help="Filter by type: weekly, monthly, yearly"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -223,7 +223,7 @@ def report_list_cmd(
         print(f"[{r.id}] {r.report_type:8s} {r.created_at}  {preview}")
 
 
-@app.command("report-show")
+@app.command("report-show", help="查看报告全文")
 def report_show_cmd(
     report_id: str = typer.Argument(..., help="Report ID"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -238,7 +238,7 @@ def report_show_cmd(
     print(report.content or "(empty)")
 
 
-@app.command("report-delete")
+@app.command("report-delete", help="删除一份报告")
 def report_delete_cmd(
     report_id: str = typer.Argument(..., help="Report ID"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -258,7 +258,7 @@ def report_delete_cmd(
     print(f"Deleted report {report_id}.")
 
 
-@app.command("report-edit")
+@app.command("report-edit", help="在编辑器中修改报告内容")
 def report_edit_cmd(
     report_id: str = typer.Argument(..., help="Report ID"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -291,7 +291,7 @@ def report_edit_cmd(
         Path(tmp_path).unlink(missing_ok=True)
 
 
-@app.command("report-search")
+@app.command("report-search", help="按关键词搜索报告")
 def report_search_cmd(
     keyword: str = typer.Argument(..., help="Search keyword"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -342,7 +342,7 @@ def feed_digest_run_cmd(
     asyncio.run(_run())
 
 
-@app.command("status")
+@app.command("status", help="查看 solo 运行状态与数据概览")
 def status_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
     status = SoloStore(workspace).status()
     gateway = gateway_status(workspace=workspace)
@@ -354,7 +354,7 @@ def status_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
     )
 
 
-@app.command("start")
+@app.command("start", help="启动 solo 后台网关")
 def start_cmd(
     cwd: str = typer.Option(str(Path.cwd()), "--cwd", help="Project working directory"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -363,7 +363,7 @@ def start_cmd(
     print(f"solo gateway started (pid={pid})")
 
 
-@app.command("stop")
+@app.command("stop", help="停止 solo 后台网关")
 def stop_cmd(
     cwd: str = typer.Option(str(Path.cwd()), "--cwd", help="Project working directory"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -374,7 +374,7 @@ def stop_cmd(
     print("solo gateway is not running.")
 
 
-@app.command("doctor")
+@app.command("doctor", help="检查工作目录与配置健康状况")
 def doctor_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP)) -> None:
     health = workspace_health(get_workspace_root(workspace))
     for name, ok in health.items():

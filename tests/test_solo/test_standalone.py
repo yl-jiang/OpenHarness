@@ -267,6 +267,19 @@ def test_solo_command_prefix_supports_llm_usage():
 
     help_text = solo_help_text()
     assert "/solo llm-usage" in help_text
+    assert "个人记录" in help_text
+    assert "/solo backfill" in help_text
+
+
+def test_solo_cli_help_describes_core_commands():
+    from solo.cli import app
+
+    result = CliRunner().invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "独立的个人记录应用" in result.output
+    assert "写入一条原始日常记录" in result.output
+    assert "整理待处理记录并生成结构化内容" in result.output
 
 
 @pytest.mark.asyncio

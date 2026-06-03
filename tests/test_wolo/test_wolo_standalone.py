@@ -181,6 +181,19 @@ def test_wolo_command_prefix_help_and_work_actions():
     assert "/wolo process" in help_text
     assert "/wolo llm-usage" in help_text
     assert "工作记录" in help_text
+    assert "决策" in help_text
+
+
+def test_wolo_cli_help_describes_core_commands():
+    from typer.testing import CliRunner
+    from wolo.cli import app
+
+    result = CliRunner().invoke(app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "独立的工作记录应用" in result.output
+    assert "查看关键决策" in result.output
+    assert "对工作沉淀发起综合查询" in result.output
 
 
 @pytest.mark.asyncio
