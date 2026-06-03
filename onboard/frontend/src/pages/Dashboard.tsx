@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 
 import { api } from '../api/client';
 import type { AppName } from '../api/types';
-import { ActivityHeatmap, EmotionPieChart, ModelTokenUsageChart, formatTokenAmount } from '../components/Charts';
+import { ActivityHeatmap, EmotionPieChart, ModelCallUsageChart, ModelTokenUsageChart, formatTokenAmount } from '../components/Charts';
 import { StatsCard } from '../components/StatsCard';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
@@ -76,41 +76,32 @@ export function Dashboard({ appName }: { appName: AppName }) {
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
             <h3 className="text-sm font-medium text-text m-0">LLM Model Usage</h3>
-            <div className="mt-1 text-[12px] text-text-muted">
-              Daily breakdown · {data.llm_daily_focus_date}
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-text-muted">
+              <span>
+                Daily totals · current month view
+              </span>
+              <span>focus · {data.llm_daily_focus_date}</span>
+              <span className="inline-flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-success animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
+                live · 5s
+              </span>
             </div>
           </div>
-          <div className="flex flex-wrap justify-end gap-2 text-[12px] font-mono text-text-muted">
-            <span>calls {data.llm_daily_total_calls.toLocaleString()}</span>
-            <span title={`${data.llm_daily_input_tokens.toLocaleString()} input tokens on ${data.llm_daily_focus_date}`}>
-              input {formatTokenAmount(data.llm_daily_input_tokens)}
-            </span>
-            <span title={`${data.llm_daily_output_tokens.toLocaleString()} output tokens on ${data.llm_daily_focus_date}`}>
-              output {formatTokenAmount(data.llm_daily_output_tokens)}
+          <div className="flex flex-wrap justify-end gap-2 text-[12px] font-mono">
+            <span
+              title={`${data.llm_daily_total_calls.toLocaleString()} calls on ${data.llm_daily_focus_date}`}
+              className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text"
+            >
+              <span className="text-text-muted">calls</span>
+              <span className="tabular-nums">{data.llm_daily_total_calls.toLocaleString()}</span>
             </span>
           </div>
         </div>
-        {data.llm_daily_usage_models.length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {data.llm_daily_usage_models.map((item) => (
-              <div
-                key={item.model}
-                className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-[12px]"
-              >
-                <span className="font-mono text-text">{item.model}</span>
-                <span className="text-text-muted">{item.count.toLocaleString()} calls</span>
-                <span className="text-text-muted" title={`${item.input_tokens.toLocaleString()} input tokens`}>
-                  in {formatTokenAmount(item.input_tokens)}
-                </span>
-                <span className="text-text-muted" title={`${item.output_tokens.toLocaleString()} output tokens`}>
-                  out {formatTokenAmount(item.output_tokens)}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-sm text-text-muted">No LLM calls on {data.llm_daily_focus_date} yet.</div>
-        )}
+        <ModelCallUsageChart
+          data={data.llm_monthly_model_calls}
+          startDate={data.llm_monthly_start_date}
+          endDate={data.llm_monthly_end_date}
+        />
       </section>
 
       {/* Charts grid */}

@@ -50,6 +50,11 @@ class SoloService:
             end_date=month_end.isoformat(),
             target_tz=target_tz,
         )
+        monthly_model_calls = self.store.llm_call_daily_summary(
+            start_date=month_start.isoformat(),
+            end_date=month_end.isoformat(),
+            target_tz=target_tz,
+        )
         llm_daily_focus_date = latest_llm_usage_date(
             monthly_tokens,
             fallback=datetime.now(tz=target_tz).date().isoformat(),
@@ -73,6 +78,7 @@ class SoloService:
             "llm_monthly_start_date": month_start.isoformat(),
             "llm_monthly_end_date": month_end.isoformat(),
             "llm_monthly_tokens": monthly_tokens,
+            "llm_monthly_model_calls": monthly_model_calls,
             "llm_daily_focus_date": llm_daily_focus_date,
             "llm_daily_total_calls": int(daily_llm_usage["total_calls"]),
             "llm_daily_input_tokens": int(daily_llm_usage["total_input_tokens"]),

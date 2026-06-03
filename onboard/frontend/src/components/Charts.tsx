@@ -14,7 +14,7 @@ import {
   YAxis,
 } from 'recharts';
 
-import type { CountPoint, EmotionPoint, ModelTokenDailyPoint, TagPoint } from '../api/types';
+import type { CountPoint, EmotionPoint, ModelCallDailyPoint, ModelTokenDailyPoint, TagPoint } from '../api/types';
 
 const palette = ['#d4a574', '#5eead4', '#a78bfa', '#fbbf24', '#f87171', '#34d399'];
 
@@ -49,6 +49,10 @@ function inputKey(model: string): string {
 
 function outputKey(model: string): string {
   return `out_${sanitizeModelKey(model)}`;
+}
+
+function callCountKey(model: string): string {
+  return `count_${sanitizeModelKey(model)}`;
 }
 
 function formatFullNumber(value: number): string {
@@ -277,6 +281,116 @@ export function ModelTokenUsageChart({
                   style={{ borderColor: colors.output, borderTopWidth: '2px' }}
                 />
                 output
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ModelCallUsageChart({
+  data,
+  startDate,
+  endDate,
+}: {
+  data: ModelCallDailyPoint[];
+  startDate: string;
+  endDate: string;
+}) {
+  const models = Array.from(new Set(data.map((item) => item.model))).sort();
+  const visibleEndDate = endDate || startDate;
+  const byDateAndModel = new Map(data.map((item) => [`${item.date}:${item.model}`, item] as const));
+  const allDates = buildDateRange(startDate, visibleEndDate);
+  const series = models.map((model, index) => ({
+    model,
+    color: tokenPalette[index % tokenPalette.length].input,
+  }));
+
+  const chartData = allDates.map((date) => {
+    const row: Record<string, number | string | null> = { date };
+    models.forEach((model) => {
+      const point = byDateAndModel.get(`${date}:${model}`);
+      row[callCountKey(model)] = point?.count ?? 0;
+    });
+    return row;
+  });
+
+  // Show day-of-month numbers: 1st, every 5th, and the last visible day.
+  const lastDay = visibleEndDate ? parseInt(visibleEndDate.slice(8), 10) : 0;
+  const tickDates = allDates.filter((d) => {
+    const day = parseInt(d.slice(8), 10);
+    return day === 1 || day % 5 === 0 || day === lastDay;
+  });
+
+  const allValues = chartData.flatMap((row) => models.map((m) => row[callCountKey(m)] as number));
+  const dataMax = Math.max(0, ...allValues);
+  const yMax = dataMax <= 0 ? 10 : Math.ceil(dataMax * 1.1);
+
+  return (
+    <div className="space-y-3">
+      <div className="h-[300px]">
+        <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={chartData} margin={{ top: 8, right: 16, bottom: 4, left: 8 }}>
+            <CartesianGrid stroke="#1f1f24" strokeDasharray="2 4" />
+            <XAxis
+              dataKey="date"
+              stroke="#63636e"
+              tick={{ fontSize: 10, fill: '#a1a1aa' }}
+              ticks={tickDates}
+              tickFormatter={(v: string) => v.slice(8)}
+              tickLine={{ stroke: '#2e2e33' }}
+            />
+            <YAxis
+              orientation="left"
+              domain={[0, yMax]}
+              tick={{ fontSize: 11, fill: '#a1a1aa' }}
+              tickLine={{ stroke: '#2e2e33' }}
+              axisLine={{ stroke: '#2e2e33' }}
+              stroke="#63636e"
+              tickFormatter={formatFullNumber}
+              allowDecimals={false}
+              width={64}
+              label={{ value: 'Calls', angle: -90, position: 'insideLeft', offset: 12, fill: '#63636e', fontSize: 10 }}
+            />
+            <Tooltip
+              contentStyle={tooltipStyle}
+              labelStyle={tooltipLabelStyle}
+              itemStyle={tooltipItemStyle}
+              formatter={(value: number | string) => {
+                const n = Number(value);
+                return `${formatFullNumber(n)} calls`;
+              }}
+              labelFormatter={(value: string) => value}
+            />
+            {series.map(({ model, color }) => (
+              <Line
+                key={callCountKey(model)}
+                type="linear"
+                dataKey={callCountKey(model)}
+                name={`${model} calls`}
+                stroke={color}
+                strokeWidth={1.75}
+                isAnimationActive={false}
+                dot={{ r: 2.5, fill: color, strokeWidth: 0 }}
+                activeDot={{ r: 4 }}
+              />
+            ))}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+      {series.length > 0 && (
+        <div className="flex flex-wrap gap-2 text-[11px] font-mono text-text-secondary">
+          {series.map(({ model, color }) => (
+            <div
+              key={model}
+              className="inline-flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5"
+            >
+              <span className="text-text">{model}</span>
+              <span className="inline-flex items-center gap-1 text-text-muted">
+                <span className="h-0.5 w-4 rounded-full" style={{ backgroundColor: color }} />
+                calls
               </span>
             </div>
           ))}

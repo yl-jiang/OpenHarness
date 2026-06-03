@@ -145,6 +145,14 @@ def test_onboard_stats_include_llm_usage_breakdown(service_cls, workspace_name: 
     assert monthly_points[(second_day.isoformat(), "gpt-5")] == (80, 32)
     assert monthly_points[(second_day.isoformat(), "claude-sonnet-4.5")] == (64, 20)
     assert all(item["model"] != "legacy-model" for item in stats["llm_monthly_tokens"])
+    monthly_model_calls = {
+        (item["date"], item["model"]): item["count"]
+        for item in stats["llm_monthly_model_calls"]
+    }
+    assert monthly_model_calls[(month_start.isoformat(), "gpt-5")] == 1
+    assert monthly_model_calls[(second_day.isoformat(), "gpt-5")] == 1
+    assert monthly_model_calls[(second_day.isoformat(), "claude-sonnet-4.5")] == 1
+    assert all(item["model"] != "legacy-model" for item in stats["llm_monthly_model_calls"])
     assert stats["llm_daily_focus_date"] == second_day.isoformat()
     assert stats["llm_daily_total_calls"] == 2
     assert stats["llm_daily_input_tokens"] == 144

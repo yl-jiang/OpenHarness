@@ -146,6 +146,12 @@ export interface ModelTokenDailyPoint {
   output_tokens: number;
 }
 
+export interface ModelCallDailyPoint {
+  date: string;
+  model: string;
+  count: number;
+}
+
 export interface AppStats {
   total_entries: number;
   total_records: number;
@@ -160,6 +166,7 @@ export interface AppStats {
   llm_monthly_start_date: string;
   llm_monthly_end_date: string;
   llm_monthly_tokens: ModelTokenDailyPoint[];
+  llm_monthly_model_calls: ModelCallDailyPoint[];
   llm_daily_focus_date: string;
   llm_daily_total_calls: number;
   llm_daily_input_tokens: number;

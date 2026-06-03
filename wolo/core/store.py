@@ -1101,6 +1101,37 @@ class WoloStore:
             point["output_tokens"] += max(0, int(row[3] or 0))
         return sorted(daily.values(), key=lambda item: (str(item["date"]), str(item["model"])))
 
+    def llm_call_daily_summary(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        target_tz: tzinfo | None = None,
+    ) -> list[dict[str, object]]:
+        zone = target_tz or datetime.now().astimezone().tzinfo or timezone.utc
+        cur = self._db.execute(
+            "SELECT model, created_at FROM llm_calls ORDER BY created_at ASC, model ASC"
+        )
+        daily: dict[tuple[str, str], dict[str, object]] = {}
+        for row in cur.fetchall():
+            model = str(row[0] or "").strip()
+            created_at = str(row[1] or "").strip()
+            if not model or not created_at:
+                continue
+            try:
+                call_at = datetime.fromisoformat(created_at)
+            except ValueError:
+                continue
+            if call_at.tzinfo is None:
+                call_at = call_at.replace(tzinfo=timezone.utc)
+            day = call_at.astimezone(zone).date().isoformat()
+            if day < start_date or day > end_date:
+                continue
+            key = (day, model)
+            point = daily.setdefault(key, {"date": day, "model": model, "count": 0})
+            point["count"] += 1
+        return sorted(daily.values(), key=lambda item: (str(item["date"]), str(item["model"])))
+
     def dates_with_activity(self) -> set[str]:
         dates: set[str] = set()
         # Entry dates from metadata or created_at
