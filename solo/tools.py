@@ -1585,7 +1585,7 @@ def _tool_status() -> ToolDefinition:
 def _tool_llm_usage() -> ToolDefinition:
     return _definition(
         "solo_llm_usage",
-        "Show cumulative solo LLM model usage counts plus input/output token totals grouped by model name.",
+        "Report how many LLM calls solo has made so far and how many input/output tokens were consumed, broken down by model name. Use this when the user asks about LLM usage, token consumption, or API call costs.",
         [],
     )
 
