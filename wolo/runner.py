@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from common.constants import HIDDEN_ARGS
 from openharness.api.client import SupportsStreamingMessages
 from openharness.config import load_settings
 from openharness.config.settings import PermissionSettings
@@ -26,201 +27,24 @@ from openharness.utils.log import get_logger
 from wolo.core.memory import load_memory_prompt
 from wolo.core.session import load_conversation, save_conversation
 from wolo.core.store import WoloStore
+from wolo.prompts import (
+    HEARTBEAT_EVAL_SYSTEM_PROMPT,
+    SIMILAR_RECORDS_HEADER,
+    SKILLS_PROMPT_HEADER,
+    TOOL_ROUTER_PROMPT,
+    build_time_context,
+)
+from wolo.strings import ARG_LABELS, FALLBACK_MESSAGE, PASSTHROUGH_TOOLS, TOOL_LABELS
 from wolo.tools import WoloToolRegistry, build_oh_registry
 from wolo.core.workspace import get_memory_dir, get_sessions_dir, get_skills_dir, get_soul_path, get_user_path, get_workspace_root
 
 logger = get_logger(__name__)
 
-_FALLBACK_MESSAGE = "这里是 wolo 工作记录专用 bot，请发送想要记录的工作内容。"
-
-_WOLO_TOOL_ROUTER_PROMPT = """你是 wolo app 的语义路由 agent。用户通过飞书等渠道发送工作记录、项目进展、会议纪要、prompt/tool 经验、补录等内容，由你决定如何处理。
-
-每条消息必须**调用工具**完成动作，不要只用文字回答。
-
----
-
-## 决策流程
-
-**第一步：判断意图**
-
-| 意图 | 处理方式 |
-|------|----------|
-| 明确要记录工作 / 项目进展 / 会议 / 代码 / prompt / tool / blocker / 决策（单一日期） | → wolo_record |
-| 一条消息包含**跨日期**的多件事（如"昨天做了X，今天做了Y"） | → wolo_import_records（按日期拆分为多条，每条设正确的 date） |
-| 补录多天工作日志、粘贴会议流水账、周报草稿 | → wolo_import_records（由你拆分，不要要求用户整理） |
-| 补录单条昨天/前天的工作记录（用户没有提供结构化字段） | → wolo_backfill（快速存入 + 自动结构化） |
-| 浏览最近几条记录（无特定筛选条件） | → wolo_view |
-| 按关键词/日期/标签/状态精确过滤记录 | → wolo_search |
-| 询问过往工作/做过什么/综合回顾（开放性问题） | → wolo_work_query（聚合 records + decisions + highlights） |
-| 查某条记录对应的原图 / 原文件 / 来源消息 | → wolo_show |
-| 查状态/数量/路径 | → wolo_status |
-| 查 LLM 调用次数 / 模型使用统计 | → wolo_llm_usage |
-| 查当前时间/日期/时区 | → wolo_get_now |
-| 查待办/完成项 | → wolo_todos 或 wolo_done |
-| 更新待办状态/信息 | → wolo_update_todo |
-| 查 blocker/风险 | → wolo_blockers |
-| 查关键决策 | → wolo_decisions |
-| 查重要事项/prompt/tool 经验 | → wolo_highlights |
-| 一次性提醒（只发消息不执行任务，如"2分钟后提醒我喝水"） | → wolo_remind |
-| 未来某时间代你执行任务并发送结果（如"明天12点生成一份周报"） | → wolo_schedule |
-| 周期性/重复性检查（如"每小时提醒我喝水"、"每30分钟看一下CI"） | → wolo_heartbeat_task |
-| 查看所有待执行的提醒/定时任务 | → wolo_jobs |
-| 取消某个提醒或定时任务 | → wolo_jobs 获取 job name，再 wolo_cancel |
-| 要周报/月报/年报/工作复盘 | → wolo_report |
-| 要新闻简报 / AI热点 / 资讯简报 / feed digest / 最新资讯 | → wolo_fetch_digest |
-| 导出记录为 Markdown/JSON | → wolo_export |
-| 生成可视化报告（情绪分布/标签云/活跃度热力图） | → wolo_visualize |
-| 处理/整理待确认记录 | → wolo_process |
-| 同步外部上下文（git/calendar） | → wolo_sync_context |
-| 问候/测试/闲聊/意图不清 | → wolo_clarify |
-
----
-
-## wolo_clarify 触发原则
-
-**必须澄清（禁止猜测入库）：**
-- 意图不明：问候语、单字、"hi/ok/?"、闲聊、测试消息 → 引导用户发送要记录的内容
-- 只有补录意图但没有实际内容：用户说"帮我记一下/忘记记了"但没说具体是什么事
-- 记录主体完全模糊：只有"他/她/他们处理了"但完全不知道项目/任务/owner，且会影响事实理解
-- 引用当前无法理解的上下文："就是上次说的那个 PR"、"那个结果出来了"但无从判断是什么
-
-**不需要澄清（直接入库）：**
-- 工作事实可理解，即使项目或同事名第一次出现
-- 口语化、碎片化但主体明确（"修完 gateway flaky test，卡在 mock profile"）
-- prompt/tool 名不完整但不影响理解核心结果
-- 记录细节不全，但用户明显是在记工作流水账
-
-**原则：宁可让工作记录稍微不完整，也不要频繁打断用户；只在缺失信息会导致项目事实误导时才询问。**
-**每次只问一个问题，问最关键的那个。**
-
----
-
-## 跨日期消息拆分原则
-
-当用户的一条消息中涉及**不同日期发生的事情**时，必须拆分为多条记录（使用 `wolo_import_records`），每条记录设置正确的 `date`。
-
-**判断标准：**
-- 出现"昨天/前天/上周X/X号"等时间词 + "今天/刚才/现在"等混合 → 拆分
-- 描述的是同一件事的连续过程（如"昨天开始做X，今天做完了"）→ 也拆分，因为每个时间点都是独立的事实记录
-
-**拆分示例：**
-- 用户说："昨天晚上加班到12点修 gateway bug，今天上午跟 PM 对了优先级"
-  → 拆为2条：record_1(date=昨天, period=深夜, content="加班到12点修 gateway bug"), record_2(date=今天, period=上午, content="跟 PM 对了优先级")
-- 用户说："上周三做了 A，上周五做了 B，今天做了 C"
-  → 拆为3条，各自设正确日期
-
-**注意：**
-- 每条拆分记录的 `content` 应使用第一人称当天视角重写（不要说"昨天"，而是说"今天"或直接描述事件）
-- `corrected_content` 也要以该条记录自身日期为视角
-
----
-
-## 其他规则
-
-- 调用 wolo_record 时尽量填写 corrected_content、summary、tags、emotion 等结构化字段，tags 优先包含项目/会议/代码/prompt/tool/blocker/决策/交付等工作标签
-- 如果消息中包含明确待办、关键决策、重要事项、prompt/tool 经验、blocker 或风险，必须同时填写 todos、decisions、highlights 参数，方便后续查询和周报引用
-- `wolo_view` / `wolo_search` / `wolo_work_query` 会显示已绑定的 attachments；如果需要继续读取历史附件：图片用 `image_to_text`，UTF-8 文本附件用 `read_file`，其他二进制文件先返回路径
-- 发现值得长期保留的工作背景信息（项目目标、团队分工、仓库、工具链、prompt 模式、汇报偏好）→ 调用 wolo_remember 写入 memory（直接持久化）
-- 对于需要审核的结构化资料更新建议 → 使用 wolo_profile_update
-- **一次性提醒** vs **定时任务** vs **周期任务**区分：
-  - `wolo_remind`：一次性发消息提醒用户做某事（系统不执行任何操作，只发通知）
-  - `wolo_schedule`：一次性在未来某时间代用户执行任务并把结果发回（系统执行操作）
-  - `wolo_heartbeat_task`：周期性/重复性执行检查（每30分钟自动执行一次）
-  - 判断标准：只提醒不执行 → remind；代为执行 → schedule；重复/周期性 → heartbeat_task
-  - 若用户没说清提醒内容或未来时间，用 `wolo_clarify` 追问
-- 取消提醒/定时任务时：先调用 `wolo_jobs` 列出待执行任务，再带 job_name 调用 `wolo_cancel` 取消
-- 工具参数中不要填写当前日期，工具会自行计算
-
----
-
-## 回复约束
-
-- 每次工具执行完毕后，你的文字回复**必须且只能**回应用户最近一条消息的内容。
-- 语气自然温暖，像同事之间的对话。可以自然表达已经记下，但不要只说「已记录」「已入库」「已保存」这类机械确认语；还要给出贴合情境的轻量反馈。
-- 如果用户消息上方出现了「Relevant Historical Records」区块，只在确实相关时顺带引用；不要为了引用而牵强跳回旧话题。
-- 确认收到工作记录时，可以简短表达关注或跟进（如"这个排查有结果了吗""blocker 需要帮忙 push 吗"），但不要啰嗦。
-- **严禁**在工具执行后跳回之前的历史讨论话题。
-"""
-
 _MAX_TURNS = 10
 _SESSION_MAX_MESSAGES = 80
 
-# Friendly Chinese labels for tool actions, keyed by the name suffix after the
-# ``solo_`` / ``wolo_`` prefix (both apps share the same action vocabulary).
-_TOOL_LABELS: dict[str, str] = {
-    "record": "📝 记录内容",
-    "import_records": "📝 批量记录",
-    "backfill": "📝 补录记录",
-    "view": "📖 浏览记录",
-    "search": "🔍 搜索记录",
-    "work_query": "🔍 综合回顾",
-    "decisions": "🧭 查看决策",
-    "highlights": "✨ 查看高光",
-    "blockers": "🚧 查看阻塞",
-    "playbook": "📘 查看打法",
-    "show": "🖼️ 查看来源",
-    "status": "📊 查看状态",
-    "llm_usage": "🤖 模型调用统计",
-    "get_now": "🕐 查询时间",
-    "remind": "⏰ 设置提醒",
-    "schedule": "📅 定时任务",
-    "heartbeat_task": "🔁 周期任务",
-    "jobs": "📋 查看任务",
-    "cancel": "🚫 取消任务",
-    "report": "📑 生成报告",
-    "report_list": "📑 报告列表",
-    "report_show": "📑 查看报告",
-    "report_search": "📑 搜索报告",
-    "fetch_digest": "📡 获取资讯简报",
-    "export": "📤 导出记录",
-    "visualize": "📈 生成可视化",
-    "process": "⚙️ 整理记录",
-    "sync_context": "🔄 同步上下文",
-    "todos": "✅ 待办清单",
-    "done": "✅ 完成待办",
-    "update_todo": "✏️ 更新待办",
-    "update_record": "✏️ 更新记录",
-    "delete_record": "🗑️ 删除记录",
-    "clarify": "💬 请你补充",
-    "remember": "🧠 记入长期记忆",
-    "profile_update": "🪪 更新资料",
-    "suggest_reflection": "💡 复盘建议",
-    "experiments": "🧪 查看实验",
-    "patterns": "🧩 查看模式",
-}
-
-# Friendly labels for common argument keys.
-_ARG_LABELS: dict[str, str] = {
-    "content": "内容",
-    "corrected_content": "整理后内容",
-    "summary": "摘要",
-    "query": "关键词",
-    "keyword": "关键词",
-    "domain": "领域",
-    "date": "日期",
-    "tags": "标签",
-    "tag": "标签",
-    "status": "状态",
-    "limit": "数量",
-    "report_type": "报告类型",
-    "message": "提醒内容",
-    "task": "任务内容",
-    "delay_minutes": "延迟(分钟)",
-    "when": "时间",
-    "cron": "周期",
-    "interval_minutes": "间隔(分钟)",
-    "job_name": "任务名",
-    "title": "标题",
-    "todo_id": "待办",
-    "record_id": "记录",
-    "project": "项目",
-    "format": "格式",
-    "kind": "类型",
-    "name": "名称",
-}
-
 # Arguments that are noise for end-users and should never be shown.
-_HIDDEN_ARGS: frozenset[str] = frozenset({"source_context", "metadata", "session_key"})
+_HIDDEN_ARGS = HIDDEN_ARGS
 
 _MAX_HINT_ARGS = 3
 _MAX_ARG_LEN = 60
@@ -248,7 +72,7 @@ def _format_tool_hint(tool_name: str, tool_input: dict[str, Any] | None) -> str:
     Feishu user sees *what* is being executed, not just the tool name.
     """
     suffix = tool_name.split("_", 1)[1] if "_" in tool_name else tool_name
-    header = _TOOL_LABELS.get(suffix, f"🛠️ {tool_name}")
+    header = TOOL_LABELS.get(suffix, f"🛠️ {tool_name}")
 
     lines: list[str] = []
     for key, value in (tool_input or {}).items():
@@ -257,7 +81,7 @@ def _format_tool_hint(tool_name: str, tool_input: dict[str, Any] | None) -> str:
         text = _stringify_arg(value)
         if not text:
             continue
-        label = _ARG_LABELS.get(key, key)
+        label = ARG_LABELS.get(key, key)
         lines.append(f"  · {label}：{text}")
         if len(lines) >= _MAX_HINT_ARGS:
             break
@@ -272,28 +96,6 @@ def _read_file(path: Path) -> str | None:
         return None
     content = path.read_text(encoding="utf-8", errors="replace").strip()
     return content or None
-
-
-def _build_time_context() -> str:
-    """Build a short time-context prefix for the user message.
-
-    Kept out of the system prompt so the static system prompt can benefit from
-    KV-Cache prefix sharing across turns.
-    """
-    from datetime import datetime
-
-    local_now = datetime.now().astimezone()
-    return (
-        f"## Current Local Time\n"
-        f"- Date: {local_now.strftime('%Y-%m-%d')}\n"
-        f"- Time: {local_now.strftime('%H:%M:%S')}\n"
-        f"- Timezone: {local_now.tzname()} (UTC{local_now.strftime('%z')})\n"
-        f"- Weekday: {local_now.strftime('%A')}\n"
-        f"\n"
-        f"When the user mentions time without an explicit date (e.g. '10:00站会', '加班到很晚'), "
-        f"assume it refers to TODAY in the above local timezone, not UTC.\n"
-        f"\n---\n\n"
-    )
 
 
 def _is_image_file(path: str) -> bool:
@@ -318,13 +120,7 @@ def _build_similar_records_context(store: WoloStore, user_text: str, *, max_resu
     if not records:
         logger.debug("_build_similar_records_context no similar records found")
         return ""
-    lines = [
-        "## Relevant Historical Records",
-        "",
-        "The following past records are semantically similar to the user's current message.",
-        "Use them to detect patterns, avoid contradictions, or reference related past events.",
-        "",
-    ]
+    lines = list(SIMILAR_RECORDS_HEADER)
     for record in records:
         summary = record.summary or record.corrected_content[:60]
         tag_part = f" #{record.tags}" if record.tags else ""
@@ -358,7 +154,7 @@ def _build_user_message(text: str, media: list[str] | None) -> str | Conversatio
 
 def _build_system_prompt(workspace: Path) -> str:
     """Build the system prompt by combining routing rules with persona files and memory."""
-    sections = [_WOLO_TOOL_ROUTER_PROMPT.strip()]
+    sections = [TOOL_ROUTER_PROMPT.strip()]
     skills_prompt = _build_skills_prompt(workspace)
     if skills_prompt:
         sections.append(skills_prompt)
@@ -383,13 +179,7 @@ def _build_skills_prompt(workspace: Path) -> str | None:
     skills = [skill for skill in registry.list_skills() if not skill.disable_model_invocation]
     if not skills:
         return None
-    lines = [
-        "# Available Skills",
-        "",
-        "The following skills are available via the `skill_manager` tool.",
-        'When a user\'s request matches a skill, call `skill_manager(action="load", name="<skill_name>")` before proceeding.',
-        "",
-    ]
+    lines = list(SKILLS_PROMPT_HEADER)
     for skill in skills:
         lines.append(f"- **{skill.name}**: {skill.description}")
     return "\n".join(lines)
@@ -499,7 +289,7 @@ class WoloQueryRunner:
         # remains static and can be fully KV-Cache shared across turns.
         prefix = ""
         if include_time_context:
-            prefix += _build_time_context()
+            prefix += build_time_context()
         if include_similar_context:
             prefix += _build_similar_records_context(self._store, user_text)
         user_message = _build_user_message(prefix + user_text, media)
@@ -508,8 +298,6 @@ class WoloQueryRunner:
         last_text = ""
         tool_outputs: list[str] = []
         tool_errors: list[str] = []
-        # Tools whose output should be sent verbatim (not summarized by LLM).
-        _PASSTHROUGH_TOOLS = {"wolo_report", "wolo_visualize"}
         passthrough_output: str = ""
         engine_error: str = ""
         try:
@@ -529,7 +317,7 @@ class WoloQueryRunner:
                         tool_errors.append(f"{event.tool_name}: {event.output.strip()[:200]}")
                     elif event.output.strip():
                         tool_outputs.append(event.output.strip())
-                        if event.tool_name in _PASSTHROUGH_TOOLS:
+                        if event.tool_name in PASSTHROUGH_TOOLS:
                             passthrough_output = event.output.strip()
         except Exception as exc:
             engine_error = f"{type(exc).__name__}: {exc}"
@@ -546,8 +334,8 @@ class WoloQueryRunner:
             # Prefer the model's final text for human tone after a successful
             # record/import flow; tool output remains the fallback for silent
             # final turns.
-            final = last_text or "\n".join(tool_outputs) or _FALLBACK_MESSAGE
-            if final.startswith(_FALLBACK_MESSAGE):
+            final = last_text or "\n".join(tool_outputs) or FALLBACK_MESSAGE
+            if final.startswith(FALLBACK_MESSAGE):
                 logger.warning(
                     "wolo fallback triggered — last_text=%r tool_outputs=%s "
                     "tool_errors=%s engine_error=%s session_key=%s text_preview=%r",
@@ -588,4 +376,4 @@ class WoloQueryRunner:
         ):
             if kind == "final":
                 return text
-        return _FALLBACK_MESSAGE
+        return FALLBACK_MESSAGE

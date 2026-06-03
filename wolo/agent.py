@@ -6,6 +6,7 @@ import asyncio
 import json
 from typing import Any
 
+from common.constants import DEFAULT_SAMPLE_TYPE
 from openharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
@@ -17,6 +18,19 @@ from openharness.config import load_settings
 from openharness.engine.messages import ConversationMessage
 from openharness.ui.runtime import _resolve_api_client_from_settings
 from openharness.utils.log import get_logger
+
+from wolo.prompts import (
+    ARTIFACT_EXTRACTION_SYSTEM_PROMPT,
+    DAILY_QUESTION_SYSTEM_PROMPT,
+    EXTRACT_ARTIFACTS_USER_PROMPT,
+    GENERATE_DAILY_QUESTION_USER_PROMPT,
+    GENERATE_REFLECTION_USER_PROMPT,
+    JSON_RETRY_SUFFIX,
+    PROCESS_RECORD_SYSTEM_PROMPT,
+    PROCESS_RECORD_USER_PROMPT,
+    REFLECTION_SYSTEM_PROMPT,
+    report_system_prompt,
+)
 
 logger = get_logger(__name__)
 _DEFAULT_JSON_ATTEMPTS = 3
@@ -47,8 +61,8 @@ class OpenHarnessWoloAgent:
         snippet = raw_content[:120].replace("\n", " ")
         logger.debug("process_record start model=%s content=%r", self._settings.model, snippet)
         result = await self._complete_json(
-            system_prompt=_PROCESS_RECORD_SYSTEM_PROMPT,
-            user_prompt=f"{profile_context}\n\n## 用户原始记录\n{raw_content}\n\n请整理上述记录，输出 JSON。",
+            system_prompt=PROCESS_RECORD_SYSTEM_PROMPT,
+            user_prompt=PROCESS_RECORD_USER_PROMPT.format(profile_context=profile_context, raw_content=raw_content),
             fallback=_fallback_record(raw_content),
             operation="process_record",
         )
@@ -69,12 +83,11 @@ class OpenHarnessWoloAgent:
     ) -> dict[str, Any]:
         logger.debug("extract_artifacts start record_id=%s", record.get("id") or record.get("entry_id"))
         result = await self._complete_json(
-            system_prompt=_ARTIFACT_EXTRACTION_SYSTEM_PROMPT,
-            user_prompt=(
-                f"{profile_context}\n\n"
-                f"## 原始输入\n{raw_content}\n\n"
-                f"## 已结构化主记录\n{json.dumps(record, ensure_ascii=False)}\n\n"
-                "请只提取工作 artifacts，输出 JSON。"
+            system_prompt=ARTIFACT_EXTRACTION_SYSTEM_PROMPT,
+            user_prompt=EXTRACT_ARTIFACTS_USER_PROMPT.format(
+                profile_context=profile_context,
+                raw_content=raw_content,
+                record_json=json.dumps(record, ensure_ascii=False),
             ),
             fallback=_empty_artifacts(),
             operation="extract_artifacts",
@@ -106,7 +119,7 @@ class OpenHarnessWoloAgent:
             user_prompt_parts.append(f"\n\n## 数据统计摘要\n{stats_summary}")
         user_prompt_parts.append(f"\n\n## 记录数据（共 {len(records)} 条）\n{records_text}")
         content = await self._complete(
-            system_prompt=_report_system_prompt(report_type),
+            system_prompt=report_system_prompt(report_type),
             user_prompt="".join(user_prompt_parts),
             max_tokens=self._settings.max_tokens,
         )
@@ -117,8 +130,8 @@ class OpenHarnessWoloAgent:
     async def generate_daily_question(self, profile_context: str) -> str:
         logger.info("generate_daily_question start")
         return await self._complete(
-            system_prompt=_DAILY_QUESTION_SYSTEM_PROMPT,
-            user_prompt=f"{profile_context}\n\n请根据以上上下文，为用户生成一个今日份的、有深度的对话引导问题。",
+            system_prompt=DAILY_QUESTION_SYSTEM_PROMPT,
+            user_prompt=GENERATE_DAILY_QUESTION_USER_PROMPT.format(profile_context=profile_context),
         )
 
     async def generate_reflection_questions(
@@ -129,15 +142,17 @@ class OpenHarnessWoloAgent:
         style: str | None = None,
     ) -> str:
         logger.info("generate_reflection_questions start focus=%s style=%s", focus, style)
-        user_prompt = f"{profile_context}\n\n## 最近记录摘要\n{records_summary}"
-        if focus:
-            user_prompt += f"\n\n请特别关注以下领域：{focus}"
-        if style:
-            user_prompt += f"\n\n请使用以下语气/风格：{style}"
+        focus_section = f"\n\n请特别关注以下领域：{focus}" if focus else ""
+        style_section = f"\n\n请使用以下语气/风格：{style}" if style else ""
 
         return await self._complete(
-            system_prompt=_REFLECTION_SYSTEM_PROMPT,
-            user_prompt=user_prompt + "\n\n请生成 3 个深度复盘问题。",
+            system_prompt=REFLECTION_SYSTEM_PROMPT,
+            user_prompt=GENERATE_REFLECTION_USER_PROMPT.format(
+                profile_context=profile_context,
+                records_summary=records_summary,
+                focus_section=focus_section,
+                style_section=style_section,
+            ),
         )
 
     async def _complete(self, *, system_prompt: str, user_prompt: str, max_tokens: int | None = None) -> str:
@@ -188,11 +203,7 @@ class OpenHarnessWoloAgent:
                 )
                 if attempt < self._max_json_attempts and self._retry_delay_seconds:
                     await asyncio.sleep(self._retry_delay_seconds)
-                prompt = (
-                    f"{user_prompt}\n\n"
-                    "上一次模型输出不是合法 JSON。请重新输出，必须只包含一个 JSON object，"
-                    "不要包含 Markdown、解释或额外文本。"
-                )
+                prompt = user_prompt + JSON_RETRY_SUFFIX
         logger.error("%s exhausted json retries; using fallback: %s", operation, last_error)
         return fallback
 
@@ -218,7 +229,7 @@ def _fallback_record(raw_content: str) -> dict[str, Any]:
         "emotion_reason": "结构化失败",
         "related_people": "",
         "related_places": "",
-        "sample_type": "neutral",
+        "sample_type": DEFAULT_SAMPLE_TYPE,
         "problem_essence": "",
         "available_cards": "",
         "strategy": "",
@@ -243,219 +254,3 @@ def _normalize_artifacts(result: dict[str, Any]) -> dict[str, Any]:
         value = result.get(key)
         normalized[key] = value if isinstance(value, list) else []
     return normalized
-
-
-_PROCESS_RECORD_SYSTEM_PROMPT = """你是一位严谨的 AI 工作日志助手。你的任务不是替用户发泄情绪，而是把工作输入转成可用于复盘和策略迭代的主工作记录。
-
-你拥有以下上下文信息作为参考：
-1. **Soul**: 你的行为准则与人设。
-2. **User Profile**: 用户的工作角色、项目、团队、工具和报告偏好。
-3. **Work Memory**: 已沉淀的长效工作事实（项目背景、仓库、工具、prompt 模式、协作约定）。
-4. **Recent Observations**: 最近观察到但尚未确认为长效事实的项目动态、blocker、决策和工具经验。
-
-### 核心原则
-- **事实一致性**：检查用户新输入是否与已知项目上下文矛盾。若发现矛盾（例如项目名、负责人、结论或工具结果冲突），在 `note` 中指出，并在 `needs_clarification` 为 true 时询问。
-- **系统分析优先**：优先判断这条记录是否是 `tension_success`、`aware_failure`、`avoidance_design`、`neutral` 四类样本之一，并提炼本质、手上牌、策略、下一步和验证信号。
-- **工作优先级**：优先识别项目、任务、会议、代码变更、prompt、tool、命令、决策、blocker、风险、指标和 next action。
-- **记忆分层**：
-    - **Memory (长效工作记忆)**：稳定、低频变动的事实（项目目标、团队分工、工具链、汇报节奏）。
-    - **Observations (动态观察)**：高频变动的进展、临时 blocker、prompt/tool 实验、阶段性结论。
-- **绝不猜测**：对模糊的项目、结论、owner、度量或交付状态，优先追问而非脑补。
-- **少抱怨，多闭环**：弱化情绪化归因，优先输出问题本质、可用资源、可执行策略、截止时间和验证标准。
-
-### 输出格式 (严格 JSON)
-{
-  "date": "YYYY-MM-DD (仅当用户提到非今天的日期时输出)",
-  "period": "凌晨/清晨/上午/中午/下午/傍晚/深夜 (仅当用户提到的时间与当前记录时间明显不符时输出)",
-  "corrected_content": "修正语病但不改变事实的工作原文",
-  "summary": "一句极简的工作摘要，突出交付物/决策/blocker",
-  "tags": "标签1,标签2 (如：项目,会议,代码,prompt,tool,bug,review,blocker,决策,交付)",
-  "emotion": "顺利/受阻/中性/高压/完成/风险",
-  "events": "会议、里程碑、发布、评审、事故或重要工作节点",
-  "emotion_reason": "基于工作状态的简短说明，例如为何受阻或为何完成",
-  "related_people": "涉及同事、团队、owner 或 stakeholder",
-  "related_places": "涉及地点、仓库、系统、服务、工具或平台",
-  "sample_type": "tension_success/aware_failure/avoidance_design/neutral",
-  "problem_essence": "问题本质，不要只写抱怨",
-  "available_cards": "当前可用资源、路径或筹码",
-  "strategy": "本次采取或应采取的策略",
-  "next_move": "下一步最小可执行动作",
-  "deadline": "这步动作的期限；若无可空",
-  "validation_signal": "如何判断策略有效；若无可空",
-  "needs_clarification": false,
-  "clarification_reason": "若为 true，说明原因",
-  "clarification_questions": ["追问的问题"],
-  "note": "对本次工作记录的洞察、风险、后续动作或与历史事实的冲突提醒"
-}
-
-如果输入包含多条独立日志，请拆分为 `records` 数组：
-{
-  "records": [
-    {
-      "date": "YYYY-MM-DD",
-      "content": "单条原文",
-      "corrected_content": "修正后原文",
-      "summary": "摘要",
-      "tags": "标签",
-      "emotion": "工作状态",
-      "period": "时段",
-      "events": "会议/里程碑/发布/评审/事故",
-      "source": "补录"
-    }
-  ],
-  "needs_clarification": false
-}
-"""
-
-
-_ARTIFACT_EXTRACTION_SYSTEM_PROMPT = """你是一位工作 artifacts 提取器。输入包含原始文本和已经整理好的主工作记录。
-
-你的唯一职责是从事实中提取可持续维护的工作 artifacts 和策略实验，不要重写主记录，也不要推测缺失事实。
-
-### 输出格式 (严格 JSON)
-{
-  "todos": [
-    {
-      "title": "明确可执行的待办",
-      "project": "项目名",
-      "priority": "high/medium/low",
-      "due_date": "YYYY-MM-DD 或空"
-    }
-  ],
-  "decisions": [
-    {
-      "title": "关键决策",
-      "rationale": "为什么这么决定",
-      "impact": "影响范围或后果",
-      "project": "项目名"
-    }
-  ],
-  "highlights": [
-    {
-      "kind": "类型标签",
-      "title": "重要事项标题",
-      "content": "可复用经验、阻塞、风险或关键上下文",
-      "project": "项目名",
-      "tags": "prompt,tool,blocker 等"
-    }
-  ],
-  "experiments": [
-    {
-      "title": "策略实验标题",
-      "hypothesis": "准备验证的假设",
-      "problem": "对应问题",
-      "strategy": "准备用什么策略试",
-      "next_move": "下一个最小动作",
-      "success_signal": "如何判断有效",
-      "deadline": "YYYY-MM-DD 或空",
-      "project": "项目名"
-    }
-  ],
-  "suggested_profile_updates": [
-    {
-      "category": "分类",
-      "entity_type": "实体类型",
-      "entity_name": "名称",
-      "suggested_value": "新发现或更新的工作事实",
-      "confidence": "high/medium/low"
-    }
-  ]
-}
-
-若没有对应内容，输出空数组。只输出 JSON。
-"""
-
-def _report_system_prompt(report_type: str) -> str:
-    labels = {"weekly": "周报", "monthly": "月报", "yearly": "年报"}
-    period_label = labels.get(report_type, report_type)
-
-    return f"""你是一位资深工程/知识工作复盘助手。请基于用户的工作记录生成一份有深度、有洞察的工作{period_label}。
-
-## 核心要求
-
-**你不是在做数据统计搬运工。** 统计数据会在报告末尾由系统自动附加——你的职责是提供人类无法通过数据表直接看出的「洞察」和「叙事」。
-
-你需要做的：
-1. 从零散记录中**提炼出叙事线**——本期工作的主线是什么，发生了什么转折
-2. 识别**模式与趋势**——哪些行为在重复，哪些方向在收敛或发散
-3. 给出**具体可执行的建议**——基于实际数据，而非泛泛而谈
-4. 对风险做**前瞻判断**——什么可能在下一周期爆发
-
-## 输出结构
-
----
-
-# 📊 工作{period_label}
-
-## 🎯 本期全貌
-
-用一段连贯的叙事（5-8句）概括本期工作全貌。要回答：
-- 核心推进了什么？
-- 遇到了什么阻力，如何应对的？
-- 相比上一期，工作重心有什么迁移？
-
-## ✅ 关键成果
-
-| 成果 | 项目/领域 | 为什么重要 |
-|------|-----------|-----------|
-| ... | ... | 一句话说明价值和影响 |
-
-只列真正重要的成果（3-7条），不要把每条记录都列上来。
-
-## 🔍 深度洞察
-
-这是报告最核心的部分。请识别并展开 2-4 个洞察，例如：
-- 某个项目在本期发生了关键转折——转折点是什么、为什么
-- 工作模式中有某种值得注意的趋势（比如 blocker 集中在某类问题）
-- 某个决策的后续效果开始显现（正面或负面）
-- 存在未被正式识别但反复出现的隐性问题
-
-每个洞察用 **加粗标题** + 2-3句分析展开。
-
-## 🚧 风险 & 待解决
-
-| 问题 | 严重度 | 为什么现在要关注 | 建议行动 |
-|------|--------|-----------------|----------|
-| ... | 🔴/🟡 | ... | ... |
-
-只列确实构成风险的项（1-5条），不要把所有 todo 搬过来。
-
-## 📋 下期建议
-
-基于以上分析，给出 3-5 条具体建议。每条须关联到本期的具体发现：
-1. **建议内容** — 因为本期观察到...所以建议...
-
----
-
-## 写作原则
-- **叙事优先**：先讲故事、给判断，再用数据佐证——不要罗列数据让读者自己总结
-- **引用具体证据**：每个结论引用日期、项目名或具体事件
-- **诚实**: 数据不足就明说，不编造不臆测
-- **不要重复统计数据**: 情绪分布、标签云、活跃热力图等会由系统自动附在报告末尾，你不需要输出这些
-- **语言精炼**: 拒绝"总体来说""各方面都""希望下期继续努力"等空话
-"""
-
-_DAILY_QUESTION_SYSTEM_PROMPT = """你是一位 AI 工作记录助手。
-你的目标是通过一个精准、具体的问题，引导用户记录今天的工作重点。
-
-### 引导原则
-1. **基于上下文**：参考用户的 User Profile 和最近的 Observation。如果用户最近在忙某个项目、prompt/tool 实验、bug、PR 或会议，问题应与之相关。
-2. **避免陈词滥调**：不要问“今天工作怎么样”，要优先问问题本质、策略选择、验证信号或今天是否出现了新的规避设计。
-3. **保持简短**：问题应在一句话以内。
-4. **可汇报**：问题的答案应该能进入周报或项目复盘。
-
-示例：
-- “昨天 wolo 结构化方案里，todo/decision/highlight 的边界最后怎么定的？”
-- “今天哪个 blocker 最影响交付，下一步是谁负责推进？”
-- “今天有没有新的 prompt/tool 经验值得沉淀成可复用做法？”
-"""
-
-_REFLECTION_SYSTEM_PROMPT = """你是一位工作复盘教练。
-你的任务是基于用户最近的工作记录，提出 3 个能够推动项目、prompt、tool 或协作改进的深度复盘问题。
-
-### 复盘原则
-1. **见微知著**：从碎片记录中发现重复 blocker、工具链问题、prompt 模式、规避设计或协作摩擦。
-2. **多维视角**：如果用户只关注了进展，提醒风险和决策依据；如果只关注了 blocker，引导拆解 next action、截止时间和验证信号。
-3. **针对性**：如果提供了 focus 领域，请严格围绕该领域提问。
-4. **启发性**：问题不应有标准答案，而是为了沉淀可复用工作方法和下一轮实验。
-"""

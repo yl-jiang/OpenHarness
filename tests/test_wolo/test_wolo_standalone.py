@@ -244,14 +244,13 @@ def test_wolo_tool_names_and_descriptions_are_work_focused(tmp_path: Path):
 
 
 def test_wolo_prompts_are_optimized_for_work_logs():
-    from wolo.agent import _PROCESS_RECORD_SYSTEM_PROMPT, _report_system_prompt
-    from wolo.runner import _WOLO_TOOL_ROUTER_PROMPT
+    from wolo.prompts import PROCESS_RECORD_SYSTEM_PROMPT, TOOL_ROUTER_PROMPT, report_system_prompt
 
     prompt_text = "\n".join(
         [
-            _WOLO_TOOL_ROUTER_PROMPT,
-            _PROCESS_RECORD_SYSTEM_PROMPT,
-            _report_system_prompt("weekly"),
+            TOOL_ROUTER_PROMPT,
+            PROCESS_RECORD_SYSTEM_PROMPT,
+            report_system_prompt("weekly"),
         ]
     )
 

@@ -11,8 +11,10 @@ from openharness.engine.messages import ConversationMessage, TextBlock
 
 from wolo.agent import (
     OpenHarnessWoloAgent,
-    _ARTIFACT_EXTRACTION_SYSTEM_PROMPT,
-    _PROCESS_RECORD_SYSTEM_PROMPT,
+)
+from wolo.prompts import (
+    ARTIFACT_EXTRACTION_SYSTEM_PROMPT,
+    PROCESS_RECORD_SYSTEM_PROMPT,
 )
 from wolo.core.models import WoloDecision, WoloHighlight, WoloTodo
 from wolo.processor import WoloProcessor
@@ -103,12 +105,12 @@ class _JsonClient:
 
 
 def test_record_and_artifact_prompts_have_separate_responsibilities():
-    assert "todos" not in _PROCESS_RECORD_SYSTEM_PROMPT
-    assert "decisions" not in _PROCESS_RECORD_SYSTEM_PROMPT
-    assert "highlights" not in _PROCESS_RECORD_SYSTEM_PROMPT
-    assert "todos" in _ARTIFACT_EXTRACTION_SYSTEM_PROMPT
-    assert "decisions" in _ARTIFACT_EXTRACTION_SYSTEM_PROMPT
-    assert "highlights" in _ARTIFACT_EXTRACTION_SYSTEM_PROMPT
+    assert "todos" not in PROCESS_RECORD_SYSTEM_PROMPT
+    assert "decisions" not in PROCESS_RECORD_SYSTEM_PROMPT
+    assert "highlights" not in PROCESS_RECORD_SYSTEM_PROMPT
+    assert "todos" in ARTIFACT_EXTRACTION_SYSTEM_PROMPT
+    assert "decisions" in ARTIFACT_EXTRACTION_SYSTEM_PROMPT
+    assert "highlights" in ARTIFACT_EXTRACTION_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,7 @@ from openharness.utils.fs import atomic_write_text
 from openharness.utils.log import get_logger
 
 from wolo.runner import WoloQueryRunner
+from wolo.prompts import HEARTBEAT_EVAL_SYSTEM_PROMPT
 from wolo.core.session import list_conversations, load_conversation, save_conversation
 from wolo.core.store import WoloStore
 from wolo.core.workspace import get_workspace_root
@@ -33,11 +34,6 @@ _BLOCKER_MAX_AGE_DAYS = 7
 _PENDING_CONFIRMATION_MAX_AGE_DAYS = 7
 _COOLDOWN_MIN_SECONDS = 30 * 60
 _COOLDOWN_INTERVAL_MULTIPLIER = 4
-_HEARTBEAT_EVAL_SYSTEM_PROMPT = (
-    "你是 wolo heartbeat 的只读通知评估助手。"
-    "你不能调用任何工具，也不能写入记录、创建待办或修改数据。"
-    "你只能基于用户消息里的信号生成 JSON 结果。"
-)
 
 
 class _Runner(Protocol):
@@ -370,7 +366,7 @@ class WoloHeartbeatService:
             include_similar_context=False,
             use_session_history=False,
             persist_session=False,
-            system_prompt_override=_HEARTBEAT_EVAL_SYSTEM_PROMPT,
+            system_prompt_override=HEARTBEAT_EVAL_SYSTEM_PROMPT,
         )
         return self._extract_notifications(response)
 

@@ -250,10 +250,10 @@ def test_standalone_solo_gateway_service_uses_standalone_config(tmp_path: Path):
 
 
 def test_solo_prompt_routes_future_reminders():
-    from solo.runner import _SOLO_TOOL_ROUTER_PROMPT
+    from solo.prompts import TOOL_ROUTER_PROMPT
 
-    assert "提醒" in _SOLO_TOOL_ROUTER_PROMPT
-    assert "solo_remind" in _SOLO_TOOL_ROUTER_PROMPT
+    assert "提醒" in TOOL_ROUTER_PROMPT
+    assert "solo_remind" in TOOL_ROUTER_PROMPT
 
 
 def test_solo_command_prefix_supports_llm_usage():

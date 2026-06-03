@@ -7,7 +7,17 @@ from uuid import uuid4
 
 from openharness.utils.log import get_logger
 
+from common.constants import (
+    DEFAULT_EMOTION,
+    DEFAULT_SAMPLE_TYPE,
+    DEFAULT_SOURCE_BACKFILL,
+    DEFAULT_SOURCE_ORIGINAL,
+    PROFILE_UPDATE_ACCEPTED_STATUSES,
+    REPORT_WINDOW_DAYS,
+    WEEKDAYS_ZH,
+)
 from wolo.agent import OpenHarnessWoloAgent
+from wolo.strings import MISSING_DAY_REMINDER_TMPL, PENDING_REMINDER_TMPL
 from wolo.core.artifacts import persist_work_artifacts
 from wolo.core.models import PendingConfirmation, ProcessResult, ProfileUpdate, WoloEntry, WoloRecord, WoloReport
 from wolo.core.store import WoloStore
@@ -22,9 +32,6 @@ from wolo.core.utils import (
 )
 
 logger = get_logger(__name__)
-
-_PENDING_REMINDER_TMPL = "还有 {count} 条待确认 wolo 工作记录需要你确认。"
-_MISSING_DAY_REMINDER_TMPL = "你已经连续 {streak} 天没有 wolo 工作记录，要不要补一下？"
 
 
 def _build_report_stats(records: list, start_date: str, end_date: str) -> str:
@@ -321,7 +328,7 @@ class WoloProcessor:
         elif start_date:
             start, end = start_date, now.strftime("%Y-%m-%d")
         else:
-            _window = {"weekly": 7, "monthly": 30, "yearly": 365}
+            _window = REPORT_WINDOW_DAYS
             start = (now - timedelta(days=_window.get(report_type, 30))).strftime("%Y-%m-%d")
             end = now.strftime("%Y-%m-%d")
 
@@ -393,7 +400,7 @@ class WoloProcessor:
         data: dict[str, object],
         *,
         raw_content: str | None = None,
-        default_source: str = "原始",
+        default_source: str = DEFAULT_SOURCE_ORIGINAL,
     ) -> WoloRecord:
         """Build a WoloRecord from entry + extracted/imported data dict.
 
@@ -419,7 +426,7 @@ class WoloProcessor:
             corrected_content=str(data.get("corrected_content") or raw),
             summary=str(data.get("summary") or ""),
             tags=str(data.get("tags") or ""),
-            emotion=str(data.get("emotion") or "中性"),
+            emotion=str(data.get("emotion") or DEFAULT_EMOTION),
             weekday=_get_weekday(date),
             events=events,
             period=str(data.get("period") or _get_period(entry.created_at)),
@@ -432,7 +439,7 @@ class WoloProcessor:
             source=str(data.get("source") or metadata.get("source") or default_source),
             created_at=_now(),
             attachments=list(entry.attachments),
-            sample_type=str(data.get("sample_type") or "neutral"),
+            sample_type=str(data.get("sample_type") or DEFAULT_SAMPLE_TYPE),
             problem_essence=str(data.get("problem_essence") or ""),
             available_cards=str(data.get("available_cards") or ""),
             strategy=str(data.get("strategy") or ""),
@@ -442,12 +449,12 @@ class WoloProcessor:
         )
 
     def _record_from_result(self, entry: WoloEntry, result: dict[str, object]) -> WoloRecord:
-        return self._build_record(entry, result, default_source="原始")
+        return self._build_record(entry, result, default_source=DEFAULT_SOURCE_ORIGINAL)
 
     def _record_from_import(self, entry: WoloEntry, item: dict[str, object]) -> WoloRecord:
         raw = str(item.get("content") or item.get("raw_content") or item.get("corrected_content") or "")
         return self._build_record(
-            entry, item, raw_content=raw or entry.content, default_source="补录",
+            entry, item, raw_content=raw or entry.content, default_source=DEFAULT_SOURCE_BACKFILL,
         )
 
     def _pending_from_result(self, entry: WoloEntry, result: dict[str, object]) -> PendingConfirmation:
@@ -535,7 +542,7 @@ class WoloProcessor:
                     dt = datetime.fromisoformat(target_date)
                 
                 # Use Chinese weekday names for better LLM understanding in Chinese context
-                weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+                weekdays = WEEKDAYS_ZH
                 weekday_str = weekdays[dt.weekday()]
                 date_str = dt.strftime("%Y-%m-%d")
                 
@@ -570,7 +577,7 @@ class WoloProcessor:
         updates = [
             update
             for update in self.store.list_profile_updates()
-            if update.status in {"accepted", "pending"}
+            if update.status in PROFILE_UPDATE_ACCEPTED_STATUSES
         ]
         if updates:
             lines = [
@@ -603,7 +610,7 @@ class WoloProcessor:
         state = self.store.reminder_state()
         if pending_count >= 1 and pending_count > state["last_pending_count"]:
             self.store.update_reminder_state(pending_count=pending_count)
-            return _PENDING_REMINDER_TMPL.format(count=pending_count)
+            return PENDING_REMINDER_TMPL.format(count=pending_count)
         self.store.update_reminder_state(pending_count=pending_count)
         return None
 
@@ -619,6 +626,6 @@ class WoloProcessor:
         state = self.store.reminder_state()
         reminder = None
         if streak >= 1 and streak > state["last_missing_streak"]:
-            reminder = _MISSING_DAY_REMINDER_TMPL.format(streak=streak)
+            reminder = MISSING_DAY_REMINDER_TMPL.format(streak=streak)
         self.store.update_reminder_state(missing_streak=streak)
         return streak, reminder

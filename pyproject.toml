@@ -69,7 +69,7 @@ wolo = "wolo.cli:app"
 onboard = "onboard.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/openharness", "ohmo", "solo", "wolo", "onboard", "feed_digest"]
+packages = ["src/openharness", "ohmo", "solo", "wolo", "onboard", "feed_digest", "common"]
 
 [tool.hatch.build]
 exclude = [

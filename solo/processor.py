@@ -7,7 +7,17 @@ from uuid import uuid4
 
 from openharness.utils.log import get_logger
 
+from common.constants import (
+    DEFAULT_EMOTION,
+    DEFAULT_SAMPLE_TYPE,
+    DEFAULT_SOURCE_BACKFILL,
+    DEFAULT_SOURCE_ORIGINAL,
+    PROFILE_UPDATE_ACCEPTED_STATUSES,
+    REPORT_WINDOW_DAYS,
+    WEEKDAYS_ZH,
+)
 from solo.agent import OpenHarnessSoloAgent
+from solo.strings import MISSING_DAY_REMINDER_TMPL, PENDING_REMINDER_TMPL
 from solo.core.artifacts import persist_personal_artifacts
 from solo.core.models import (
     PendingConfirmation,
@@ -328,7 +338,7 @@ class SoloProcessor:
         elif start_date:
             start, end = start_date, now.strftime("%Y-%m-%d")
         else:
-            _window = {"weekly": 7, "monthly": 30, "yearly": 365}
+            _window = REPORT_WINDOW_DAYS
             start = (now - timedelta(days=_window.get(report_type, 30))).strftime("%Y-%m-%d")
             end = now.strftime("%Y-%m-%d")
 
@@ -400,7 +410,7 @@ class SoloProcessor:
         data: dict[str, object],
         *,
         raw_content: str | None = None,
-        default_source: str = "原始",
+        default_source: str = DEFAULT_SOURCE_ORIGINAL,
     ) -> SoloRecord:
         """Build a SoloRecord from entry + extracted/imported data dict.
 
@@ -426,7 +436,7 @@ class SoloProcessor:
             corrected_content=str(data.get("corrected_content") or raw),
             summary=str(data.get("summary") or ""),
             tags=str(data.get("tags") or ""),
-            emotion=str(data.get("emotion") or "中性"),
+            emotion=str(data.get("emotion") or DEFAULT_EMOTION),
             weekday=_get_weekday(date),
             events=events,
             period=str(data.get("period") or _get_period(entry.created_at)),
@@ -439,7 +449,7 @@ class SoloProcessor:
             source=str(data.get("source") or metadata.get("source") or default_source),
             created_at=_now(),
             attachments=list(entry.attachments),
-            sample_type=str(data.get("sample_type") or "neutral"),
+            sample_type=str(data.get("sample_type") or DEFAULT_SAMPLE_TYPE),
             trigger_scene=str(data.get("trigger_scene") or ""),
             friction_signal=str(data.get("friction_signal") or ""),
             awareness_timing=str(data.get("awareness_timing") or ""),
@@ -450,12 +460,12 @@ class SoloProcessor:
         )
 
     def _record_from_result(self, entry: SoloEntry, result: dict[str, object]) -> SoloRecord:
-        return self._build_record(entry, result, default_source="原始")
+        return self._build_record(entry, result, default_source=DEFAULT_SOURCE_ORIGINAL)
 
     def _record_from_import(self, entry: SoloEntry, item: dict[str, object]) -> SoloRecord:
         raw = str(item.get("content") or item.get("raw_content") or item.get("corrected_content") or "")
         return self._build_record(
-            entry, item, raw_content=raw or entry.content, default_source="补录",
+            entry, item, raw_content=raw or entry.content, default_source=DEFAULT_SOURCE_BACKFILL,
         )
 
     def _pending_from_result(self, entry: SoloEntry, result: dict[str, object]) -> PendingConfirmation:
@@ -525,7 +535,7 @@ class SoloProcessor:
                     dt = datetime.fromisoformat(target_date)
                 
                 # Use Chinese weekday names for better LLM understanding in Chinese context
-                weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+                weekdays = WEEKDAYS_ZH
                 weekday_str = weekdays[dt.weekday()]
                 date_str = dt.strftime("%Y-%m-%d")
                 
@@ -560,7 +570,7 @@ class SoloProcessor:
         updates = [
             update
             for update in self.store.list_profile_updates()
-            if update.status in {"accepted", "pending"}
+            if update.status in PROFILE_UPDATE_ACCEPTED_STATUSES
         ]
         if updates:
             lines = [
@@ -593,7 +603,7 @@ class SoloProcessor:
         state = self.store.reminder_state()
         if pending_count >= 1 and pending_count > state["last_pending_count"]:
             self.store.update_reminder_state(pending_count=pending_count)
-            return f"还有 {pending_count} 条待确认 solo 需要你确认。"
+            return PENDING_REMINDER_TMPL.format(count=pending_count)
         self.store.update_reminder_state(pending_count=pending_count)
         return None
 
@@ -609,6 +619,6 @@ class SoloProcessor:
         state = self.store.reminder_state()
         reminder = None
         if streak >= 1 and streak > state["last_missing_streak"]:
-            reminder = f"你已经连续 {streak} 天没有 solo 记录，要不要补一下？"
+            reminder = MISSING_DAY_REMINDER_TMPL.format(streak=streak)
         self.store.update_reminder_state(missing_streak=streak)
         return streak, reminder

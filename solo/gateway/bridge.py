@@ -7,6 +7,7 @@ import hashlib
 import time
 from pathlib import Path
 
+from common.constants import AUTH_ERROR_MESSAGES
 from openharness.channels.bus.events import InboundMessage, OutboundMessage
 from openharness.channels.bus.queue import MessageBus
 from openharness.utils.log import get_logger
@@ -66,10 +67,9 @@ def _format_gateway_error(exc: Exception) -> str:
     """Return a short, user-facing error message."""
     message = str(exc).strip() or exc.__class__.__name__
     lowered = message.lower()
-    if "claude oauth refresh failed" in lowered:
-        return "Claude 订阅认证过期，请重新运行 `oh auth claude-login`。"
-    if "claude oauth refresh token is invalid or expired" in lowered:
-        return "Claude 订阅 token 已过期，请运行 `claude auth login` 后重新执行 `oh auth claude-login`。"
+    for pattern, user_msg in AUTH_ERROR_MESSAGES:
+        if pattern in lowered:
+            return user_msg
     if "auth source not found" in lowered or "access token" in lowered:
         return "认证未配置，请运行 `solo config` 设置 provider。"
     if "api key" in lowered or "credential" in lowered or "auth" in lowered:

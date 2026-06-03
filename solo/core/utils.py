@@ -6,6 +6,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from common.constants import TIME_PERIODS_ZH, WEEKDAYS_ZH
+
 
 def _now() -> str:
     """Get current UTC time in ISO format."""
@@ -19,10 +21,13 @@ def _get_weekday(date_str: str) -> str:
             dt = datetime.strptime(date_str, "%Y-%m-%d")
         else:
             dt = datetime.fromisoformat(date_str)
-        weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"]
+        weekdays = WEEKDAYS_ZH
         return weekdays[dt.weekday()]
     except Exception:
         return ""
+
+
+_PERIOD_BOUNDARIES = [0, 5, 9, 12, 14, 18, 22]
 
 
 def _get_period(created_at: str) -> str:
@@ -30,19 +35,11 @@ def _get_period(created_at: str) -> str:
     try:
         dt = datetime.fromisoformat(created_at)
         hour = dt.hour
-        if 0 <= hour < 5:
-            return "凌晨"
-        if 5 <= hour < 9:
-            return "清晨"
-        if 9 <= hour < 12:
-            return "上午"
-        if 12 <= hour < 14:
-            return "中午"
-        if 14 <= hour < 18:
-            return "下午"
-        if 18 <= hour < 22:
-            return "傍晚"
-        return "深夜"
+        for i, boundary in enumerate(_PERIOD_BOUNDARIES):
+            next_boundary = _PERIOD_BOUNDARIES[i + 1] if i + 1 < len(_PERIOD_BOUNDARIES) else 24
+            if boundary <= hour < next_boundary:
+                return TIME_PERIODS_ZH[i]
+        return TIME_PERIODS_ZH[-1]
     except Exception:
         return ""
 

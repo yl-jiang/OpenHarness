@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from wolo.core.models import ProcessResult
+from wolo.strings import COMMAND_ALIASES, HELP_TEXT
 
 WoloAction = Literal["record", "process", "status", "llm_usage", "view", "report", "backfill", "help"]
 
@@ -52,19 +53,19 @@ def parse_wolo_command(text: str, *, default_record: bool = False) -> WoloComman
     parts = content.split(maxsplit=1)
     first = parts[0].lower()
     rest = parts[1].strip() if len(parts) > 1 else ""
-    if first in {"help", "-h", "--help", "帮助"}:
+    if first in COMMAND_ALIASES["help"]:
         return WoloCommand(action="help")
-    if first in {"process", "整理"}:
+    if first in COMMAND_ALIASES["process"]:
         return WoloCommand(action="process", backfill_missing_yesterday=True)
-    if first in {"status", "状态"}:
+    if first in COMMAND_ALIASES["status"]:
         return WoloCommand(action="status")
-    if first in {"llm-usage", "llm_usage", "llm", "models", "模型", "模型调用"}:
+    if first in COMMAND_ALIASES["llm_usage"]:
         return WoloCommand(action="llm_usage")
-    if first in {"view", "list", "recent", "查看", "最近"}:
+    if first in COMMAND_ALIASES["view"]:
         return WoloCommand(action="view", limit=_parse_int(rest, default=10))
-    if first in {"report", "周报", "月报", "年报"}:
+    if first in COMMAND_ALIASES["report"]:
         return WoloCommand(action="report", report_type=_parse_report_type(first, rest))
-    if first in {"backfill", "补录"}:
+    if first in COMMAND_ALIASES["backfill"]:
         date, body = parse_backfill_argument(rest)
         return WoloCommand(action="backfill", content=body, backfill_date=date)
     return WoloCommand(action="record", content=content)
@@ -81,17 +82,7 @@ def parse_backfill_argument(text: str) -> tuple[str, str]:
 
 
 def wolo_help_text() -> str:
-    return (
-        "wolo 用法：\n"
-        "- 直接发送工作记录：自动入库并由模型整理\n"
-        "- /wolo process：整理待处理记录\n"
-        "- /wolo view [数量]：查看最近记录\n"
-        "- /wolo report weekly|monthly|yearly：生成报告\n"
-        "- 询问待办/blocker/决策/prompt 或 tool 经验：查询工作 artifacts\n"
-        "- /wolo status：查看状态\n"
-        "- /wolo llm-usage：查看模型调用统计\n"
-        "- /wolo backfill [YYYY-MM-DD] 内容：补录"
-    )
+    return HELP_TEXT
 
 
 def format_process_result(result: ProcessResult) -> str:
