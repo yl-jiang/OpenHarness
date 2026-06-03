@@ -734,6 +734,108 @@ async def test_solo_heartbeat_triggers_runner_and_notifies_recent_channel(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_solo_heartbeat_suppresses_duplicate_signals_with_persisted_cooldown(tmp_path: Path):
+    import json
+    from datetime import date
+
+    from solo.gateway.heartbeat import SoloHeartbeatService
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    SoloStore(workspace).add_todo(
+        SoloTodo(
+            id="todo1",
+            record_id="record1",
+            title="补齐日志",
+            category="复盘",
+            due_date=date.today().isoformat(),
+        )
+    )
+    save_conversation(workspace, "feishu:ou_user", [ConversationMessage.from_user_text("hi")])
+    calls: list[dict[str, object]] = []
+
+    class FakeRunner:
+        def __init__(self, store, *, profile=None):
+            self.store = store
+
+        async def run(self, text, session_key="", **kwargs):
+            del text, session_key
+            calls.append(dict(kwargs))
+            return '{"notifications": ["请先处理今日待办"]}'
+
+    bus = MessageBus()
+    service = SoloHeartbeatService(
+        bus=bus,
+        workspace=workspace,
+        provider_profile="codex",
+        enabled_channels=["feishu"],
+        runner_factory=FakeRunner,
+        notification_cooldown_s=3600,
+    )
+
+    first = await service.trigger_once()
+    second = await service.trigger_once()
+
+    assert first.notified is True
+    assert second.executed is False
+    assert second.reason == "cooldown"
+    assert len(calls) == 1
+    assert calls[0]["allow_tools"] is False
+    assert calls[0]["include_similar_context"] is False
+    assert calls[0]["use_session_history"] is False
+    assert calls[0]["persist_session"] is False
+
+    state_path = workspace / "data" / "heartbeat_state.json"
+    assert state_path.exists()
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["last_signal_fingerprint"]
+    assert state["last_notified_at"]
+
+    service_reloaded = SoloHeartbeatService(
+        bus=bus,
+        workspace=workspace,
+        provider_profile="codex",
+        enabled_channels=["feishu"],
+        runner_factory=FakeRunner,
+        notification_cooldown_s=3600,
+    )
+    third = await service_reloaded.trigger_once()
+    assert third.executed is False
+    assert third.reason == "cooldown"
+    assert len(calls) == 1
+
+
+def test_solo_heartbeat_failed_cron_jobs_uses_entry_name(tmp_path: Path):
+    import json
+    from datetime import datetime, timezone
+
+    from solo.gateway.heartbeat import SoloHeartbeatService
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    history_path = workspace / "data" / "cron_history.jsonl"
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.write_text(
+        json.dumps(
+            {
+                "name": "solo-todo-reminder",
+                "status": "failed",
+                "ended_at": datetime.now(timezone.utc).isoformat(),
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    service = SoloHeartbeatService(
+        bus=MessageBus(),
+        workspace=workspace,
+        provider_profile="codex",
+        enabled_channels=[],
+    )
+    assert service._check_failed_cron_jobs() == ["solo-todo-reminder"]
+
+
+@pytest.mark.asyncio
 async def test_solo_heartbeat_skips_when_agenda_is_empty(tmp_path: Path):
     from solo.gateway.heartbeat import SoloHeartbeatService
 
@@ -783,6 +885,8 @@ def test_solo_heartbeat_cli_status_reflects_config(tmp_path: Path):
 
 
 def test_solo_heartbeat_agenda_includes_pending_confirmations_and_file_tasks(tmp_path: Path):
+    from datetime import datetime, timezone
+
     from solo.gateway.heartbeat import SoloHeartbeatService
 
     workspace = initialize_workspace(tmp_path / ".solo")
@@ -794,7 +898,7 @@ def test_solo_heartbeat_agenda_includes_pending_confirmations_and_file_tasks(tmp
             raw_content="他说下周去检查",
             clarification_reason="指代不清",
             questions=["他说的是谁？"],
-            created_at="2026-05-20T00:00:00+00:00",
+            created_at=datetime.now(timezone.utc).isoformat(),
         )
     )
     (workspace / "HEARTBEAT.md").write_text("- 检查这个月的睡眠趋势\n", encoding="utf-8")

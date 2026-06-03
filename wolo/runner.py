@@ -19,6 +19,7 @@ from openharness.permissions.checker import PermissionChecker
 from openharness.permissions.modes import PermissionMode
 from openharness.api.recording_client import wrap_with_model_call_recorder
 from openharness.skills import load_skill_registry
+from openharness.tools.base import ToolRegistry
 from openharness.ui.runtime import _resolve_api_client_from_settings, _resolve_vision_config
 from openharness.utils.log import get_logger
 
@@ -428,6 +429,12 @@ class WoloQueryRunner:
         media: list[str] | None = None,
         source_context: dict[str, Any] | None = None,
         progress_callback: Callable[[str], Any] | None = None,
+        allow_tools: bool = True,
+        include_time_context: bool = True,
+        include_similar_context: bool = True,
+        use_session_history: bool = True,
+        persist_session: bool = True,
+        system_prompt_override: str | None = None,
     ):
         """Async generator yielding ``(kind, text)`` tuples during execution.
 
@@ -436,16 +443,21 @@ class WoloQueryRunner:
             ``("tool_hint", text)`` — tool-use notification
             ``("final", text)``    — the final reply (always last)
         """
-        registry = WoloToolRegistry(
-            self._store,
-            source_context=source_context,
-            progress_callback=progress_callback,
-        )
-        oh_registry = build_oh_registry(registry)
+        if allow_tools:
+            registry = WoloToolRegistry(
+                self._store,
+                source_context=source_context,
+                progress_callback=progress_callback,
+            )
+            oh_registry = build_oh_registry(registry)
+        else:
+            oh_registry = ToolRegistry()
 
         workspace = get_workspace_root(self._store.workspace)
         skill_dirs = (str(get_skills_dir(workspace)),)
-        prior_messages, session_id = load_conversation(workspace, session_key) if session_key else ([], None)
+        prior_messages, session_id = ([], None)
+        if session_key and use_session_history:
+            prior_messages, session_id = load_conversation(workspace, session_key)
         # Limit session history to prevent topic drift in long conversations.
         # Keep only the most recent messages; older context is preserved in the
         # session store and remains available via search tools.
@@ -464,7 +476,7 @@ class WoloQueryRunner:
             permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
             cwd=Path.cwd(),
             model=self._settings.model,
-            system_prompt=_build_system_prompt(workspace),
+            system_prompt=system_prompt_override or _build_system_prompt(workspace),
             max_tokens=self._settings.max_tokens,
             max_turns=_MAX_TURNS,
             settings=self._settings,
@@ -477,14 +489,20 @@ class WoloQueryRunner:
                 "autodream_context": _autodream_context(workspace),
             },
         )
-        engine.tool_metadata["system_prompt_refresher"] = lambda: engine.set_system_prompt(_build_system_prompt(workspace))
+        engine.tool_metadata["system_prompt_refresher"] = lambda: engine.set_system_prompt(
+            system_prompt_override or _build_system_prompt(workspace)
+        )
         if prior_messages:
             engine.load_messages(sanitize_conversation_messages(prior_messages))
 
         # Prefix the user message with volatile context so the *system prompt*
         # remains static and can be fully KV-Cache shared across turns.
-        similar_context = _build_similar_records_context(self._store, user_text)
-        user_message = _build_user_message(_build_time_context() + similar_context + user_text, media)
+        prefix = ""
+        if include_time_context:
+            prefix += _build_time_context()
+        if include_similar_context:
+            prefix += _build_similar_records_context(self._store, user_text)
+        user_message = _build_user_message(prefix + user_text, media)
 
         yield ("progress", "🤔 正在思考...")
         last_text = ""
@@ -517,7 +535,7 @@ class WoloQueryRunner:
             engine_error = f"{type(exc).__name__}: {exc}"
             logger.exception("WoloQueryRunner engine error session_key=%r text=%r", session_key, user_text[:80])
 
-        if session_key:
+        if session_key and persist_session:
             save_conversation(workspace, session_key, engine.messages, session_id=session_id)
 
         # For passthrough tools (report/visualize), send the full tool output
@@ -549,12 +567,24 @@ class WoloQueryRunner:
         *,
         media: list[str] | None = None,
         source_context: dict[str, Any] | None = None,
+        allow_tools: bool = True,
+        include_time_context: bool = True,
+        include_similar_context: bool = True,
+        use_session_history: bool = True,
+        persist_session: bool = True,
+        system_prompt_override: str | None = None,
     ) -> str:
         async for kind, text in self.stream_run(
             user_text,
             session_key,
             media=media,
             source_context=source_context,
+            allow_tools=allow_tools,
+            include_time_context=include_time_context,
+            include_similar_context=include_similar_context,
+            use_session_history=use_session_history,
+            persist_session=persist_session,
+            system_prompt_override=system_prompt_override,
         ):
             if kind == "final":
                 return text

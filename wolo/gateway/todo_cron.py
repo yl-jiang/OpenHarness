@@ -178,29 +178,47 @@ def ensure_todo_reminder_job(
         timezone: IANA timezone for the schedule
     """
     job_name = f"{app}-todo-reminder"
+    python = sys.executable
+    script = str(_APP_ROOT / "gateway" / "todo_reminder.py")
+    expected_command = f"{python} {script}"
+    if workspace:
+        expected_command += f" --workspace {workspace}"
+    expected_cwd = str(_REPO_ROOT)
     existing = _get_cron_job(job_name, workspace)
     if existing is not None:
-        # Update notify target if we now have one and the existing job doesn't
-        if notify and not existing.get("notify"):
+        updated = False
+        # Reconcile job drift from older versions (command/schedule/cwd/notify).
+        if str(existing.get("command") or "").strip() != expected_command:
+            existing["command"] = expected_command
+            updated = True
+        if str(existing.get("cwd") or "").strip() != expected_cwd:
+            existing["cwd"] = expected_cwd
+            updated = True
+        if str(existing.get("schedule") or "").strip() != str(schedule).strip():
+            existing["schedule"] = schedule
+            updated = True
+        if str(existing.get("timezone") or "").strip() != str(timezone).strip():
+            existing["timezone"] = timezone
+            updated = True
+        if not bool(existing.get("enabled", True)):
+            existing["enabled"] = True
+            updated = True
+        if notify and existing.get("notify") != notify:
             existing["notify"] = notify
+            updated = True
+        if updated:
             _upsert_cron_job(existing, workspace)
-            logger.info("Updated todo reminder cron job %s with notify target", job_name)
+            logger.info("Reconciled todo reminder cron job %s", job_name)
         else:
             logger.debug("todo reminder cron job already exists: %s", job_name)
         return
-
-    python = sys.executable
-    script = str(_APP_ROOT / "gateway" / "todo_reminder.py")
-    command = f"{python} {script}"
-    if workspace:
-        command += f" --workspace {workspace}"
 
     job: dict[str, object] = {
         "name": job_name,
         "schedule": schedule,
         "timezone": timezone,
-        "command": command,
-        "cwd": str(_REPO_ROOT),
+        "command": expected_command,
+        "cwd": expected_cwd,
         "enabled": True,
     }
     if notify:

@@ -8,6 +8,7 @@ notifying and how to phrase it — user experience over cost.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ from typing import Protocol
 
 from openharness.channels.bus.events import OutboundMessage
 from openharness.channels.bus.queue import MessageBus
+from openharness.utils.fs import atomic_write_text
 from openharness.utils.log import get_logger
 
 from wolo.runner import WoloQueryRunner
@@ -25,6 +27,17 @@ from wolo.core.store import WoloStore
 from wolo.core.workspace import get_workspace_root
 
 logger = get_logger(__name__)
+
+_HEARTBEAT_STATE_FILENAME = "heartbeat_state.json"
+_BLOCKER_MAX_AGE_DAYS = 7
+_PENDING_CONFIRMATION_MAX_AGE_DAYS = 7
+_COOLDOWN_MIN_SECONDS = 30 * 60
+_COOLDOWN_INTERVAL_MULTIPLIER = 4
+_HEARTBEAT_EVAL_SYSTEM_PROMPT = (
+    "你是 wolo heartbeat 的只读通知评估助手。"
+    "你不能调用任何工具，也不能写入记录、创建待办或修改数据。"
+    "你只能基于用户消息里的信号生成 JSON 结果。"
+)
 
 
 class _Runner(Protocol):
@@ -104,6 +117,7 @@ class WoloHeartbeatService:
         interval_s: int = 30 * 60,
         enabled: bool = True,
         keep_recent_messages: int = 8,
+        notification_cooldown_s: int | None = None,
         runner_factory: type[_Runner] = WoloQueryRunner,
     ) -> None:
         self._bus = bus
@@ -114,6 +128,15 @@ class WoloHeartbeatService:
         self._enabled = enabled
         self._keep_recent_messages = max(0, keep_recent_messages)
         self._runner_factory = runner_factory
+        default_cooldown = max(_COOLDOWN_MIN_SECONDS, self._interval_s * _COOLDOWN_INTERVAL_MULTIPLIER)
+        self._notification_cooldown_s = max(
+            0,
+            int(default_cooldown if notification_cooldown_s is None else notification_cooldown_s),
+        )
+        self._state_path = self._workspace / "data" / _HEARTBEAT_STATE_FILENAME
+        self._last_signal_fingerprint = ""
+        self._last_notified_at: datetime | None = None
+        self._load_state()
         self._running = False
         self._task: asyncio.Task[None] | None = None
 
@@ -159,6 +182,7 @@ class WoloHeartbeatService:
         return {
             "enabled": self._enabled,
             "interval_s": self._interval_s,
+            "notification_cooldown_s": self._notification_cooldown_s,
             "has_signals": not signals.is_empty,
             "notify_target": f"{target[0]}:{target[1]}" if target else "",
         }
@@ -173,13 +197,16 @@ class WoloHeartbeatService:
         signals = HeartbeatSignals()
 
         # 1. Stale pending confirmations (waiting > 24h)
-        pending = store.list_pending_confirmations()[:5]
-        if pending:
-            for item in pending:
-                question = item.questions[0] if item.questions else item.clarification_reason
-                signals.stale_confirmations.append(
-                    f"{item.raw_content[:60]}（{question}）"
-                )
+        pending = store.list_pending_confirmations()
+        for item in pending:
+            if not self._is_recent(item.created_at, max_age_days=_PENDING_CONFIRMATION_MAX_AGE_DAYS):
+                continue
+            question = item.questions[0] if item.questions else item.clarification_reason
+            signals.stale_confirmations.append(
+                f"{item.raw_content[:60]}（{question}）"
+            )
+            if len(signals.stale_confirmations) >= 5:
+                break
 
         # 2. Overdue / due-today todos
         today_str = date.today().isoformat()
@@ -191,9 +218,13 @@ class WoloHeartbeatService:
                 )
 
         # 3. Active blockers
-        blockers = store.list_highlights(kind="blocker", limit=5)
+        blockers = store.list_highlights(kind="blocker", limit=20)
         for item in blockers:
+            if not self._is_recent(item.created_at, max_age_days=_BLOCKER_MAX_AGE_DAYS):
+                continue
             signals.blockers.append(item.title)
+            if len(signals.blockers) >= 5:
+                break
 
         # 4. Failed cron jobs (check recent history)
         signals.failed_cron_jobs = self._check_failed_cron_jobs()
@@ -220,7 +251,14 @@ class WoloHeartbeatService:
                     continue
                 entry = json.loads(line)
                 if entry.get("status") == "failed" and entry.get("ended_at", "") >= cutoff:
-                    failures.append(entry.get("job_name", entry.get("job_id", "unknown")))
+                    failures.append(
+                        str(
+                            entry.get("name")
+                            or entry.get("job_name")
+                            or entry.get("job_id")
+                            or "unknown"
+                        )
+                    )
         except Exception:
             pass
         return failures[:3]
@@ -259,6 +297,11 @@ class WoloHeartbeatService:
             logger.debug("wolo heartbeat skipped: no signals")
             return HeartbeatResult(executed=False, reason="empty")
 
+        signal_fingerprint = self._signal_fingerprint(signals)
+        if self._should_suppress(signal_fingerprint):
+            logger.info("wolo heartbeat suppressed duplicate signals within cooldown")
+            return HeartbeatResult(executed=False, reason="cooldown")
+
         # All signals go through LLM — it decides what/how to notify
         notifications = await self._evaluate_signals(signals)
 
@@ -280,6 +323,7 @@ class WoloHeartbeatService:
                 metadata={"_session_key": "heartbeat"},
             )
         )
+        self._mark_notified(signal_fingerprint)
         return HeartbeatResult(executed=True, notified=True, response=user_message)
 
     async def _evaluate_signals(self, signals: HeartbeatSignals) -> list[str]:
@@ -309,17 +353,25 @@ class WoloHeartbeatService:
             "**你的职责：**\n"
             "1. 判断哪些信号值得通知用户（考虑紧急程度、可操作性）\n"
             "2. 对值得通知的信号，用简洁友好的语言组织成通知消息\n"
-            "3. 若 HEARTBEAT.md 有任务，执行并汇报结果\n\n"
+            "3. 若 HEARTBEAT.md 有任务，只做提醒建议，不要执行任何写入操作\n\n"
             "**输出格式（严格遵守）**\n"
             '{"notifications": ["通知消息1", "通知消息2"]}\n'
             "- 每条是发给用户的一句话，简洁、有信息量、可操作\n"
+            "- 语气克制、专业，不要说教或命令式措辞（如“立刻”“必须”“身体垮了”）\n"
             "- 若所有信号都不值得打扰用户（如：不紧急、用户无法立即行动），"
             '返回 {"notifications": []}\n'
         )
 
         runner = self._runner_factory(WoloStore(self._workspace), profile=self._provider_profile)
-        response = await runner.run(prompt, session_key="heartbeat")
-        self._trim_heartbeat_session()
+        response = await runner.run(
+            prompt,
+            session_key="heartbeat",
+            allow_tools=False,
+            include_similar_context=False,
+            use_session_history=False,
+            persist_session=False,
+            system_prompt_override=_HEARTBEAT_EVAL_SYSTEM_PROMPT,
+        )
         return self._extract_notifications(response)
 
     # ------------------------------------------------------------------
@@ -387,3 +439,76 @@ class WoloHeartbeatService:
                 messages[-self._keep_recent_messages:],
                 session_id=session_id,
             )
+
+    @staticmethod
+    def _parse_iso_datetime(value: str) -> datetime | None:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    def _is_recent(self, value: str, *, max_age_days: int) -> bool:
+        parsed = self._parse_iso_datetime(value)
+        if parsed is None:
+            return True
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        return parsed >= cutoff
+
+    def _signal_fingerprint(self, signals: HeartbeatSignals) -> str:
+        payload = {
+            "stale_confirmations": sorted(signals.stale_confirmations),
+            "overdue_todos": sorted(signals.overdue_todos),
+            "blockers": sorted(signals.blockers),
+            "failed_cron_jobs": sorted(signals.failed_cron_jobs),
+            "scheduler_down": signals.scheduler_down,
+            "heartbeat_tasks": signals.heartbeat_tasks.strip(),
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _should_suppress(self, fingerprint: str) -> bool:
+        if self._notification_cooldown_s <= 0:
+            return False
+        if not self._last_signal_fingerprint or self._last_signal_fingerprint != fingerprint:
+            return False
+        if self._last_notified_at is None:
+            return False
+        elapsed = (datetime.now(timezone.utc) - self._last_notified_at).total_seconds()
+        return elapsed < self._notification_cooldown_s
+
+    def _mark_notified(self, fingerprint: str) -> None:
+        self._last_signal_fingerprint = fingerprint
+        self._last_notified_at = datetime.now(timezone.utc)
+        self._save_state()
+
+    def _load_state(self) -> None:
+        if not self._state_path.exists():
+            return
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        self._last_signal_fingerprint = str(data.get("last_signal_fingerprint") or "")
+        notified_at = self._parse_iso_datetime(str(data.get("last_notified_at") or ""))
+        self._last_notified_at = notified_at
+
+    def _save_state(self) -> None:
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "last_signal_fingerprint": self._last_signal_fingerprint,
+            "last_notified_at": (
+                self._last_notified_at.isoformat() if self._last_notified_at is not None else ""
+            ),
+        }
+        atomic_write_text(
+            self._state_path,
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        )

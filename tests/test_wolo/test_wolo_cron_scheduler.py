@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -94,3 +95,41 @@ async def test_wolo_scheduler_runs_agent_task_and_removes_job(
     reformat.assert_not_awaited()
     send_dm.assert_awaited_once()
     assert "本周你做了很多事情" in send_dm.await_args.kwargs["content"]
+
+
+def test_wolo_ensure_todo_reminder_job_reconciles_existing_drift(_workspace: Path) -> None:
+    from wolo.gateway import todo_cron
+
+    jobs_path = get_data_dir(_workspace) / "cron_jobs.json"
+    jobs_path.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "wolo-todo-reminder",
+                    "schedule": "5 * * * *",
+                    "timezone": "UTC",
+                    "command": "/tmp/legacy/scripts/todo_reminder.py --app wolo",
+                    "cwd": "/tmp/legacy",
+                    "enabled": False,
+                    "notify": {"type": "feishu_dm", "user_open_id": "ou_old"},
+                }
+            ],
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    notify = {"type": "feishu_dm", "user_open_id": "ou_user", "workspace": str(_workspace)}
+    todo_cron.ensure_todo_reminder_job("wolo", workspace=_workspace, notify=notify)
+
+    jobs = json.loads(jobs_path.read_text(encoding="utf-8"))
+    job = next(item for item in jobs if item["name"] == "wolo-todo-reminder")
+    assert job["schedule"] == "0 9 * * *"
+    assert job["timezone"] == "Asia/Shanghai"
+    assert job["enabled"] is True
+    assert job["cwd"] == str(todo_cron._REPO_ROOT)
+    assert f"{sys.executable} {todo_cron._APP_ROOT / 'gateway' / 'todo_reminder.py'}" in job["command"]
+    assert str(_workspace) in job["command"]
+    assert job["notify"] == notify
