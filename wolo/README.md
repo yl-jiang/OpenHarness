@@ -365,13 +365,13 @@ wolo: entries=12 | records=10 | pending=1 | gateway=stopped | path=/Users/yulin/
 启动或停止后台 gateway：
 
 ```bash
-wolo start
-wolo stop
+wolo gateway start
+wolo gateway stop
 ```
 
 ### 5.12 `heartbeat`
 
-`wolo` 的 heartbeat 是 app-local 的周期唤醒机制，只在 `wolo start` / `wolo gateway run` 运行时生效；它不依赖也不修改 OpenHarness 核心。默认关闭，启用后会定期汇总待确认工作记录、开放待办、blocker 和可选的 `HEARTBEAT.md` 任务，然后通过 wolo agent 执行并投递到最近活跃的已启用消息通道。
+`wolo` 的 heartbeat 是 app-local 的周期唤醒机制，只在 `wolo gateway start` / `wolo gateway run` 运行时生效；它不依赖也不修改 OpenHarness 核心。默认关闭，启用后会定期汇总待确认工作记录、开放待办、blocker 和可选的 `HEARTBEAT.md` 任务，然后通过 wolo agent 执行并投递到最近活跃的已启用消息通道。
 
 ```bash
 wolo heartbeat status

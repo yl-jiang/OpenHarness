@@ -448,7 +448,7 @@ def status_cmd(workspace: str | None = typer.Option(None, "--workspace", help=_W
     )
 
 
-@app.command("start", help="启动 wolo 后台网关")
+@gateway_app.command("start", help="启动 wolo 后台网关")
 def start_cmd(
     cwd: str = typer.Option(str(Path.cwd()), "--cwd", help="Project working directory"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
@@ -457,7 +457,7 @@ def start_cmd(
     print(f"wolo gateway started (pid={pid})")
 
 
-@app.command("stop", help="停止 wolo 后台网关")
+@gateway_app.command("stop", help="停止 wolo 后台网关")
 def stop_cmd(
     cwd: str = typer.Option(str(Path.cwd()), "--cwd", help="Project working directory"),
     workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),

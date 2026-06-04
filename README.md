@@ -744,7 +744,7 @@ solo record "..."     # record an entry
 solo process          # model structures pending entries
 solo view             # view structured records
 solo report weekly    # generate weekly report
-solo start            # start gateway (Feishu/Telegram/...)
+solo gateway start    # start gateway (Feishu/Telegram/...)
 ```
 
 See [`solo/README.md`](solo/README.md) for full documentation.
@@ -760,7 +760,7 @@ wolo record "..."     # record a work entry
 wolo process          # model structures pending entries
 wolo view             # view structured records
 wolo report weekly    # generate weekly report
-wolo start            # start gateway
+wolo gateway start    # start gateway
 ```
 
 See [`wolo/README.md`](wolo/README.md) for full documentation.

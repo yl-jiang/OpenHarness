@@ -190,10 +190,10 @@ ohmo 运行在你现有的 **Claude Code 订阅**或 **Codex 订阅**上 — 无
 
 ```bash
 # solo — 个人生活日志
-solo init && solo config && solo start
+solo init && solo config && solo gateway start
 
 # wolo — 工作日志
-wolo init && wolo config && wolo start
+wolo init && wolo config && wolo gateway start
 ```
 
 ### 非交互模式（管道与脚本）
@@ -502,7 +502,7 @@ solo record "今天心情不错"     # 记录
 solo process                 # 模型整理
 solo view                    # 查看结构化记录
 solo report weekly           # 生成周报
-solo start                   # 启动 gateway（飞书/Telegram/...）
+solo gateway start           # 启动 gateway（飞书/Telegram/...）
 ```
 
 详细文档：[solo/README.md](solo/README.md)
@@ -520,7 +520,7 @@ wolo record "修完 gateway 去重逻辑"  # 记录
 wolo process                 # 模型整理
 wolo view                    # 查看结构化记录
 wolo report weekly           # 生成周报
-wolo start                   # 启动 gateway
+wolo gateway start           # 启动 gateway
 ```
 
 详细文档：[wolo/README.md](wolo/README.md)

@@ -326,22 +326,22 @@ state: ok
 启动或停止后台 gateway。
 
 ```bash
-solo start
-solo stop
+solo gateway start
+solo gateway stop
 ```
 
 指定运行目录和工作目录：
 
 ```bash
-solo start --cwd /Users/yulin/Github/OpenHarness --workspace ~/.solo
-solo stop --workspace ~/.solo
+solo gateway start --cwd /Users/yulin/Github/OpenHarness --workspace ~/.solo
+solo gateway stop --workspace ~/.solo
 ```
 
 `--cwd` 是 gateway 进程的项目工作目录；`--workspace` 是 solo 数据和配置目录。
 
 ### 5.11 `heartbeat`
 
-`solo` 的 heartbeat 是 app-local 的周期唤醒机制，只在 `solo start` / `solo gateway run` 运行时生效；它不依赖也不修改 OpenHarness 核心。默认关闭，启用后会定期汇总待确认记录、未完成个人待办和可选的 `HEARTBEAT.md` 任务，然后通过 solo agent 执行并投递到最近活跃的已启用消息通道。
+`solo` 的 heartbeat 是 app-local 的周期唤醒机制，只在 `solo gateway start` / `solo gateway run` 运行时生效；它不依赖也不修改 OpenHarness 核心。默认关闭，启用后会定期汇总待确认记录、未完成个人待办和可选的 `HEARTBEAT.md` 任务，然后通过 solo agent 执行并投递到最近活跃的已启用消息通道。
 
 ```bash
 solo heartbeat status
@@ -361,7 +361,7 @@ solo gateway run
 后台运行请优先使用：
 
 ```bash
-solo start
+solo gateway start
 ```
 
 ### 5.13 `onboard` (WebUI)
@@ -412,7 +412,7 @@ solo config
 ### 6.2 启动
 
 ```bash
-solo start
+solo gateway start
 ```
 
 查看状态：
@@ -602,7 +602,7 @@ solo view
 
 ```bash
 solo config
-solo start
+solo gateway start
 ```
 
 然后在飞书里直接发：
@@ -630,7 +630,7 @@ solo 是独立应用：
 - 独立 package：`solo`
 - 独立 CLI：`solo`
 - 独立工作目录：`~/.solo`
-- 独立 gateway：`solo start`
+- 独立 gateway：`solo gateway start`
 
 它不应该：
 
@@ -642,7 +642,7 @@ solo 是独立应用：
 如果需要在飞书中使用 solo，请启动：
 
 ```bash
-solo start
+solo gateway start
 ```
 
 而不是：
@@ -679,7 +679,7 @@ tail -f ~/.solo/logs/gateway.log
 
 确认：
 
-- `solo start` 已启动。
+- `solo gateway start` 已启动。
 - `config.json` 中 `enabled_channels` 包含 `feishu`。
 - 飞书 app 的 `app_id`、`app_secret`、事件订阅配置正确。
 - `allow_from` 包含当前用户或会话，或临时设置为 `["*"]` 验证链路。
@@ -700,7 +700,7 @@ solo view
 ### 12.5 停止 gateway
 
 ```bash
-solo stop
+solo gateway stop
 ```
 
 如果 PID 文件残留，可先查看：
