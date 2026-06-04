@@ -578,6 +578,30 @@ class FeishuChannel(BaseChannel):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._add_reaction_sync, message_id, emoji_type)
 
+    @staticmethod
+    def _extract_text_from_message_item(msg: Any) -> str:
+        """Extract plain text from a single Feishu message item returned by the API."""
+        msg_type = getattr(msg, "msg_type", "text")
+        body_raw = getattr(msg, "body", None)
+        body_content = getattr(body_raw, "content", None) if body_raw else None
+        if not body_content:
+            return ""
+        try:
+            content_json = json.loads(body_content)
+        except (json.JSONDecodeError, TypeError):
+            return ""
+        if msg_type == "text":
+            return content_json.get("text", "")
+        if msg_type == "post":
+            text, _ = _extract_post_content(content_json)
+            return text
+        if msg_type == "interactive":
+            return _extract_share_card_content(content_json, msg_type) or ""
+        if msg_type == "merge_forward":
+            # Nested merge_forward inside another merge_forward; don't recurse.
+            return "[merged forward messages]"
+        return content_json.get("text", "")
+
     def _fetch_message_content_sync(self, message_id: str) -> str:
         """Fetch the text content of a message by ID (runs in thread pool)."""
         from lark_oapi.api.im.v1 import GetMessageRequest
@@ -590,27 +614,60 @@ class FeishuChannel(BaseChannel):
             items = getattr(response.data, "items", None)
             if not items:
                 return ""
-            msg = items[0]
-            msg_type = getattr(msg, "msg_type", "text")
-            body_raw = getattr(msg, "body", None)
-            body_content = getattr(body_raw, "content", None) if body_raw else None
-            if not body_content:
-                return ""
-            try:
-                content_json = json.loads(body_content)
-            except (json.JSONDecodeError, TypeError):
-                return ""
-            if msg_type == "text":
-                return content_json.get("text", "")
-            if msg_type == "post":
-                text, _ = _extract_post_content(content_json)
-                return text
-            if msg_type == "interactive":
-                return _extract_share_card_content(content_json, msg_type) or ""
-            return content_json.get("text", "")
+            return self._extract_text_from_message_item(items[0])
         except Exception as e:
             logger.warning("Error fetching quoted message %s: %s", message_id, e)
             return ""
+
+    def _fetch_merge_forward_content_sync(self, message_id: str) -> str:
+        """Fetch and expand all sub-messages of a merge_forward message.
+
+        The GetMessage API returns items[0] as the merge_forward envelope and
+        items[1:] as the individual sub-messages.  We extract text from each
+        sub-message and concatenate them with sender/index context.
+        """
+        from lark_oapi.api.im.v1 import GetMessageRequest
+        try:
+            request = GetMessageRequest.builder().message_id(message_id).build()
+            response = self._client.im.v1.message.get(request)
+            if not response.success():
+                logger.warning(
+                    "Failed to fetch merge_forward message %s: code=%s, msg=%s",
+                    message_id, response.code, response.msg,
+                )
+                return "[merged forward messages]"
+            items = getattr(response.data, "items", None)
+            if not items or len(items) <= 1:
+                return "[merged forward messages]"
+            # items[0] is the envelope; items[1:] are the sub-messages
+            parts: list[str] = []
+            for idx, sub_msg in enumerate(items[1:], start=1):
+                sender_raw = getattr(sub_msg, "sender", None)
+                sender_name = ""
+                if sender_raw:
+                    sender_id = getattr(sender_raw, "id", "") or ""
+                    sender_name = self._resolve_sender_display_name_sync(sender_id) if sender_id else ""
+                text = self._extract_text_from_message_item(sub_msg)
+                msg_type = getattr(sub_msg, "msg_type", "")
+                if not text:
+                    text = MSG_TYPE_MAP.get(msg_type, f"[{msg_type}]")
+                label = sender_name or f"message {idx}"
+                parts.append(f"{label}: {text}")
+            if not parts:
+                return "[merged forward messages]"
+            return "[merged forward messages]\n" + "\n".join(parts)
+        except Exception as e:
+            logger.warning("Error fetching merge_forward message %s: %s", message_id, e)
+            return "[merged forward messages]"
+
+    async def _fetch_merge_forward_content(self, message_id: str) -> str:
+        """Async wrapper for _fetch_merge_forward_content_sync."""
+        if not self._client or not message_id:
+            return "[merged forward messages]"
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None, self._fetch_merge_forward_content_sync, message_id,
+        )
 
     async def _fetch_quoted_context(self, message_id: str) -> str:
         """Fetch quoted message content, return formatted context string or empty."""
@@ -1327,7 +1384,13 @@ class FeishuChannel(BaseChannel):
                     media_paths.append(file_path)
                 content_parts.append(content_text)
 
-            elif msg_type in ("share_chat", "share_user", "interactive", "share_calendar_event", "system", "merge_forward"):
+            elif msg_type == "merge_forward":
+                # Expand sub-messages from merged forward
+                text = await self._fetch_merge_forward_content(message_id)
+                if text:
+                    content_parts.append(text)
+
+            elif msg_type in ("share_chat", "share_user", "interactive", "share_calendar_event", "system"):
                 # Handle share cards and interactive messages
                 text = _extract_share_card_content(content_json, msg_type)
                 if text:
