@@ -51,7 +51,9 @@ def _runner_event_to_ws_event(kind: str, text: str) -> dict[str, Any] | None:
         try:
             paths = json.loads(text)
             if isinstance(paths, list):
-                return {"type": "media", "paths": paths}
+                from urllib.parse import quote
+                url_paths = [f"/api/chat/media?path={quote(str(p))}" for p in paths]
+                return {"type": "media", "paths": url_paths}
         except (json.JSONDecodeError, TypeError):
             pass
         return None
