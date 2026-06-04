@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Added
 
+- `solo` / `wolo` gateways now auto-register recurring report jobs that archive a natural-week report every Sunday at 21:00 and a natural-month report at 21:00 on the month's last day, automatically DM the generated report to the resolved Feishu user, and use longer cron timeouts so monthly synthesis can finish without being killed after 5 minutes.
 - Root `Makefile` now provides `make onboard`, which builds `onboard/frontend` and then runs the onboard app in the foreground; optional CLI flags can be passed through with `ONBOARD_ARGS="..."`.
 - Onboard dashboard now shows cumulative solo/wolo LLM invocation counts plus input/output token totals, including a current-month per-model token trend chart, and standalone `solo` / `wolo` now expose matching `solo_llm_usage` / `wolo_llm_usage` tools plus `/solo llm-usage` / `/wolo llm-usage` slash commands with per-model token breakdowns.
 - React TUI slash picker now namespaces skills under a `skill:` prefix (e.g. `/skill:review`) so they are visually distinct from built-in commands; skills stay discoverable by bare name and the explicit `/skill:<name>` form is accepted both in the picker and when invoking a skill directly. `/skills list` output uses the same `/skill:<name>` form.

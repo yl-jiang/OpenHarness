@@ -343,6 +343,8 @@ wolo report yearly
 - blocker、风险和未解决问题
 - prompt/tool 经验、失败模式和可复用做法
 - 开放待办和已关闭事项
+
+当 `wolo gateway start` / `wolo gateway run` 运行时，还会自动注册两类周期报告：每周日 21:00 生成自然周周报，每月最后一天 21:00 生成自然月月报；生成结果会写入 `reports.jsonl`，并在能解析到飞书目标用户时自动发送到飞书。
 - 引用来源记录或 artifact 作为证据链
 - next actions
 

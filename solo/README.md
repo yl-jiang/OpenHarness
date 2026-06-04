@@ -289,6 +289,8 @@ solo report yearly
 
 报告会基于 `records.jsonl` 中已经结构化的记录生成，并写入 `reports.jsonl`。
 
+当 `solo gateway start` / `solo gateway run` 运行时，还会自动注册两类周期报告：每周日 21:00 生成自然周周报，每月最后一天 21:00 生成自然月月报；生成结果会写入 `reports.jsonl`，并在能解析到飞书目标用户时自动发送到飞书。
+
 ### 5.8 `status`
 
 查看记录数量和 gateway 状态。

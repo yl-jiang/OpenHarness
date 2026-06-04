@@ -126,6 +126,8 @@ class SoloGatewayService:
         _migrate_legacy_todo_cron(self._workspace)
         # Auto-register feed digest cron job
         _register_feed_digest_cron(self._workspace, self._config)
+        # Auto-register weekly/monthly report cron jobs
+        _register_report_cron(self._workspace)
         # Ensure cron scheduler daemon is running so registered jobs get executed
         _ensure_cron_daemon(self._workspace)
 
@@ -428,6 +430,16 @@ def _register_feed_digest_cron(
         )
     except Exception as exc:
         logger.warning("Failed to register solo feed digest cron job: %s", exc)
+
+
+def _register_report_cron(workspace: str | Path | None) -> None:
+    """Best-effort registration of the solo weekly/monthly report cron jobs."""
+    try:
+        from solo.gateway.report_cron import ensure_report_jobs
+
+        ensure_report_jobs("solo", workspace=workspace)
+    except Exception as exc:
+        logger.warning("Failed to register solo report cron jobs: %s", exc)
 
 
 def _migrate_legacy_todo_cron(workspace: str | Path | None) -> None:
