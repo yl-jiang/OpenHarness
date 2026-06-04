@@ -612,6 +612,10 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
     name = job["name"]
     cwd = Path(job.get("cwd") or ".").expanduser()
     started_at = datetime.now(timezone.utc)
+    try:
+        timeout_s = max(1, int(job.get("timeout_s") or 300))
+    except (TypeError, ValueError):
+        timeout_s = 300
 
     # --- One-shot inline tasks (reminder / agent_task) ---
     result = await _handle_reminder_job(job, started_at)
@@ -644,7 +648,7 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_s)
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, asyncio.TimeoutError):
             try:
@@ -653,7 +657,7 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
             except Exception:
                 pass
         status = "timeout" if isinstance(exc, asyncio.TimeoutError) else "error"
-        stderr_text = "Job timed out after 300s" if isinstance(exc, asyncio.TimeoutError) else str(exc)
+        stderr_text = f"Job timed out after {timeout_s}s" if isinstance(exc, asyncio.TimeoutError) else str(exc)
         entry = {
             "name": name, "command": command,
             "started_at": started_at.isoformat(),

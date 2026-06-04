@@ -133,3 +133,40 @@ def test_wolo_ensure_todo_reminder_job_reconciles_existing_drift(_workspace: Pat
     assert f"{sys.executable} {todo_cron._APP_ROOT / 'gateway' / 'todo_reminder.py'}" in job["command"]
     assert str(_workspace) in job["command"]
     assert job["notify"] == notify
+
+
+@pytest.mark.asyncio
+async def test_wolo_execute_job_uses_custom_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    _workspace: Path,
+) -> None:
+    timeout_seen: dict[str, int] = {}
+    notify = AsyncMock()
+
+    class _Process:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return (b"weekly report archived", b"")
+
+    async def _fake_wait_for(awaitable, timeout):
+        timeout_seen["value"] = timeout
+        return await awaitable
+
+    monkeypatch.setattr(scheduler, "_notify_job_result", notify)
+    monkeypatch.setattr(scheduler, "create_shell_subprocess", AsyncMock(return_value=_Process()))
+    monkeypatch.setattr(scheduler.asyncio, "wait_for", _fake_wait_for)
+
+    entry = await scheduler.execute_job(
+        {
+            "name": "wolo-weekly-report",
+            "command": "echo report",
+            "cwd": str(_workspace),
+            "timeout_s": 901,
+        }
+    )
+
+    assert timeout_seen["value"] == 901
+    assert entry["status"] == "success"
+    assert "weekly report archived" in entry["stdout"]
+    notify.assert_awaited_once()
