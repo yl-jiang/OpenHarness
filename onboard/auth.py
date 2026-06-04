@@ -27,6 +27,8 @@ _ONBOARD_ROOT = Path(os.environ.get("ONBOARD_WORKSPACE", "~/.onboard")).expandus
 _SECRET_PATH = _ONBOARD_ROOT / "secret"
 
 COOKIE_NAME = "onboard_session"
+
+_cached_token: str | None = None
 COOKIE_MAX_AGE = 30 * 24 * 3600  # 30 days
 
 # Routes that bypass authentication
@@ -40,11 +42,15 @@ _PUBLIC_PATHS = frozenset({
 
 
 def get_token() -> str:
-    """Read the current token, generating one if missing."""
+    """Return the current token, reading from disk only once per process lifetime."""
+    global _cached_token
+    if _cached_token is not None:
+        return _cached_token
     if _SECRET_PATH.exists():
         token = _SECRET_PATH.read_text(encoding="utf-8").strip()
         if token:
-            return token
+            _cached_token = token
+            return _cached_token
     return _generate_token()
 
 
@@ -54,11 +60,13 @@ def reset_token() -> str:
 
 
 def _generate_token() -> str:
-    """Generate a new random token and persist it."""
+    """Generate a new random token, persist it, and update the in-memory cache."""
+    global _cached_token
     _ONBOARD_ROOT.mkdir(parents=True, exist_ok=True)
     token = secrets.token_urlsafe(24)
     _SECRET_PATH.write_text(token + "\n", encoding="utf-8")
     _SECRET_PATH.chmod(0o600)
+    _cached_token = token
     return token
 
 
