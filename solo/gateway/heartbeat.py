@@ -1,8 +1,18 @@
 """App-local heartbeat for the standalone solo gateway.
 
 Design: signal-based watchdog that gathers deterministic signals from DB/system
-state, then passes them ALL to the LLM.  The model decides what's worth
-notifying and how to phrase it — user experience over cost.
+state, then passes them to the LLM. The model decides what's worth notifying
+and how to phrase it. Safeguards:
+
+- **Quiet hours** (configurable, default 22:30-08:00 local): no LLM, no push.
+- **Daily push cap** (configurable, default 3): cross-fingerprint hard limit.
+- **Per-signal ack** (24h TTL): the same overdue todo is not re-pushed within
+  a day unless its state materially changes.
+- **Decision history** (7d) is injected into the LLM prompt so it knows
+  "this was already pushed 2h ago" and avoids repeating itself.
+- **System-health signals** (failed cron jobs, scheduler liveness) are
+  collected for CLI / dashboard display but never enter the user-facing
+  notification path.
 """
 
 from __future__ import annotations
@@ -12,9 +22,10 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
 from openharness.channels.bus.events import OutboundMessage
 from openharness.channels.bus.queue import MessageBus
@@ -31,8 +42,8 @@ logger = get_logger(__name__)
 
 _HEARTBEAT_STATE_FILENAME = "heartbeat_state.json"
 _PENDING_CONFIRMATION_MAX_AGE_DAYS = 7
-_COOLDOWN_MIN_SECONDS = 30 * 60
-_COOLDOWN_INTERVAL_MULTIPLIER = 4
+_ACK_TTL = timedelta(hours=24)
+_PUSH_HISTORY_RETENTION = timedelta(days=7)
 
 
 class _Runner(Protocol):
@@ -53,18 +64,15 @@ class HeartbeatSignals:
 
     stale_confirmations: list[str] = field(default_factory=list)
     overdue_todos: list[str] = field(default_factory=list)
-    failed_cron_jobs: list[str] = field(default_factory=list)
-    scheduler_down: bool = False
-    heartbeat_tasks: str = ""  # raw HEARTBEAT.md content (requires LLM)
+    system_health: list[str] = field(default_factory=list)
+    heartbeat_tasks: str = ""
 
     @property
-    def has_simple_signals(self) -> bool:
-        """Signals that can be formatted without LLM."""
+    def has_user_signals(self) -> bool:
+        """User-facing signals that can be formatted into notifications."""
         return bool(
             self.stale_confirmations
             or self.overdue_todos
-            or self.failed_cron_jobs
-            or self.scheduler_down
         )
 
     @property
@@ -74,28 +82,25 @@ class HeartbeatSignals:
 
     @property
     def is_empty(self) -> bool:
-        return not self.has_simple_signals and not self.has_agent_tasks
+        return not self.has_user_signals and not self.has_agent_tasks
 
-    def format_notifications(self) -> list[str]:
-        """Format simple signals into user-facing notification strings."""
-        items: list[str] = []
+    def iter_user_items(self) -> list[tuple[str, str]]:
+        """Return (kind, message) pairs for user-facing signals."""
+        items: list[tuple[str, str]] = []
         for msg in self.stale_confirmations:
-            items.append(f"待确认：{msg}")
+            items.append(("pending_confirmation", msg))
         for msg in self.overdue_todos:
-            items.append(f"Todo 提醒：{msg}")
-        for msg in self.failed_cron_jobs:
-            items.append(f"⚠️ 定时任务失败：{msg}")
-        if self.scheduler_down:
-            items.append("⚠️ 定时任务调度器已停止运行，提醒和定时任务将不会执行。")
+            items.append(("overdue_todo", msg))
         return items
 
 
 class SoloHeartbeatService:
     """Signal-based periodic watchdog for the solo app.
 
-    Gathers deterministic signals from DB/system state, then passes ALL
-    signals to the LLM which decides what's worth notifying the user about
-    and how to phrase it.  User experience over cost.
+    Gathers deterministic signals from DB/system state, applies quiet-hours /
+    daily-cap / per-signal-ack safeguards, then passes the remainder to the
+    LLM which decides what's worth notifying the user about. Decision history
+    is fed back into the prompt so the LLM does not re-push the same item.
     """
 
     def __init__(
@@ -108,7 +113,10 @@ class SoloHeartbeatService:
         interval_s: int = 30 * 60,
         enabled: bool = True,
         keep_recent_messages: int = 8,
-        notification_cooldown_s: int | None = None,
+        quiet_hours_start: str = "22:30",
+        quiet_hours_end: str = "08:00",
+        timezone_name: str = "Asia/Shanghai",
+        max_daily_pushes: int = 3,
         runner_factory: type[_Runner] = SoloQueryRunner,
     ) -> None:
         self._bus = bus
@@ -119,14 +127,15 @@ class SoloHeartbeatService:
         self._enabled = enabled
         self._keep_recent_messages = max(0, keep_recent_messages)
         self._runner_factory = runner_factory
-        default_cooldown = max(_COOLDOWN_MIN_SECONDS, self._interval_s * _COOLDOWN_INTERVAL_MULTIPLIER)
-        self._notification_cooldown_s = max(
-            0,
-            int(default_cooldown if notification_cooldown_s is None else notification_cooldown_s),
-        )
+        self._quiet_hours_start = quiet_hours_start
+        self._quiet_hours_end = quiet_hours_end
+        self._tz = ZoneInfo(timezone_name)
+        self._max_daily_pushes = max(0, int(max_daily_pushes))
         self._state_path = self._workspace / "data" / _HEARTBEAT_STATE_FILENAME
-        self._last_signal_fingerprint = ""
-        self._last_notified_at: datetime | None = None
+        self._acks: dict[str, str] = {}
+        self._push_history: list[dict[str, str]] = []
+        self._pushes_today: int = 0
+        self._push_day: str = ""
         self._load_state()
         self._running = False
         self._task: asyncio.Task[None] | None = None
@@ -142,8 +151,15 @@ class SoloHeartbeatService:
         if self._running:
             return
         self._running = True
-        self._task = asyncio.create_task(self._run_loop(), name="wolo-heartbeat")
-        logger.info("solo heartbeat started interval_s=%d", self._interval_s)
+        self._task = asyncio.create_task(self._run_loop(), name="solo-heartbeat")
+        logger.info(
+            "solo heartbeat started interval_s=%d quiet=%s-%s tz=%s daily_cap=%d",
+            self._interval_s,
+            self._quiet_hours_start,
+            self._quiet_hours_end,
+            str(self._tz),
+            self._max_daily_pushes,
+        )
 
     async def stop(self) -> None:
         self._running = False
@@ -170,13 +186,129 @@ class SoloHeartbeatService:
     def status(self) -> dict[str, object]:
         signals = self.gather_signals()
         target = self._pick_notify_target()
+        self._refresh_daily_counter()
         return {
             "enabled": self._enabled,
             "interval_s": self._interval_s,
-            "notification_cooldown_s": self._notification_cooldown_s,
+            "quiet_hours": f"{self._quiet_hours_start}-{self._quiet_hours_end}",
+            "timezone": str(self._tz),
+            "max_daily_pushes": self._max_daily_pushes,
+            "pushes_today": self._pushes_today,
+            "acked_signals": len(self._acks),
             "has_signals": not signals.is_empty,
             "notify_target": f"{target[0]}:{target[1]}" if target else "",
         }
+
+    # ------------------------------------------------------------------
+    # Quiet hours / daily cap
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_hhmm(value: str) -> time:
+        text = str(value or "").strip()
+        parts = text.split(":")
+        if len(parts) != 2:
+            return time(0, 0)
+        try:
+            return time(int(parts[0]) % 24, int(parts[1]) % 60)
+        except ValueError:
+            return time(0, 0)
+
+    def _now_local(self) -> datetime:
+        return datetime.now(self._tz)
+
+    def _in_quiet_hours(self) -> bool:
+        now_t = self._now_local().time().replace(second=0, microsecond=0)
+        start = self._parse_hhmm(self._quiet_hours_start)
+        end = self._parse_hhmm(self._quiet_hours_end)
+        if start == end:
+            return False
+        if start < end:
+            return start <= now_t < end
+        return now_t >= start or now_t < end
+
+    def _refresh_daily_counter(self) -> None:
+        today = self._now_local().date().isoformat()
+        if self._push_day != today:
+            self._push_day = today
+            self._pushes_today = 0
+
+    def _daily_cap_reached(self) -> bool:
+        if self._max_daily_pushes <= 0:
+            return False
+        self._refresh_daily_counter()
+        return self._pushes_today >= self._max_daily_pushes
+
+    # ------------------------------------------------------------------
+    # Ack map / push history (persistent)
+    # ------------------------------------------------------------------
+
+    def _prune_acks(self, now: datetime) -> None:
+        cutoff = (now - _ACK_TTL).isoformat()
+        self._acks = {k: v for k, v in self._acks.items() if v > cutoff}
+
+    def _prune_push_history(self, now: datetime) -> None:
+        cutoff = (now - _PUSH_HISTORY_RETENTION).isoformat()
+        self._push_history = [e for e in self._push_history if e.get("at", "") >= cutoff]
+
+    def _ack_key(self, kind: str, message: str) -> str:
+        normalized = " ".join(f"{kind}:{message}".split())
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:24]
+
+    def _is_acked(self, kind: str, message: str) -> bool:
+        return self._ack_key(kind, message) in self._acks
+
+    def _ack(self, kind: str, message: str, now: datetime) -> None:
+        self._acks[self._ack_key(kind, message)] = now.isoformat()
+
+    def _record_push(self, notifications: list[str], now: datetime) -> None:
+        summary = " | ".join(n.strip() for n in notifications if n.strip())[:300]
+        self._push_history.append(
+            {
+                "at": now.isoformat(),
+                "summary": summary,
+                "count": len(notifications),
+            }
+        )
+        self._refresh_daily_counter()
+        self._pushes_today += len(notifications)
+
+    def _load_state(self) -> None:
+        if not self._state_path.exists():
+            return
+        try:
+            data = json.loads(self._state_path.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(data, dict):
+            return
+        acks = data.get("acks")
+        if isinstance(acks, dict):
+            self._acks = {str(k): str(v) for k, v in acks.items()}
+        history = data.get("push_history")
+        if isinstance(history, list):
+            self._push_history = [e for e in history if isinstance(e, dict)]
+        pushes_today = data.get("pushes_today")
+        if isinstance(pushes_today, int):
+            self._pushes_today = pushes_today
+        push_day = data.get("push_day")
+        if isinstance(push_day, str):
+            self._push_day = push_day
+        self._prune_acks(datetime.now(timezone.utc))
+        self._prune_push_history(datetime.now(timezone.utc))
+
+    def _save_state(self) -> None:
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "acks": self._acks,
+            "push_history": self._push_history[-40:],
+            "pushes_today": self._pushes_today,
+            "push_day": self._push_day,
+        }
+        atomic_write_text(
+            self._state_path,
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        )
 
     # ------------------------------------------------------------------
     # Signal gathering (deterministic, no LLM)
@@ -201,27 +333,27 @@ class SoloHeartbeatService:
 
         # 2. Overdue / due-today todos
         today_str = date.today().isoformat()
-        todos = store.list_todos(status="pending", limit=10)
+        todos = store.list_todos(status="pending", limit=20)
         for todo in todos:
             if todo.due_date and todo.due_date <= today_str:
                 signals.overdue_todos.append(
-                    f"{todo.title}（due: {todo.due_date}）"
+                    f"[{todo.priority}] {todo.category} {todo.title}（due: {todo.due_date}）"
                 )
 
+        # 3. System-health signals: kept out of the user notification path.
+        #    They surface via CLI / dashboard (`solo heartbeat status`) only.
+        for name in self._check_failed_cron_jobs():
+            signals.system_health.append(f"failed_cron:{name}")
+        if self._check_scheduler_down():
+            signals.system_health.append("scheduler_down")
 
-        # 4. Failed cron jobs (check recent history)
-        signals.failed_cron_jobs = self._check_failed_cron_jobs()
-
-        # 5. Scheduler liveness
-        signals.scheduler_down = self._check_scheduler_down()
-
-        # 6. HEARTBEAT.md tasks (optional power-user file)
+        # 5. HEARTBEAT.md tasks (optional power-user file)
         signals.heartbeat_tasks = self._read_heartbeat_tasks()
 
         return signals
 
     def _check_failed_cron_jobs(self) -> list[str]:
-        """Check for recently failed cron jobs."""
+        """Check for recently failed cron jobs (internal-only signal)."""
         history_path = self._workspace / "data" / "cron_history.jsonl"
         if not history_path.exists():
             return []
@@ -247,7 +379,6 @@ class SoloHeartbeatService:
         return failures[:3]
 
     def _check_scheduler_down(self) -> bool:
-        """Check if the cron scheduler daemon is running (only relevant if jobs exist)."""
         try:
             jobs_file = self._workspace / "data" / "cron_jobs.json"
             if not jobs_file.exists():
@@ -258,7 +389,6 @@ class SoloHeartbeatService:
             return False
 
     def _read_heartbeat_tasks(self) -> str:
-        """Read optional HEARTBEAT.md for power-user agent tasks."""
         if not self.heartbeat_file.exists():
             return ""
         content = self.heartbeat_file.read_text(encoding="utf-8", errors="replace")
@@ -274,20 +404,37 @@ class SoloHeartbeatService:
     # ------------------------------------------------------------------
 
     async def trigger_once(self) -> HeartbeatResult:
-        signals = self.gather_signals()
+        # Safeguard 1: quiet hours — no LLM, no push.
+        if self._in_quiet_hours():
+            logger.debug("solo heartbeat skipped: quiet hours")
+            return HeartbeatResult(executed=False, reason="quiet_hours")
 
+        # Safeguard 2: daily push cap (cross-fingerprint).
+        if self._daily_cap_reached():
+            logger.info(
+                "solo heartbeat skipped: daily cap reached (%d/%d)",
+                self._pushes_today,
+                self._max_daily_pushes,
+            )
+            return HeartbeatResult(executed=False, reason="daily_cap")
+
+        signals = self.gather_signals()
         if signals.is_empty:
             logger.debug("solo heartbeat skipped: no signals")
             return HeartbeatResult(executed=False, reason="empty")
 
-        signal_fingerprint = self._signal_fingerprint(signals)
-        if self._should_suppress(signal_fingerprint):
-            logger.info("solo heartbeat suppressed duplicate signals within cooldown")
-            return HeartbeatResult(executed=False, reason="cooldown")
+        # Safeguard 3: per-signal ack — drop items already pushed within 24h.
+        unacked = [
+            (kind, msg)
+            for kind, msg in signals.iter_user_items()
+            if not self._is_acked(kind, msg)
+        ]
+        has_unacked_agent_task = bool(signals.heartbeat_tasks)
+        if not unacked and not has_unacked_agent_task:
+            logger.debug("solo heartbeat skipped: all signals acked")
+            return HeartbeatResult(executed=False, reason="all_acked")
 
-        # All signals go through LLM — it decides what/how to notify
-        notifications = await self._evaluate_signals(signals)
-
+        notifications = await self._evaluate_signals(unacked, signals.heartbeat_tasks)
         if not notifications:
             return HeartbeatResult(executed=True, reason="empty_response")
 
@@ -306,41 +453,53 @@ class SoloHeartbeatService:
                 metadata={"_session_key": "heartbeat"},
             )
         )
-        self._mark_notified(signal_fingerprint)
+        now = datetime.now(timezone.utc)
+        for kind, msg in unacked:
+            self._ack(kind, msg, now)
+        self._record_push(notifications, now)
+        self._save_state()
         return HeartbeatResult(executed=True, notified=True, response=user_message)
 
-    async def _evaluate_signals(self, signals: HeartbeatSignals) -> list[str]:
+    async def _evaluate_signals(
+        self,
+        unacked_items: list[tuple[str, str]],
+        heartbeat_tasks: str,
+    ) -> list[str]:
         """Let LLM decide whether and how to notify the user based on signals."""
         parts: list[str] = []
-
-        if signals.overdue_todos:
-            parts.append("【逾期/今日到期 Todo】\n" + "\n".join(f"- {t}" for t in signals.overdue_todos))
-        if signals.stale_confirmations:
-            parts.append("【待确认记录（>24h）】\n" + "\n".join(f"- {c}" for c in signals.stale_confirmations))
-        if signals.failed_cron_jobs:
-            parts.append("【失败的定时任务】\n" + "\n".join(f"- {j}" for j in signals.failed_cron_jobs))
-        if signals.scheduler_down:
-            parts.append("【系统异常】定时任务调度器已停止运行")
-        if signals.heartbeat_tasks:
-            parts.append(f"【HEARTBEAT.md 周期性任务】\n{signals.heartbeat_tasks}")
+        for kind, msg in unacked_items:
+            if kind == "overdue_todo":
+                label = "逾期/今日到期 Todo"
+            elif kind == "pending_confirmation":
+                label = "待确认记录（>24h）"
+            else:
+                label = kind
+            parts.append(f"【{label}】\n- {msg}")
+        if heartbeat_tasks:
+            parts.append(f"【HEARTBEAT.md 周期性任务】\n{heartbeat_tasks}")
 
         signal_text = "\n\n".join(parts)
+        history_text = self._format_push_history()
 
         prompt = (
             "【heartbeat 自动触发】你是 solo 的定时心跳 agent。\n"
-            "以下是系统检测到的当前状态信号：\n\n"
+            "以下是系统检测到的、尚未向用户推送过的状态信号：\n\n"
             f"{signal_text}\n\n"
+            f"---\n"
+            f"【过去 24h 已推送过的内容（不要重复推送，除非状态发生实质变化）】\n"
+            f"{history_text}\n\n"
             "---\n"
             "**你的职责：**\n"
-            "1. 判断哪些信号值得通知用户（考虑紧急程度、可操作性）\n"
-            "2. 对值得通知的信号，用简洁友好的语言组织成通知消息\n"
-            "3. 若 HEARTBEAT.md 有任务，只做提醒建议，不要执行任何写入操作\n\n"
+            "1. 判断哪些未推送的信号值得打扰用户（考虑紧急程度、可操作性、当前时段）\n"
+            "2. 对值得推送的信号，用简洁友好的语言组织成通知消息\n"
+            "3. 若 HEARTBEAT.md 有任务，只做提醒建议，不要执行任何写入操作\n"
+            "4. **不要在深夜/清晨推送非紧急事项**（宁可空手也不要打扰）\n"
+            "5. 不要推送系统内部失败（cron 失败、调度器停机等运维问题）\n\n"
             "**输出格式（严格遵守）**\n"
             '{"notifications": ["通知消息1", "通知消息2"]}\n'
             "- 每条是发给用户的一句话，简洁、有信息量、可操作\n"
-            "- 语气克制、专业，不要说教或命令式措辞（如“立刻”“必须”“身体垮了”）\n"
-            "- 若所有信号都不值得打扰用户（如：不紧急、用户无法立即行动），"
-            '返回 {"notifications": []}\n'
+            "- 语气克制、专业，不要说教或命令式措辞\n"
+            "- 若所有信号都不值得打扰用户，返回 {\"notifications\": []}\n"
         )
 
         runner = self._runner_factory(SoloStore(self._workspace), profile=self._provider_profile)
@@ -355,25 +514,43 @@ class SoloHeartbeatService:
         )
         return self._extract_notifications(response)
 
+    def _format_push_history(self) -> str:
+        if not self._push_history:
+            return "（无）"
+        recent = [
+            e for e in self._push_history
+            if e.get("at", "") >= (datetime.now(timezone.utc) - _ACK_TTL).isoformat()
+        ]
+        if not recent:
+            return "（无）"
+        lines: list[str] = []
+        for e in recent[-6:]:
+            at = str(e.get("at", ""))[:19].replace("T", " ")
+            summary = str(e.get("summary") or "").strip()
+            if summary:
+                lines.append(f"- {at}  {summary}")
+        return "\n".join(lines) if lines else "（无）"
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    # Keep build_agenda for backward compat (used by `solo heartbeat status`)
     def build_agenda(self) -> str | None:
         signals = self.gather_signals()
-        if signals.is_empty:
+        if signals.is_empty and not signals.system_health:
             return None
         parts: list[str] = []
-        if signals.has_simple_signals:
-            parts.append("Simple signals: " + "; ".join(signals.format_notifications()))
+        if signals.has_user_signals:
+            items = [f"{k}:{m}" for k, m in signals.iter_user_items()]
+            parts.append("User signals: " + "; ".join(items))
         if signals.has_agent_tasks:
             parts.append("Agent tasks: " + signals.heartbeat_tasks[:200])
+        if signals.system_health:
+            parts.append("System health (internal): " + "; ".join(signals.system_health))
         return "\n".join(parts)
 
     @staticmethod
     def _extract_notifications(response: str) -> list[str]:
-        """Parse JSON response from heartbeat agent."""
         text = response.strip()
         if not text:
             return []
@@ -428,55 +605,3 @@ class SoloHeartbeatService:
             return True
         cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
         return parsed >= cutoff
-
-    def _signal_fingerprint(self, signals: HeartbeatSignals) -> str:
-        payload = {
-            "stale_confirmations": sorted(signals.stale_confirmations),
-            "overdue_todos": sorted(signals.overdue_todos),
-            "failed_cron_jobs": sorted(signals.failed_cron_jobs),
-            "scheduler_down": signals.scheduler_down,
-            "heartbeat_tasks": signals.heartbeat_tasks.strip(),
-        }
-        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-    def _should_suppress(self, fingerprint: str) -> bool:
-        if self._notification_cooldown_s <= 0:
-            return False
-        if not self._last_signal_fingerprint or self._last_signal_fingerprint != fingerprint:
-            return False
-        if self._last_notified_at is None:
-            return False
-        elapsed = (datetime.now(timezone.utc) - self._last_notified_at).total_seconds()
-        return elapsed < self._notification_cooldown_s
-
-    def _mark_notified(self, fingerprint: str) -> None:
-        self._last_signal_fingerprint = fingerprint
-        self._last_notified_at = datetime.now(timezone.utc)
-        self._save_state()
-
-    def _load_state(self) -> None:
-        if not self._state_path.exists():
-            return
-        try:
-            data = json.loads(self._state_path.read_text(encoding="utf-8"))
-        except Exception:
-            return
-        if not isinstance(data, dict):
-            return
-        self._last_signal_fingerprint = str(data.get("last_signal_fingerprint") or "")
-        notified_at = self._parse_iso_datetime(str(data.get("last_notified_at") or ""))
-        self._last_notified_at = notified_at
-
-    def _save_state(self) -> None:
-        self._state_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {
-            "last_signal_fingerprint": self._last_signal_fingerprint,
-            "last_notified_at": (
-                self._last_notified_at.isoformat() if self._last_notified_at is not None else ""
-            ),
-        }
-        atomic_write_text(
-            self._state_path,
-            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        )

@@ -28,7 +28,6 @@ from wolo.core.memory import load_memory_prompt
 from wolo.core.session import load_conversation, save_conversation
 from wolo.core.store import WoloStore
 from wolo.prompts import (
-    HEARTBEAT_EVAL_SYSTEM_PROMPT,
     SIMILAR_RECORDS_HEADER,
     SKILLS_PROMPT_HEADER,
     TOOL_ROUTER_PROMPT,

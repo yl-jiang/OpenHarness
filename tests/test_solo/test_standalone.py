@@ -782,7 +782,9 @@ async def test_solo_heartbeat_suppresses_duplicate_signals_with_persisted_cooldo
         provider_profile="codex",
         enabled_channels=["feishu"],
         runner_factory=FakeRunner,
-        notification_cooldown_s=3600,
+        quiet_hours_start="00:00",
+        quiet_hours_end="00:00",
+        max_daily_pushes=10,
     )
 
     first = await service.trigger_once()
@@ -790,7 +792,7 @@ async def test_solo_heartbeat_suppresses_duplicate_signals_with_persisted_cooldo
 
     assert first.notified is True
     assert second.executed is False
-    assert second.reason == "cooldown"
+    assert second.reason == "all_acked"
     assert len(calls) == 1
     assert calls[0]["allow_tools"] is False
     assert calls[0]["include_similar_context"] is False
@@ -800,8 +802,9 @@ async def test_solo_heartbeat_suppresses_duplicate_signals_with_persisted_cooldo
     state_path = workspace / "data" / "heartbeat_state.json"
     assert state_path.exists()
     state = json.loads(state_path.read_text(encoding="utf-8"))
-    assert state["last_signal_fingerprint"]
-    assert state["last_notified_at"]
+    assert state["acks"]
+    assert state["push_history"]
+    assert state["pushes_today"] >= 1
 
     service_reloaded = SoloHeartbeatService(
         bus=bus,
@@ -809,11 +812,13 @@ async def test_solo_heartbeat_suppresses_duplicate_signals_with_persisted_cooldo
         provider_profile="codex",
         enabled_channels=["feishu"],
         runner_factory=FakeRunner,
-        notification_cooldown_s=3600,
+        quiet_hours_start="00:00",
+        quiet_hours_end="00:00",
+        max_daily_pushes=10,
     )
     third = await service_reloaded.trigger_once()
     assert third.executed is False
-    assert third.reason == "cooldown"
+    assert third.reason == "all_acked"
     assert len(calls) == 1
 
 
@@ -924,6 +929,6 @@ def test_solo_heartbeat_agenda_includes_pending_confirmations_and_file_tasks(tmp
     ).build_agenda()
 
     assert agenda is not None
-    assert "待确认" in agenda
+    assert "pending_confirmation" in agenda
     assert "他说的是谁" in agenda
     assert "检查这个月的睡眠趋势" in agenda

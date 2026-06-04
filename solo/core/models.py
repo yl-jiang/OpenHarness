@@ -17,6 +17,10 @@ class SoloHeartbeatConfig(BaseModel):
     enabled: bool = True
     interval_s: int = 30 * 60
     keep_recent_messages: int = 8
+    quiet_hours_start: str = "22:30"
+    quiet_hours_end: str = "08:00"
+    timezone: str = "Asia/Shanghai"
+    max_daily_pushes: int = 3
 
 
 class SoloConfig(BaseModel):

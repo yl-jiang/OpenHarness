@@ -62,6 +62,10 @@ class WoloGatewayService:
             interval_s=self._config.heartbeat.interval_s,
             enabled=self._config.heartbeat.enabled,
             keep_recent_messages=self._config.heartbeat.keep_recent_messages,
+            quiet_hours_start=self._config.heartbeat.quiet_hours_start,
+            quiet_hours_end=self._config.heartbeat.quiet_hours_end,
+            timezone_name=self._config.heartbeat.timezone,
+            max_daily_pushes=self._config.heartbeat.max_daily_pushes,
         )
 
     @property
@@ -115,8 +119,11 @@ class WoloGatewayService:
             self._workspace,
         )
 
-        # Auto-register todo reminder cron job
-        _register_todo_cron(self._workspace, self._config)
+        # One-shot migration: retire the legacy todo-reminder cron job.
+        # The heartbeat watchdog now owns the todo/due-today signal, so keeping
+        # the cron would just produce permanent notify failures that poison
+        # the heartbeat fingerprint.
+        _migrate_legacy_todo_cron(self._workspace)
         # Auto-register feed digest cron job
         _register_feed_digest_cron(self._workspace, self._config)
 
@@ -220,6 +227,17 @@ def stop_gateway_process(cwd: str | Path | None = None, workspace: str | Path | 
                 os.kill(pid, signal.SIGTERM)
     service.pid_file.unlink(missing_ok=True)
     service.write_state(running=False)
+
+    # The cron scheduler daemon is forked independently by `_register_feed_digest_cron`
+    # and survives a gateway stop. Stop it too
+    # so a subsequent `make onboard` / `make wolo-gw` does not inherit a daemon
+    # running stale bytecode.
+    try:
+        from wolo.gateway.cron_scheduler import stop_daemon as _stop_cron_daemon
+        _stop_cron_daemon(workspace)
+    except Exception as exc:
+        logger.warning("Failed to stop cron scheduler daemon: %s", exc)
+
     return True
 
 
@@ -290,7 +308,7 @@ def _check_pid_file(pid_file: Path) -> int | None:
 
 
 def _iter_workspace_gateway_pids(workspace: str | Path | None = None) -> list[int]:
-    root = str(get_workspace_root(workspace))
+    get_workspace_root(workspace)  # ensure workspace exists & is initialized
     try:
         result = subprocess.run(
             ["ps", "-eo", "pid=,args="],
@@ -313,9 +331,17 @@ def _iter_workspace_gateway_pids(workspace: str | Path | None = None) -> list[in
             continue
         if pid == current_pid:
             continue
-        if "-m wolo gateway run" not in args:
-            continue
-        if f"--workspace {root}" not in args:
+        # Match any of:
+        #   python -m wolo gateway run [--workspace /path]
+        #   /.venv/bin/wolo gateway run
+        #   /.venv/bin/python3 /.venv/bin/wolo gateway run
+        # The `wolo` + `gateway run` pair is specific enough: other wolo
+        # subcommands (status / doctor / stop / ...) never contain
+        # "gateway run". We intentionally do NOT require `--workspace` in
+        # args because older gateway processes launched via the console-
+        # script entry point inherit the workspace from WOLO_WORKSPACE env
+        # and don't put it on the command line.
+        if "wolo" not in args or "gateway run" not in args:
             continue
         if _pid_is_running(pid):
             pids.append(pid)
@@ -384,37 +410,6 @@ def _resolve_feishu_notify_target(
     }
 
 
-def _register_todo_cron(
-    workspace: str | Path | None,
-    config: object,
-) -> None:
-    """Best-effort registration of the wolo todo reminder cron job and scheduler daemon."""
-    try:
-        from wolo.gateway.todo_cron import ensure_todo_reminder_job
-
-        notify = _resolve_feishu_notify_target(config, workspace)
-
-        ensure_todo_reminder_job(
-            "wolo",
-            workspace=workspace,
-            notify=notify,
-        )
-    except Exception as exc:
-        logger.warning("Failed to register wolo todo cron job: %s", exc)
-
-    # Ensure cron scheduler daemon is running
-    try:
-        from wolo.gateway.cron_scheduler import is_scheduler_running, start_daemon
-
-        if not is_scheduler_running():
-            pid = start_daemon(workspace)
-            logger.info("Started cron scheduler daemon (pid=%d)", pid)
-        else:
-            logger.debug("Cron scheduler daemon already running")
-    except Exception as exc:
-        logger.warning("Failed to start cron scheduler daemon: %s", exc)
-
-
 def _register_feed_digest_cron(
     workspace: str | Path | None,
     config: object,
@@ -442,3 +437,44 @@ def _register_feed_digest_cron(
         )
     except Exception as exc:
         logger.warning("Failed to register wolo feed digest cron job: %s", exc)
+
+
+def _migrate_legacy_todo_cron(workspace: str | Path | None) -> None:
+    """Retire the legacy `wolo-todo-reminder` cron job and stale one-shot reminders.
+
+    The heartbeat watchdog now serves the overdue / due-today todo signal with
+    proper quiet-hours / daily-cap / per-signal-ack safeguards. Keeping the old
+    cron would only produce permanent notify failures (broken feishu config in
+    older deployments) that pollute cron_history and poison the heartbeat
+    signal fingerprint.
+
+    Idempotent: safe to invoke on every gateway startup.
+    """
+    try:
+        from wolo.gateway.todo_cron import delete_cron_job, list_one_shot_jobs
+        from datetime import datetime, timezone
+
+        if delete_cron_job("wolo-todo-reminder", workspace):
+            logger.info("Migrated: removed legacy wolo-todo-reminder cron job")
+
+        now_utc = datetime.now(timezone.utc)
+        for job in list_one_shot_jobs(workspace):
+            payload = job.get("payload") or {}
+            if str(payload.get("kind") or "") != "reminder":
+                continue
+            next_run_str = str(job.get("next_run") or "")
+            try:
+                next_run = datetime.fromisoformat(next_run_str)
+            except (TypeError, ValueError):
+                continue
+            if next_run.tzinfo is None:
+                next_run = next_run.replace(tzinfo=timezone.utc)
+            if next_run < now_utc:
+                delete_cron_job(str(job.get("name") or ""), workspace)
+                logger.info(
+                    "Migrated: removed past-due one-shot reminder %s (was due %s)",
+                    job.get("name"),
+                    next_run_str,
+                )
+    except Exception as exc:
+        logger.warning("Legacy todo-cron migration failed: %s", exc)
