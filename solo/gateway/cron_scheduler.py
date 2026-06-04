@@ -27,6 +27,7 @@ logger = get_logger(__name__)
 
 NOTIFICATION_OUTPUT_LIMIT = 3500
 TICK_INTERVAL_SECONDS = 30
+NOTIFY_FAILURE_STREAK_DISABLE = 3
 
 # Set once before fork so the child process inherits the workspace path.
 _WORKSPACE: str | Path | None = None
@@ -77,6 +78,48 @@ def _save_jobs(jobs: list[dict[str, Any]]) -> None:
     path = _cron_registry_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, json.dumps(jobs, indent=2) + "\n")
+
+
+def _update_job(name: str, updates: dict[str, Any]) -> None:
+    """Merge `updates` into the job named `name` and persist atomically."""
+    if not name or not updates:
+        return
+    lock = _cron_registry_path().with_suffix(".json.lock")
+    with exclusive_file_lock(lock):
+        jobs = _load_jobs()
+        for job in jobs:
+            if job.get("name") == name:
+                job.update(updates)
+                break
+        else:
+            return
+        _save_jobs(jobs)
+
+
+def _reconcile_notify_streak(job: dict[str, Any], entry: dict[str, Any]) -> None:
+    """Update per-job notify failure streak; auto-disable notify after N failures.
+
+    Called after `_notify_job_result` populated `entry["notification_status"]`.
+    Only jobs that carry a notify config participate; jobs without one are a no-op.
+    """
+    if not isinstance(job.get("notify"), dict):
+        return
+    status = str(entry.get("notification_status") or "").strip()
+    if status == "sent":
+        _update_job(str(job.get("name") or ""), {"notify_failure_streak": 0})
+        return
+    if status != "failed":
+        return
+    streak = int(job.get("notify_failure_streak") or 0) + 1
+    updates: dict[str, Any] = {"notify_failure_streak": streak}
+    if streak >= NOTIFY_FAILURE_STREAK_DISABLE:
+        updates["notify"] = None
+        logger.warning(
+            "Auto-disabled notify for cron job %r after %d consecutive failures",
+            job.get("name"),
+            streak,
+        )
+    _update_job(str(job.get("name") or ""), updates)
 
 
 def _mark_job_run(name: str, *, success: bool) -> None:
@@ -205,6 +248,48 @@ def is_scheduler_running() -> bool:
     return _read_pid() is not None
 
 
+def stop_daemon(workspace: str | Path | None = None, *, timeout_s: float = 3.0) -> bool:
+    """Stop the cron scheduler daemon if it is running.
+
+    Sends SIGTERM (and SIGKILL on timeout), then unlinks the PID file.
+    Idempotent: safe to call when no daemon is running.
+
+    Returns True iff a daemon process was actually terminated.
+    """
+    global _WORKSPACE
+    if workspace is not None:
+        _WORKSPACE = workspace
+
+    pid = _read_pid()
+    if pid is None:
+        _remove_pid()
+        return False
+
+    terminated = False
+    try:
+        os.kill(pid, signal.SIGTERM)
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except OSError:
+                terminated = True
+                break
+            time.sleep(0.1)
+        else:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                os.waitpid(pid, 0)
+            except (OSError, ChildProcessError):
+                pass
+            terminated = True
+    except OSError:
+        terminated = False
+
+    _remove_pid()
+    if terminated:
+        logger.info("Stopped cron scheduler daemon (pid=%d)", pid)
+    return terminated
 # ---------------------------------------------------------------------------
 # Job execution
 # ---------------------------------------------------------------------------
@@ -470,6 +555,7 @@ async def _execute_inline_task(
     }
     _finalize_job_run(job, success=True)
     await _notify_job_result(job, entry)
+    _reconcile_notify_streak(job, entry)
     _append_history(entry)
     logger.info("Job %r finished %s dispatch", job["name"], label)
     return entry
@@ -495,6 +581,7 @@ async def _execute_inline_task_with_error(
     }
     _finalize_job_run(job, success=False)
     await _notify_job_result(job, entry)
+    _reconcile_notify_streak(job, entry)
     _append_history(entry)
     return entry
 
@@ -546,6 +633,7 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
         }
         _finalize_job_run(job, success=False)
         await _notify_job_result(job, entry)
+        _reconcile_notify_streak(job, entry)
         _append_history(entry)
         return entry
 
@@ -574,6 +662,7 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
         }
         _finalize_job_run(job, success=False)
         await _notify_job_result(job, entry)
+        _reconcile_notify_streak(job, entry)
         _append_history(entry)
         return entry
 
@@ -589,6 +678,7 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
     }
     _finalize_job_run(job, success=success)
     await _notify_job_result(job, entry)
+    _reconcile_notify_streak(job, entry)
     _append_history(entry)
     logger.info("Job %r finished: %s (rc=%s)", name, entry["status"], process.returncode)
     return entry
