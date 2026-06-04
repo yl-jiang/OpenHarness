@@ -3,7 +3,7 @@ ONBOARD_ARGS ?=
 RESTART_CLEAN ?= scripts/restart_clean.sh
 
 .PHONY: all install install-dev test test-cov cov-html lint format typecheck check build clean \
-        onboard solo-gw wolo-gw stop restart clean-runtime
+        onboard solo-gw wolo-gw solo wolo stop restart clean-runtime
 
 # 默认执行测试
 all: test
@@ -68,25 +68,47 @@ build:
 # 运行时生命周期
 # -----------------
 #
-# 启动类 target 都会先调用 `$(RESTART_CLEAN)` 把旧的 gateway / onboard /
-# cron 调度器守护进程杀掉、把 __pycache__ 清掉，再启动新进程。这样就不会
-# 出现"前台重起了，后台常驻进程还在跑老代码"的情况。
+# 单独启动类 target (solo-gw / wolo-gw / onboard) 只清理本应用的旧进程和
+# 守护进程，不会影响其他正在运行的应用，方便在 console 中查看各自的 log。
+#
+# 组合启动类 target (solo / wolo) 会清理对应 gateway + onboard 的旧进程，
+# 然后以 daemon 方式同时启动两者。
+#
+# stop / restart 保持全量清理的行为。
 
-# 一键构建前端并前台启动 onboard（自动先停掉旧的常驻进程并清缓存）
+# 前台启动 onboard（只清理 onboard 旧进程）
 onboard:
-	@$(RESTART_CLEAN) --quiet
+	@$(RESTART_CLEAN) --only onboard --quiet
 	npm --prefix onboard/frontend run build
 	uv run onboard run $(ONBOARD_ARGS)
 
-# 启动 solo gateway（自动先停掉旧的常驻进程并清缓存）
+# 前台启动 solo gateway（只清理 solo 旧进程和守护进程）
 solo-gw:
-	@$(RESTART_CLEAN) --quiet
+	@$(RESTART_CLEAN) --only solo --quiet
 	uv run solo gateway run
 
-# 启动 wolo gateway（自动先停掉旧的常驻进程并清缓存）
+# 前台启动 wolo gateway（只清理 wolo 旧进程和守护进程）
 wolo-gw:
-	@$(RESTART_CLEAN) --quiet
+	@$(RESTART_CLEAN) --only wolo --quiet
 	uv run wolo gateway run
+
+# 一键启动 solo gateway + onboard（先清理两者的旧进程，再 daemon 启动）
+solo:
+	@$(RESTART_CLEAN) --only solo --only onboard --quiet
+	@echo "[solo] starting solo-gw + onboard as daemons..."
+	@mkdir -p /tmp/openharness
+	@nohup uv run solo gateway run      >/tmp/openharness/solo-gw.log  2>&1 & echo "solo-gw     pid=$$!  log=/tmp/openharness/solo-gw.log"
+	@nohup uv run onboard run $(ONBOARD_ARGS) >/tmp/openharness/onboard.log 2>&1 & echo "onboard     pid=$$!  log=/tmp/openharness/onboard.log"
+	@echo "[solo] launched. Use 'make stop' to stop them."
+
+# 一键启动 wolo gateway + onboard（先清理两者的旧进程，再 daemon 启动）
+wolo:
+	@$(RESTART_CLEAN) --only wolo --only onboard --quiet
+	@echo "[wolo] starting wolo-gw + onboard as daemons..."
+	@mkdir -p /tmp/openharness
+	@nohup uv run wolo gateway run      >/tmp/openharness/wolo-gw.log  2>&1 & echo "wolo-gw     pid=$$!  log=/tmp/openharness/wolo-gw.log"
+	@nohup uv run onboard run $(ONBOARD_ARGS) >/tmp/openharness/onboard.log 2>&1 & echo "onboard     pid=$$!  log=/tmp/openharness/onboard.log"
+	@echo "[wolo] launched. Use 'make stop' to stop them."
 
 # 仅停止所有常驻进程（wolo gateway + solo gateway + onboard + cron 调度器守护进程），不清缓存
 stop:

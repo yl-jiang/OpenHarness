@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# restart_clean.sh — stop every running OpenHarness long-running process and
+# restart_clean.sh — stop running OpenHarness long-running processes and
 # purge caches that would otherwise let a freshly-started process run stale
 # bytecode or hold onto obsolete state.
 #
@@ -9,22 +9,27 @@
 #   1. Stops the wolo gateway (main process + its cron-scheduler daemon).
 #   2. Stops the solo gateway (main process + its cron-scheduler daemon).
 #   3. Stops the onboard uvicorn server.
-#   4. Kills any leaked cron-scheduler daemon whose PID file survived (belt &
-#      braces — the service stop paths now call `stop_daemon`, but older
-#      deployed versions did not).
-#   5. Removes Python bytecode caches (`.pyc` files and `__pycache__` dirs)
-#      so a restarted process recompiles from the current source on disk.
+#   4. Kills any leaked cron-scheduler daemon whose PID file survived.
+#   5. Removes Python bytecode caches so a restarted process recompiles.
 #   6. Removes stray PID files that referenced dead processes.
 #
 # Usage:
-#   scripts/restart_clean.sh [--no-pyc]    skip pycache cleanup
-#                          [--no-stop]     only clear caches; don't stop procs
-#                          [--quiet]       suppress per-step output
+#   scripts/restart_clean.sh [--only <app>]  only stop the specified app
+#                                             (solo, wolo, or onboard;
+#                                              repeatable for multiple apps)
+#                          [--no-pyc]        skip pycache cleanup
+#                          [--no-stop]       only clear caches; don't stop procs
+#                          [--quiet]         suppress per-step output
+#
+# Examples:
+#   scripts/restart_clean.sh                     # stop everything + clear caches
+#   scripts/restart_clean.sh --only wolo         # stop only wolo gateway + daemon
+#   scripts/restart_clean.sh --only solo --only onboard  # stop solo + onboard
+#   scripts/restart_clean.sh --no-pyc            # stop everything, keep caches
 #
 # Exit codes:
 #   0  cleanup done
-#   1  a hard error occurred (a stop command crashed); partial cleanup may
-#      have happened — inspect stderr.
+#   1  a hard error occurred; partial cleanup may have happened.
 
 set -u
 
@@ -33,17 +38,43 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 QUIET=0
 DO_STOP=1
 DO_PYC=1
-for arg in "$@"; do
-  case "$arg" in
+ONLY_APPS=()
+
+_args=("$@")
+_i=0
+while [ $_i -lt ${#_args[@]} ]; do
+  _a="${_args[$_i]}"
+  case "$_a" in
     --quiet|-q)   QUIET=1 ;;
     --no-stop)    DO_STOP=0 ;;
     --no-pyc)     DO_PYC=0 ;;
+    --only=*)     ONLY_APPS+=("${_a#--only=}") ;;
+    --only)
+      _i=$((_i + 1))
+      if [ $_i -ge ${#_args[@]} ]; then
+        echo "--only requires an argument (solo|wolo|onboard)" >&2
+        exit 2
+      fi
+      ONLY_APPS+=("${_args[$_i]}")
+      ;;
     --help|-h)
-      sed -n '2,30p' "$0"
+      sed -n '2,35p' "$0"
       exit 0
       ;;
     *)
-      echo "Unknown argument: $arg" >&2
+      echo "Unknown argument: $_a" >&2
+      exit 2
+      ;;
+  esac
+  _i=$((_i + 1))
+done
+
+# Validate --only values
+for app in "${ONLY_APPS[@]+"${ONLY_APPS[@]}"}"; do
+  case "$app" in
+    solo|wolo|onboard) ;;
+    *)
+      echo "Invalid --only value: $app (expected solo, wolo, or onboard)" >&2
       exit 2
       ;;
   esac
@@ -55,35 +86,62 @@ log() {
   fi
 }
 
+# Return 0 if the given app should be stopped.
+# When no --only flags are set, all apps are stopped (default behavior).
+_should_stop() {
+  local app="$1"
+  if [ ${#ONLY_APPS[@]} -eq 0 ]; then
+    return 0
+  fi
+  for a in "${ONLY_APPS[@]}"; do
+    if [ "$a" = "$app" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # 1-3. Stop long-running services via their own CLIs.
 # ---------------------------------------------------------------------------
 
 if [ "$DO_STOP" -eq 1 ]; then
-  log "stopping wolo gateway (main process + cron scheduler daemon)..."
-  if command -v uv >/dev/null 2>&1; then
-    uv run --quiet wolo gateway stop 2>/dev/null || true
-    uv run --quiet solo gateway stop 2>/dev/null || true
-    uv run --quiet onboard stop 2>/dev/null || true
-  else
-    # Fallback: direct python invocations.
-    (cd "$REPO_ROOT" && python -m wolo gateway stop 2>/dev/null || true)
-    (cd "$REPO_ROOT" && python -m solo gateway stop 2>/dev/null || true)
-    (cd "$REPO_ROOT" && python -m onboard stop 2>/dev/null || true)
+  if _should_stop wolo; then
+    log "stopping wolo gateway (main process + cron scheduler daemon)..."
+    if command -v uv >/dev/null 2>&1; then
+      uv run --quiet wolo gateway stop 2>/dev/null || true
+    else
+      (cd "$REPO_ROOT" && python -m wolo gateway stop 2>/dev/null || true)
+    fi
+  fi
+
+  if _should_stop solo; then
+    log "stopping solo gateway (main process + cron scheduler daemon)..."
+    if command -v uv >/dev/null 2>&1; then
+      uv run --quiet solo gateway stop 2>/dev/null || true
+    else
+      (cd "$REPO_ROOT" && python -m solo gateway stop 2>/dev/null || true)
+    fi
+  fi
+
+  if _should_stop onboard; then
+    log "stopping onboard server..."
+    if command -v uv >/dev/null 2>&1; then
+      uv run --quiet onboard stop 2>/dev/null || true
+    else
+      (cd "$REPO_ROOT" && python -m onboard stop 2>/dev/null || true)
+    fi
   fi
 
   # -----------------------------------------------------------------------
   # 4. Belt & braces: any cron-scheduler daemon that slipped through?
-  #    Read PID files directly and SIGTERM whatever is still alive.
   # -----------------------------------------------------------------------
-  for pidfile in \
-    "$HOME/.wolo/data/cron_scheduler.pid" \
-    "$HOME/.solo/data/cron_scheduler.pid" \
-    "$HOME/.onboard/onboard.pid"; do
+  if _should_stop wolo; then
+    pidfile="$HOME/.wolo/data/cron_scheduler.pid"
     if [ -f "$pidfile" ]; then
       pid="$(tr -d '[:space:]' < "$pidfile" 2>/dev/null || true)"
       if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        log "killing leaked daemon pid=$pid (from $pidfile)"
+        log "killing leaked wolo cron daemon pid=$pid"
         kill -TERM "$pid" 2>/dev/null || true
         for _ in 1 2 3 4 5 6 7 8 9 10; do
           kill -0 "$pid" 2>/dev/null || break
@@ -95,35 +153,77 @@ if [ "$DO_STOP" -eq 1 ]; then
       fi
       rm -f "$pidfile"
     fi
-  done
-
-  # And the gateway main-process PID files (in case the CLI didn't clean up).
-  for pidfile in "$HOME/.wolo/gateway.pid" "$HOME/.solo/gateway.pid"; do
+    # wolo gateway main PID file
+    pidfile="$HOME/.wolo/gateway.pid"
     if [ -f "$pidfile" ]; then
       pid="$(tr -d '[:space:]' < "$pidfile" 2>/dev/null || true)"
       if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-        log "killing leftover gateway pid=$pid (from $pidfile)"
+        log "killing leftover wolo gateway pid=$pid"
         kill -TERM "$pid" 2>/dev/null || true
         sleep 0.3
         kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
       fi
       rm -f "$pidfile"
     fi
-  done
+  fi
+
+  if _should_stop solo; then
+    pidfile="$HOME/.solo/data/cron_scheduler.pid"
+    if [ -f "$pidfile" ]; then
+      pid="$(tr -d '[:space:]' < "$pidfile" 2>/dev/null || true)"
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        log "killing leaked solo cron daemon pid=$pid"
+        kill -TERM "$pid" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+          kill -0 "$pid" 2>/dev/null || break
+          sleep 0.1
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+          kill -KILL "$pid" 2>/dev/null || true
+        fi
+      fi
+      rm -f "$pidfile"
+    fi
+    pidfile="$HOME/.solo/gateway.pid"
+    if [ -f "$pidfile" ]; then
+      pid="$(tr -d '[:space:]' < "$pidfile" 2>/dev/null || true)"
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        log "killing leftover solo gateway pid=$pid"
+        kill -TERM "$pid" 2>/dev/null || true
+        sleep 0.3
+        kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
+      fi
+      rm -f "$pidfile"
+    fi
+  fi
+
+  if _should_stop onboard; then
+    pidfile="$HOME/.onboard/onboard.pid"
+    if [ -f "$pidfile" ]; then
+      pid="$(tr -d '[:space:]' < "$pidfile" 2>/dev/null || true)"
+      if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        log "killing leaked onboard pid=$pid"
+        kill -TERM "$pid" 2>/dev/null || true
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+          kill -0 "$pid" 2>/dev/null || break
+          sleep 0.1
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+          kill -KILL "$pid" 2>/dev/null || true
+        fi
+      fi
+      rm -f "$pidfile"
+    fi
+  fi
 fi
 
 # ---------------------------------------------------------------------------
 # 5. Purge Python bytecode caches.
-#    Rationale: when source is edited and a daemon process isn't fully killed,
-#    the next import may still load stale `.pyc` from `__pycache__/`.
-#    Removing them forces recompilation on next start.
 # ---------------------------------------------------------------------------
 
 if [ "$DO_PYC" -eq 1 ]; then
   log "purging __pycache__ / .pyc under $REPO_ROOT ..."
 
-  # Trees to skip entirely (virtualenvs / node_modules / build artifacts).
-  # Each entry becomes `-path X -prune -o` in the find expression.
   EXCLUDES=""
   for p in \
     "$REPO_ROOT/.venv" \
@@ -136,17 +236,14 @@ if [ "$DO_PYC" -eq 1 ]; then
     fi
   done
 
-  # 5a. Remove `__pycache__` directories.
   # shellcheck disable=SC2086
   find "$REPO_ROOT" $EXCLUDES -type d -name __pycache__ -print0 \
     | xargs -0 -r rm -rf 2>/dev/null || true
 
-  # 5b. Remove stray `.pyc` files.
   # shellcheck disable=SC2086
   find "$REPO_ROOT" $EXCLUDES -type f -name '*.pyc' -print0 \
     | xargs -0 -r rm -f 2>/dev/null || true
 
-  # Tool caches that can hold stale analysis results
   for d in .pytest_cache .mypy_cache .ruff_cache; do
     if [ -d "$REPO_ROOT/$d" ]; then
       rm -rf "$REPO_ROOT/$d"
