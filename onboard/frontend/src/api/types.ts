@@ -219,7 +219,7 @@ export interface ChatSessionDetail {
   messages: { role: string; content: string }[];
 }
 
-export type WsClientMessage = { type: 'message'; content: string } | { type: 'cancel' };
+export type WsClientMessage = { type: 'message'; content: string; media?: string[] } | { type: 'cancel' };
 
 export type WsServerMessage =
   | { type: 'delta'; content: string }
@@ -227,6 +227,7 @@ export type WsServerMessage =
   | { type: 'tool_start'; tool: string; args: JsonObject }
   | { type: 'tool_complete'; tool: string; result: string }
   | { type: 'progress'; content: string }
+  | { type: 'media'; paths: string[] }
   | { type: 'complete'; content: string }
   | { type: 'session_key'; session_key: string }
   | { type: 'error'; message: string };

@@ -161,4 +161,20 @@ export const api = {
     `/api/${app}/chat/sessions/${sessionKey}/export/markdown`,
   exportChatHtml: (app: AppName, sessionKey: string) =>
     `/api/${app}/chat/sessions/${sessionKey}/export/html`,
+
+  // Chat file upload
+  uploadChatFile: async (file: File): Promise<{ path: string; disk_path: string }> => {
+    const form = new FormData();
+    form.append('file', file);
+    const response = await fetch('/api/chat/upload', { method: 'POST', body: form });
+    if (response.status === 401) {
+      window.location.href = '/_gate';
+      throw new Error('Authentication required');
+    }
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || `Upload failed: ${response.status}`);
+    }
+    return (await response.json()) as { path: string; disk_path: string };
+  },
 };

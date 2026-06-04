@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import mimetypes
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi import APIRouter, File, Query, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
 from onboard.services.chat_service import stream_chat
 
 router = APIRouter(tags=["chat"])
+
+_UPLOAD_DIR = Path(os.environ.get("ONBOARD_WORKSPACE", "~/.onboard")).expanduser() / "chat-uploads"
+_MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MB
 
 # Regex to strip the volatile time-context prefix injected by the runner
 _TIME_CONTEXT_RE = re.compile(
@@ -45,6 +50,33 @@ def _get_session_module(app_name: str):
         return session
 
 
+@router.post("/api/chat/upload")
+async def upload_chat_file(file: UploadFile = File(...)) -> dict[str, str]:
+    """Upload a file for use in chat. Returns the URL path and the disk path."""
+    _UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    safe_name = re.sub(r"[^\w.\-]", "_", file.filename or "upload")
+    stored_name = f"{uuid4().hex[:12]}_{safe_name}"
+    disk_path = _UPLOAD_DIR / stored_name
+    data = await file.read()
+    if len(data) > _MAX_UPLOAD_SIZE:
+        from fastapi import HTTPException
+        raise HTTPException(413, "File too large (max 20 MB)")
+    disk_path.write_bytes(data)
+    url_path = f"/api/chat/uploads/{stored_name}"
+    return {"path": url_path, "disk_path": str(disk_path)}
+
+
+@router.get("/api/chat/uploads/{filename}")
+def serve_uploaded_file(filename: str) -> FileResponse:
+    """Serve an uploaded chat file."""
+    file_path = (_UPLOAD_DIR / filename).resolve()
+    if not file_path.is_relative_to(_UPLOAD_DIR.resolve()) or not file_path.is_file():
+        from fastapi import HTTPException
+        raise HTTPException(404, "File not found")
+    content_type, _ = mimetypes.guess_type(str(file_path))
+    return FileResponse(file_path, media_type=content_type or "application/octet-stream")
+
+
 @router.websocket("/ws/chat/{app_name}")
 async def chat(websocket: WebSocket, app_name: str) -> None:
     await websocket.accept()
@@ -62,11 +94,13 @@ async def chat(websocket: WebSocket, app_name: str) -> None:
                 await websocket.send_json({"type": "error", "message": "Unsupported message type"})
                 continue
             content = str(message.get("content") or "").strip()
-            if not content:
-                await websocket.send_json({"type": "error", "message": "Message content is required"})
+            media_raw = message.get("media")
+            media = [str(p) for p in media_raw if isinstance(p, str) and p.strip()] if isinstance(media_raw, list) else []
+            if not content and not media:
+                await websocket.send_json({"type": "error", "message": "Message content or media is required"})
                 continue
             try:
-                async for event in stream_chat(app_name, content, session_key=session_key):
+                async for event in stream_chat(app_name, content, session_key=session_key, media=media or None):
                     await websocket.send_json(event)
             except Exception as exc:
                 await websocket.send_json({"type": "error", "message": str(exc)})

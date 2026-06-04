@@ -12,6 +12,14 @@ interface ChatMessage {
   label: string;
   status: 'sent' | 'streaming' | 'running' | 'complete' | 'error';
   timestamp: Date;
+  media?: string[];
+}
+
+interface PendingAttachment {
+  file: File;
+  diskPath: string;
+  previewUrl: string;
+  uploading: boolean;
 }
 
 // Module-level cache so messages survive component unmount during SPA navigation
@@ -39,6 +47,9 @@ export function ChatPanel({ appName }: { appName: AppName }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [loadingSession, setLoadingSession] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messageCounter = useRef(0);
   const messagesRef = useRef<HTMLElement | null>(null);
 
@@ -107,6 +118,12 @@ export function ChatPanel({ appName }: { appName: AppName }) {
         ...items,
         createMessage({ role: 'tool', label: 'tool', status: 'complete', content: `${message.tool}${message.result ? `\n${message.result}` : ''}` }),
       ]);
+    } else if (message.type === 'media') {
+      setStreaming(true);
+      setMessages((items) => [
+        ...items,
+        createMessage({ role: 'assistant', label: 'assistant', status: 'complete', content: '', media: message.paths }),
+      ]);
     } else if (message.type === 'complete') {
       setStreaming(false);
       setProgressText(null);
@@ -131,7 +148,8 @@ export function ChatPanel({ appName }: { appName: AppName }) {
     }
   });
 
-  const canSend = useMemo(() => socket.connected && input.trim().length > 0, [socket.connected, input]);
+  const readyAttachments = attachments.filter((a) => a.diskPath && !a.uploading);
+  const canSend = useMemo(() => socket.connected && (input.trim().length > 0 || readyAttachments.length > 0), [socket.connected, input, readyAttachments]);
   const displayName = appName === 'solo' ? 'Solo' : 'Wolo';
 
   // Reset streaming state when WebSocket disconnects mid-stream
@@ -218,13 +236,67 @@ export function ChatPanel({ appName }: { appName: AppName }) {
     setShowHistory(false);
   }, [appName, socket]);
 
+  const isImageFile = (path: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(path);
+
+  const uploadFiles = useCallback(async (files: FileList | File[]) => {
+    const newAttachments: PendingAttachment[] = [];
+    for (const file of Array.from(files)) {
+      const att: PendingAttachment = { file, diskPath: '', previewUrl: '', uploading: true };
+      if (file.type.startsWith('image/')) {
+        att.previewUrl = URL.createObjectURL(file);
+      }
+      newAttachments.push(att);
+    }
+    setAttachments((prev) => [...prev, ...newAttachments]);
+
+    const updated = [...newAttachments];
+    for (let i = 0; i < updated.length; i++) {
+      try {
+        const result = await api.uploadChatFile(updated[i].file);
+        updated[i] = { ...updated[i], diskPath: result.disk_path, uploading: false };
+      } catch {
+        updated[i] = { ...updated[i], uploading: false };
+      }
+    }
+    setAttachments((prev) => {
+      const names = new Set(updated.map((a) => a.file.name));
+      const kept = prev.filter((a) => !names.has(a.file.name));
+      return [...kept, ...updated];
+    });
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    if (e.dataTransfer.files.length > 0) uploadFiles(e.dataTransfer.files);
+  }, [uploadFiles]);
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.kind === 'file') {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      uploadFiles(files);
+    }
+  }, [uploadFiles]);
+
   function submit(event: FormEvent) {
     event.preventDefault();
     if (!canSend) return;
     const content = input.trim();
-    setMessages((items) => [...items, createMessage({ role: 'user', label: 'you', status: 'sent', content })]);
+    const mediaPaths = readyAttachments.map((a) => a.diskPath);
+    const mediaUrls = readyAttachments.map((a) => a.previewUrl || a.diskPath);
+    setMessages((items) => [...items, createMessage({ role: 'user', label: 'you', status: 'sent', content, media: mediaUrls.length > 0 ? mediaUrls : undefined })]);
     setInput('');
-    socket.send({ type: 'message', content });
+    setAttachments([]);
+    socket.send({ type: 'message', content, media: mediaPaths });
   }
 
   return (
@@ -402,6 +474,22 @@ export function ChatPanel({ appName }: { appName: AppName }) {
               <div className={`text-[13px] leading-relaxed ${msg.role === 'tool' ? 'text-text-muted whitespace-pre-wrap' : 'text-text-secondary'}`}>
                 {msg.role === 'assistant' ? <MarkdownView content={msg.content} /> : msg.content}
               </div>
+              {msg.media && msg.media.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {msg.media.map((path, i) =>
+                    isImageFile(path) ? (
+                      <a key={i} href={path} target="_blank" rel="noopener noreferrer">
+                        <img src={path} alt="" className="max-h-48 max-w-xs rounded border border-border/50" />
+                      </a>
+                    ) : (
+                      <a key={i} href={path} download className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-mono rounded border border-border bg-surface-1 text-text-secondary hover:text-text hover:border-text-muted transition-colors">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                        {path.split('/').pop() || 'file'}
+                      </a>
+                    )
+                  )}
+                </div>
+              )}
             </article>
             )
           ))}
@@ -422,20 +510,76 @@ export function ChatPanel({ appName }: { appName: AppName }) {
         </section>
 
         {/* Input */}
-        <form className="border-t border-border px-5 py-3" onSubmit={submit} aria-label="Chat composer">
-          <textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            placeholder={socket.connected ? `Message ${displayName}... (Enter to send)` : 'Connecting...'}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                submit(event);
-              }
-            }}
-            className="w-full min-h-[44px] max-h-[160px] px-3 py-2.5 text-[13px] bg-transparent border-none text-text placeholder:text-text-muted outline-none resize-none"
-            rows={1}
-          />
+        <form
+          className={`border-t border-border px-5 py-3 ${dragOver ? 'bg-accent-solo-dim/20 border-accent-solo/40' : ''}`}
+          onSubmit={submit}
+          aria-label="Chat composer"
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+        >
+          {/* Pending attachments preview */}
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {attachments.map((att, i) => (
+                <div key={i} className="relative group flex items-center gap-1.5 px-2 py-1 rounded border border-border bg-surface-1 text-[11px] font-mono">
+                  {att.previewUrl ? (
+                    <img src={att.previewUrl} alt="" className="w-8 h-8 rounded object-cover" />
+                  ) : (
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-muted shrink-0"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  )}
+                  <span className="text-text-secondary truncate max-w-[120px]">{att.file.name}</span>
+                  {att.uploading && <span className="w-1.5 h-1.5 rounded-full bg-warning animate-pulse" />}
+                  <button
+                    type="button"
+                    onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                    className="ml-1 text-text-muted hover:text-danger transition-colors"
+                  >
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-end gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={(e) => { if (e.target.files?.length) uploadFiles(e.target.files); e.target.value = ''; }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="shrink-0 p-2 text-text-muted hover:text-text transition-colors rounded"
+              title="Attach file"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
+            </button>
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onPaste={handlePaste}
+              placeholder={socket.connected ? `Message ${displayName}... (Enter to send, paste/drop files)` : 'Connecting...'}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault();
+                  submit(event);
+                }
+              }}
+              className="flex-1 min-h-[44px] max-h-[160px] px-3 py-2.5 text-[13px] bg-transparent border-none text-text placeholder:text-text-muted outline-none resize-none"
+              rows={1}
+            />
+            <button
+              type="submit"
+              disabled={!canSend}
+              className="shrink-0 p-2 text-text-muted hover:text-text disabled:opacity-30 disabled:hover:text-text-muted transition-colors rounded"
+              title="Send"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+            </button>
+          </div>
         </form>
       </div>
     </div>

@@ -37,6 +37,7 @@ async def test_stream_chat_forwards_tool_progress_before_tool_finishes(
             content: str,
             *,
             session_key: str,
+            media: Any = None,
             progress_callback: Any = None,
         ):
             assert content == "生成新闻简报"

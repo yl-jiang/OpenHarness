@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
 from typing import Any, AsyncIterator
 
@@ -19,6 +20,7 @@ async def stream_chat(
     content: str,
     *,
     session_key: str,
+    media: list[str] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """Stream a chat response as onboard WebSocket protocol events."""
     if app_name == "solo":
@@ -32,7 +34,7 @@ async def stream_chat(
     else:
         raise ValueError(f"Unsupported app: {app_name}")
 
-    async for event in _stream_runner_events(runner, content, session_key=session_key):
+    async for event in _stream_runner_events(runner, content, session_key=session_key, media=media):
         yield event
 
 
@@ -45,6 +47,14 @@ def _runner_event_to_ws_event(kind: str, text: str) -> dict[str, Any] | None:
         return {"type": "complete", "content": text}
     if kind == "progress":
         return {"type": "progress", "content": text}
+    if kind == "media":
+        try:
+            paths = json.loads(text)
+            if isinstance(paths, list):
+                return {"type": "media", "paths": paths}
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return None
     return {"type": "delta", "content": text}
 
 
@@ -53,6 +63,7 @@ async def _stream_runner_events(
     content: str,
     *,
     session_key: str,
+    media: list[str] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     done = object()
     queue: asyncio.Queue[dict[str, Any] | BaseException | object] = asyncio.Queue()
@@ -66,6 +77,7 @@ async def _stream_runner_events(
             async for kind, text in runner.stream_run(
                 content,
                 session_key=session_key,
+                media=media,
                 progress_callback=emit_progress,
             ):
                 event = _runner_event_to_ws_event(kind, text)
