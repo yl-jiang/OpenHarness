@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import mimetypes
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -101,6 +103,59 @@ def _is_image_file(path: str) -> bool:
     """Check if a file path refers to an image based on MIME type."""
     mime, _ = mimetypes.guess_type(path)
     return bool(mime and mime.startswith("image/"))
+
+
+_FINAL_REPLY_IMAGE_PATH_RE = re.compile(
+    r"(?P<path>(?:[A-Za-z]:[\\/]|/)[^\r\n`\"'<>|?*\x00]+?\.(?:png|jpe?g|webp|gif|bmp))",
+    re.IGNORECASE,
+)
+
+
+def _extract_tool_media(event: ToolExecutionCompleted) -> list[str]:
+    """Return local media paths produced by a tool completion event."""
+    if event.is_error or not isinstance(event.metadata, dict):
+        return []
+    raw_paths = event.metadata.get("paths") or event.metadata.get("media")
+    if isinstance(raw_paths, str):
+        candidates = [raw_paths]
+    elif isinstance(raw_paths, list):
+        candidates = [str(item) for item in raw_paths if isinstance(item, str) and item.strip()]
+    else:
+        candidates = []
+    media: list[str] = []
+    seen: set[str] = set()
+    for raw in candidates:
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            path = path.resolve()
+        if not path.is_file():
+            continue
+        resolved = str(path)
+        if resolved not in seen:
+            seen.add(resolved)
+            media.append(resolved)
+    return media
+
+
+def _extract_final_reply_media(reply: str, emitted_media: set[str]) -> list[str]:
+    """Return local image paths mentioned in final text that were not already emitted."""
+    media: list[str] = []
+    seen = set(emitted_media)
+    for match in _FINAL_REPLY_IMAGE_PATH_RE.finditer(reply or ""):
+        raw = match.group("path").strip(" \t\r\n\"'.,;:，。；：、)]}")
+        if not raw:
+            continue
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            continue
+        if not path.is_file():
+            continue
+        resolved = str(path)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        media.append(resolved)
+    return media
 
 
 def _build_similar_records_context(store: SoloStore, user_text: str, *, max_results: int = 5) -> str:
@@ -296,10 +351,10 @@ class SoloQueryRunner:
         last_text = ""
         tool_outputs: list[str] = []
         tool_errors: list[str] = []
-        # Tools whose output should be sent verbatim (not summarized by LLM).
         _PASSTHROUGH_TOOLS = PASSTHROUGH_TOOLS
         passthrough_output: str = ""
         engine_error: str = ""
+        emitted_media: set[str] = set()
         try:
             async for event in engine.submit_message(user_message):
                 if isinstance(event, ReasoningDelta):
@@ -319,6 +374,11 @@ class SoloQueryRunner:
                         tool_outputs.append(event.output.strip())
                         if event.tool_name in _PASSTHROUGH_TOOLS:
                             passthrough_output = event.output.strip()
+                    tool_media = _extract_tool_media(event)
+                    for path in tool_media:
+                        emitted_media.add(path)
+                    if tool_media:
+                        yield ("media", json.dumps(tool_media))
         except Exception as exc:
             engine_error = f"{type(exc).__name__}: {exc}"
             logger.exception("SoloQueryRunner engine error session_key=%r text=%r", session_key, user_text[:80])
@@ -326,14 +386,9 @@ class SoloQueryRunner:
         if session_key and persist_session:
             save_conversation(workspace, session_key, engine.messages, session_id=session_id)
 
-        # For passthrough tools (report/visualize), send the full tool output
-        # directly instead of the LLM's potentially abbreviated summary.
         if passthrough_output:
             final = passthrough_output
         else:
-            # Prefer the model's final text for human tone after a successful
-            # record/import flow; tool output remains the fallback for silent
-            # final turns.
             final = last_text or "\n".join(tool_outputs) or FALLBACK_MESSAGE
             if final.startswith(FALLBACK_MESSAGE):
                 logger.warning(
@@ -346,6 +401,9 @@ class SoloQueryRunner:
                     session_key,
                     user_text[:120],
                 )
+        remaining_media = _extract_final_reply_media(final, emitted_media)
+        for path in remaining_media:
+            yield ("media", json.dumps([path]))
         yield ("final", final)
 
     async def run(

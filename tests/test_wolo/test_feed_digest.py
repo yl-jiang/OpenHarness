@@ -268,12 +268,13 @@ async def test_wolo_gateway_bridge_publishes_feed_digest_progress(tmp_path) -> N
     message = InboundMessage(channel="feishu", sender_id="user-1", chat_id="chat-1", content="生成今天简报")
 
     with patch("wolo.gateway.bridge.WoloQueryRunner", _FakeRunner):
-        reply = await bridge._handle_record(message, WoloStore(tmp_path), message.content)
+        reply, reply_media = await bridge._handle_record(message, WoloStore(tmp_path), message.content)
 
     progress_message = await bus.consume_outbound()
     tool_hint_message = await bus.consume_outbound()
 
     assert reply == "# Digest"
+    assert reply_media == []
     assert progress_message.content == "📡 正在采集新闻源…（2 个来源，预计 5-15 秒）"
     assert progress_message.metadata == {"_progress": True, "_session_key": "feishu:chat-1"}
     assert tool_hint_message.content == "正在调用 wolo_fetch_digest…"

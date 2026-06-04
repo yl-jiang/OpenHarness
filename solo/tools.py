@@ -1186,7 +1186,10 @@ class _SoloToolAdapter(BaseTool):
             output = str(result.get("message") or result)
             if not output.strip():
                 logger.warning("solo tool %s returned empty output raw_keys=%s", self.name, list(result.keys())[:10])
-            return ToolResult(output=output)
+            metadata: dict[str, Any] = {}
+            if result.get("path"):
+                metadata["paths"] = [str(result["path"])]
+            return ToolResult(output=output, metadata=metadata)
         except Exception as exc:
             logger.warning("solo tool %s execution failed: %s args_preview=%s",
                            self.name, exc, {k: str(v)[:100] for k, v in raw.items()})

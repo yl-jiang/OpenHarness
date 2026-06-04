@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 from pathlib import Path
 
@@ -240,9 +241,10 @@ class WoloGatewayBridge:
         command = parse_wolo_command(content)
         store = WoloStore(self._workspace)
         _succeeded = False
+        reply_media: list[str] = []
         try:
             if command is None:
-                reply = await self._handle_record(message, store, content)
+                reply, reply_media = await self._handle_record(message, store, content)
             elif command.action == "help":
                 reply = wolo_help_text()
             elif command.action == "process":
@@ -273,7 +275,7 @@ class WoloGatewayBridge:
             elif command.action == "backfill":
                 reply = await self._handle_backfill(store, command.content, command.backfill_date)
             else:
-                reply = await self._handle_record(message, store, content)
+                reply, reply_media = await self._handle_record(message, store, content)
             _succeeded = True
         except asyncio.CancelledError:
             logger.info(
@@ -293,10 +295,11 @@ class WoloGatewayBridge:
             self._session_content_hashes.pop(message.session_key, None)
         if _succeeded:
             self._recent_success_hashes[message.session_key] = (content_hash, time.monotonic())
-        await self._publish_reply(message, reply)
+        await self._publish_reply(message, reply, media=reply_media)
 
-    async def _handle_record(self, message: InboundMessage, store: WoloStore, content: str) -> str:
+    async def _handle_record(self, message: InboundMessage, store: WoloStore, content: str) -> tuple[str, list[str]]:
         runner = WoloQueryRunner(store, profile=self._provider_profile)
+        collected_media: list[str] = []
 
         async def _progress(text: str) -> None:
             await self._bus.publish_outbound(
@@ -316,7 +319,24 @@ class WoloGatewayBridge:
             progress_callback=_progress,
         ):
             if kind == "final":
-                return text
+                return text, collected_media
+            if kind == "media":
+                try:
+                    paths = json.loads(text)
+                    if isinstance(paths, list):
+                        collected_media.extend(paths)
+                        await self._bus.publish_outbound(
+                            OutboundMessage(
+                                channel=message.channel,
+                                chat_id=message.chat_id,
+                                content="",
+                                media=paths,
+                                metadata={"_session_key": message.session_key},
+                            )
+                        )
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                continue
             if kind not in {"progress", "tool_hint"}:
                 continue
             if text:
@@ -332,7 +352,7 @@ class WoloGatewayBridge:
                         },
                     )
                 )
-        return ""
+        return "", collected_media
 
     async def _handle_backfill(
         self,
@@ -350,7 +370,7 @@ class WoloGatewayBridge:
         ).process_pending(limit=20)
         return f"已补录 {backfill_date}。entry_id={entry.id}\n{format_process_result(result)}"
 
-    async def _publish_reply(self, message: InboundMessage, content: str) -> None:
+    async def _publish_reply(self, message: InboundMessage, content: str, *, media: list[str] | None = None) -> None:
         logger.info(
             "wolo outbound final channel=%s chat_id=%s session_key=%s content=%r",
             message.channel,
@@ -363,6 +383,7 @@ class WoloGatewayBridge:
                 channel=message.channel,
                 chat_id=message.chat_id,
                 content=content,
+                media=media or [],
                 metadata={"_session_key": message.session_key},
             )
         )

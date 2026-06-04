@@ -1280,7 +1280,11 @@ class _WoloToolAdapter(BaseTool):
         raw = arguments.model_dump()
         try:
             result = await self._domain_tool.handler(raw)
-            return ToolResult(output=str(result.get("message") or result))
+            output = str(result.get("message") or result)
+            metadata: dict[str, Any] = {}
+            if result.get("path"):
+                metadata["paths"] = [str(result["path"])]
+            return ToolResult(output=output, metadata=metadata)
         except Exception as exc:
             return ToolResult(output=str(exc), is_error=True)
 
