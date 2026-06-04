@@ -126,6 +126,8 @@ class WoloGatewayService:
         _migrate_legacy_todo_cron(self._workspace)
         # Auto-register feed digest cron job
         _register_feed_digest_cron(self._workspace, self._config)
+        # Ensure cron scheduler daemon is running so registered jobs get executed
+        _ensure_cron_daemon(self._workspace)
 
         bridge_task = asyncio.create_task(self._bridge.run(), name="wolo-gateway-bridge")
         manager_task = asyncio.create_task(self._manager.start_all(), name="wolo-gateway-channels")
@@ -437,6 +439,18 @@ def _register_feed_digest_cron(
         )
     except Exception as exc:
         logger.warning("Failed to register wolo feed digest cron job: %s", exc)
+
+
+def _ensure_cron_daemon(workspace: str | Path | None) -> None:
+    """Start the cron scheduler daemon if it is not already running."""
+    try:
+        from wolo.gateway.cron_scheduler import is_scheduler_running, start_daemon
+
+        if not is_scheduler_running():
+            start_daemon(workspace)
+            logger.info("Auto-started cron scheduler daemon")
+    except Exception as exc:
+        logger.warning("Failed to auto-start cron scheduler daemon: %s", exc)
 
 
 def _migrate_legacy_todo_cron(workspace: str | Path | None) -> None:
