@@ -324,7 +324,6 @@ class SoloGatewayBridge:
                 try:
                     paths = json.loads(text)
                     if isinstance(paths, list):
-                        collected_media.extend(paths)
                         await self._bus.publish_outbound(
                             OutboundMessage(
                                 channel=message.channel,

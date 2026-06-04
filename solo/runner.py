@@ -106,7 +106,7 @@ def _is_image_file(path: str) -> bool:
 
 
 _FINAL_REPLY_IMAGE_PATH_RE = re.compile(
-    r"(?P<path>(?:[A-Za-z]:[\\/]|/)[^\r\n`\"'<>|?*\x00]+?\.(?:png|jpe?g|webp|gif|bmp))",
+    r"(?P<path>(?:[A-Za-z]:[\\/]|~/|/)[^\r\n`\"'<>|?*\x00]+?\.(?:png|jpe?g|webp|gif|bmp))",
     re.IGNORECASE,
 )
 

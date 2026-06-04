@@ -932,3 +932,52 @@ def test_solo_heartbeat_agenda_includes_pending_confirmations_and_file_tasks(tmp
     assert "pending_confirmation" in agenda
     assert "他说的是谁" in agenda
     assert "检查这个月的睡眠趋势" in agenda
+
+
+# ── _extract_final_reply_media tests ──
+
+
+def test_extract_final_reply_media_tilde_path(tmp_path: Path):
+    """Tilde paths in agent replies should be expanded and extracted."""
+    from solo.runner import _extract_final_reply_media
+
+    img = tmp_path / "test.jpeg"
+    img.write_bytes(b"\xff\xd8dummy")
+    # Simulate agent reply using ~/ path
+    tilde_path = str(img).replace(str(Path.home()), "~")
+    reply = f"这是图片路径：`{tilde_path}`"
+    result = _extract_final_reply_media(reply, set())
+    assert len(result) == 1
+    assert result[0] == str(img)
+
+
+def test_extract_final_reply_media_absolute_path(tmp_path: Path):
+    """Absolute paths in replies should still work."""
+    from solo.runner import _extract_final_reply_media
+
+    img = tmp_path / "photo.png"
+    img.write_bytes(b"\x89PNGdummy")
+    reply = f"文件路径在：{img}"
+    result = _extract_final_reply_media(reply, set())
+    assert len(result) == 1
+    assert result[0] == str(img)
+
+
+def test_extract_final_reply_media_skips_already_emitted(tmp_path: Path):
+    """Paths already in emitted_media should not be returned again."""
+    from solo.runner import _extract_final_reply_media
+
+    img = tmp_path / "dup.jpg"
+    img.write_bytes(b"\xff\xd8dummy")
+    reply = f"path: {img}"
+    result = _extract_final_reply_media(reply, {str(img)})
+    assert result == []
+
+
+def test_extract_final_reply_media_nonexistent_path():
+    """Paths that don't exist on disk should be silently skipped."""
+    from solo.runner import _extract_final_reply_media
+
+    reply = "path: /nonexistent/dir/image.png"
+    result = _extract_final_reply_media(reply, set())
+    assert result == []
