@@ -12,7 +12,7 @@ from openharness.channels.bus.queue import MessageBus
 from openharness.engine.messages import ConversationMessage, TextBlock
 from openharness.engine.stream_events import AssistantTurnComplete, ToolExecutionCompleted
 from openharness.tools.base import ToolExecutionContext
-from openharness.tools.skill_manager_tool import SkillManagerToolInput
+from openharness.tools.skill_write_tool import SkillWriteInput
 
 from solo.config import build_channel_manager_config, load_config, save_config
 from solo.gateway.bridge import SoloGatewayBridge
@@ -476,7 +476,14 @@ async def test_standalone_solo_record_tool_persists_traceable_attachments(tmp_pa
     assert "bash" in tool_names
     assert "read_file" in tool_names
     assert "image_to_text" in tool_names
-    assert "skill_manager" in tool_names
+    assert {
+        "skill_list",
+        "skill_load",
+        "skill_search",
+        "skill_write",
+        "skill_patch",
+        "skill_delete",
+    } <= tool_names
 
 
 @pytest.mark.asyncio
@@ -615,12 +622,12 @@ async def test_solo_query_runner_prefers_final_text_after_record_tool(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_solo_skill_manager_writes_workspace_local_skills(tmp_path: Path):
+async def test_solo_skill_write_writes_workspace_local_skills(tmp_path: Path):
     from solo.tools import SoloToolRegistry, build_oh_registry
 
     workspace = initialize_workspace(tmp_path / ".solo")
     registry = build_oh_registry(SoloToolRegistry(SoloStore(workspace)))
-    skill_tool = registry.get("skill_manager")
+    skill_tool = registry.get("skill_write")
     assert skill_tool is not None
 
     context = ToolExecutionContext(
@@ -634,7 +641,7 @@ async def test_solo_skill_manager_writes_workspace_local_skills(tmp_path: Path):
     content = "---\nname: evening-wrap\ndescription: Close the day cleanly.\n---\n\n# Evening Wrap\nCapture loose ends.\n"
 
     result = await skill_tool.execute(
-        SkillManagerToolInput(action="write", name="evening-wrap", content=content),
+        SkillWriteInput(name="evening-wrap", content=content),
         context,
     )
 

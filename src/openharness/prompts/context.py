@@ -35,9 +35,9 @@ SKILLS_GUIDANCE = (
     "# Skill guidance\n"
     "After completing a complex task (5+ tool calls), fixing a tricky error, "
     "or discovering a non-trivial workflow, save the approach as a "
-    "skill with skill_manager so you can reuse it next time.\n"
+    "skill with `skill_write` so you can reuse it next time.\n"
     "When using a skill and finding it outdated, incomplete, or wrong, "
-    "patch it immediately with skill_manager(action='patch') — don't wait to be asked. "
+    "patch it immediately with `skill_patch` — don't wait to be asked. "
     "Skills that aren't maintained become liabilities.\n"
     "Load a skill when the task is complex enough to benefit from specialized workflow "
     "or domain knowledge. For trivial tasks (e.g., simple file edit, quick factual answer, "
@@ -195,10 +195,15 @@ def _build_skills_section(
     lines = [SKILLS_GUIDANCE] + [
         "# Available Skills",
         "",
-        "The following skills are available via the `skill_manager` tool. "
-        "When a user's request matches a skill, invoke it with "
-        "`skill_manager(action=\"load\", name=\"<skill_name>\")` "
-        "to load detailed instructions before proceeding.",
+        "The following skills are available. "
+        "When a user's request matches a skill, invoke "
+        "`skill_load(name=\"<skill_name>\")` "
+        "to load detailed instructions before proceeding. "
+        "If the list below is long or the user's intent is specific, prefer "
+        "`skill_search(query=\"<natural language>\")` "
+        "to find the most relevant skill(s) by hybrid keyword/semantic ranking "
+        "instead of scanning the full list. "
+        "Use `skill_list()` for a full catalogue dump.",
         "",
     ]
     for skill in skills:

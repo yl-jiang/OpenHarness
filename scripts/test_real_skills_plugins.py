@@ -110,18 +110,18 @@ async def test_real_skill_content_quality() -> tuple[bool, str]:
 
 async def test_skill_tool_with_real_skill() -> tuple[bool, str]:
     """Test load_skill with a real anthropic skill (pdf)."""
-    from openharness.tools.skill_manager_tool import SkillManagerTool, SkillManagerToolInput
+    from openharness.tools.skill_load_tool import SkillLoadInput, SkillLoadTool
     from openharness.tools.base import ToolExecutionContext
 
-    tool = SkillManagerTool()
+    tool = SkillLoadTool()
     result = await tool.execute(
-        SkillManagerToolInput(action="load", name="pdf"),
+        SkillLoadInput(name="pdf"),
         ToolExecutionContext(cwd=Path("."), metadata={}),
     )
     if result.is_error:
         # Try another skill name
         result = await tool.execute(
-            SkillManagerToolInput(action="load", name="xlsx"),
+            SkillLoadInput(name="xlsx"),
             ToolExecutionContext(cwd=Path("."), metadata={}),
         )
     if result.is_error:

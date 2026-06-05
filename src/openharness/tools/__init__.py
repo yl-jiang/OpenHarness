@@ -27,7 +27,12 @@ from openharness.tools.plan_mode_tool import PlanModeTool
 from openharness.tools.read_mcp_resource_tool import ReadMcpResourceTool
 from openharness.tools.remote_trigger_tool import RemoteTriggerTool
 from openharness.tools.send_message_tool import SendMessageTool
-from openharness.tools.skill_manager_tool import SkillManagerTool
+from openharness.tools.skill_delete_tool import SkillDeleteTool
+from openharness.tools.skill_list_tool import SkillListTool
+from openharness.tools.skill_load_tool import SkillLoadTool
+from openharness.tools.skill_patch_tool import SkillPatchTool
+from openharness.tools.skill_search_tool import SkillSearchTool
+from openharness.tools.skill_write_tool import SkillWriteTool
 from openharness.tools.sleep_tool import SleepTool
 from openharness.tools.task_create_tool import TaskCreateTool
 from openharness.tools.task_get_tool import TaskGetTool
@@ -60,7 +65,12 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         GrepTool(),
         ImageToTextTool(),
         ImageGenerationTool(),
-        SkillManagerTool(),
+        SkillListTool(),
+        SkillLoadTool(),
+        SkillSearchTool(),
+        SkillWriteTool(),
+        SkillPatchTool(),
+        SkillDeleteTool(),
         ToolSearchTool(),
         WebFetchTool(),
         WebSearchTool(),

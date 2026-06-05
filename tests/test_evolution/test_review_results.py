@@ -54,8 +54,8 @@ def test_extract_skill_create_action():
             role="assistant",
             content=[
                 ToolUseBlock(
-                    name="skill_manager",
-                    input={"action": "write", "name": "pytest-runner", "content": "..."},
+                    name="skill_write",
+                    input={"name": "pytest-runner", "content": "..."},
                     id="tool-2",
                 ),
             ],
@@ -74,7 +74,7 @@ def test_extract_skill_create_action():
     actions = extract_review_actions(messages)
 
     assert len(actions) == 1
-    assert actions[0].tool == "skill_manager"
+    assert actions[0].tool == "skill_write"
     assert actions[0].action == "write"
     assert actions[0].detail == "pytest-runner"
     assert actions[0].success is True
@@ -156,8 +156,8 @@ def test_extract_multiple_actions():
                     id="t1",
                 ),
                 ToolUseBlock(
-                    name="skill_manager",
-                    input={"action": "write", "name": "docker-debug", "content": "..."},
+                    name="skill_write",
+                    input={"name": "docker-debug", "content": "..."},
                     id="t2",
                 ),
             ],
@@ -183,7 +183,7 @@ def test_format_review_summary_memory_and_skill():
     """Summary should be compact and mention both memory and skill actions."""
     actions = [
         ReviewAction(tool="memory", action="add", target="user", success=True),
-        ReviewAction(tool="skill_manager", action="write", detail="pytest-runner", success=True),
+        ReviewAction(tool="skill_write", action="write", detail="pytest-runner", success=True),
     ]
 
     summary = format_review_summary(actions)

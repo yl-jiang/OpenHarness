@@ -80,8 +80,8 @@ def test_controller_resets_skill_counter_after_skill_write():
             role="assistant",
             content=[
                 ToolUseBlock(
-                    name="skill_manager",
-                    input={"action": "patch", "name": "pytest"},
+                    name="skill_patch",
+                    input={"name": "pytest", "old_str": "old", "new_str": "new"},
                 )
             ],
         ),

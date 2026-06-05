@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-import openharness.tools.skill_manager_tool as skill_manager_module
+import openharness.skills.skill_utils as skill_common_module
 from openharness.tools.bash_tool import BashTool, BashToolInput
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from openharness.tools.ask_user_question_tool import AskUserQuestionTool
@@ -25,7 +25,10 @@ from openharness.tools.grep_tool import GrepTool, GrepToolInput
 from openharness.tools.lsp_tool import LspTool, LspToolInput
 from openharness.tools.notebook_edit_tool import NotebookEditTool, NotebookEditToolInput
 from openharness.tools.remote_trigger_tool import RemoteTriggerTool, RemoteTriggerToolInput
-from openharness.tools.skill_manager_tool import SkillManagerTool, SkillManagerToolInput, validate_skill_content
+from openharness.skills.skill_utils import sample_skill_files, validate_skill_content
+from openharness.tools.skill_list_tool import SkillListInput, SkillListTool
+from openharness.tools.skill_load_tool import SkillLoadInput, SkillLoadTool
+from openharness.tools.skill_write_tool import SkillWriteInput, SkillWriteTool
 from openharness.tools.todo_tool import TodoTool, TodoToolInput
 from openharness.tools.tool_search_tool import ToolSearchTool, ToolSearchToolInput
 from openharness.tools import create_default_tool_registry
@@ -171,8 +174,8 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
     pytest_dir.mkdir()
     (pytest_dir / "SKILL.md").write_text("# Pytest\nHelpful pytest notes.\n", encoding="utf-8")
 
-    skill_result = await SkillManagerTool().execute(
-        SkillManagerToolInput(action="load", name="Pytest"),
+    skill_result = await SkillLoadTool().execute(
+        SkillLoadInput(name="Pytest"),
         ToolExecutionContext(cwd=tmp_path),
     )
     assert "Helpful pytest notes." in skill_result.output
@@ -555,8 +558,8 @@ async def test_write_skill_creates_skill_file(tmp_path: Path, monkeypatch):
     ctx = ToolExecutionContext(cwd=tmp_path)
     content = "---\nname: my-workflow\ndescription: My custom workflow\n---\n# My Workflow\nDo stuff.\n"
 
-    result = await SkillManagerTool().execute(
-        SkillManagerToolInput(action="write", name="my-workflow", content=content),
+    result = await SkillWriteTool().execute(
+        SkillWriteInput(name="my-workflow", content=content),
         ctx,
     )
 
@@ -574,9 +577,8 @@ async def test_write_skill_normalises_name_to_lowercase(tmp_path: Path, monkeypa
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     ctx = ToolExecutionContext(cwd=tmp_path)
 
-    result = await SkillManagerTool().execute(
-        SkillManagerToolInput(
-            action="write",
+    result = await SkillWriteTool().execute(
+        SkillWriteInput(
             name="MySkill",
             content="---\nname: MySkill\ndescription: A test skill\n---\n\n# MySkill\nSome content.\n",
         ),
@@ -595,8 +597,8 @@ async def test_write_skill_rejects_invalid_name(tmp_path: Path, monkeypatch):
     ctx = ToolExecutionContext(cwd=tmp_path)
 
     for bad_name in ("My Skill", "skill!", "../etc", ""):
-        result = await SkillManagerTool().execute(
-            SkillManagerToolInput(action="write", name=bad_name, content="# content\n"),
+        result = await SkillWriteTool().execute(
+            SkillWriteInput(name=bad_name, content="# content\n"),
             ctx,
         )
         assert result.is_error is True, f"Expected error for name={bad_name!r}"
@@ -608,8 +610,8 @@ async def test_write_skill_rejects_empty_content(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     ctx = ToolExecutionContext(cwd=tmp_path)
 
-    result = await SkillManagerTool().execute(
-        SkillManagerToolInput(action="write", name="empty-skill", content="   "),
+    result = await SkillWriteTool().execute(
+        SkillWriteInput(name="empty-skill", content="   "),
         ctx,
     )
     assert result.is_error is True
@@ -626,22 +628,22 @@ async def test_write_skill_overwrite_protection(tmp_path: Path, monkeypatch):
     guard_repl = "---\nname: guard\ndescription: Guard skill\n---\n\n# Guard\nReplaced.\n"
 
     # Create it first.
-    await SkillManagerTool().execute(
-        SkillManagerToolInput(action="write", name="guard", content=guard_orig),
+    await SkillWriteTool().execute(
+        SkillWriteInput(name="guard", content=guard_orig),
         ctx,
     )
 
     # Second write without overwrite flag should fail.
-    result = await SkillManagerTool().execute(
-        SkillManagerToolInput(action="write", name="guard", content=guard_repl),
+    result = await SkillWriteTool().execute(
+        SkillWriteInput(name="guard", content=guard_repl),
         ctx,
     )
     assert result.is_error is True
     assert "overwrite" in result.output.lower()
 
     # With overwrite=True it should succeed and update content.
-    result = await SkillManagerTool().execute(
-        SkillManagerToolInput(action="write", name="guard", content=guard_repl, overwrite=True),
+    result = await SkillWriteTool().execute(
+        SkillWriteInput(name="guard", content=guard_repl, overwrite=True),
         ctx,
     )
     assert result.is_error is False
@@ -657,14 +659,14 @@ async def test_write_skill_immediately_loadable(tmp_path: Path, monkeypatch):
     ctx = ToolExecutionContext(cwd=tmp_path)
     content = "---\nname: auto-test\ndescription: Automated test skill\n---\n# Auto Test\nTest content here.\n"
 
-    write_result = await SkillManagerTool().execute(
-        SkillManagerToolInput(action="write", name="auto-test", content=content),
+    write_result = await SkillWriteTool().execute(
+        SkillWriteInput(name="auto-test", content=content),
         ctx,
     )
     assert write_result.is_error is False
 
-    load_result = await SkillManagerTool().execute(
-        SkillManagerToolInput(action="load", name="auto-test"),
+    load_result = await SkillLoadTool().execute(
+        SkillLoadInput(name="auto-test"),
         ctx,
     )
     assert load_result.is_error is False
@@ -690,8 +692,8 @@ async def test_load_skill_includes_base_directory_and_sampled_files(tmp_path: Pa
     (skill_dir / "scripts" / "demo.sh").write_text("#!/usr/bin/env bash\necho demo\n", encoding="utf-8")
     (skill_dir / "templates" / "prompt.txt").write_text("Template body", encoding="utf-8")
 
-    load_result = await SkillManagerTool().execute(
-        SkillManagerToolInput(action="load", name="research"),
+    load_result = await SkillLoadTool().execute(
+        SkillLoadInput(name="research"),
         ctx,
     )
     expected_base = skill_dir.resolve().as_uri()
@@ -744,10 +746,10 @@ def test_sample_skill_files_uses_rg_and_stops_at_limit(tmp_path: Path, monkeypat
         del args, kwargs
         return fake_process
 
-    monkeypatch.setattr(skill_manager_module.shutil, "which", lambda _: "/usr/bin/rg")
-    monkeypatch.setattr(skill_manager_module.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(skill_common_module.shutil, "which", lambda _: "/usr/bin/rg")
+    monkeypatch.setattr(skill_common_module.subprocess, "Popen", _fake_popen)
 
-    files = skill_manager_module._sample_skill_files(tmp_path, limit=2)
+    files = sample_skill_files(tmp_path, limit=2)
 
     assert files == [
         str((tmp_path / "references" / "guide.md").resolve()),
@@ -765,9 +767,9 @@ def test_sample_skill_files_falls_back_when_rg_missing(tmp_path: Path, monkeypat
     (tmp_path / "references" / "guide.md").write_text("guide", encoding="utf-8")
     (tmp_path / ".hidden" / "config.json").write_text("{}", encoding="utf-8")
     (tmp_path / "scripts" / "demo.sh").write_text("echo demo\n", encoding="utf-8")
-    monkeypatch.setattr(skill_manager_module.shutil, "which", lambda _: None)
+    monkeypatch.setattr(skill_common_module.shutil, "which", lambda _: None)
 
-    files = skill_manager_module._sample_skill_files(tmp_path, limit=2)
+    files = sample_skill_files(tmp_path, limit=2)
 
     assert files == [
         str((tmp_path / ".hidden" / "config.json").resolve()),
@@ -776,27 +778,26 @@ def test_sample_skill_files_falls_back_when_rg_missing(tmp_path: Path, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_load_skill_lists_skills_when_name_omitted(tmp_path: Path, monkeypatch):
-    """load_skill returns a list of available skills when name is not provided."""
+async def test_skill_list_lists_available_skills(tmp_path: Path, monkeypatch):
+    """skill_list returns the available skills and points callers at skill_load."""
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     ctx = ToolExecutionContext(cwd=tmp_path)
 
     # Write two skills so there's something to list.
     for name in ("skill-alpha", "skill-beta"):
-        await SkillManagerTool().execute(
-            SkillManagerToolInput(
-                action="write",
+        await SkillWriteTool().execute(
+            SkillWriteInput(
                 name=name,
                 content=f"---\nname: {name}\ndescription: Skill {name}\n---\n\n# {name}\nContent.\n",
             ),
             ctx,
         )
 
-    result = await SkillManagerTool().execute(SkillManagerToolInput(action="list"), ctx)
+    result = await SkillListTool().execute(SkillListInput(), ctx)
     assert result.is_error is False
     assert "skill-alpha" in result.output
     assert "skill-beta" in result.output
-    assert "action='load'" in result.output
+    assert "skill_load(name='<skill_name>')" in result.output
 
 
 @pytest.mark.asyncio
@@ -806,17 +807,16 @@ async def test_load_skill_not_found_shows_available(tmp_path: Path, monkeypatch)
     ctx = ToolExecutionContext(cwd=tmp_path)
 
     # Write a known skill.
-    await SkillManagerTool().execute(
-        SkillManagerToolInput(
-            action="write",
+    await SkillWriteTool().execute(
+        SkillWriteInput(
             name="existing-skill",
             content="---\nname: existing-skill\ndescription: An existing skill\n---\n\n# Existing Skill\nHello.\n",
         ),
         ctx,
     )
 
-    result = await SkillManagerTool().execute(
-        SkillManagerToolInput(action="load", name="nonexistent"),
+    result = await SkillLoadTool().execute(
+        SkillLoadInput(name="nonexistent"),
         ctx,
     )
     assert result.is_error is True

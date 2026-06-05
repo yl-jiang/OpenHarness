@@ -396,7 +396,8 @@ SIMILAR_RECORDS_HEADER = [
 SKILLS_PROMPT_HEADER = [
     "# Available Skills",
     "",
-    "The following skills are available via the `skill_manager` tool.",
-    'When a user\'s request matches a skill, call `skill_manager(action="load", name="<skill_name>")` before proceeding.',
+    "The following skills are available.",
+    'When a user\'s request matches a skill, call `skill_load(name="<skill_name>")` before proceeding. '
+    'Use `skill_search(query="...")` when the intent is specific, or `skill_list()` to dump the catalogue.',
     "",
 ]

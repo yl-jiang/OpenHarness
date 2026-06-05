@@ -21,7 +21,12 @@ from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry,
 from openharness.tools.bash_tool import BashTool
 from openharness.tools.file_read_tool import FileReadTool
 from openharness.tools.image_to_text_tool import ImageToTextTool
-from openharness.tools.skill_manager_tool import SkillManagerTool
+from openharness.tools.skill_delete_tool import SkillDeleteTool
+from openharness.tools.skill_list_tool import SkillListTool
+from openharness.tools.skill_load_tool import SkillLoadTool
+from openharness.tools.skill_patch_tool import SkillPatchTool
+from openharness.tools.skill_search_tool import SkillSearchTool
+from openharness.tools.skill_write_tool import SkillWriteTool
 from openharness.utils.log import get_logger
 
 from wolo.core.artifacts import persist_work_artifacts
@@ -1297,7 +1302,12 @@ def build_oh_registry(registry: WoloToolRegistry) -> ToolRegistry:
     oh_registry.register(BashTool())
     oh_registry.register(FileReadTool())
     oh_registry.register(ImageToTextTool())
-    oh_registry.register(SkillManagerTool())
+    oh_registry.register(SkillListTool())
+    oh_registry.register(SkillLoadTool())
+    oh_registry.register(SkillSearchTool())
+    oh_registry.register(SkillWriteTool())
+    oh_registry.register(SkillPatchTool())
+    oh_registry.register(SkillDeleteTool())
     return oh_registry
 
 

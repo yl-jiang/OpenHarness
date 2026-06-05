@@ -190,7 +190,7 @@ def test_agent_prompt_profiles_control_runtime_sections(tmp_path: Path, monkeypa
     assert "Available Skills" not in compact_prompt
 
 
-def test_skills_section_uses_runtime_skill_manager_tool_name(tmp_path: Path, monkeypatch):
+def test_skills_section_uses_runtime_skill_tool_names(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.delenv("CLAUDE_CODE_COORDINATOR_MODE", raising=False)
     repo = tmp_path / "repo"
@@ -210,9 +210,9 @@ def test_skills_section_uses_runtime_skill_manager_tool_name(tmp_path: Path, mon
         latest_user_prompt="review this project",
     )
 
-    assert "via the `skill_manager` tool" in prompt
-    assert 'skill_manager(action="load", name="<skill_name>")' in prompt
-    assert "via the `skill` tool" not in prompt
+    assert "skill_load(name=" in prompt
+    assert "skill_search(query=" in prompt
+    assert "skill_manager" not in prompt
 
 
 def test_skills_section_excludes_disable_model_invocation_skills(tmp_path: Path, monkeypatch):

@@ -614,7 +614,7 @@ async def build_runtime(
             **restored_metadata,
         },
     )
-    # Register a callback so tools (e.g. skill_manager) can refresh the
+    # Register a callback so tools (e.g. skill_write / skill_patch / skill_delete) can refresh the
     # system prompt immediately after mutating skill files on disk.
     def _refresh_system_prompt() -> None:
         fresh_settings = load_settings().merge_cli_overrides(**settings_overrides)

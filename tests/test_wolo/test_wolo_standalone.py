@@ -12,7 +12,7 @@ from openharness.channels.bus.queue import MessageBus
 from openharness.engine.messages import ConversationMessage, TextBlock
 from openharness.engine.stream_events import AssistantTurnComplete, ToolExecutionCompleted
 from openharness.tools.base import ToolExecutionContext
-from openharness.tools.skill_manager_tool import SkillManagerToolInput
+from openharness.tools.skill_write_tool import SkillWriteInput
 
 from wolo.config import load_config, save_config
 from wolo.core.models import WoloConfig, WoloHighlight, WoloTodo
@@ -364,12 +364,12 @@ async def test_wolo_query_runner_passes_settings_and_autodream_context(tmp_path:
 
 
 @pytest.mark.asyncio
-async def test_wolo_skill_manager_writes_workspace_local_skills(tmp_path: Path):
+async def test_wolo_skill_write_writes_workspace_local_skills(tmp_path: Path):
     from wolo.tools import WoloToolRegistry, build_oh_registry
 
     workspace = initialize_workspace(tmp_path / ".wolo")
     registry = build_oh_registry(WoloToolRegistry(WoloStore(workspace)))
-    skill_tool = registry.get("skill_manager")
+    skill_tool = registry.get("skill_write")
     assert skill_tool is not None
 
     context = ToolExecutionContext(
@@ -383,7 +383,7 @@ async def test_wolo_skill_manager_writes_workspace_local_skills(tmp_path: Path):
     content = "---\nname: standup-brief\ndescription: Capture blockers and next actions.\n---\n\n# Standup Brief\nSummarize progress.\n"
 
     result = await skill_tool.execute(
-        SkillManagerToolInput(action="write", name="standup-brief", content=content),
+        SkillWriteInput(name="standup-brief", content=content),
         context,
     )
 

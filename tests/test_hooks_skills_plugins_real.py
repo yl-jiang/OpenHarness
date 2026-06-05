@@ -156,7 +156,7 @@ async def task_model_invokes_skill_tool():
     from openharness.tools.file_read_tool import FileReadTool
     from openharness.tools.glob_tool import GlobTool
     from openharness.tools.grep_tool import GrepTool
-    from openharness.tools.skill_manager_tool import SkillManagerTool
+    from openharness.tools.skill_load_tool import SkillLoadTool
     import openharness.skills.loader as sl
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -187,7 +187,7 @@ When performing a code review, follow these exact steps:
 
         api = AnthropicApiClient(api_key=API_KEY, base_url=BASE_URL)
         reg = ToolRegistry()
-        for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), SkillManagerTool()]:
+        for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), SkillLoadTool()]:
             reg.register(t)
         checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
 
@@ -195,8 +195,8 @@ When performing a code review, follow these exact steps:
             api_client=api, tool_registry=reg, permission_checker=checker,
             cwd=WORKSPACE, model=MODEL, max_tokens=2048,
             system_prompt=(
-                "You are a code reviewer. You have a 'skill' tool that provides review checklists. "
-                "ALWAYS start by invoking the skill tool with the relevant skill name to get instructions, "
+                "You are a code reviewer. You have a `skill_load` tool that provides review checklists. "
+                "ALWAYS start by calling `skill_load(name=...)` with the relevant skill name to get instructions, "
                 "then follow those instructions exactly. Available skill: 'code-review'."
             ),
         )
@@ -215,11 +215,11 @@ When performing a code review, follow these exact steps:
         print(f"  Turns: {r['turns']}")
         print(f"  Response: {r['text'][:400]}")
 
-        skill_invoked = "skill_manager" in r["tools"]
+        skill_invoked = "skill_load" in r["tools"]
         followed_instructions = "grep" in r["tools"]  # skill says to grep for TODO/FIXME
         has_report = any(kw in r["text"].lower() for kw in ["todo", "fixme"])
 
-        print(f"\n  skill tool invoked: {skill_invoked}")
+        print(f"\n  skill_load invoked: {skill_invoked}")
         print(f"  followed instructions (used grep): {followed_instructions}")
         print(f"  report has TODO/FIXME: {has_report}")
         ok = skill_invoked and followed_instructions and has_report
@@ -249,7 +249,7 @@ async def task_plugin_skill_in_agent_loop():
     from openharness.tools.file_read_tool import FileReadTool
     from openharness.tools.glob_tool import GlobTool
     from openharness.tools.grep_tool import GrepTool
-    from openharness.tools.skill_manager_tool import SkillManagerTool
+    from openharness.tools.skill_load_tool import SkillLoadTool
     import openharness.skills.loader as sl
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -292,7 +292,7 @@ To scan for hardcoded secrets:
 
         api = AnthropicApiClient(api_key=API_KEY, base_url=BASE_URL)
         reg = ToolRegistry()
-        for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), SkillManagerTool()]:
+        for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), SkillLoadTool()]:
             reg.register(t)
         checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
 
@@ -300,7 +300,7 @@ To scan for hardcoded secrets:
             api_client=api, tool_registry=reg, permission_checker=checker,
             cwd=WORKSPACE, model=MODEL, max_tokens=2048,
             system_prompt=(
-                "You are a security analyst. You have a 'skill' tool that provides scanning procedures. "
+                "You are a security analyst. You have a `skill_load` tool that provides scanning procedures. "
                 "Start by loading the 'scan-secrets' skill, then follow its procedure to scan the autoagent/ codebase. "
                 "Report ALL findings."
             ),
@@ -320,7 +320,7 @@ To scan for hardcoded secrets:
         print(f"  Turns: {r['turns']}")
         print(f"  Response: {r['text'][:400]}")
 
-        skill_invoked = "skill_manager" in r["tools"]
+        skill_invoked = "skill_load" in r["tools"]
         did_grep = "grep" in r["tools"]
         has_findings = any(kw in r["text"].lower() for kw in ["password", "secret", "token", "api_key", "key"])
 
@@ -355,7 +355,7 @@ async def task_hook_gates_writes_skill_guides():
     from openharness.tools.file_edit_tool import FileEditTool
     from openharness.tools.glob_tool import GlobTool
     from openharness.tools.grep_tool import GrepTool
-    from openharness.tools.skill_manager_tool import SkillManagerTool
+    from openharness.tools.skill_load_tool import SkillLoadTool
     from openharness.hooks.events import HookEvent
     from openharness.hooks.loader import HookRegistry
     from openharness.hooks.schemas import CommandHookDefinition
@@ -428,7 +428,7 @@ def process_v2(data):
 
         reg = ToolRegistry()
         for t in [BashTool(), FileReadTool(), FileWriteTool(), FileEditTool(),
-                  GlobTool(), GrepTool(), SkillManagerTool()]:
+                  GlobTool(), GrepTool(), SkillLoadTool()]:
             reg.register(t)
         checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
 
@@ -436,7 +436,7 @@ def process_v2(data):
             api_client=api, tool_registry=reg, permission_checker=checker,
             cwd=work_dir, model=MODEL, max_tokens=2048,
             system_prompt=(
-                "You are a developer. Use the 'skill' tool to load refactoring instructions. "
+                "You are a developer. Use `skill_load` to load refactoring instructions. "
                 "Follow them precisely. If a write is blocked by a hook, skip that file and explain why."
             ),
             hook_executor=hook_exec,
@@ -458,7 +458,7 @@ def process_v2(data):
         print(f"  Tool errors: {len(r['tool_errors'])}")
         print(f"  Response: {r['text'][:300]}")
 
-        skill_invoked = "skill_manager" in r["tools"]
+        skill_invoked = "skill_load" in r["tools"]
         did_read = "read_file" in r["tools"]
         did_write = "write_file" in r["tools"]
 
@@ -507,7 +507,7 @@ async def task_swarm_teammates_use_skills():
     from openharness.tools.file_read_tool import FileReadTool
     from openharness.tools.glob_tool import GlobTool
     from openharness.tools.grep_tool import GrepTool
-    from openharness.tools.skill_manager_tool import SkillManagerTool
+    from openharness.tools.skill_load_tool import SkillLoadTool
     from openharness.tools.file_write_tool import FileWriteTool
     import openharness.skills.loader as sl
 
@@ -539,13 +539,13 @@ Use grep to search for '^import ' and '^from .* import'. Count unique packages. 
 
         async def run_teammate(name, prompt):
             reg = ToolRegistry()
-            for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), SkillManagerTool(), FileWriteTool()]:
+            for t in [BashTool(), FileReadTool(), GlobTool(), GrepTool(), SkillLoadTool(), FileWriteTool()]:
                 reg.register(t)
             ctx = QueryContext(
                 api_client=api, tool_registry=reg,
                 permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
                 cwd=WORKSPACE, model=MODEL, max_tokens=1024, max_turns=DEFAULT_MAX_TURNS,
-                system_prompt="You are a worker. First invoke the skill tool to get instructions, then follow them.",
+                system_prompt="You are a worker. First call `skill_load` to get instructions, then follow them.",
             )
             config = TeammateSpawnConfig(
                 name=name, team="skill-team", prompt=prompt,

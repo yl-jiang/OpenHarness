@@ -739,7 +739,7 @@ class QueryEngine:
         controller.begin_user_turn(
             self._tool_metadata,
             memory_tool_available=self._tool_registry.get("memory") is not None,
-            skill_tool_available=self._tool_registry.get("skill_manager") is not None,
+            skill_tool_available=self._tool_registry.get("skill_load") is not None,
         )
 
     def _notify_self_evolution_assistant_turn(self, message: ConversationMessage) -> None:

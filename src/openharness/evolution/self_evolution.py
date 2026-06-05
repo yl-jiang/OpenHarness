@@ -74,7 +74,7 @@ def extract_review_actions(messages: list[ConversationMessage]) -> list[ReviewAc
 
     Pairs each :class:`ToolUseBlock` with its corresponding
     :class:`ToolResultBlock` to determine success/failure.  Only memory
-    and skill_manager write actions are considered.
+    and skill_write/skill_patch/skill_delete actions are considered.
     """
     # Build a tool_use_id → ToolUseBlock index.
     tool_uses: dict[str, ToolUseBlock] = {}
@@ -88,12 +88,27 @@ def extract_review_actions(messages: list[ConversationMessage]) -> list[ReviewAc
 
     actions: list[ReviewAction] = []
     for use_id, use_block in tool_uses.items():
-        if use_block.name not in ("memory", "skill_manager"):
+        if use_block.name not in (
+            "memory",
+            "skill_write",
+            "skill_patch",
+            "skill_delete",
+        ):
             continue
         tool_input = use_block.input or {}
-        action_name = str(tool_input.get("action", ""))
-        if action_name in _READ_ONLY_ACTIONS:
-            continue
+        if use_block.name == "memory":
+            action_name = str(tool_input.get("action", ""))
+            if action_name in _READ_ONLY_ACTIONS:
+                continue
+        else:
+            # skill_write/skill_patch/skill_delete are each single-action
+            # tools; synthesise an action label that downstream code can
+            # key on uniformly.
+            action_name = {
+                "skill_write": "write",
+                "skill_patch": "patch",
+                "skill_delete": "delete",
+            }[use_block.name]
 
         result_block = results.get(use_id)
         if result_block is None:
@@ -132,7 +147,7 @@ def format_review_summary(actions: list[ReviewAction]) -> str:
         if act.tool == "memory":
             label = f"{'User profile' if act.target == 'user' else 'Memory'} updated"
             parts.append(label)
-        elif act.tool == "skill_manager":
+        elif act.tool in ("skill_write", "skill_patch", "skill_delete", "skill_manager"):
             verb = {
                 "write": "created",
                 "create": "created",
@@ -368,6 +383,10 @@ def _state(metadata: dict[str, object]) -> dict[str, object]:
 
 
 def _is_skill_write(tool_name: str, tool_input: object) -> bool:
+    if tool_name in ("skill_write", "skill_patch", "skill_delete"):
+        return True
+    # Legacy routing for any remaining skill_manager dispatch: only write-like
+    # actions count as skill writes.
     if tool_name != "skill_manager" or not isinstance(tool_input, dict):
         return False
     return str(tool_input.get("action") or "") in {"write", "patch", "delete"}

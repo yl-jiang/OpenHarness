@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Added
 
+- `skill_manager` tool now supports `action="search"` for hybrid (BM25 + heuristic token, fused via Reciprocal Rank Fusion) skill discovery by natural language query, with optional `tag` filtering and `limit`, so the agent can progressively disclose the growing skill catalogue instead of scanning a flat list. Common text-search primitives were factored into a new `openharness.search.text` module shared with `memory/search.py`.
 - `solo` / `wolo` gateways now auto-register recurring report jobs that archive a natural-week report every Sunday at 21:00 and a natural-month report at 21:00 on the month's last day, automatically DM the generated report to the resolved Feishu user, and use longer cron timeouts so monthly synthesis can finish without being killed after 5 minutes.
 - Root `Makefile` now provides `make onboard`, which builds `onboard/frontend` and then runs the onboard app in the foreground; optional CLI flags can be passed through with `ONBOARD_ARGS="..."`.
 - Onboard dashboard now shows cumulative solo/wolo LLM invocation counts plus input/output token totals, including a current-month per-model token trend chart, and standalone `solo` / `wolo` now expose matching `solo_llm_usage` / `wolo_llm_usage` tools plus `/solo llm-usage` / `/wolo llm-usage` slash commands with per-model token breakdowns.

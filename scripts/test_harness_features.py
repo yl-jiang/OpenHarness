@@ -107,12 +107,12 @@ async def test_skills_in_system_prompt() -> tuple[bool, str]:
 
 async def test_skill_tool_invocation() -> tuple[bool, str]:
     """Test that load_skill tool can load a skill's content."""
-    from openharness.tools.skill_manager_tool import SkillManagerTool, SkillManagerToolInput
+    from openharness.tools.skill_load_tool import SkillLoadInput, SkillLoadTool
     from openharness.tools.base import ToolExecutionContext
 
-    tool = SkillManagerTool()
+    tool = SkillLoadTool()
     result = await tool.execute(
-        SkillManagerToolInput(action="load", name="commit"),
+        SkillLoadInput(name="commit"),
         ToolExecutionContext(cwd=Path("."), metadata={}),
     )
     if result.is_error:

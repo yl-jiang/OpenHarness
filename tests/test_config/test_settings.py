@@ -27,7 +27,7 @@ class TestSettings:
         s = Settings()
         assert s.api_key == ""
         assert s.model == "claude-sonnet-4-6"
-        assert s.max_tokens == 8192
+        assert s.max_tokens == 32768
         assert s.timeout == 300.0
         assert s.max_turns == 200
         assert s.max_children == DEFAULT_PRIMARY_MAX_CHILDREN
