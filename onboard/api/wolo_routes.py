@@ -111,6 +111,20 @@ def todos(
     return _service(workspace).list_todos(status=status, project=project)
 
 
+@router.put("/todos/{todo_id}/start")
+def todo_start(todo_id: str, workspace: str | None = None) -> dict[str, bool]:
+    if not _service(workspace).start_todo(todo_id):
+        raise HTTPException(status_code=404, detail="Todo not found or not in pending status")
+    return {"ok": True}
+
+
+@router.put("/todos/{todo_id}/revert")
+def todo_revert(todo_id: str, workspace: str | None = None) -> dict[str, bool]:
+    if not _service(workspace).revert_todo(todo_id):
+        raise HTTPException(status_code=404, detail="Todo not found or not in progress")
+    return {"ok": True}
+
+
 @router.put("/todos/{todo_id}/done")
 def todo_done(todo_id: str, workspace: str | None = None) -> dict[str, bool]:
     if not _service(workspace).complete_todo(todo_id):

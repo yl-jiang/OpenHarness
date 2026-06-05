@@ -41,6 +41,16 @@ export function Todos({ appName }: { appName: AppName }) {
     reload();
   }
 
+  async function start(todo: Todo) {
+    await api.startTodo(appName, todo.id);
+    reload();
+  }
+
+  async function revert(todo: Todo) {
+    await api.revertTodo(appName, todo.id);
+    reload();
+  }
+
   return (
     <div className="space-y-5">
       <h2 className="font-serif text-2xl text-text m-0">Todos</h2>
@@ -79,14 +89,32 @@ export function Todos({ appName }: { appName: AppName }) {
                       </>
                     ) : null}
                   </div>
-                  {todo.status !== 'done' ? (
-                    <button
-                      onClick={() => complete(todo)}
-                      className="mt-2.5 text-[11px] px-2 py-1 rounded border border-border bg-transparent text-text-secondary hover:text-text hover:border-text-muted cursor-pointer transition-colors active:scale-[0.97]"
-                    >
-                      ✓ Mark done
-                    </button>
-                  ) : null}
+                  <div className="flex items-center gap-1.5 mt-2.5">
+                    {todo.status === 'pending' ? (
+                      <button
+                        onClick={() => start(todo)}
+                        className="text-[11px] px-2 py-1 rounded border border-border bg-transparent text-text-secondary hover:text-text hover:border-text-muted cursor-pointer transition-colors active:scale-[0.97]"
+                      >
+                        ▶ Start
+                      </button>
+                    ) : null}
+                    {todo.status === 'in_progress' ? (
+                      <button
+                        onClick={() => revert(todo)}
+                        className="text-[11px] px-2 py-1 rounded border border-border bg-transparent text-text-secondary hover:text-text hover:border-text-muted cursor-pointer transition-colors active:scale-[0.97]"
+                      >
+                        ← Pending
+                      </button>
+                    ) : null}
+                    {todo.status !== 'done' ? (
+                      <button
+                        onClick={() => complete(todo)}
+                        className="text-[11px] px-2 py-1 rounded border border-border bg-transparent text-text-secondary hover:text-text hover:border-text-muted cursor-pointer transition-colors active:scale-[0.97]"
+                      >
+                        ✓ Mark done
+                      </button>
+                    ) : null}
+                  </div>
                 </article>
               ))}
           </section>

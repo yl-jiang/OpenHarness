@@ -171,6 +171,12 @@ class WoloService:
             for todo in self.store.list_todos(status=status, project=project)
         ]
 
+    def start_todo(self, todo_id: str) -> bool:
+        return self.store.start_todo(todo_id)
+
+    def revert_todo(self, todo_id: str) -> bool:
+        return self.store.revert_todo(todo_id)
+
     def complete_todo(self, todo_id: str) -> bool:
         return self.store.complete_todo(todo_id)
 

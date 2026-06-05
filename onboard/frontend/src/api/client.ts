@@ -56,6 +56,10 @@ export const api = {
     request<Todo[]>(`/api/${app}/todos${query(params)}`),
   markTodoDone: (app: AppName, id: string) =>
     request<{ ok: boolean }>(`/api/${app}/todos/${id}/done`, { method: 'PUT' }),
+  startTodo: (app: AppName, id: string) =>
+    request<{ ok: boolean }>(`/api/${app}/todos/${id}/start`, { method: 'PUT' }),
+  revertTodo: (app: AppName, id: string) =>
+    request<{ ok: boolean }>(`/api/${app}/todos/${id}/revert`, { method: 'PUT' }),
   reports: (app: AppName, params: Record<string, QueryValue> = {}) =>
     request<Report[]>(`/api/${app}/reports${query(params)}`),
   report: (app: AppName, id: string) => request<Report>(`/api/${app}/reports/${id}`),

@@ -757,6 +757,22 @@ class WoloStore:
         row = cur.fetchone()
         return self._row_to_todo(row) if row else None
 
+    def start_todo(self, todo_id: str) -> bool:
+        cur = self._db.execute(
+            "UPDATE todos SET status='in_progress' WHERE id=? AND status='pending'",
+            (todo_id,),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def revert_todo(self, todo_id: str) -> bool:
+        cur = self._db.execute(
+            "UPDATE todos SET status='pending' WHERE id=? AND status='in_progress'",
+            (todo_id,),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
     def complete_todo(self, todo_id: str) -> bool:
         cur = self._db.execute(
             "UPDATE todos SET status='done', completed_at=? WHERE id=? AND status != 'done'",
