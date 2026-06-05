@@ -180,6 +180,14 @@ class SandboxSettings(BaseModel):
     docker: DockerSandboxSettings = Field(default_factory=DockerSandboxSettings)
 
 
+class WebSettings(BaseModel):
+    """Outbound web tool configuration."""
+
+    proxy: str | None = None
+    resolution_mode: str = "auto"
+    synthetic_dns_cidrs: list[str] = Field(default_factory=list)
+
+
 class ProviderProfile(BaseModel):
     """Named provider workflow configuration."""
 
@@ -670,6 +678,7 @@ class Settings(BaseModel):
     memory: MemorySettings = Field(default_factory=MemorySettings)
     self_evolution: SelfEvolutionSettings = Field(default_factory=SelfEvolutionSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
+    web: WebSettings = Field(default_factory=WebSettings)
     enabled_plugins: dict[str, bool] = Field(default_factory=dict)
     allow_project_plugins: bool = False
     user_skill_dirs: list[str] = Field(default_factory=_default_user_skill_dirs)
@@ -1142,6 +1151,23 @@ def _apply_env_overrides(settings: Settings) -> Settings:
         )
     if sandbox_updates:
         updates["sandbox"] = settings.sandbox.model_copy(update=sandbox_updates)
+
+    web_updates: dict[str, Any] = {}
+    web_proxy = os.environ.get("OPENHARNESS_WEB_PROXY")
+    if web_proxy:
+        web_updates["proxy"] = web_proxy
+    web_resolution_mode = os.environ.get("OPENHARNESS_WEB_RESOLUTION_MODE")
+    if web_resolution_mode:
+        web_updates["resolution_mode"] = web_resolution_mode
+    web_synthetic_dns_cidrs = os.environ.get("OPENHARNESS_WEB_SYNTHETIC_DNS_CIDRS")
+    if web_synthetic_dns_cidrs:
+        web_updates["synthetic_dns_cidrs"] = [
+            entry.strip()
+            for entry in web_synthetic_dns_cidrs.split(",")
+            if entry.strip()
+        ]
+    if web_updates:
+        updates["web"] = settings.web.model_copy(update=web_updates)
 
     if not updates:
         return settings
