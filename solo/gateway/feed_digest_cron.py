@@ -101,6 +101,9 @@ def ensure_feed_digest_job(
         if existing.get("command") != expected_command:
             existing["command"] = expected_command
             changed = True
+        if existing.get("timeout_s") != 900:
+            existing["timeout_s"] = 900
+            changed = True
         if changed:
             _upsert_cron_job(existing, workspace)
             logger.info("Updated feed digest cron job %s", job_name)
@@ -123,6 +126,7 @@ def ensure_feed_digest_job(
         "command": command,
         "cwd": str(_REPO_ROOT),
         "enabled": True,
+        "timeout_s": 900,
         "metadata": {"app": app, "im_push_enabled": im_push_enabled},
     }
     if notify and im_push_enabled:
