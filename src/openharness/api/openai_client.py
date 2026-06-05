@@ -412,6 +412,12 @@ class OpenAICompatibleClient:
                     "output_tokens": chunk.usage.completion_tokens or 0,
                 }
 
+        if collected_reasoning and not collected_content and not collected_tool_calls:
+            logger.warning(
+                "Model produced reasoning (%d chars) but no visible output (finish_reason=%s)",
+                len(collected_reasoning), finish_reason,
+            )
+
         # Build the final ConversationMessage
         content: list[ContentBlock] = []
         if collected_content:

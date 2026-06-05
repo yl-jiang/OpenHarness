@@ -355,9 +355,11 @@ class WoloQueryRunner:
         passthrough_output: str = ""
         engine_error: str = ""
         emitted_media: set[str] = set()
+        had_reasoning = False
         try:
             async for event in engine.submit_message(user_message):
                 if isinstance(event, ReasoningDelta):
+                    had_reasoning = True
                     yield ("reasoning", event.text)
                 elif isinstance(event, AssistantTextDelta):
                     yield ("delta", event.text)
@@ -383,24 +385,60 @@ class WoloQueryRunner:
             engine_error = f"{type(exc).__name__}: {exc}"
             logger.exception("WoloQueryRunner engine error session_key=%r text=%r", session_key, user_text[:80])
 
+        # One-shot retry when the thinking model exhausted tokens without visible output
+        if not last_text and not tool_outputs and had_reasoning and not engine_error:
+            yield ("progress", "⏳ 模型思考完毕但未产生输出，正在重试...")
+            try:
+                async for event in engine.submit_message("请直接输出记录结果，不需要过多思考。"):
+                    if isinstance(event, AssistantTextDelta):
+                        yield ("delta", event.text)
+                    elif isinstance(event, AssistantTurnComplete):
+                        candidate = event.message.text.strip()
+                        if candidate and not event.message.tool_uses:
+                            last_text = candidate
+                    elif isinstance(event, ToolExecutionCompleted):
+                        if event.is_error:
+                            tool_errors.append(f"{event.tool_name}: {event.output.strip()[:200]}")
+                        elif event.output.strip():
+                            tool_outputs.append(event.output.strip())
+                            if event.tool_name in PASSTHROUGH_TOOLS:
+                                passthrough_output = event.output.strip()
+                        tool_media = _extract_tool_media(event)
+                        for path in tool_media:
+                            emitted_media.add(path)
+                        if tool_media:
+                            yield ("media", json.dumps(tool_media))
+            except Exception as exc:
+                engine_error = f"{type(exc).__name__}: {exc}"
+                logger.exception("WoloQueryRunner retry error session_key=%r text=%r", session_key, user_text[:80])
+
         if session_key and persist_session:
             save_conversation(workspace, session_key, engine.messages, session_id=session_id)
 
         if passthrough_output:
             final = passthrough_output
+        elif last_text:
+            final = last_text
+        elif tool_outputs:
+            final = "\n".join(tool_outputs)
+        elif had_reasoning:
+            final = "抱歉，模型思考后未能产生有效输出，请稍后重试。"
+            logger.warning(
+                "wolo empty-response fallback — had_reasoning=True engine_error=%s session_key=%s text_preview=%r",
+                engine_error, session_key, user_text[:120],
+            )
         else:
-            final = last_text or "\n".join(tool_outputs) or FALLBACK_MESSAGE
-            if final.startswith(FALLBACK_MESSAGE):
-                logger.warning(
-                    "wolo fallback triggered — last_text=%r tool_outputs=%s "
-                    "tool_errors=%s engine_error=%s session_key=%s text_preview=%r",
-                    last_text,
-                    [o[:80] for o in tool_outputs],
-                    tool_errors,
-                    engine_error,
-                    session_key,
-                    user_text[:120],
-                )
+            final = FALLBACK_MESSAGE
+            logger.warning(
+                "wolo fallback triggered — last_text=%r tool_outputs=%s "
+                "tool_errors=%s engine_error=%s session_key=%s text_preview=%r",
+                last_text,
+                [o[:80] for o in tool_outputs],
+                tool_errors,
+                engine_error,
+                session_key,
+                user_text[:120],
+            )
         remaining_media = _extract_final_reply_media(final, emitted_media)
         for path in remaining_media:
             yield ("media", json.dumps([path]))
