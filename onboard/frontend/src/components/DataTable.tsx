@@ -37,7 +37,11 @@ export function DataTable<T>({ columns, rows, emptyText = 'No data yet.' }: Data
         </thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={index} className="border-b border-border-subtle last:border-0 hover:bg-surface-2 transition-colors">
+            <tr
+              key={index}
+              className="border-b border-border-subtle last:border-0 hover:bg-surface-2 transition-colors animate-[fade-in_0.3s_ease-out_both]"
+              style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
+            >
               {columns.map((column) => (
                 <td key={column.key} className="px-4 py-3 text-[13px] text-text-secondary align-top">
                   {column.render(row)}

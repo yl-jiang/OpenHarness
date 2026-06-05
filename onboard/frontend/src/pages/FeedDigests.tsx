@@ -6,24 +6,30 @@ import type { AppName, FeedDigest, FeedDigestMeta } from '../api/types';
 import { MarkdownView } from '../components/MarkdownView';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
-function formatTime(raw: string): string {
-  const date = new Date(raw);
-  if (Number.isNaN(date.getTime())) return raw;
-  return date.toLocaleString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
+function formatRelativeDate(raw: string): string {
+  const d = new Date(raw);
+  if (Number.isNaN(d.getTime())) return raw;
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffDays = Math.floor(diffMs / 86400000);
+  const time = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+  if (diffDays === 0) return `Today ${time}`;
+  if (diffDays === 1) return `Yesterday ${time}`;
+  if (diffDays < 7) return `${d.toLocaleDateString(undefined, { weekday: 'short' })} ${time}`;
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
-function formatPeriod(digest: FeedDigest): string {
-  if (!digest.period_start && !digest.period_end) return '—';
-  const start = digest.period_start ? formatTime(digest.period_start) : '—';
-  const end = digest.period_end ? formatTime(digest.period_end) : '—';
-  return `${start} → ${end}`;
+function formatPeriodCompact(digest: FeedDigest): string {
+  if (!digest.period_start && !digest.period_end) return '';
+  const fmt = (s: string) => {
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return s;
+    return d.toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+  };
+  const start = digest.period_start ? fmt(digest.period_start) : '';
+  const end = digest.period_end ? fmt(digest.period_end) : '';
+  if (!start && !end) return '';
+  return `${start} — ${end}`;
 }
 
 function sortDigests(items: FeedDigest[]): FeedDigest[] {
@@ -41,7 +47,6 @@ function DigestMetaPanel({ meta, accentBorder }: { meta: FeedDigestMeta; accentB
 
   return (
     <div className="border border-border rounded-lg bg-surface-2/50 p-4 space-y-4 text-[12px]">
-      {/* Summary row */}
       <div className="flex items-center gap-4 flex-wrap text-text-secondary">
         <span>
           <span className="text-text-muted mr-1">Selected</span>
@@ -64,7 +69,6 @@ function DigestMetaPanel({ meta, accentBorder }: { meta: FeedDigestMeta; accentB
         )}
       </div>
 
-      {/* Source stats table */}
       {stats.length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full text-[11px] border-collapse">
@@ -91,9 +95,9 @@ function DigestMetaPanel({ meta, accentBorder }: { meta: FeedDigestMeta; accentB
                     </td>
                     <td className="py-1.5 text-right">
                       {row.failed ? (
-                        <span className="text-danger">✕ failed</span>
+                        <span className="text-danger">failed</span>
                       ) : (
-                        <span className="text-success">✓ ok</span>
+                        <span className="text-success">ok</span>
                       )}
                     </td>
                   </tr>
@@ -111,9 +115,8 @@ const PRESETS = [
   { value: 'ai_news', label: 'AI News' },
 ] as const;
 
-const INITIAL_RUN_MESSAGE = 'Starting…';
+const INITIAL_RUN_MESSAGE = 'Starting...';
 
-// Module-level run state — survives component unmount (navigation away and back)
 type DigestRunState = { running: boolean; runMessage: string };
 const _digestRunStates = new Map<AppName, DigestRunState>();
 const _digestRunListeners = new Map<AppName, Set<() => void>>();
@@ -132,7 +135,6 @@ function useDigestRunState(app: AppName): [DigestRunState, (update: Partial<Dige
   const [state, setState] = useState<DigestRunState>(() => getDigestRunState(app));
 
   useEffect(() => {
-    // Re-sync on mount — state may have changed while component was unmounted
     setState(getDigestRunState(app));
     const listener = () => setState(getDigestRunState(app));
     if (!_digestRunListeners.has(app)) _digestRunListeners.set(app, new Set());
@@ -194,8 +196,8 @@ export function FeedDigests({ appName }: { appName: AppName }) {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
     const domain = digest.metadata?.domain ?? 'Feed Digest';
     const selected = digest.metadata?.selected_count ?? 0;
-    const n = new Notification(`📰 ${domain} 简报已就绪`, {
-      body: `精选 ${selected} 条内容，点击查看`,
+    const n = new Notification(`${domain} digest ready`, {
+      body: `${selected} items selected`,
       icon: '/favicon.ico',
       tag: `feed-digest-${digest.id}`,
     });
@@ -240,8 +242,12 @@ export function FeedDigests({ appName }: { appName: AppName }) {
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-baseline justify-between gap-4 flex-wrap">
-        <h2 className="font-serif text-2xl text-text m-0">Feed Digests</h2>
+        <div className="flex items-baseline gap-3">
+          <h2 className="font-serif text-2xl text-text m-0">Feed Digests</h2>
+          <span className="text-[11px] font-mono text-text-muted">{digests.length} archived</span>
+        </div>
         <div className="flex items-center gap-2">
           <select
             value={runPreset}
@@ -264,10 +270,9 @@ export function FeedDigests({ appName }: { appName: AppName }) {
                 <span className="max-w-[220px] truncate" title={runMessage}>{runMessage}</span>
               </>
             ) : (
-              <>⚡ Fetch Now</>
+              <>Fetch Now</>
             )}
           </button>
-          <span className="text-[11px] font-mono text-text-muted">{digests.length} archived</span>
         </div>
       </div>
 
@@ -284,44 +289,73 @@ export function FeedDigests({ appName }: { appName: AppName }) {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,380px)_minmax(0,1fr)] items-start">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)] items-start">
+        {/* Digest list */}
         <section className="border border-border rounded-lg overflow-hidden bg-surface-1">
           {digests.length === 0 ? (
-            <div className="p-5 text-[13px] text-text-muted italic">No feed digests yet.</div>
+            <div className="p-8 text-center">
+              <div className="text-[13px] text-text-muted">No feed digests yet.</div>
+              <div className="mt-1 text-[12px] text-text-muted/60">Run a fetch to generate your first digest.</div>
+            </div>
           ) : (
             <div className="divide-y divide-border">
-              {digests.map((digest) => {
+              {digests.map((digest, index) => {
                 const active = digest.id === id;
                 const meta = digest.metadata;
+                const period = formatPeriodCompact(digest);
                 return (
                   <div
                     key={digest.id}
-                    className={`px-4 py-3 transition-colors ${active ? 'bg-surface-2' : 'hover:bg-surface-2/60'}`}
+                    className={`group relative transition-colors animate-[fade-in_0.3s_ease-out_both] ${active ? 'bg-surface-2' : 'hover:bg-surface-2/60'}`}
+                    style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <Link to={`/feeds/${digest.id}`} className="min-w-0 no-underline text-inherit">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`text-[12px] font-medium ${accent}`}>{meta?.preset ?? 'feed_digest'}</span>
-                          <span className={`text-[11px] px-2 py-0.5 rounded-full border ${accentBorder}`}>{meta?.domain ?? 'Feed Digest'}</span>
-                          {meta?.is_empty ? (
-                            <span className="text-[10px] uppercase tracking-wide text-text-muted">empty</span>
-                          ) : null}
+                    {active && (
+                      <span className={`absolute inset-y-0 left-0 w-0.5 ${appName === 'solo' ? 'bg-accent-solo' : 'bg-accent-wolo'}`} />
+                    )}
+                    <Link
+                      to={`/feeds/${digest.id}`}
+                      className="block px-4 py-3.5 no-underline text-inherit"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-[13px] font-medium text-text truncate">
+                              {meta?.domain ?? 'Feed Digest'}
+                            </span>
+                            {meta?.is_empty && (
+                              <span className="text-[10px] uppercase tracking-wide text-text-muted border border-border rounded px-1.5 py-0.5">empty</span>
+                            )}
+                          </div>
+                          <div className="mt-1.5 flex items-center gap-2 text-[12px] text-text-muted flex-wrap">
+                            <span>{formatRelativeDate(digest.created_at)}</span>
+                            {period && (
+                              <>
+                                <span className="text-border">|</span>
+                                <span className="font-mono text-[11px]">{period}</span>
+                              </>
+                            )}
+                          </div>
                         </div>
-                        <div className="mt-2 text-[13px] text-text">{meta?.date ?? digest.created_at}</div>
-                        <div className="mt-1 text-[11px] font-mono text-text-muted">{formatPeriod(digest)}</div>
-                        <div className="mt-1 text-[11px] text-text-muted">
-                          selected {meta?.selected_count ?? 0} · created {formatTime(digest.created_at)}
+                        <div className="flex items-center gap-2 shrink-0 pt-0.5">
+                          <span className={`text-[11px] font-mono px-2 py-0.5 rounded-full border ${accentBorder}`}>
+                            {meta?.selected_count ?? 0}
+                          </span>
+                          {meta?.preset && (
+                            <span className={`text-[10px] font-medium ${accent}`}>
+                              {meta.preset}
+                            </span>
+                          )}
                         </div>
-                      </Link>
-                      <button
-                        onClick={() => deleteDigest(digest.id)}
-                        disabled={deleting === digest.id}
-                        className="text-[12px] text-text-muted hover:text-danger cursor-pointer bg-transparent border-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        title="Delete digest"
-                      >
-                        {deleting === digest.id ? '…' : '✕'}
-                      </button>
-                    </div>
+                      </div>
+                    </Link>
+                    <button
+                      onClick={() => deleteDigest(digest.id)}
+                      disabled={deleting === digest.id}
+                      className="absolute top-2.5 right-2.5 text-[11px] text-text-muted/0 group-hover:text-text-muted hover:!text-danger cursor-pointer bg-transparent border-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      title="Delete digest"
+                    >
+                      {deleting === digest.id ? '...' : 'x'}
+                    </button>
                   </div>
                 );
               })}
@@ -329,10 +363,12 @@ export function FeedDigests({ appName }: { appName: AppName }) {
           )}
         </section>
 
+        {/* Detail panel */}
         <section className="border border-border rounded-lg bg-surface-1 p-6 min-h-[320px]">
           {!id ? (
-            <div className="h-full flex items-center justify-center text-[13px] text-text-muted">
-              Select a feed digest to view the archived Markdown.
+            <div className="h-full flex flex-col items-center justify-center gap-2 text-center">
+              <div className="text-text-muted text-[28px] leading-none select-none opacity-40">&larr;</div>
+              <div className="text-[13px] text-text-muted">Select a digest to view its content</div>
             </div>
           ) : selectedLoading ? (
             <div className="h-60 rounded-lg bg-gradient-to-r from-surface-1 via-surface-2 to-surface-1 bg-[length:200%_auto] animate-[shimmer_1.5s_linear_infinite]" />
@@ -341,32 +377,59 @@ export function FeedDigests({ appName }: { appName: AppName }) {
               {selectedError ?? 'Feed digest not found.'}
             </div>
           ) : (
-            <article className="space-y-5">
-              <header className="flex items-start justify-between gap-4 pb-4 border-b border-border">
+            <article className="space-y-6 animate-[fade-in_0.2s_ease-out]">
+              {/* Header */}
+              <header className="flex items-start justify-between gap-4 pb-5 border-b border-border">
                 <div className="space-y-2">
-                  <h3 className="font-serif text-xl text-text m-0">{selected.metadata?.domain ?? 'Feed Digest'}</h3>
-                  <div className="flex items-center gap-2 flex-wrap text-[12px] text-text-muted">
+                  <h3 className="font-serif text-2xl text-text m-0">{selected.metadata?.domain ?? 'Feed Digest'}</h3>
+                  <div className="flex items-center gap-3 flex-wrap text-[12px] text-text-muted">
                     <span className={`font-medium ${accent}`}>{selected.metadata?.preset ?? 'feed_digest'}</span>
+                    <span className="text-border">|</span>
                     <span>{selected.metadata?.date ?? selected.created_at}</span>
-                    <span>·</span>
-                    <span>{formatPeriod(selected)}</span>
-                    <span>·</span>
-                    <button
-                      onClick={() => setShowMeta((v) => !v)}
-                      className={`text-[11px] underline underline-offset-2 cursor-pointer bg-transparent border-none transition-colors ${showMeta ? accent : 'text-text-muted hover:text-text-secondary'}`}
-                    >
-                      {showMeta ? 'Hide metadata' : 'Metadata'}
-                    </button>
+                    {formatPeriodCompact(selected) && (
+                      <>
+                        <span className="text-border">|</span>
+                        <span className="font-mono text-[11px]">{formatPeriodCompact(selected)}</span>
+                      </>
+                    )}
                   </div>
                 </div>
-                <button
-                  onClick={() => deleteDigest(selected.id)}
-                  disabled={deleting === selected.id}
-                  className="text-[12px] px-3 py-1.5 rounded-md border border-border bg-surface-2 text-text-secondary hover:text-danger hover:border-danger/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {deleting === selected.id ? 'Deleting…' : 'Delete'}
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => setShowMeta((v) => !v)}
+                    className={`text-[11px] px-2.5 py-1.5 rounded-md border cursor-pointer transition-colors ${showMeta ? `${accent} ${accentBorder}` : 'text-text-muted border-border bg-transparent hover:text-text-secondary hover:border-text-muted'}`}
+                  >
+                    {showMeta ? 'Hide metadata' : 'Metadata'}
+                  </button>
+                  <button
+                    onClick={() => deleteDigest(selected.id)}
+                    disabled={deleting === selected.id}
+                    className="text-[12px] px-3 py-1.5 rounded-md border border-border bg-surface-2 text-text-secondary hover:text-danger hover:border-danger/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  >
+                    {deleting === selected.id ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
               </header>
+
+              {/* Stats row */}
+              {selected.metadata && (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-lg bg-surface-2 px-4 py-3">
+                    <div className="text-[11px] text-text-muted uppercase tracking-wide">Selected</div>
+                    <div className="mt-1 text-xl font-mono text-text tabular-nums">{selected.metadata.selected_count}</div>
+                  </div>
+                  <div className="rounded-lg bg-surface-2 px-4 py-3">
+                    <div className="text-[11px] text-text-muted uppercase tracking-wide">Sources</div>
+                    <div className="mt-1 text-xl font-mono text-text tabular-nums">{selected.metadata.source_stats.length}</div>
+                  </div>
+                  <div className="rounded-lg bg-surface-2 px-4 py-3">
+                    <div className="text-[11px] text-text-muted uppercase tracking-wide">Fetched</div>
+                    <div className="mt-1 text-xl font-mono text-text tabular-nums">
+                      {selected.metadata.source_stats.reduce((s, r) => s + r.fetched, 0)}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {showMeta && selected.metadata && (
                 <DigestMetaPanel meta={selected.metadata} accentBorder={accentBorder} />

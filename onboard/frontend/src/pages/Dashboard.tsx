@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 
 import { api } from '../api/client';
 import type { AppName } from '../api/types';
-import { ActivityHeatmap, EmotionPieChart, ModelCallUsageChart, ModelTokenUsageChart, formatTokenAmount } from '../components/Charts';
+import { ActivityHeatmap, EmotionBarList, ModelCallUsageChart, ModelTokenUsageChart, formatTokenAmount } from '../components/Charts';
 import { StatsCard } from '../components/StatsCard';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
@@ -25,12 +25,13 @@ export function Dashboard({ appName }: { appName: AppName }) {
       </div>
 
       {/* Stats row */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-6 gap-3">
         <StatsCard label="Entries" value={data.total_entries} />
         <StatsCard label="Records" value={data.total_records} />
         <StatsCard label="This week" value={data.this_week_records} />
         <StatsCard label="Pending todos" value={data.pending_todos} />
         <StatsCard label="LLM calls" value={data.llm_total_calls} />
+        <StatsCard label="Current model" value={data.current_model} />
       </div>
 
       <section className="p-5 border border-border rounded-lg bg-surface-1">
@@ -114,8 +115,8 @@ export function Dashboard({ appName }: { appName: AppName }) {
           <ActivityHeatmap data={data.daily_counts} />
         </section>
         <section className="p-5 border border-border rounded-lg bg-surface-1">
-          <h3 className="text-sm font-medium text-text m-0 mb-4">Emotion Distribution</h3>
-          <EmotionPieChart data={data.emotion_distribution} />
+          <h3 className="text-sm font-medium text-text m-0 mb-4">Emotions</h3>
+          <EmotionBarList data={data.emotion_distribution} />
         </section>
       </div>
 

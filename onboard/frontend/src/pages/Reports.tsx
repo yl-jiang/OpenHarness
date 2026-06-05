@@ -183,10 +183,14 @@ export function Reports({ appName }: { appName: AppName }) {
             <p className="text-[13px] text-text-muted italic m-0 pl-1">No {type} reports yet.</p>
           ) : (
             <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
-              {items.map((report) => {
+              {items.map((report, index) => {
                 const period = formatPeriod(report);
                 return (
-                  <div key={report.id} className="flex items-center justify-between px-4 py-3 bg-surface-1 hover:bg-surface-2/60 transition-colors">
+                  <div
+                    key={report.id}
+                    className="flex items-center justify-between px-4 py-3 bg-surface-1 hover:bg-surface-2/60 transition-colors animate-[fade-in_0.3s_ease-out_both]"
+                    style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
+                  >
                     <div className="flex items-center gap-3">
                       {period && (
                         <span className="font-mono text-[12px] text-text">{period}</span>

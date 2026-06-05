@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -134,15 +136,56 @@ function useOneShotLineAnimation(duration = 900): boolean {
 }
 
 export function DailyLineChart({ data }: { data: CountPoint[] }) {
+  const isAnimationActive = useOneShotLineAnimation();
+
+  const tickStep = data.length > 20 ? Math.ceil(data.length / 6) : data.length > 10 ? 3 : 1;
+  const ticks = data
+    .filter((_, i) => i === 0 || i === data.length - 1 || i % tickStep === 0)
+    .map((d) => d.date);
+
   return (
     <ResponsiveContainer width="100%" height={200}>
-      <LineChart data={data}>
+      <AreaChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -8 }}>
+        <defs>
+          <linearGradient id="dailyAreaGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#d4a574" stopOpacity={0.25} />
+            <stop offset="95%" stopColor="#d4a574" stopOpacity={0.02} />
+          </linearGradient>
+        </defs>
         <CartesianGrid stroke="#1f1f24" strokeDasharray="2 4" />
-        <XAxis dataKey="date" stroke="#63636e" tick={{ fontSize: 11 }} />
-        <YAxis stroke="#63636e" tick={{ fontSize: 11 }} allowDecimals={false} width={30} />
+        <XAxis
+          dataKey="date"
+          stroke="#63636e"
+          tick={{ fontSize: 10, fill: '#a1a1aa' }}
+          ticks={ticks}
+          tickFormatter={(v: string) => {
+            const d = new Date(v + 'T00:00:00');
+            return Number.isNaN(d.getTime()) ? v : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+          }}
+          tickLine={{ stroke: '#2e2e33' }}
+        />
+        <YAxis
+          stroke="#63636e"
+          tick={{ fontSize: 10, fill: '#a1a1aa' }}
+          allowDecimals={false}
+          width={32}
+          tickLine={{ stroke: '#2e2e33' }}
+          axisLine={{ stroke: '#2e2e33' }}
+        />
         <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-        <Line type="monotone" dataKey="count" stroke="#d4a574" strokeWidth={1.5} dot={false} />
-      </LineChart>
+        <Area
+          type="monotone"
+          dataKey="count"
+          stroke="#d4a574"
+          strokeWidth={2}
+          fill="url(#dailyAreaGrad)"
+          dot={{ r: 2, fill: '#d4a574', strokeWidth: 0 }}
+          activeDot={{ r: 4, fill: '#d4a574', stroke: '#1c1c21', strokeWidth: 2 }}
+          isAnimationActive={isAnimationActive}
+          animationDuration={900}
+          animationEasing="ease-out"
+        />
+      </AreaChart>
     </ResponsiveContainer>
   );
 }
@@ -159,6 +202,45 @@ export function EmotionPieChart({ data }: { data: EmotionPoint[] }) {
         <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
       </PieChart>
     </ResponsiveContainer>
+  );
+}
+
+export function EmotionBarList({ data }: { data: EmotionPoint[] }) {
+  if (!data.length) {
+    return <div className="text-[12px] text-text-muted py-4 text-center">No data yet</div>;
+  }
+
+  const sorted = [...data].sort((a, b) => b.count - a.count);
+  const total = sorted.reduce((s, d) => s + d.count, 0);
+  const maxCount = sorted[0]?.count ?? 1;
+
+  return (
+    <div className="space-y-2">
+      {sorted.map((item, i) => {
+        const pct = total > 0 ? (item.count / total) * 100 : 0;
+        const barWidth = maxCount > 0 ? (item.count / maxCount) * 100 : 0;
+        const opacity = Math.max(0.3, 1 - i * 0.12);
+        return (
+          <div key={item.emotion} className="flex items-center gap-3">
+            <span className="text-[12px] text-text w-16 flex-shrink-0 truncate">{item.emotion}</span>
+            <div className="flex-1 h-[6px] rounded-full bg-surface-2 overflow-hidden">
+              <div
+                className="h-full rounded-full"
+                style={{
+                  width: `${barWidth}%`,
+                  backgroundColor: 'var(--color-accent-solo)',
+                  opacity,
+                  minWidth: item.count > 0 ? 3 : 0,
+                }}
+              />
+            </div>
+            <span className="text-[11px] font-mono text-text-muted w-12 text-right tabular-nums flex-shrink-0">
+              {item.count} <span className="text-text-muted/60">{pct.toFixed(0)}%</span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -229,7 +311,7 @@ export function ModelTokenUsageChart({
               stroke="#63636e"
               tick={{ fontSize: 10, fill: '#a1a1aa' }}
               ticks={tickDates}
-              tickFormatter={(v: string) => v.slice(8)}
+              tickFormatter={(v: string) => `${v.slice(5, 7)}/${v.slice(8)}`}
               tickLine={{ stroke: '#2e2e33' }}
             />
             <YAxis
@@ -245,14 +327,12 @@ export function ModelTokenUsageChart({
               label={{ value: 'Tokens', angle: -90, position: 'insideLeft', offset: 12, fill: '#63636e', fontSize: 10 }}
             />
             <Tooltip
-              contentStyle={tooltipStyle}
-              labelStyle={tooltipLabelStyle}
-              itemStyle={tooltipItemStyle}
-              formatter={(value: number | string) => {
-                const n = Number(value);
-                return `${formatTokenAmount(n)} (${formatFullNumber(n)})`;
-              }}
-              labelFormatter={(value: string) => value}
+              content={(props) => (
+                <FilteredTooltip
+                  {...props}
+                  formatValue={(n) => `${formatTokenAmount(n)} (${formatFullNumber(n)})`}
+                />
+              )}
             />
             {series.flatMap(({ model, colors }) => [
               <Line
@@ -363,7 +443,7 @@ export function ModelCallUsageChart({
               stroke="#63636e"
               tick={{ fontSize: 10, fill: '#a1a1aa' }}
               ticks={tickDates}
-              tickFormatter={(v: string) => v.slice(8)}
+              tickFormatter={(v: string) => `${v.slice(5, 7)}/${v.slice(8)}`}
               tickLine={{ stroke: '#2e2e33' }}
             />
             <YAxis
@@ -379,14 +459,12 @@ export function ModelCallUsageChart({
               label={{ value: 'Calls', angle: -90, position: 'insideLeft', offset: 12, fill: '#63636e', fontSize: 10 }}
             />
             <Tooltip
-              contentStyle={tooltipStyle}
-              labelStyle={tooltipLabelStyle}
-              itemStyle={tooltipItemStyle}
-              formatter={(value: number | string) => {
-                const n = Number(value);
-                return `${formatFullNumber(n)} calls`;
-              }}
-              labelFormatter={(value: string) => value}
+              content={(props) => (
+                <FilteredTooltip
+                  {...props}
+                  formatValue={(n) => `${formatFullNumber(n)} calls`}
+                />
+              )}
             />
             {series.map(({ model, color }) => (
               <Line
@@ -426,27 +504,131 @@ export function ModelCallUsageChart({
   );
 }
 
-export function ActivityHeatmap({ data }: { data: CountPoint[] }) {
-  const byDate = new Map(data.map((item) => [item.date, item.count]));
-  const today = new Date();
-  const days = Array.from({ length: 91 }, (_, index) => {
-    const date = new Date(today);
-    date.setDate(today.getDate() - (90 - index));
-    const key = date.toISOString().slice(0, 10);
-    return { date: key, count: byDate.get(key) ?? 0 };
-  });
+function FilteredTooltip({
+  active,
+  payload,
+  label,
+  formatValue,
+}: {
+  active?: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  payload?: ReadonlyArray<{ name?: string | number; value?: unknown; color?: string }>;
+  label?: string | number;
+  formatValue: (value: number) => string;
+}) {
+  if (!active || !payload?.length) return null;
+  const visible = payload.filter((entry) => Number(entry.value) > 0);
+  if (visible.length === 0) return null;
+  return (
+    <div style={{ ...tooltipStyle, padding: '8px 12px' }}>
+      <div style={{ ...tooltipLabelStyle, marginBottom: 4 }}>{label}</div>
+      {visible.map((entry) => (
+        <div key={String(entry.name)} style={{ display: 'flex', alignItems: 'center', gap: 6, lineHeight: 1.6 }}>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', backgroundColor: entry.color ?? '#888' }} />
+          <span style={tooltipItemStyle}>{entry.name}</span>
+          <span style={{ ...tooltipItemStyle, marginLeft: 'auto', paddingLeft: 12 }}>{formatValue(Number(entry.value))}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-  const levels = ['bg-surface-2', 'bg-accent-solo/30', 'bg-accent-solo/50', 'bg-accent-solo/70', 'bg-accent-solo'];
+export function ActivityHeatmap({ data }: { data: CountPoint[] }) {
+  const now = new Date();
+  const [viewYear, setViewYear] = useState(now.getFullYear());
+  const [viewMonth, setViewMonth] = useState(now.getMonth());
+
+  const byDate = new Map(data.map((item) => [item.date, item.count]));
+  const todayKey = formatLocalDateKey(now);
+
+  const firstDow = (new Date(viewYear, viewMonth, 1).getDay() + 6) % 7;
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < firstDow; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const monthLabel = new Date(viewYear, viewMonth).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  const isCurrentMonth = viewYear === now.getFullYear() && viewMonth === now.getMonth();
+
+  const navigate = (delta: number) => {
+    let m = viewMonth + delta;
+    let y = viewYear;
+    if (m < 0) { m = 11; y--; } else if (m > 11) { m = 0; y++; }
+    setViewMonth(m);
+    setViewYear(y);
+  };
+
+  const dotCount = (count: number): number => {
+    if (count <= 0) return 0;
+    if (count <= 2) return 1;
+    if (count <= 5) return 2;
+    return 3;
+  };
+
+  const weekdayLabels = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
 
   return (
-    <div className="grid grid-cols-13 gap-[3px]">
-      {days.map((day) => (
-        <span
-          key={day.date}
-          title={`${day.date}: ${day.count}`}
-          className={`aspect-square rounded-[3px] ${levels[Math.min(day.count, 4)]}`}
-        />
-      ))}
+    <div className="select-none">
+      <div className="flex items-center justify-between mb-2 px-0.5">
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => navigate(-1)}
+            className="w-6 h-6 rounded flex items-center justify-center text-text-muted hover:bg-surface-2 hover:text-text transition-colors text-sm"
+          >
+            ‹
+          </button>
+          <button
+            onClick={() => navigate(1)}
+            className="w-6 h-6 rounded flex items-center justify-center text-text-muted hover:bg-surface-2 hover:text-text transition-colors text-sm"
+          >
+            ›
+          </button>
+        </div>
+        <span className="text-[12px] font-medium text-text">{monthLabel}</span>
+        {isCurrentMonth ? (
+          <span className="w-10" />
+        ) : (
+          <button
+            onClick={() => { setViewYear(now.getFullYear()); setViewMonth(now.getMonth()); }}
+            className="text-[11px] text-accent-solo hover:text-text transition-colors w-10 text-right"
+          >
+            today
+          </button>
+        )}
+      </div>
+      <div className="grid grid-cols-7 text-center">
+        {weekdayLabels.map((label, i) => (
+          <div key={i} className="text-[10px] text-text-muted py-1 font-medium">{label}</div>
+        ))}
+        {cells.map((day, i) => {
+          if (day === null) return <div key={`e${i}`} />;
+          const dateKey = `${viewYear}-${String(viewMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+          const count = byDate.get(dateKey) ?? 0;
+          const isToday = dateKey === todayKey;
+          const dots = dotCount(count);
+          return (
+            <div
+              key={`d${day}`}
+              className="flex flex-col items-center py-[2px]"
+              title={`${dateKey}: ${count} ${count === 1 ? 'entry' : 'entries'}`}
+            >
+              <span
+                className={`w-[26px] h-[26px] flex items-center justify-center rounded-full text-[11px] leading-none
+                  ${isToday ? 'bg-red-500 text-white font-semibold' : 'text-text'}`}
+              >
+                {day}
+              </span>
+              <div className="flex gap-[2px] h-[5px] mt-[1px]">
+                {Array.from({ length: dots }).map((_, j) => (
+                  <span key={j} className="w-[3px] h-[3px] rounded-full bg-accent-solo" />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

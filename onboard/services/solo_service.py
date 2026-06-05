@@ -23,6 +23,7 @@ from onboard.services.common import (
     find_by_id,
     newest_first,
     paginate,
+    resolve_current_model,
     split_csv,
     stream_feed_digest_run,
     to_jsonable,
@@ -64,6 +65,7 @@ class SoloService:
             end_date=llm_daily_focus_date,
             target_tz=target_tz,
         )
+        config = load_config(self.workspace)
         return {
             "total_entries": int(status["entries"]),
             "total_records": int(status["records"]),
@@ -84,6 +86,7 @@ class SoloService:
             "llm_daily_input_tokens": int(daily_llm_usage["total_input_tokens"]),
             "llm_daily_output_tokens": int(daily_llm_usage["total_output_tokens"]),
             "llm_daily_usage_models": daily_llm_usage["models"],
+            "current_model": resolve_current_model(config.provider_profile),
             "emotion_distribution": emotion_distribution(records),
             "daily_counts": daily_counts(records),
             "top_tags": top_tags(records),

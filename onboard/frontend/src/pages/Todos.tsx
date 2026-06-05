@@ -57,8 +57,12 @@ export function Todos({ appName }: { appName: AppName }) {
             {data
               .filter((todo) => todo.status === col.key)
               .sort((a, b) => new Date(todoTime(b)).getTime() - new Date(todoTime(a)).getTime())
-              .map((todo) => (
-                <article key={todo.id} className="p-3.5 border border-border rounded-md bg-surface-1 hover:bg-surface-2 transition-colors">
+              .map((todo, index) => (
+                <article
+                  key={todo.id}
+                  className="p-3.5 border border-border rounded-md bg-surface-1 hover:bg-surface-2 transition-colors animate-[fade-in_0.3s_ease-out_both]"
+                  style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
+                >
                   <div className="text-[13px] font-medium text-text mb-1">{todo.title}</div>
                   <div className="flex items-center gap-2 text-[11px] text-text-muted">
                     <span>{todo.project ?? todo.category ?? 'general'}</span>

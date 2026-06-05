@@ -215,3 +215,11 @@ def find_by_id(items: Iterable[Any], item_id: str) -> Any | None:
         if getattr(item, "id", None) == item_id:
             return item
     return None
+
+
+def resolve_current_model(provider_profile: str) -> str:
+    """Resolve the concrete model name for a provider profile."""
+    from openharness.config.settings import load_settings
+
+    settings = load_settings().merge_cli_overrides(active_profile=provider_profile)
+    return settings.model
