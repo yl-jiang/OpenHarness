@@ -97,6 +97,7 @@ class SoloToolRegistry:
         self._source_context = dict(source_context or {})
         self._progress_callback = progress_callback
         self._background_tasks: set[Any] = set()
+        self._created_record_ids: set[str] = set()
 
     def _processor(self) -> SoloProcessor:
         if self.processor is None:
@@ -256,6 +257,7 @@ class SoloToolRegistry:
                 attachments=list(entry.attachments),
             )
             self.store.add_record(record)
+            self._created_record_ids.add(record.id)
             return {
                 "ok": True,
                 "entry_id": entry.id,
@@ -727,6 +729,14 @@ class SoloToolRegistry:
     async def _handle_update_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Update fields of an existing solo record."""
         record_id = _required_text(arguments, "record_id")
+        if record_id in self._created_record_ids:
+            return {
+                "ok": False,
+                "message": (
+                    "❌ 不要在同一轮补改刚创建的记录。"
+                    "请在 solo_record 里一次性提供明确事实，不要基于猜测补写原因或症状。"
+                ),
+            }
         
         # Valid fields for update
         updates = {}
@@ -1227,7 +1237,8 @@ def _tool_record() -> ToolDefinition:
             "(e.g. '昨天11点睡的，今天7点醒来'), use solo_import_records to split into separate records per date. "
             "Do NOT call this when the user's intent is ambiguous or the record is unintelligible — "
             "call solo_clarify instead. Fill in structured fields (summary, tags, emotion, etc.) "
-            "based on your understanding of the content."
+            "based only on facts explicitly present in the user's message. Do not add unstated causes, diagnoses, "
+            "motives, timelines, or explanations. When a reason is not explicit, keep it unknown instead of filling it in."
         ),
         [
             ("content", "string", "Original solo content as the user wrote it.", True),
@@ -1554,7 +1565,12 @@ def _tool_update_todo() -> ToolDefinition:
 def _tool_update_record() -> ToolDefinition:
     return _definition(
         "solo_update_record",
-        "Modify an existing structured record. Use this to fix mistakes in summary, tags, emotions, or content.",
+        (
+            "Modify an existing structured record ONLY to correct a factual mistake that the user explicitly pointed "
+            "out or that is directly evidenced by visible record/search results. Never use this to add inferred causes, "
+            "symptoms, or motivations. Never call it in the same turn immediately after solo_record just to 'improve' "
+            "a newly created record."
+        ),
         [
             ("record_id", "string", "The ID of the record to update.", True),
             ("summary", "string", "New summary.", False),

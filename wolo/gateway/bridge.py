@@ -35,6 +35,24 @@ def _hash_content(text: str) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
+def _reply_dedup_context(message: InboundMessage) -> dict[str, str]:
+    metadata = message.metadata or {}
+    context: dict[str, str] = {}
+    for key in ("parent_id", "quoted_context"):
+        value = metadata.get(key)
+        if value:
+            context[key] = str(value)
+    return context
+
+
+def _hash_message(message: InboundMessage) -> str:
+    normalized = " ".join(message.content.split())
+    reply_context = _reply_dedup_context(message)
+    if reply_context:
+        normalized += "\n" + json.dumps(reply_context, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(normalized.encode()).hexdigest()
+
+
 def _content_snippet(text: str, *, limit: int = 160) -> str:
     normalized = " ".join(text.split())
     if len(normalized) <= limit:
@@ -125,7 +143,7 @@ class WoloGatewayBridge:
                 continue
 
             session_key = message.session_key
-            content_hash = _hash_content(content)
+            content_hash = _hash_message(message)
 
             # Dedup: same content is still running in this session
             running_task = self._session_tasks.get(session_key)
@@ -237,7 +255,7 @@ class WoloGatewayBridge:
 
     async def _process_message(self, message: InboundMessage) -> None:
         content = message.content.strip()
-        content_hash = _hash_content(content)
+        content_hash = _hash_message(message)
         command = parse_wolo_command(content)
         store = WoloStore(self._workspace)
         _succeeded = False

@@ -98,6 +98,7 @@ class WoloToolRegistry:
         self._source_context = dict(source_context or {})
         self._progress_callback = progress_callback
         self._background_tasks: set[Any] = set()
+        self._created_record_ids: set[str] = set()
 
     def _processor(self) -> WoloProcessor:
         if self.processor is None:
@@ -264,6 +265,7 @@ class WoloToolRegistry:
                 attachments=list(entry.attachments),
             )
             self.store.add_record(record)
+            self._created_record_ids.add(record.id)
             persist_work_artifacts(self.store, record, arguments)
             return {
                 "ok": True,
@@ -811,6 +813,14 @@ class WoloToolRegistry:
     async def _handle_update_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Update fields of an existing wolo record."""
         record_id = _required_text(arguments, "record_id")
+        if record_id in self._created_record_ids:
+            return {
+                "ok": False,
+                "message": (
+                    "❌ 不要在同一轮补改刚创建的记录。"
+                    "请在 wolo_record 里一次性提供明确事实，不要基于猜测补写原因或解释。"
+                ),
+            }
         
         # Valid fields for update
         updates = {}
@@ -1321,7 +1331,9 @@ def _tool_record() -> ToolDefinition:
             "IMPORTANT: This tool only accepts ONE date. If the user's message spans multiple dates "
             "(e.g. '昨天做了X，今天做了Y'), use wolo_import_records to split into separate records per date. "
             "Do NOT call this when the user's intent is ambiguous — call wolo_clarify instead. "
-            "Fill in structured fields (summary, tags, status/emotion, etc.) based on the content."
+            "Fill in structured fields (summary, tags, status/emotion, etc.) based only on facts explicitly present "
+            "in the user's message. Do not add unstated causes, diagnoses, motives, timelines, or explanations. "
+            "When a reason is not explicit, keep it unknown instead of filling it in."
         ),
         [
             ("content", "string", "Original work-log content as the user wrote it.", True),
@@ -1716,7 +1728,12 @@ def _tool_playbook() -> ToolDefinition:
 def _tool_update_record() -> ToolDefinition:
     return _definition(
         "wolo_update_record",
-        "Modify an existing structured work record. Use this to fix mistakes in summary, tags, status labels, or content.",
+        (
+            "Modify an existing structured work record ONLY to correct a factual mistake that the user explicitly "
+            "pointed out or that is directly evidenced by visible record/search results. Never use this to add "
+            "inferred causes or motivations. Never call it in the same turn immediately after wolo_record just to "
+            "'improve' a newly created record."
+        ),
         [
             ("record_id", "string", "The ID of the record to update.", True),
             ("summary", "string", "New summary.", False),

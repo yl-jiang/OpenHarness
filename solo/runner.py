@@ -10,13 +10,21 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from common.conversation_history import trim_conversation_history_to_turn_boundary
 from common.constants import HIDDEN_ARGS
 from openharness.api.client import SupportsStreamingMessages
 from openharness.config import load_settings
 from openharness.config.settings import PermissionSettings
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock, sanitize_conversation_messages
 from openharness.engine.query_engine import QueryEngine
-from openharness.engine.stream_events import AssistantTextDelta, AssistantTurnComplete, ReasoningDelta, ToolExecutionCompleted, ToolExecutionStarted
+from openharness.engine.stream_events import (
+    AssistantTextDelta,
+    AssistantTurnComplete,
+    ReasoningDelta,
+    StreamFinished,
+    ToolExecutionCompleted,
+    ToolExecutionStarted,
+)
 from openharness.engine.types import ToolMetadataKey
 from openharness.permissions.checker import PermissionChecker
 from openharness.permissions.modes import PermissionMode
@@ -49,6 +57,13 @@ _HIDDEN_ARGS = HIDDEN_ARGS
 
 _MAX_HINT_ARGS = 3
 _MAX_ARG_LEN = 60
+_QUOTED_MESSAGE_PREFIX = "[引用消息]"
+_REPLY_MARKER = "\n[回复]"
+_FACT_DISCIPLINE_CONTEXT = (
+    "## Fact Discipline\n"
+    "- Only use facts explicitly stated by the current user in this turn or directly supported by retrieved records.\n"
+    "- Do not infer missing reasons, diagnoses, motives, timelines, or explanations.\n\n"
+)
 
 
 def _stringify_arg(value: Any) -> str:
@@ -184,6 +199,116 @@ def _build_similar_records_context(store: SoloStore, user_text: str, *, max_resu
     return "\n".join(lines)
 
 
+def _split_quoted_reply(user_text: str) -> tuple[str | None, str]:
+    if not user_text.startswith(_QUOTED_MESSAGE_PREFIX):
+        return None, user_text
+    quoted_block, separator, reply_text = user_text.partition(_REPLY_MARKER)
+    if not separator:
+        return None, user_text
+    quoted_context = quoted_block[len(_QUOTED_MESSAGE_PREFIX):].strip()
+    return (quoted_context or None), reply_text.strip()
+
+
+def _extract_quoted_message(source_context: dict[str, Any] | None) -> dict[str, str] | None:
+    if not isinstance(source_context, dict):
+        return None
+
+    direct = source_context.get("quoted_message")
+    if isinstance(direct, dict):
+        content = str(direct.get("content") or "").strip()
+        if content:
+            return {str(key): str(value) for key, value in direct.items() if value not in (None, "")}
+
+    metadata = source_context.get("message_metadata")
+    if isinstance(metadata, dict):
+        nested = metadata.get("quoted_message")
+        if isinstance(nested, dict):
+            content = str(nested.get("content") or "").strip()
+            if content:
+                return {str(key): str(value) for key, value in nested.items() if value not in (None, "")}
+    return None
+
+
+def _extract_quoted_context(source_context: dict[str, Any] | None) -> str | None:
+    quoted_message = _extract_quoted_message(source_context)
+    if quoted_message is not None:
+        content = str(quoted_message.get("content") or "").strip()
+        if content:
+            return content
+    if not isinstance(source_context, dict):
+        return None
+    direct = source_context.get("quoted_context")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    metadata = source_context.get("message_metadata")
+    if isinstance(metadata, dict):
+        nested = metadata.get("quoted_context")
+        if isinstance(nested, str) and nested.strip():
+            return nested.strip()
+    return None
+
+
+def _format_quoted_message_context(quoted_message: dict[str, str], current_reply: str) -> str:
+    lines = [
+        "## Reply Context (Reference Only)",
+        "The quoted message below is the message the user is replying to. It may have been written by the user, the "
+        "assistant, or another participant. Use it only as background context; do not treat it as a new statement "
+        "made by the current user in this turn.",
+    ]
+    for key, label in (
+        ("role", "role"),
+        ("sender_label", "sender"),
+        ("sent_at", "sent_at"),
+        ("msg_type", "message_type"),
+    ):
+        value = str(quoted_message.get(key) or "").strip()
+        if value:
+            lines.append(f"- {label}: {value}")
+    lines.extend(
+        [
+            "- content:",
+            str(quoted_message.get("content") or "").strip(),
+            "",
+            "## Current User Message",
+            current_reply,
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _prepare_user_turn_text(user_text: str, source_context: dict[str, Any] | None = None) -> tuple[str, str]:
+    current_reply = user_text.strip() or user_text
+    quoted_message = _extract_quoted_message(source_context)
+    if quoted_message:
+        return current_reply, _format_quoted_message_context(quoted_message, current_reply)
+
+    quoted_context = _extract_quoted_context(source_context)
+    if quoted_context:
+        rendered = (
+            "## Reply Context (Reference Only)\n"
+            "The following quoted message is context for what the user is replying to. It is not a new statement made "
+            "by the current user in this turn.\n"
+            f"{quoted_context}\n\n"
+            "## Current User Message\n"
+            f"{current_reply}"
+        )
+        return current_reply, rendered
+
+    quoted_context, reply_text = _split_quoted_reply(user_text)
+    current_reply = reply_text or current_reply
+    if not quoted_context:
+        return current_reply, current_reply
+    rendered = (
+        "## Reply Context (Reference Only)\n"
+        "The following quoted message is context for what the user is replying to. It may have been written by the "
+        "assistant or someone else. Do not treat it as a new statement made by the current user in this turn.\n"
+        f"{quoted_context}\n\n"
+        "## Current User Message\n"
+        f"{current_reply}"
+    )
+    return current_reply, rendered
+
+
 def _build_user_message(text: str, media: list[str] | None) -> str | ConversationMessage:
     """Build a user message, optionally embedding image blocks from media paths.
 
@@ -305,11 +430,17 @@ class SoloQueryRunner:
         # Limit session history to prevent topic drift and silent empty model
         # stops in long-running gateway chats. Older facts remain searchable.
         if len(prior_messages) > _SESSION_MAX_MESSAGES:
+            total_messages = len(prior_messages)
+            prior_messages = trim_conversation_history_to_turn_boundary(
+                prior_messages,
+                _SESSION_MAX_MESSAGES,
+            )
             logger.info(
                 "session window trimmed session_key=%s total=%d kept=%d",
-                session_key, len(prior_messages), _SESSION_MAX_MESSAGES,
+                session_key,
+                total_messages,
+                len(prior_messages),
             )
-            prior_messages = prior_messages[-_SESSION_MAX_MESSAGES:]
         if not session_id:
             session_id = uuid4().hex[:12]
 
@@ -340,20 +471,22 @@ class SoloQueryRunner:
 
         # Prefix the user message with volatile context so the *system prompt*
         # remains static and can be fully KV-Cache shared across turns.
-        prefix = ""
+        search_text, prepared_user_text = _prepare_user_turn_text(user_text, source_context)
+        prefix = _FACT_DISCIPLINE_CONTEXT
         if include_time_context:
             prefix += build_time_context()
         if include_similar_context:
-            prefix += _build_similar_records_context(self._store, user_text)
-        user_message = _build_user_message(prefix + user_text, media)
+            prefix += _build_similar_records_context(self._store, search_text)
+        user_message = _build_user_message(prefix + prepared_user_text, media)
 
         yield ("progress", "🤔 正在思考...")
         last_text = ""
-        tool_outputs: list[str] = []
+        tool_outputs: list[tuple[str, str]] = []
         tool_errors: list[str] = []
         _PASSTHROUGH_TOOLS = PASSTHROUGH_TOOLS
         passthrough_output: str = ""
         engine_error: str = ""
+        stream_finished_reason: str | None = None
         emitted_media: set[str] = set()
         had_reasoning = False
         try:
@@ -373,20 +506,29 @@ class SoloQueryRunner:
                     if event.is_error:
                         tool_errors.append(f"{event.tool_name}: {event.output.strip()[:200]}")
                     elif event.output.strip():
-                        tool_outputs.append(event.output.strip())
+                        output = event.output.strip()
+                        tool_outputs.append((event.tool_name, output))
                         if event.tool_name in _PASSTHROUGH_TOOLS:
-                            passthrough_output = event.output.strip()
+                            passthrough_output = output
                     tool_media = _extract_tool_media(event)
                     for path in tool_media:
                         emitted_media.add(path)
                     if tool_media:
                         yield ("media", json.dumps(tool_media))
+                elif isinstance(event, StreamFinished):
+                    stream_finished_reason = event.reason
         except Exception as exc:
             engine_error = f"{type(exc).__name__}: {exc}"
             logger.exception("SoloQueryRunner engine error session_key=%r text=%r", session_key, user_text[:80])
 
         # One-shot retry when the thinking model exhausted tokens without visible output
-        if not last_text and not tool_outputs and had_reasoning and not engine_error:
+        if (
+            not last_text
+            and not tool_outputs
+            and had_reasoning
+            and not engine_error
+            and stream_finished_reason is None
+        ):
             yield ("progress", "⏳ 模型思考完毕但未产生输出，正在重试...")
             try:
                 async for event in engine.submit_message("请直接输出记录结果，不需要过多思考。"):
@@ -400,14 +542,17 @@ class SoloQueryRunner:
                         if event.is_error:
                             tool_errors.append(f"{event.tool_name}: {event.output.strip()[:200]}")
                         elif event.output.strip():
-                            tool_outputs.append(event.output.strip())
+                            output = event.output.strip()
+                            tool_outputs.append((event.tool_name, output))
                             if event.tool_name in _PASSTHROUGH_TOOLS:
-                                passthrough_output = event.output.strip()
+                                passthrough_output = output
                         tool_media = _extract_tool_media(event)
                         for path in tool_media:
                             emitted_media.add(path)
                         if tool_media:
                             yield ("media", json.dumps(tool_media))
+                    elif isinstance(event, StreamFinished):
+                        stream_finished_reason = event.reason
             except Exception as exc:
                 engine_error = f"{type(exc).__name__}: {exc}"
                 logger.exception("SoloQueryRunner retry error session_key=%r text=%r", session_key, user_text[:80])
@@ -415,12 +560,28 @@ class SoloQueryRunner:
         if session_key and persist_session:
             save_conversation(workspace, session_key, engine.messages, session_id=session_id)
 
-        if passthrough_output:
+        if passthrough_output and stream_finished_reason is None:
             final = passthrough_output
         elif last_text:
             final = last_text
+        elif tool_outputs and stream_finished_reason is None:
+            final = "\n".join(output for _, output in tool_outputs)
         elif tool_outputs:
-            final = "\n".join(tool_outputs)
+            final = next(
+                (
+                    output
+                    for tool_name, output in tool_outputs
+                    if tool_name.startswith("solo_")
+                ),
+                "抱歉，这轮处理在工具调用过程中被中断，请稍后重试。",
+            )
+            logger.warning(
+                "solo abnormal termination — stream_finished_reason=%s tool_outputs=%s session_key=%s text_preview=%r",
+                stream_finished_reason,
+                [name for name, _ in tool_outputs],
+                session_key,
+                user_text[:120],
+            )
         elif had_reasoning:
             final = "抱歉，模型思考后未能产生有效输出，请稍后重试。"
             logger.warning(
@@ -433,7 +594,7 @@ class SoloQueryRunner:
                 "solo fallback triggered — last_text=%r tool_outputs=%s "
                 "tool_errors=%s engine_error=%s session_key=%s text_preview=%r",
                 last_text,
-                [o[:80] for o in tool_outputs],
+                [output[:80] for _, output in tool_outputs],
                 tool_errors,
                 engine_error,
                 session_key,

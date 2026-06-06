@@ -197,9 +197,22 @@ class WoloStore:
             self._ensure_db()
         return self._conn  # type: ignore[return-value]
 
+    def close(self) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
+    def __del__(self) -> None:
+        self.close()
+
     def _ensure_db(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self._db_path), timeout=10)
+        self._conn = sqlite3.connect(
+            str(self._db_path), timeout=10, check_same_thread=False
+        )
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA_SQL)

@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
+from common.conversation_history import stabilize_conversation_history
 from openharness.engine.messages import ConversationMessage, sanitize_conversation_messages
 from openharness.utils.fs import atomic_write_text
 
@@ -114,7 +115,7 @@ def save_conversation(
     session_id: str | None = None,
 ) -> None:
     """Persist the latest conversation history for a session_key."""
-    clean = sanitize_conversation_messages(messages)
+    clean, changed = stabilize_conversation_history(sanitize_conversation_messages(messages))
     sid = session_id or uuid4().hex[:12]
     messages_json = json.dumps([m.model_dump(mode="json") for m in clean], ensure_ascii=False)
     now = _now_iso()
@@ -131,6 +132,12 @@ def save_conversation(
             (session_key, sid, messages_json, len(clean), now, now),
         )
         conn.commit()
+        if changed:
+            logger.info(
+                "wolo session: dropped incomplete trailing turn session_key=%s kept=%d",
+                session_key,
+                len(clean),
+            )
         logger.debug("wolo session saved session_key=%s messages=%d", session_key, len(clean))
     finally:
         conn.close()
@@ -146,6 +153,9 @@ def load_conversation(
     Returns (messages, session_id).  Both are empty / None if no snapshot exists.
     """
     conn = _get_db(workspace)
+    healed_messages: list[ConversationMessage] | None = None
+    healed_session_id: str | None = None
+    result: tuple[list[ConversationMessage], str | None] = ([], None)
     try:
         _maybe_migrate_json_sessions(workspace, conn)
         cur = conn.execute(
@@ -154,24 +164,43 @@ def load_conversation(
         )
         row = cur.fetchone()
         if row is None:
-            return [], None
+            return result
         session_id, messages_json = row
         raw = json.loads(messages_json)
-        messages = sanitize_conversation_messages(
-            [ConversationMessage.model_validate(m) for m in raw]
+        messages, changed = stabilize_conversation_history(
+            sanitize_conversation_messages(
+                [ConversationMessage.model_validate(m) for m in raw]
+            )
         )
+        if changed:
+            healed_messages = list(messages)
+            healed_session_id = session_id
+            healed_json = json.dumps([m.model_dump(mode="json") for m in messages], ensure_ascii=False)
+            conn.execute(
+                "UPDATE conversations SET messages = ?, message_count = ?, updated_at = ? WHERE session_key = ?",
+                (healed_json, len(messages), _now_iso(), session_key),
+            )
+            conn.commit()
+            logger.info(
+                "wolo session: healed incomplete trailing turn session_key=%s kept=%d",
+                session_key,
+                len(messages),
+            )
         logger.debug(
             "wolo session loaded session_key=%s messages=%d session_id=%s",
             session_key,
             len(messages),
             session_id,
         )
-        return messages, session_id
+        result = (messages, session_id)
     except Exception:
         logger.warning("wolo session load failed for session_key=%s, starting fresh", session_key, exc_info=True)
-        return [], None
+        result = ([], None)
     finally:
         conn.close()
+    if healed_messages is not None and healed_session_id is not None:
+        _write_dream_snapshot(workspace, session_key, healed_session_id, healed_messages)
+    return result
 
 
 def list_conversations(workspace: Path, limit: int = 20) -> list[dict]:

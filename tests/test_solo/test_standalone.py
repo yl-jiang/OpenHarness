@@ -1,6 +1,8 @@
 import asyncio
 import contextlib
+import json
 import logging
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -9,8 +11,8 @@ from typer.testing import CliRunner
 from openharness.api.usage import UsageSnapshot
 from openharness.channels.bus.events import InboundMessage
 from openharness.channels.bus.queue import MessageBus
-from openharness.engine.messages import ConversationMessage, TextBlock
-from openharness.engine.stream_events import AssistantTurnComplete, ToolExecutionCompleted
+from openharness.engine.messages import ConversationMessage, TextBlock, ToolResultBlock, ToolUseBlock
+from openharness.engine.stream_events import AssistantTurnComplete, ReasoningDelta, StreamFinished, ToolExecutionCompleted
 from openharness.tools.base import ToolExecutionContext
 from openharness.tools.skill_write_tool import SkillWriteInput
 
@@ -410,6 +412,73 @@ async def test_standalone_solo_gateway_logs_inbound_and_outbound(
 
 
 @pytest.mark.asyncio
+async def test_standalone_solo_gateway_does_not_dedup_same_reply_text_with_different_quotes(
+    tmp_path: Path,
+    monkeypatch,
+):
+    workspace = tmp_path / ".solo"
+    bus = MessageBus()
+    calls: list[dict[str, object]] = []
+
+    class FakeToolAgent:
+        def __init__(self, store, *, profile=None, **kw):
+            del store, profile, kw
+
+        async def stream_run(self, text, session_key="", **kwargs):
+            calls.append({"text": text, "session_key": session_key, "kwargs": kwargs})
+            quoted = kwargs["source_context"]["message_metadata"].get("quoted_context", "")
+            yield ("final", f"已处理：{quoted}")
+
+    class FakeModelAgent:
+        def __init__(self, profile=None):
+            self.profile = profile
+
+    monkeypatch.setattr("solo.gateway.bridge.SoloQueryRunner", FakeToolAgent)
+    monkeypatch.setattr("solo.gateway.bridge.OpenHarnessSoloAgent", FakeModelAgent)
+    bridge = SoloGatewayBridge(bus=bus, workspace=workspace, provider_profile="codex")
+    task = asyncio.create_task(bridge.run())
+    try:
+        await bus.publish_inbound(
+            InboundMessage(
+                channel="feishu",
+                sender_id="ou_user",
+                chat_id="ou_user",
+                content="是的",
+                metadata={
+                    "chat_type": "p2p",
+                    "parent_id": "parent-1",
+                    "quoted_context": "第一条引用",
+                },
+            )
+        )
+        first = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+
+        await bus.publish_inbound(
+            InboundMessage(
+                channel="feishu",
+                sender_id="ou_user",
+                chat_id="ou_user",
+                content="是的",
+                metadata={
+                    "chat_type": "p2p",
+                    "parent_id": "parent-2",
+                    "quoted_context": "第二条引用",
+                },
+            )
+        )
+        second = await asyncio.wait_for(bus.consume_outbound(), timeout=1.0)
+    finally:
+        bridge.stop()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert len(calls) == 2
+    assert first.content == "已处理：第一条引用"
+    assert second.content == "已处理：第二条引用"
+
+
+@pytest.mark.asyncio
 async def test_standalone_solo_record_tool_persists_traceable_attachments(tmp_path: Path):
     from solo.cli import app
     from solo.tools import SoloToolRegistry, build_oh_registry
@@ -584,6 +653,63 @@ async def test_solo_query_runner_trims_long_session_history(tmp_path: Path, monk
 
 
 @pytest.mark.asyncio
+async def test_solo_query_runner_trims_long_session_history_on_turn_boundary(tmp_path: Path, monkeypatch):
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    session_key = "feishu:chat-turn-boundary"
+    messages = [
+        ConversationMessage(role="assistant", content=[TextBlock(text="更早的回复")]),
+        ConversationMessage.from_user_text("spill user"),
+        ConversationMessage(
+            role="assistant",
+            content=[ToolUseBlock(id="call_spill", name="solo_search", input={"query": "spill"})],
+        ),
+        ConversationMessage(
+            role="user",
+            content=[ToolResultBlock(tool_use_id="call_spill", content="spill result")],
+        ),
+        ConversationMessage(role="assistant", content=[TextBlock(text="spill done")]),
+    ]
+    for index in range(39):
+        messages.extend(
+            [
+                ConversationMessage.from_user_text(f"turn {index}"),
+                ConversationMessage(role="assistant", content=[TextBlock(text=f"reply {index}")]),
+            ]
+        )
+    save_conversation(workspace, session_key, messages, session_id="sid-boundary")
+    captured: dict[str, object] = {}
+
+    class FakeQueryEngine:
+        def __init__(self, **kwargs):
+            self.messages: list[ConversationMessage] = []
+            self.tool_metadata = kwargs["tool_metadata"]
+
+        def set_system_prompt(self, prompt: str):
+            del prompt
+
+        def load_messages(self, messages):
+            self.messages = list(messages)
+            captured["loaded_count"] = len(messages)
+            captured["first_loaded"] = messages[0].text
+
+        async def submit_message(self, prompt):
+            del prompt
+            yield AssistantTurnComplete(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="收到")]),
+                usage=UsageSnapshot(),
+            )
+
+    monkeypatch.setattr("solo.runner.QueryEngine", FakeQueryEngine)
+
+    result = await SoloQueryRunner(store, api_client=object()).run("今天状态不错", session_key=session_key)
+
+    assert result == "收到"
+    assert captured["loaded_count"] == 78
+    assert captured["first_loaded"] == "turn 0"
+
+
+@pytest.mark.asyncio
 async def test_solo_query_runner_prefers_final_text_after_record_tool(tmp_path: Path, monkeypatch):
     workspace = initialize_workspace(tmp_path / ".solo")
     store = SoloStore(workspace)
@@ -619,6 +745,235 @@ async def test_solo_query_runner_prefers_final_text_after_record_tool(tmp_path: 
     result = await SoloQueryRunner(store, api_client=object()).run("今天P1000群里没消息")
 
     assert result == "没消息就是好消息，这条先帮你记下来了。"
+
+
+@pytest.mark.asyncio
+async def test_solo_query_runner_skips_retry_after_abnormal_stream_finish(tmp_path: Path, monkeypatch):
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    calls = 0
+
+    class FakeQueryEngine:
+        def __init__(self, **kwargs):
+            self.messages: list[ConversationMessage] = []
+            self.tool_metadata = kwargs["tool_metadata"]
+
+        def set_system_prompt(self, prompt: str):
+            del prompt
+
+        def load_messages(self, messages):
+            self.messages = list(messages)
+
+        async def submit_message(self, prompt):
+            nonlocal calls
+            calls += 1
+            self.messages.append(
+                prompt if isinstance(prompt, ConversationMessage) else ConversationMessage.from_user_text(prompt)
+            )
+            yield ReasoningDelta(text="thinking")
+            yield StreamFinished(reason="auto_continue_exhausted")
+
+    monkeypatch.setattr("solo.runner.QueryEngine", FakeQueryEngine)
+
+    result = await SoloQueryRunner(store, api_client=object()).run("今天状态不错", session_key="feishu:chat-retry")
+
+    assert calls == 1
+    assert result == "抱歉，模型思考后未能产生有效输出，请稍后重试。"
+
+
+@pytest.mark.asyncio
+async def test_solo_query_runner_abnormal_termination_avoids_leaking_tool_chain(tmp_path: Path, monkeypatch):
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    session_key = "feishu:chat-abnormal"
+    save_conversation(
+        workspace,
+        session_key,
+        [
+            ConversationMessage.from_user_text("上一条正常消息"),
+            ConversationMessage(role="assistant", content=[TextBlock(text="上一条正常回复")]),
+        ],
+        session_id="sid-abnormal",
+    )
+
+    class FakeQueryEngine:
+        def __init__(self, **kwargs):
+            self.messages: list[ConversationMessage] = []
+            self.tool_metadata = kwargs["tool_metadata"]
+
+        def set_system_prompt(self, prompt: str):
+            del prompt
+
+        def load_messages(self, messages):
+            self.messages = list(messages)
+
+        async def submit_message(self, prompt):
+            user_message = (
+                prompt if isinstance(prompt, ConversationMessage) else ConversationMessage.from_user_text(prompt)
+            )
+            self.messages.extend(
+                [
+                    user_message,
+                    ConversationMessage(
+                        role="assistant",
+                        content=[ToolUseBlock(id="call_record", name="solo_record", input={"content": user_message.text})],
+                    ),
+                    ConversationMessage(
+                        role="user",
+                        content=[
+                            ToolResultBlock(
+                                tool_use_id="call_record",
+                                content="收到～已记下这条。record_id=abc123",
+                            )
+                        ],
+                    ),
+                    ConversationMessage(
+                        role="assistant",
+                        content=[ToolUseBlock(id="call_read", name="skill_load", input={"name": "read"})],
+                    ),
+                    ConversationMessage(
+                        role="user",
+                        content=[
+                            ToolResultBlock(
+                                tool_use_id="call_read",
+                                content='<skill_content name="read">',
+                            )
+                        ],
+                    ),
+                ]
+            )
+            yield ToolExecutionCompleted(
+                tool_name="solo_record",
+                output="收到～已记下这条。record_id=abc123",
+                is_error=False,
+            )
+            yield ToolExecutionCompleted(
+                tool_name="skill_load",
+                output='<skill_content name="read">',
+                is_error=False,
+            )
+            yield StreamFinished(reason="max_turns_exceeded")
+
+    monkeypatch.setattr("solo.runner.QueryEngine", FakeQueryEngine)
+
+    result = await SoloQueryRunner(store, api_client=object()).run(
+        "今天下午将近6点到家",
+        session_key=session_key,
+    )
+
+    assert result == "收到～已记下这条。record_id=abc123"
+    assert "<skill_content" not in result
+
+    from solo.core.session import load_conversation
+
+    messages, loaded_sid = load_conversation(workspace, session_key)
+    assert loaded_sid == "sid-abnormal"
+    assert [message.text for message in messages] == ["上一条正常消息", "上一条正常回复"]
+
+
+@pytest.mark.asyncio
+async def test_solo_query_runner_treats_quoted_message_as_reference_only(tmp_path: Path, monkeypatch):
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    captured: dict[str, object] = {}
+    search_queries: list[str] = []
+
+    def fake_search_records(query: str, limit: int = 5):
+        del limit
+        search_queries.append(query)
+        return []
+
+    monkeypatch.setattr(store, "search_records", fake_search_records)
+
+    class FakeQueryEngine:
+        def __init__(self, **kwargs):
+            self.messages: list[ConversationMessage] = []
+            self.tool_metadata = kwargs["tool_metadata"]
+
+        def set_system_prompt(self, prompt: str):
+            del prompt
+
+        def load_messages(self, messages):
+            self.messages = list(messages)
+
+        async def submit_message(self, prompt):
+            captured["prompt"] = prompt.text if isinstance(prompt, ConversationMessage) else prompt
+            yield AssistantTurnComplete(
+                message=ConversationMessage(role="assistant", content=[TextBlock(text="收到")]),
+                usage=UsageSnapshot(),
+            )
+
+    monkeypatch.setattr("solo.runner.QueryEngine", FakeQueryEngine)
+
+    result = await SoloQueryRunner(store, api_client=object()).run(
+        "你说我昨天不舒服没食欲,我昨天什么时候说的?",
+        source_context={
+            "message_metadata": {
+                "parent_id": "parent-1",
+                "quoted_context": "已经补充上了，昨天不舒服所以今晚红烧肉没吃。",
+                "quoted_message": {
+                    "message_id": "parent-1",
+                    "role": "assistant",
+                    "sender_label": "OpenHarness Assistant",
+                    "sent_at": "2026-06-06T20:12:15+08:00",
+                    "msg_type": "text",
+                    "content": "已经补充上了，昨天不舒服所以今晚红烧肉没吃。",
+                },
+            }
+        },
+    )
+
+    assert result == "收到"
+    assert search_queries == ["你说我昨天不舒服没食欲,我昨天什么时候说的?"]
+    prompt = str(captured["prompt"])
+    assert "## Fact Discipline" in prompt
+    assert "## Reply Context (Reference Only)" in prompt
+    assert "Use it only as background context" in prompt
+    assert "- role: assistant" in prompt
+    assert "- sender: OpenHarness Assistant" in prompt
+    assert "- sent_at: 2026-06-06T20:12:15+08:00" in prompt
+    assert "- message_type: text" in prompt
+    assert "- content:" in prompt
+    assert "已经补充上了，昨天不舒服所以今晚红烧肉没吃。" in prompt
+    assert "## Current User Message" in prompt
+    assert "你说我昨天不舒服没食欲,我昨天什么时候说的?" in prompt
+
+
+@pytest.mark.asyncio
+async def test_solo_update_record_rejects_same_turn_mutation(tmp_path: Path):
+    from solo.tools import SoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    registry = SoloToolRegistry(store)
+
+    created = await registry._handle_record(
+        {
+            "content": "今晚小朋友家人做了红烧肉，我没吃。",
+            "corrected_content": "今天晚饭家人做了红烧肉，我没吃。",
+            "summary": "晚饭家人做了红烧肉，自己没吃",
+            "tags": "生活, 家庭, 饮食, 家人",
+            "emotion": "中性",
+        }
+    )
+
+    record_id = str(created["record_id"])
+    update = await registry._handle_update_record(
+        {
+            "record_id": record_id,
+            "corrected_content": "今天晚饭家人做了红烧肉，因为昨天不舒服没食欲，没吃。",
+            "tags": "生活, 家庭, 饮食, 家人, 健康, 不舒服",
+            "emotion_reason": "昨天不舒服导致没食欲",
+        }
+    )
+
+    assert update["ok"] is False
+    assert "不要在同一轮补改刚创建的记录" in str(update["message"])
+    record = store.get_record(record_id)
+    assert record is not None
+    assert record.corrected_content == "今天晚饭家人做了红烧肉，我没吃。"
+    assert record.tags == "生活, 家庭, 饮食, 家人"
+    assert record.emotion_reason == ""
 
 
 @pytest.mark.asyncio
@@ -695,6 +1050,72 @@ def test_solo_save_conversation_roundtrip(tmp_path: Path):
     messages, loaded_sid = load_conversation(workspace, session_key)
     assert loaded_sid == "sid-2"
     assert len(messages) == 2
+
+
+def test_solo_load_conversation_heals_incomplete_trailing_tool_turn(tmp_path: Path):
+    workspace = initialize_workspace(tmp_path / ".solo")
+    session_key = "feishu:chat-corrupt"
+    session_id = "sid-corrupt"
+    save_conversation(
+        workspace,
+        session_key,
+        [
+            ConversationMessage.from_user_text("上一条正常消息"),
+            ConversationMessage(role="assistant", content=[TextBlock(text="上一条正常回复")]),
+        ],
+        session_id=session_id,
+    )
+
+    corrupted_messages = [
+        ConversationMessage.from_user_text("上一条正常消息"),
+        ConversationMessage(role="assistant", content=[TextBlock(text="上一条正常回复")]),
+        ConversationMessage.from_user_text("今天下午将近6点到家"),
+        ConversationMessage(
+            role="assistant",
+            content=[ToolUseBlock(id="call_record", name="solo_record", input={"content": "今天下午将近6点到家"})],
+        ),
+        ConversationMessage(
+            role="user",
+            content=[ToolResultBlock(tool_use_id="call_record", content="收到～已记下这条。record_id=abc123")],
+        ),
+        ConversationMessage(
+            role="assistant",
+            content=[ToolUseBlock(id="call_read", name="skill_load", input={"name": "read"})],
+        ),
+        ConversationMessage(
+            role="user",
+            content=[ToolResultBlock(tool_use_id="call_read", content='<skill_content name="read">')],
+        ),
+    ]
+    db_path = workspace / "data" / "store.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute(
+        "UPDATE conversations SET messages = ?, message_count = ? WHERE session_key = ?",
+        (
+            json.dumps([message.model_dump(mode="json") for message in corrupted_messages], ensure_ascii=False),
+            len(corrupted_messages),
+            session_key,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    from solo.core.session import load_conversation
+
+    messages, loaded_sid = load_conversation(workspace, session_key)
+
+    assert loaded_sid == session_id
+    assert [message.text for message in messages] == ["上一条正常消息", "上一条正常回复"]
+
+    conn = sqlite3.connect(str(db_path))
+    row = conn.execute(
+        "SELECT messages, message_count FROM conversations WHERE session_key = ?",
+        (session_key,),
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row[1] == 2
+    assert len(json.loads(row[0])) == 2
 
 
 @pytest.mark.asyncio

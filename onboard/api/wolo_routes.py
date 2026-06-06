@@ -28,7 +28,15 @@ class ProcessRequest(BaseModel):
 
 
 def _service(workspace: str | None = None) -> WoloService:
-    return WoloService(workspace)
+    key = workspace or "__default__"
+    svc = _service_cache.get(key)
+    if svc is None:
+        svc = WoloService(workspace)
+        _service_cache[key] = svc
+    return svc
+
+
+_service_cache: dict[str, WoloService] = {}
 
 
 @router.get("/stats")
