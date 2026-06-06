@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -106,6 +107,107 @@ async def test_feishu_send_replies_in_thread_for_group_messages(monkeypatch):
     )
 
     assert sent == ["om_group"]
+
+
+def test_feishu_fetch_quoted_message_sync_extracts_role_sender_and_time():
+    channel = FeishuChannel(FeishuConfig(), MessageBus())
+    item = SimpleNamespace(
+        msg_type="text",
+        body=SimpleNamespace(content=json.dumps({"text": "上一条助手回复"}, ensure_ascii=False)),
+        create_time="1749211935000",
+        sender=SimpleNamespace(id="ou_bot", sender_type="app"),
+    )
+    fake_response = SimpleNamespace(
+        success=lambda: True,
+        data=SimpleNamespace(items=[item]),
+    )
+    channel._client = SimpleNamespace(
+        im=SimpleNamespace(
+            v1=SimpleNamespace(
+                message=SimpleNamespace(get=lambda req: fake_response)
+            )
+        )
+    )
+
+    quoted = channel._fetch_quoted_message_sync("parent-123", current_sender_id="ou_user")
+    expected_sent_at = datetime.fromtimestamp(1749211935, timezone.utc).astimezone().isoformat()
+
+    assert quoted == {
+        "message_id": "parent-123",
+        "role": "assistant",
+        "content": "上一条助手回复",
+        "msg_type": "text",
+        "sender_type": "app",
+        "sender_id": "ou_bot",
+        "sender_label": "assistant",
+        "sent_at": expected_sent_at,
+    }
+
+
+@pytest.mark.asyncio
+async def test_feishu_reply_forwards_structured_quote_metadata_without_mutating_content(monkeypatch):
+    channel = FeishuChannel(
+        FeishuConfig(allow_from=["user-open-id"], react_emoji="OK"),
+        MessageBus(),
+    )
+    reactions: list[str] = []
+    forwarded: list[dict[str, object]] = []
+
+    async def fake_add_reaction(message_id: str, emoji_type: str = "OK") -> None:
+        reactions.append(f"{message_id}:{emoji_type}")
+
+    async def fake_handle_message(**kwargs):
+        forwarded.append(kwargs)
+
+    async def fake_fetch_quoted_message(message_id: str, *, current_sender_id: str):
+        assert message_id == "parent-123"
+        assert current_sender_id == "user-open-id"
+        return {
+            "message_id": "parent-123",
+            "role": "assistant",
+            "sender_label": "OpenHarness Assistant",
+            "sender_type": "app",
+            "sent_at": "2026-06-06T20:12:15+08:00",
+            "msg_type": "text",
+            "content": "上一条被引用的消息",
+        }
+
+    monkeypatch.setattr(channel, "_add_reaction", fake_add_reaction)
+    monkeypatch.setattr(channel, "_handle_message", fake_handle_message)
+    monkeypatch.setattr(channel, "_fetch_quoted_message", fake_fetch_quoted_message)
+    monkeypatch.setattr(channel, "_resolve_sender_display_name_sync", lambda sender_id: "Allowed User")
+
+    event = SimpleNamespace(
+        sender=SimpleNamespace(
+            sender_type="user",
+            sender_id=SimpleNamespace(open_id="user-open-id"),
+        ),
+        message=SimpleNamespace(
+            message_id="message-reply",
+            chat_id="ou_user",
+            chat_type="p2p",
+            message_type="text",
+            content=json.dumps({"text": "这是当前回复"}, ensure_ascii=False),
+            parent_id="parent-123",
+        ),
+    )
+
+    await channel._on_message(SimpleNamespace(event=event))
+
+    assert reactions == ["message-reply:OK"]
+    assert len(forwarded) == 1
+    assert forwarded[0]["content"] == "这是当前回复"
+    assert forwarded[0]["metadata"]["parent_id"] == "parent-123"
+    assert forwarded[0]["metadata"]["quoted_context"] == "上一条被引用的消息"
+    assert forwarded[0]["metadata"]["quoted_message"] == {
+        "message_id": "parent-123",
+        "role": "assistant",
+        "sender_label": "OpenHarness Assistant",
+        "sender_type": "app",
+        "sent_at": "2026-06-06T20:12:15+08:00",
+        "msg_type": "text",
+        "content": "上一条被引用的消息",
+    }
 
 
 @pytest.mark.asyncio

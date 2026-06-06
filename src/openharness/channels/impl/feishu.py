@@ -7,6 +7,7 @@ import re
 import threading
 from collections import OrderedDict
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -30,6 +31,47 @@ MSG_TYPE_MAP = {
     "file": "[file]",
     "sticker": "[sticker]",
 }
+
+
+def _extract_feishu_sender_open_id(sender_raw: Any) -> str:
+    sender_id = _mention_value(sender_raw, "id")
+    if isinstance(sender_id, str):
+        return _clean_mention_value(sender_id)
+    return _clean_mention_value(
+        _mention_id_value(sender_id, "open_id")
+        or _mention_id_value(sender_id, "user_id")
+        or _mention_id_value(sender_id, "union_id")
+        or _mention_id_value(sender_id, "id")
+    )
+
+
+def _extract_feishu_sender_type(sender_raw: Any) -> str:
+    return _clean_mention_value(_mention_value(sender_raw, "sender_type")).lower()
+
+
+def _normalize_feishu_message_time(raw: Any) -> str:
+    text = _clean_mention_value(raw)
+    if not text:
+        return ""
+    try:
+        value = float(text)
+        if value > 100_000_000_000:
+            value /= 1000
+        return datetime.fromtimestamp(value, timezone.utc).astimezone().isoformat()
+    except (TypeError, ValueError, OSError, OverflowError):
+        return text
+
+
+def _quoted_message_role(sender_type: str, sender_id: str, current_sender_id: str) -> str:
+    if sender_type in {"bot", "app"}:
+        return "assistant"
+    if sender_type == "user":
+        return "user" if sender_id and sender_id == current_sender_id else "participant"
+    if sender_id and sender_id == current_sender_id:
+        return "user"
+    if sender_id:
+        return "participant"
+    return "unknown"
 
 
 @dataclass(frozen=True)
@@ -619,6 +661,67 @@ class FeishuChannel(BaseChannel):
             logger.warning("Error fetching quoted message %s: %s", message_id, e)
             return ""
 
+    def _fetch_quoted_message_sync(self, message_id: str, current_sender_id: str) -> dict[str, str] | None:
+        """Fetch structured metadata for a quoted message."""
+        from lark_oapi.api.im.v1 import GetMessageRequest
+
+        try:
+            request = GetMessageRequest.builder().message_id(message_id).build()
+            response = self._client.im.v1.message.get(request)
+            if not response.success():
+                logger.warning(
+                    "Failed to fetch quoted message %s: code=%s, msg=%s",
+                    message_id,
+                    response.code,
+                    response.msg,
+                )
+                return None
+            items = getattr(response.data, "items", None)
+            if not items:
+                return None
+
+            item = items[0]
+            msg_type = _clean_mention_value(getattr(item, "msg_type", ""))
+            text = self._extract_text_from_message_item(item)
+            if not text and msg_type:
+                text = MSG_TYPE_MAP.get(msg_type, f"[{msg_type}]")
+            if not text:
+                return None
+            if len(text) > 500:
+                text = text[:500] + "…"
+
+            sender_raw = getattr(item, "sender", None)
+            sender_id = _extract_feishu_sender_open_id(sender_raw)
+            sender_type = _extract_feishu_sender_type(sender_raw)
+            role = _quoted_message_role(sender_type, sender_id, current_sender_id)
+            sent_at = _normalize_feishu_message_time(getattr(item, "create_time", None))
+
+            sender_label = ""
+            if role == "assistant":
+                sender_label = "assistant"
+            elif sender_id:
+                sender_label = self._resolve_sender_display_name_sync(sender_id)
+
+            payload = {
+                "message_id": message_id,
+                "role": role,
+                "content": text,
+            }
+            if msg_type:
+                payload["msg_type"] = msg_type
+            if sender_type:
+                payload["sender_type"] = sender_type
+            if sender_id:
+                payload["sender_id"] = sender_id
+            if sender_label:
+                payload["sender_label"] = sender_label
+            if sent_at:
+                payload["sent_at"] = sent_at
+            return payload
+        except Exception as e:
+            logger.warning("Error fetching quoted message %s: %s", message_id, e)
+            return None
+
     def _fetch_merge_forward_content_sync(self, message_id: str) -> str:
         """Fetch and expand all sub-messages of a merge_forward message.
 
@@ -669,18 +772,17 @@ class FeishuChannel(BaseChannel):
             None, self._fetch_merge_forward_content_sync, message_id,
         )
 
-    async def _fetch_quoted_context(self, message_id: str) -> str:
-        """Fetch quoted message content, return formatted context string or empty."""
+    async def _fetch_quoted_message(self, message_id: str, *, current_sender_id: str) -> dict[str, str] | None:
+        """Fetch structured quoted message metadata or ``None``."""
         if not self._client or not message_id:
-            return ""
+            return None
         loop = asyncio.get_running_loop()
-        text = await loop.run_in_executor(None, self._fetch_message_content_sync, message_id)
-        if not text:
-            return ""
-        # Truncate overly long quotes
-        if len(text) > 500:
-            text = text[:500] + "…"
-        return text
+        return await loop.run_in_executor(
+            None,
+            self._fetch_quoted_message_sync,
+            message_id,
+            current_sender_id,
+        )
 
     # Regex to match markdown tables (header + separator + data rows)
     _TABLE_RE = re.compile(
@@ -1431,35 +1533,40 @@ class FeishuChannel(BaseChannel):
 
             # If this is a reply (quote), fetch the quoted message content
             parent_id = getattr(message, "parent_id", None)
-            quoted_context = ""
+            quoted_message: dict[str, str] | None = None
             if parent_id:
-                quoted_context = await self._fetch_quoted_context(parent_id)
-            if quoted_context:
-                content = f"[引用消息] {quoted_context}\n[回复] {content}"
+                quoted_message = await self._fetch_quoted_message(
+                    parent_id,
+                    current_sender_id=sender_id,
+                )
 
             # Forward to message bus
             reply_to = chat_id if chat_type == "group" else sender_id
 
             # thread_id enables per-topic session routing in router.py
             thread_id = getattr(message, "thread_id", None) or getattr(message, "root_id", None)
+            metadata = {
+                "message_id": message_id,
+                "thread_id": thread_id,
+                "root_id": getattr(message, "root_id", None),
+                "parent_id": parent_id,
+                "chat_type": chat_type,
+                "msg_type": msg_type,
+                "mentions": mentions,
+                "mentions_bot": mentions_bot,
+                "sender_display_name": sender_display_name,
+                "sender_label": sender_display_name or sender_id,
+            }
+            if quoted_message:
+                metadata["quoted_message"] = quoted_message
+                metadata["quoted_context"] = quoted_message.get("content", "")
 
             await self._handle_message(
                 sender_id=sender_id,
                 chat_id=reply_to,
                 content=content,
                 media=media_paths,
-                metadata={
-                    "message_id": message_id,
-                    "thread_id": thread_id,
-                    "root_id": getattr(message, "root_id", None),
-                    "parent_id": parent_id,
-                    "chat_type": chat_type,
-                    "msg_type": msg_type,
-                    "mentions": mentions,
-                    "mentions_bot": mentions_bot,
-                    "sender_display_name": sender_display_name,
-                    "sender_label": sender_display_name or sender_id,
-                }
+                metadata=metadata,
             )
 
         except Exception as e:
