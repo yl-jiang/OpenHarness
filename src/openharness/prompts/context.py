@@ -29,7 +29,7 @@ from openharness.prompts.claudemd import discover_claude_md_files, load_claude_m
 from openharness.services import estimate_tokens
 from openharness.permissions.modes import PermissionMode
 from openharness.prompts.system_prompt import build_system_prompt
-from openharness.skills.loader import discover_project_skill_dirs, get_user_skill_dirs, load_skill_registry
+from openharness.skills.loader import discover_project_skill_dirs, get_user_skill_dirs, load_skill_registry_cached
 
 SKILLS_GUIDANCE = (
     "# Skill guidance\n"
@@ -183,7 +183,7 @@ def _build_skills_section(
     settings: Settings | None = None,
 ) -> str | None:
     """Build a system prompt section listing available skills."""
-    registry = load_skill_registry(
+    registry = load_skill_registry_cached(
         cwd,
         extra_skill_dirs=extra_skill_dirs,
         extra_plugin_roots=extra_plugin_roots,

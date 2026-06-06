@@ -13,6 +13,7 @@ from openharness.skills.skill_utils import (
     validate_name,
 )
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.skills.loader import invalidate_skill_registry_cache
 
 
 class SkillWriteInput(BaseModel):
@@ -122,6 +123,7 @@ class SkillWriteTool(BaseTool):
 
         skill_dir.mkdir(parents=True, exist_ok=True)
         skill_path.write_text(arguments.content, encoding="utf-8")
+        invalidate_skill_registry_cache()
 
         refresher = context.metadata.get("system_prompt_refresher")
         if callable(refresher):

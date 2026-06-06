@@ -74,6 +74,118 @@ def load_skill_registry(
     return registry
 
 
+# ---------------------------------------------------------------------------
+# Registry cache — avoids redundant file scans within a session
+# ---------------------------------------------------------------------------
+
+_cached_registry: SkillRegistry | None = None
+_cached_registry_key: tuple[str | None, tuple[str, ...], tuple[str, ...], tuple[tuple[str, float, int], ...]] | None = None
+
+
+def _get_registry_fingerprint(
+    cwd: str | Path | None,
+    extra_skill_dirs: Iterable[str | Path] | None,
+    extra_plugin_roots: Iterable[str | Path] | None,
+    settings,
+) -> tuple[tuple[str, float, int], ...]:
+    resolved_settings = settings or load_settings()
+    dirs: list[Path] = []
+    dirs.extend(get_user_skill_dirs(resolved_settings))
+    if extra_skill_dirs:
+        dirs.extend(Path(d) for d in extra_skill_dirs)
+    if cwd is not None and getattr(resolved_settings, "allow_project_skills", True):
+        dirs.extend(discover_project_skill_dirs(
+            cwd,
+            getattr(resolved_settings, "project_skill_dirs", None),
+        ))
+
+    files: list[Path] = []
+    for d in dirs:
+        if d.exists():
+            if d.is_file():
+                files.append(d)
+            else:
+                try:
+                    files.extend(d.rglob("*.md"))
+                except OSError:
+                    pass
+
+    try:
+        from openharness.skills.bundled import _CONTENT_DIR
+        if _CONTENT_DIR.exists():
+            files.extend(_CONTENT_DIR.rglob("*.md"))
+    except (ImportError, OSError):
+        pass
+
+    try:
+        from openharness.plugins.loader import discover_plugin_paths_for_settings
+        plugin_paths = discover_plugin_paths_for_settings(
+            resolved_settings,
+            cwd or Path.cwd(),
+            extra_roots=extra_plugin_roots,
+        )
+        for p in plugin_paths:
+            if p.exists():
+                files.extend(p.rglob("*.json"))
+                files.extend(p.rglob("*.md"))
+    except Exception:
+        pass
+
+    files = sorted(set(files))
+    sig: list[tuple[str, float, int]] = []
+    for f in files:
+        try:
+            stat = f.stat()
+            sig.append((str(f.resolve()), stat.st_mtime, stat.st_size))
+        except OSError:
+            pass
+    return tuple(sig)
+
+
+def load_skill_registry_cached(
+    cwd: str | Path | None = None,
+    *,
+    extra_skill_dirs: Iterable[str | Path] | None = None,
+    extra_plugin_roots: Iterable[str | Path] | None = None,
+    settings=None,
+) -> SkillRegistry:
+    """Return a cached :class:`SkillRegistry`, rebuilding only after invalidation."""
+    global _cached_registry, _cached_registry_key
+
+    resolved_settings = settings or load_settings()
+    resolved_cwd = str(Path(cwd).resolve()) if cwd else None
+    dirs_key = tuple(str(Path(p).resolve()) for p in (extra_skill_dirs or ()))
+    roots_key = tuple(str(Path(p).resolve()) for p in (extra_plugin_roots or ()))
+
+    fingerprint = _get_registry_fingerprint(
+        cwd,
+        extra_skill_dirs=extra_skill_dirs,
+        extra_plugin_roots=extra_plugin_roots,
+        settings=resolved_settings,
+    )
+    key = (resolved_cwd, dirs_key, roots_key, fingerprint)
+
+    if _cached_registry is not None and _cached_registry_key == key:
+        return _cached_registry
+
+    registry = load_skill_registry(
+        cwd,
+        extra_skill_dirs=extra_skill_dirs,
+        extra_plugin_roots=extra_plugin_roots,
+        settings=resolved_settings,
+    )
+    _cached_registry = registry
+    _cached_registry_key = key
+    return registry
+
+
+def invalidate_skill_registry_cache() -> None:
+    """Clear the cached registry so the next call rebuilds from disk."""
+    global _cached_registry, _cached_registry_key
+    _cached_registry = None
+    _cached_registry_key = None
+
+
 def apply_skill_path_rules(
     permission_settings,
     *,

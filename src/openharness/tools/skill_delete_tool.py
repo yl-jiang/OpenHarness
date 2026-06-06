@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from openharness.skills.skill_utils import resolve_user_skills_dir
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.skills.loader import invalidate_skill_registry_cache
 
 
 class SkillDeleteInput(BaseModel):
@@ -65,6 +66,8 @@ class SkillDeleteTool(BaseTool):
             )
 
         shutil.rmtree(skill_dir)
+
+        invalidate_skill_registry_cache()
 
         refresher = context.metadata.get("system_prompt_refresher")
         if callable(refresher):

@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from openharness.skills import load_skill_registry
+from openharness.skills.loader import load_skill_registry_cached
 from openharness.skills.skill_utils import format_loaded_skill_output
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
 
@@ -55,7 +55,7 @@ class SkillLoadTool(BaseTool):
     async def execute(
         self, arguments: SkillLoadInput, context: ToolExecutionContext
     ) -> ToolResult:
-        registry = load_skill_registry(
+        registry = load_skill_registry_cached(
             context.metadata.get("skill_registry_cwd", context.cwd),
             extra_skill_dirs=context.metadata.get("extra_skill_dirs"),
             extra_plugin_roots=context.metadata.get("extra_plugin_roots"),

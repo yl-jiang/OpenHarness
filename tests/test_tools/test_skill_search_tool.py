@@ -38,10 +38,10 @@ def fake_registry(monkeypatch: pytest.MonkeyPatch) -> SkillRegistry:
 
     import openharness.tools.skill_search_tool as mod
 
-    monkeypatch.setattr(mod, "load_skill_registry", _fake_load_skill_registry)
+    monkeypatch.setattr(mod, "load_skill_registry_cached", _fake_load_skill_registry)
     monkeypatch.setitem(
         SkillSearchTool.execute.__globals__,
-        "load_skill_registry",
+        "load_skill_registry_cached",
         _fake_load_skill_registry,
     )
     return registry

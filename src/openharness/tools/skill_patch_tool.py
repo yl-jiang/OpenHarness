@@ -11,6 +11,7 @@ from openharness.skills.skill_utils import (
     validate_frontmatter,
 )
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolResult
+from openharness.skills.loader import invalidate_skill_registry_cache
 
 
 class SkillPatchInput(BaseModel):
@@ -117,6 +118,7 @@ class SkillPatchTool(BaseTool):
             )
 
         skill_path.write_text(new_content, encoding="utf-8")
+        invalidate_skill_registry_cache()
 
         refresher = context.metadata.get("system_prompt_refresher")
         if callable(refresher):
