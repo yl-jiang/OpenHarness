@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -48,6 +49,32 @@ from wolo.core.utils import (
 logger = get_logger(__name__)
 
 ToolHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+# Feature-flag names read via os.environ at handler time.
+_WOLO_DISABLE_SAME_TURN_UPDATE_GUARD = "WOLO_DISABLE_SAME_TURN_UPDATE_GUARD"
+_WOLO_DISABLE_HALLUCINATION_GUARD = "WOLO_DISABLE_HALLUCINATION_GUARD"
+
+# Recency window (seconds) used by Layer-4 hallucination guard when Layer-2
+# is disabled via flag — records newer than this are considered "fresh".
+SAME_TURN_RECENT_WINDOW_SECONDS = 180
+
+# Subjective / inferential fields the model must NOT patch in via update on a
+# freshly-created record. These must come from the user's own words in the
+# original *_record call, or remain empty / neutral.
+SUBJECTIVE_UPDATE_FIELDS: frozenset[str] = frozenset(
+    {
+        "emotion",
+        "emotion_reason",
+        "sample_type",
+        "problem_essence",
+        "available_cards",
+        "strategy",
+        "next_move",
+        "deadline",
+        "validation_signal",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -98,6 +125,7 @@ class WoloToolRegistry:
         self._source_context = dict(source_context or {})
         self._progress_callback = progress_callback
         self._background_tasks: set[Any] = set()
+        self._created_record_ids: set[str] = set()
 
     def _processor(self) -> WoloProcessor:
         if self.processor is None:
@@ -265,11 +293,17 @@ class WoloToolRegistry:
             )
             self.store.add_record(record)
             persist_work_artifacts(self.store, record, arguments)
+            self._created_record_ids.add(record.id)
             return {
                 "ok": True,
                 "entry_id": entry.id,
                 "record_id": record.id,
-                "message": f"收到～已记下这条。record_id={record.id}",
+                "message": "收到～已记下这条。",
+                "_metadata": {
+                    "app": "wolo",
+                    "domain_event": "record_created",
+                    "record_ids": [record.id],
+                },
             }
 
         # No structured fields provided — entry saved but not yet structured.
@@ -331,6 +365,7 @@ class WoloToolRegistry:
             self.store.add_record(record)
             persist_work_artifacts(self.store, record, item)
             created.append(record.id)
+        self._created_record_ids.update(created)
         logger.info("_handle_import_records imported=%d", len(created))
         ids_hint = "，可通过 wolo_search/view 获取" if len(created) > 5 else "：" + ", ".join(created)
         return {
@@ -338,6 +373,11 @@ class WoloToolRegistry:
             "record_ids": created,
             "imported": len(created),
             "message": f"收到～已记下 {len(created)} 条{ids_hint}。",
+            "_metadata": {
+                "app": "wolo",
+                "domain_event": "records_imported",
+                "record_ids": created,
+            },
         }
 
     async def _handle_clarify(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -812,34 +852,113 @@ class WoloToolRegistry:
         """Update fields of an existing wolo record."""
         record_id = _required_text(arguments, "record_id")
 
+        existing = self.store.get_record(record_id)
+        if existing is None:
+            return {"ok": False, "message": f"❌ 未找到 ID 为 {record_id} 的记录。"}
+
         # Valid fields for update
-        updates = {}
-        for field in [
+        VALID_FIELDS = (
             "summary", "tags", "emotion", "emotion_reason", "events", "period",
             "corrected_content", "related_people", "related_places", "date",
             "sample_type", "problem_essence", "available_cards", "strategy",
             "next_move", "deadline", "validation_signal",
-        ]:
+        )
+        updates: dict[str, Any] = {}
+        for field in VALID_FIELDS:
             if field in arguments:
                 updates[field] = arguments[field]
-        
+
+        if not updates:
+            return {"ok": False, "message": "未提供任何更新字段。"}
+
+        # Layer 2 — Hard same-turn update rejection. This is the primary fix
+        # for the incident where the model would create a record and then
+        # issue a chain of supplement / polish updates in the same user turn.
+        same_turn_guard_enabled = os.environ.get(_WOLO_DISABLE_SAME_TURN_UPDATE_GUARD) != "1"
+        if same_turn_guard_enabled and record_id in self._created_record_ids:
+            logger.info(
+                "_handle_update_record same-turn guard rejected record_id=%s", record_id
+            )
+            return {
+                "ok": False,
+                "message": (
+                    f"❌ 同轮创建保护：record_id={record_id} 是本轮刚创建的记录，"
+                    "不允许用 wolo_update_record 补充或润色。\n"
+                    "请将所有已知字段在 wolo_record 调用时一次性填入；"
+                    "缺失或模糊的事实请用 wolo_clarify 向用户确认，不要推断。\n"
+                    "不要重试本次 update —— 直接用一句自然的话回复用户即可。"
+                ),
+            }
+
+        # Layer 4 — Hallucinated-field rejection on fresh records. Independent
+        # of Layer-2: Layer-2 only catches updates to records created in the
+        # *current* turn, but the model can also pollute an older record by
+        # pulling a subjective field out of conversation-history context.
+        # Layer-4 is the belt-and-suspenders guard for that case — it rejects
+        # inferred subjective fields on any record younger than
+        # SAME_TURN_RECENT_WINDOW_SECONDS.
+        hallucination_guard_enabled = os.environ.get(_WOLO_DISABLE_HALLUCINATION_GUARD) != "1"
+        if (
+            hallucination_guard_enabled
+            and _is_recently_created_record(existing, window_seconds=SAME_TURN_RECENT_WINDOW_SECONDS)
+        ):
+            subjective_hit = SUBJECTIVE_UPDATE_FIELDS & set(updates.keys())
+            if subjective_hit:
+                logger.info(
+                    "_handle_update_record hallucination guard rejected record_id=%s fields=%s",
+                    record_id, sorted(subjective_hit),
+                )
+                return {
+                    "ok": False,
+                    "message": (
+                        "❌ 推断字段保护：刚创建的记录不允许通过 update 补入主观推断字段"
+                        f"（{', '.join(sorted(subjective_hit))}）。\n"
+                        "请在 wolo_record 调用时依据用户原文一次性填写；"
+                        "如果用户没有明确说明，请保持为空或中性。\n"
+                        "不要从对话历史中把之前用户纠正过的字段搬到这条新记录上。"
+                    ),
+                }
+
+        # No-op shortcut: if every proposed field already matches the existing
+        # value, short-circuit and surface the result as is_error=True with
+        # metadata.noop=True so the adapter + engine loop guard can block any
+        # second identical no-op.
+        def _normalize(value: Any) -> str:
+            if value is None:
+                return ""
+            return " ".join(str(value).split())
+
+        no_op = all(_normalize(updates.get(f)) == _normalize(getattr(existing, f, None)) for f in updates)
+        if no_op:
+            logger.info("_handle_update_record no-op record_id=%s", record_id)
+            return {
+                "ok": False,
+                "_is_error": True,
+                "message": (
+                    f"ℹ️ 记录 {record_id} 当前内容已与传入值一致，无需重复更新。"
+                    "不要再对同一条记录发起相同内容的 update 调用，"
+                    "直接用一句自然的话回复用户即可。"
+                ),
+                "_metadata": {
+                    "domain_event": "record_update_noop",
+                    "noop": True,
+                    "record_id": record_id,
+                },
+            }
+
         if "date" in updates:
             date_val = str(updates["date"])
             updates["weekday"] = _get_weekday(date_val)
             updates["season"] = _get_season(date_val)
             updates["is_weekend"] = _is_weekend(date_val)
-        
+
         if "corrected_content" in updates:
             updates["content_length"] = len(str(updates["corrected_content"]))
-        
-        if not updates:
-            return {"ok": False, "message": "未提供任何更新字段。"}
-            
+
         success = self.store.update_record(record_id, **updates)
         if success:
             return {"ok": True, "message": f"✅ 已成功更新记录 {record_id}。"}
-        else:
-            return {"ok": False, "message": f"❌ 未找到 ID 为 {record_id} 的记录。"}
+        return {"ok": False, "message": f"❌ 未找到 ID 为 {record_id} 的记录。"}
 
     async def _handle_delete_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Permanently delete an existing wolo record."""
@@ -1289,7 +1408,11 @@ class _WoloToolAdapter(BaseTool):
             metadata: dict[str, Any] = {}
             if result.get("path"):
                 metadata["paths"] = [str(result["path"])]
-            return ToolResult(output=output, metadata=metadata)
+            handler_metadata = result.get("_metadata")
+            if isinstance(handler_metadata, dict):
+                metadata.update(handler_metadata)
+            is_error = bool(result.get("_is_error")) or result.get("ok") is False
+            return ToolResult(output=output, metadata=metadata, is_error=is_error)
         except Exception as exc:
             return ToolResult(output=str(exc), is_error=True)
 
@@ -1321,13 +1444,18 @@ def _tool_record() -> ToolDefinition:
             "IMPORTANT: This tool only accepts ONE date. If the user's message spans multiple dates "
             "(e.g. '昨天做了X，今天做了Y'), use wolo_import_records to split into separate records per date. "
             "Do NOT call this when the user's intent is ambiguous — call wolo_clarify instead. "
-            "Fill in structured fields (summary, tags, status/emotion, etc.) based only on facts explicitly present "
-            "in the user's message. Do not add unstated causes, diagnoses, motives, timelines, or explanations. "
-            "When a reason is not explicit, keep it unknown instead of filling it in."
+            "Fill in ALL known structured fields (summary, tags, emotion/emotion_reason, related_people, "
+            "related_places, date, period, events, todos, decisions, highlights) in this single call — "
+            "missing or uncertain facts must be clarified via wolo_clarify, NEVER patched in later via "
+            "wolo_update_record. Subjective fields (emotion, emotion_reason, sample_type, problem_essence, "
+            "available_cards, strategy, next_move, deadline, validation_signal) must come from the user's "
+            "own words; when the user did not state them, leave them empty / neutral. Do not add unstated "
+            "causes, diagnoses, motives, timelines, or outcomes. Do NOT rewrite a future plan as a "
+            "completed event; preserve the original tense."
         ),
         [
             ("content", "string", "Original work-log content as the user wrote it.", True),
-            ("corrected_content", "string", "Lightly corrected / cleaned-up work note without inventing facts.", False),
+            ("corrected_content", "string", "Lightly cleaned-up work note — fix typos, punctuation, and colloquial phrasing ONLY. NEVER change the event tense (planned→done / future→past) or add unstated facts, timelines, people, or outcomes. Example: '今天太晚了，明天再推上线' → keep the 'plan to push tomorrow' tense, do NOT rewrite as '今天已经推上线了'.", False),
             ("summary", "string", "One-sentence work summary with outcome, decision, blocker, or next action.", False),
             ("tags", "string", "Comma-separated project/work tags, e.g. project, meeting, code, prompt, tool, bug, review, blocker, decision.", False),
             ("emotion", "string", "Work status label: 顺利/受阻/中性/高压/完成/风险.", False),
@@ -1719,10 +1847,22 @@ def _tool_update_record() -> ToolDefinition:
     return _definition(
         "wolo_update_record",
         (
-            "Modify an existing structured work record ONLY to correct a factual mistake that the user explicitly "
-            "pointed out or that is directly evidenced by visible record/search results. Never use this to add "
-            "inferred causes or motivations. Never call it in the same turn immediately after wolo_record just to "
-            "'improve' a newly created record."
+            "Modify an EXISTING structured work record (one that was created BEFORE this user turn) "
+            "ONLY when (a) the user's latest message explicitly points out a factual mistake "
+            "(e.g. '刚才说错了，其实是...', '改成已完成'), OR (b) visible record/search results "
+            "directly evidence a mistake. "
+            "FORBIDDEN on a record you just created in this same turn via wolo_record or "
+            "wolo_import_records — such calls are rejected with is_error and do NOT modify the "
+            "record. If you forgot a field, the right move is to fold it into the next wolo_record "
+            "call or ask the user via wolo_clarify, not to patch it in via update. "
+            "Subjective / inferential fields (emotion, emotion_reason, sample_type, problem_essence, "
+            "available_cards, strategy, next_move, deadline, validation_signal) must NOT be inferred "
+            "and added via update — only set them when the user explicitly states them IN THIS TURN. "
+            "CRITICAL: a prior-turn correction applied to one record does NOT authorize you to call "
+            "this tool to apply the same label to a different, newer record. Each record's subjective "
+            "fields are independent and must come from the current message. "
+            "Also do NOT re-call this tool with identical arguments: if the prior result said the "
+            "update was a no-op (is_error), stop — do not issue another call for the same record."
         ),
         [
             ("record_id", "string", "The ID of the record to update.", True),
@@ -2076,6 +2216,30 @@ def _format_highlights(highlights: list[Any], *, empty: str) -> str:
         f"- [{item.id}] [{item.kind}] {item.project} {item.title}：{item.content}".strip()
         for item in highlights
     )
+
+
+def _is_recently_created_record(
+    record: "WoloRecord",
+    *,
+    window_seconds: int = SAME_TURN_RECENT_WINDOW_SECONDS,
+) -> bool:
+    """Return True when the record's created_at falls within the recency window.
+
+    Used by the Layer-4 hallucination guard as a time-based fallback when the
+    exact same-turn set in ``WoloToolRegistry._created_record_ids`` is not
+    available (i.e. when Layer-2 is disabled via flag).
+    """
+    created_at = getattr(record, "created_at", None)
+    if not isinstance(created_at, str) or not created_at:
+        return False
+    try:
+        created_dt = datetime.fromisoformat(created_at)
+    except ValueError:
+        return False
+    if created_dt.tzinfo is None:
+        created_dt = created_dt.replace(tzinfo=timezone.utc)
+    now_utc = datetime.now(timezone.utc)
+    return (now_utc - created_dt).total_seconds() <= window_seconds
 
 
 def _backfill_hint(store: WoloStore, record_date: object) -> str | None:

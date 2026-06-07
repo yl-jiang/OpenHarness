@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -59,10 +60,21 @@ _MAX_HINT_ARGS = 3
 _MAX_ARG_LEN = 60
 _QUOTED_MESSAGE_PREFIX = "[引用消息]"
 _REPLY_MARKER = "\n[回复]"
+_WOLO_DISABLE_HINT_DEDUPE = "WOLO_DISABLE_HINT_DEDUPE"
 _FACT_DISCIPLINE_CONTEXT = (
     "## Fact Discipline\n"
     "- Only use facts explicitly stated by the current user in this turn or directly supported by retrieved records.\n"
-    "- Do not infer missing reasons, diagnoses, motives, timelines, or explanations.\n\n"
+    "- Do not infer missing reasons, diagnoses, motives, timelines, or explanations.\n"
+    "- Do NOT rewrite a future plan as a completed event. "
+    "Example: '今天太晚了，明天再推上线' means the user plans to push tomorrow because today is too late; "
+    "do NOT rewrite it as '今天已经推上线了' or '已推上线'. Preserve the original tense.\n"
+    "- Do NOT generalize emotion / emotion_reason / sample_type / problem_essence / strategy / next_move "
+    "/ validation_signal corrections from earlier turns onto new records. A prior correction applied to "
+    "one record does NOT mean new records about similar topics should carry the same fields — each "
+    "record's subjective fields must come from the current user message. When the current message does "
+    "not state them, leave them empty / 中性; do NOT silently copy the most recent historical label.\n"
+    "- Do NOT call wolo_update_record to patch in a subjective field the current user did not state, "
+    "even if a similar-looking record was corrected to that value in a past turn.\n\n"
 )
 
 
@@ -461,6 +473,7 @@ class WoloQueryRunner:
                 "user_skills_dir": str(get_skills_dir(workspace)),
                 "skill_registry_cwd": None,
                 ToolMetadataKey.VISION_MODEL_CONFIG.value: _resolve_vision_config(self._settings),
+                ToolMetadataKey.VISION_CALL_RECORDER.value: self._store.record_vision_call,
                 "autodream_context": _autodream_context(workspace),
             },
         )
@@ -489,6 +502,8 @@ class WoloQueryRunner:
         stream_finished_reason: str | None = None
         emitted_media: set[str] = set()
         had_reasoning = False
+        hint_dedupe_enabled = os.environ.get(_WOLO_DISABLE_HINT_DEDUPE) != "1"
+        emitted_tool_hints: set[tuple[str, str]] = set()
         try:
             async for event in engine.submit_message(user_message):
                 if isinstance(event, ReasoningDelta):
@@ -497,7 +512,13 @@ class WoloQueryRunner:
                 elif isinstance(event, AssistantTextDelta):
                     yield ("delta", event.text)
                 elif isinstance(event, ToolExecutionStarted):
-                    yield ("tool_hint", _format_tool_hint(event.tool_name, event.tool_input))
+                    signature = (
+                        event.tool_name,
+                        json.dumps(event.tool_input or {}, ensure_ascii=False, sort_keys=True, default=str),
+                    )
+                    if not hint_dedupe_enabled or signature not in emitted_tool_hints:
+                        yield ("tool_hint", _format_tool_hint(event.tool_name, event.tool_input))
+                    emitted_tool_hints.add(signature)
                 elif isinstance(event, AssistantTurnComplete):
                     candidate = event.message.text.strip()
                     if candidate and not event.message.tool_uses:
@@ -543,6 +564,14 @@ class WoloQueryRunner:
                         candidate = event.message.text.strip()
                         if candidate and not event.message.tool_uses:
                             last_text = candidate
+                    elif isinstance(event, ToolExecutionStarted):
+                        signature = (
+                            event.tool_name,
+                            json.dumps(event.tool_input or {}, ensure_ascii=False, sort_keys=True, default=str),
+                        )
+                        if not hint_dedupe_enabled or signature not in emitted_tool_hints:
+                            yield ("tool_hint", _format_tool_hint(event.tool_name, event.tool_input))
+                        emitted_tool_hints.add(signature)
                     elif isinstance(event, ToolExecutionCompleted):
                         if not event.is_error and "\u274c" in event.output:
                             logger.debug(

@@ -174,6 +174,16 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 CREATE INDEX IF NOT EXISTS idx_llm_calls_model ON llm_calls(model);
 CREATE INDEX IF NOT EXISTS idx_llm_calls_created_at ON llm_calls(created_at);
 
+CREATE TABLE IF NOT EXISTS vision_calls (
+    id TEXT PRIMARY KEY,
+    model TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    input_tokens INTEGER NOT NULL DEFAULT 0,
+    output_tokens INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_vision_calls_model ON vision_calls(model);
+CREATE INDEX IF NOT EXISTS idx_vision_calls_created_at ON vision_calls(created_at);
+
 CREATE TABLE IF NOT EXISTS _meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -566,6 +576,32 @@ class WoloStore:
         completion_tokens = max(0, int(output_tokens))
         self._db.execute(
             "INSERT INTO llm_calls (id, model, created_at, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?)",
+            (
+                uuid4().hex[:12],
+                model_name,
+                created_at or _now(),
+                prompt_tokens,
+                completion_tokens,
+            ),
+        )
+        self._db.commit()
+
+    def record_vision_call(
+        self,
+        model: str,
+        *,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        created_at: str | None = None,
+    ) -> None:
+        model_name = model.strip()
+        if not model_name:
+            raise ValueError("wolo vision model name cannot be empty")
+        self.initialize()
+        prompt_tokens = max(0, int(input_tokens))
+        completion_tokens = max(0, int(output_tokens))
+        self._db.execute(
+            "INSERT INTO vision_calls (id, model, created_at, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?)",
             (
                 uuid4().hex[:12],
                 model_name,
@@ -1037,12 +1073,17 @@ class WoloStore:
         end_date: str | None = None,
         target_tz: tzinfo | None = None,
     ) -> dict[str, object]:
+        _all_calls = (
+            "SELECT model, created_at, input_tokens, output_tokens FROM llm_calls "
+            "UNION ALL "
+            "SELECT model, created_at, input_tokens, output_tokens FROM vision_calls"
+        )
         if start_date is None and end_date is None:
             cur = self._db.execute(
                 "SELECT model, COUNT(*) AS count, "
                 "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
                 "COALESCE(SUM(output_tokens), 0) AS output_tokens "
-                "FROM llm_calls GROUP BY model ORDER BY count DESC, model ASC"
+                f"FROM ({_all_calls}) GROUP BY model ORDER BY count DESC, model ASC"
             )
             models = [
                 {
@@ -1056,8 +1097,8 @@ class WoloStore:
         else:
             zone = target_tz or datetime.now().astimezone().tzinfo or timezone.utc
             cur = self._db.execute(
-                "SELECT model, created_at, input_tokens, output_tokens "
-                "FROM llm_calls ORDER BY created_at ASC, model ASC"
+                f"SELECT model, created_at, input_tokens, output_tokens "
+                f"FROM ({_all_calls}) ORDER BY created_at ASC, model ASC"
             )
             aggregated: dict[str, dict[str, Any]] = {}
             for row in cur.fetchall():
@@ -1102,9 +1143,14 @@ class WoloStore:
         target_tz: tzinfo | None = None,
     ) -> list[dict[str, object]]:
         zone = target_tz or datetime.now().astimezone().tzinfo or timezone.utc
+        _all_calls = (
+            "SELECT model, created_at, input_tokens, output_tokens FROM llm_calls "
+            "UNION ALL "
+            "SELECT model, created_at, input_tokens, output_tokens FROM vision_calls"
+        )
         cur = self._db.execute(
-            "SELECT model, created_at, input_tokens, output_tokens "
-            "FROM llm_calls ORDER BY created_at ASC, model ASC"
+            f"SELECT model, created_at, input_tokens, output_tokens "
+            f"FROM ({_all_calls}) ORDER BY created_at ASC, model ASC"
         )
         daily: dict[tuple[str, str], dict[str, object]] = {}
         for row in cur.fetchall():
@@ -1138,8 +1184,144 @@ class WoloStore:
         target_tz: tzinfo | None = None,
     ) -> list[dict[str, object]]:
         zone = target_tz or datetime.now().astimezone().tzinfo or timezone.utc
+        _all_calls = (
+            "SELECT model, created_at FROM llm_calls "
+            "UNION ALL "
+            "SELECT model, created_at FROM vision_calls"
+        )
         cur = self._db.execute(
-            "SELECT model, created_at FROM llm_calls ORDER BY created_at ASC, model ASC"
+            f"SELECT model, created_at FROM ({_all_calls}) ORDER BY created_at ASC, model ASC"
+        )
+        daily: dict[tuple[str, str], dict[str, object]] = {}
+        for row in cur.fetchall():
+            model = str(row[0] or "").strip()
+            created_at = str(row[1] or "").strip()
+            if not model or not created_at:
+                continue
+            try:
+                call_at = datetime.fromisoformat(created_at)
+            except ValueError:
+                continue
+            if call_at.tzinfo is None:
+                call_at = call_at.replace(tzinfo=timezone.utc)
+            day = call_at.astimezone(zone).date().isoformat()
+            if day < start_date or day > end_date:
+                continue
+            key = (day, model)
+            point = daily.setdefault(key, {"date": day, "model": model, "count": 0})
+            point["count"] += 1
+        return sorted(daily.values(), key=lambda item: (str(item["date"]), str(item["model"])))
+
+    def vision_usage_summary(
+        self,
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        target_tz: tzinfo | None = None,
+    ) -> dict[str, object]:
+        if start_date is None and end_date is None:
+            cur = self._db.execute(
+                "SELECT model, COUNT(*) AS count, "
+                "COALESCE(SUM(input_tokens), 0) AS input_tokens, "
+                "COALESCE(SUM(output_tokens), 0) AS output_tokens "
+                "FROM vision_calls GROUP BY model ORDER BY count DESC, model ASC"
+            )
+            models = [
+                {
+                    "model": row[0],
+                    "count": int(row[1]),
+                    "input_tokens": int(row[2] or 0),
+                    "output_tokens": int(row[3] or 0),
+                }
+                for row in cur.fetchall()
+            ]
+        else:
+            zone = target_tz or datetime.now().astimezone().tzinfo or timezone.utc
+            cur = self._db.execute(
+                "SELECT model, created_at, input_tokens, output_tokens "
+                "FROM vision_calls ORDER BY created_at ASC, model ASC"
+            )
+            aggregated: dict[str, dict[str, Any]] = {}
+            for row in cur.fetchall():
+                model = str(row[0] or "").strip()
+                created_at = str(row[1] or "").strip()
+                if not model or not created_at:
+                    continue
+                try:
+                    call_at = datetime.fromisoformat(created_at)
+                except ValueError:
+                    continue
+                if call_at.tzinfo is None:
+                    call_at = call_at.replace(tzinfo=timezone.utc)
+                day = call_at.astimezone(zone).date().isoformat()
+                if start_date and day < start_date:
+                    continue
+                if end_date and day > end_date:
+                    continue
+                item = aggregated.setdefault(
+                    model,
+                    {"model": model, "count": 0, "input_tokens": 0, "output_tokens": 0},
+                )
+                item["count"] += 1
+                item["input_tokens"] += max(0, int(row[2] or 0))
+                item["output_tokens"] += max(0, int(row[3] or 0))
+            models = sorted(
+                aggregated.values(),
+                key=lambda item: (-int(item["count"]), str(item["model"])),
+            )
+        return {
+            "total_calls": sum(item["count"] for item in models),
+            "total_input_tokens": sum(item["input_tokens"] for item in models),
+            "total_output_tokens": sum(item["output_tokens"] for item in models),
+            "models": models,
+        }
+
+    def vision_token_daily_summary(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        target_tz: tzinfo | None = None,
+    ) -> list[dict[str, object]]:
+        zone = target_tz or datetime.now().astimezone().tzinfo or timezone.utc
+        cur = self._db.execute(
+            "SELECT model, created_at, input_tokens, output_tokens "
+            "FROM vision_calls ORDER BY created_at ASC, model ASC"
+        )
+        daily: dict[tuple[str, str], dict[str, object]] = {}
+        for row in cur.fetchall():
+            model = str(row[0] or "").strip()
+            created_at = str(row[1] or "").strip()
+            if not model or not created_at:
+                continue
+            try:
+                call_at = datetime.fromisoformat(created_at)
+            except ValueError:
+                continue
+            if call_at.tzinfo is None:
+                call_at = call_at.replace(tzinfo=timezone.utc)
+            day = call_at.astimezone(zone).date().isoformat()
+            if day < start_date or day > end_date:
+                continue
+            key = (day, model)
+            point = daily.setdefault(
+                key,
+                {"date": day, "model": model, "input_tokens": 0, "output_tokens": 0},
+            )
+            point["input_tokens"] += max(0, int(row[2] or 0))
+            point["output_tokens"] += max(0, int(row[3] or 0))
+        return sorted(daily.values(), key=lambda item: (str(item["date"]), str(item["model"])))
+
+    def vision_call_daily_summary(
+        self,
+        *,
+        start_date: str,
+        end_date: str,
+        target_tz: tzinfo | None = None,
+    ) -> list[dict[str, object]]:
+        zone = target_tz or datetime.now().astimezone().tzinfo or timezone.utc
+        cur = self._db.execute(
+            "SELECT model, created_at FROM vision_calls ORDER BY created_at ASC, model ASC"
         )
         daily: dict[tuple[str, str], dict[str, object]] = {}
         for row in cur.fetchall():

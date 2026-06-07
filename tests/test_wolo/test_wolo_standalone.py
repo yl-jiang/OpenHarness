@@ -1024,3 +1024,229 @@ def test_wolo_heartbeat_cli_status_reflects_config(tmp_path: Path):
     assert result.exit_code == 0
     assert "enabled=True" in result.output
     assert "interval_s=900" in result.output
+
+
+@pytest.mark.asyncio
+async def test_wolo_update_record_rejects_same_turn_supplement(tmp_path: Path):
+    """Layer-2 same-turn guard for wolo: updating a record created earlier in
+    the same registry instance is rejected.
+    """
+    from wolo.tools import WoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".wolo")
+    store = WoloStore(workspace)
+    registry = WoloToolRegistry(store)
+
+    created = await registry._handle_record(
+        {
+            "content": "今天把网关模块改完了。",
+            "corrected_content": "今天把网关模块重构完成。",
+            "summary": "重构网关模块",
+            "tags": "code, refactor",
+            "emotion": "顺利",
+        }
+    )
+
+    record_id = str(created["record_id"])
+    update = await registry._handle_update_record(
+        {
+            "record_id": record_id,
+            "emotion": "积极",
+            "emotion_reason": "重构后代码更清晰",
+        }
+    )
+
+    assert update["ok"] is False
+    assert "同轮创建保护" in update["message"]
+    assert record_id in update["message"]
+    record = store.get_record(record_id)
+    assert record is not None
+    assert record.emotion == "顺利"
+    assert record.emotion_reason == ""
+
+
+@pytest.mark.asyncio
+async def test_wolo_update_record_allows_cross_turn_correction(tmp_path: Path):
+    """Cross-turn corrections still work: a new registry (new user turn) can
+    update a record created by an earlier turn.
+    """
+    from wolo.tools import WoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".wolo")
+    store = WoloStore(workspace)
+    creating = WoloToolRegistry(store)
+    created = await creating._handle_record(
+        {
+            "content": "今天评审了方案。",
+            "summary": "评审方案",
+            "tags": "meeting",
+            "emotion": "中性",
+        }
+    )
+    record_id = str(created["record_id"])
+
+    correcting = WoloToolRegistry(store)
+    update = await correcting._handle_update_record(
+        {
+            "record_id": record_id,
+            "summary": "评审并通过方案 A",
+            "tags": "meeting, decision",
+        }
+    )
+    assert update["ok"] is True
+    record = store.get_record(record_id)
+    assert record.summary == "评审并通过方案 A"
+    assert record.tags == "meeting, decision"
+
+
+@pytest.mark.asyncio
+async def test_wolo_update_record_same_turn_guard_flag_off(tmp_path: Path, monkeypatch):
+    """When WOLO_DISABLE_SAME_TURN_UPDATE_GUARD=1 the wolo registry falls
+    back to Layer-4: plain updates pass, but subjective fields on a fresh
+    record are rejected.
+    """
+    from wolo.tools import WoloToolRegistry
+
+    monkeypatch.setenv("WOLO_DISABLE_SAME_TURN_UPDATE_GUARD", "1")
+    workspace = initialize_workspace(tmp_path / ".wolo")
+    store = WoloStore(workspace)
+    registry = WoloToolRegistry(store)
+
+    created = await registry._handle_record(
+        {
+            "content": "今天和 PM 同步了进度。",
+            "summary": "和 PM 同步进度",
+            "tags": "meeting",
+            "emotion": "中性",
+        }
+    )
+    record_id = str(created["record_id"])
+
+    plain = await registry._handle_update_record(
+        {"record_id": record_id, "tags": "meeting, sync"}
+    )
+    assert plain["ok"] is True
+
+    hallucination = await registry._handle_update_record(
+        {
+            "record_id": record_id,
+            "strategy": "采用方案 A 推进",
+            "next_move": "下周发版",
+        }
+    )
+    assert hallucination["ok"] is False
+    assert "推断字段保护" in hallucination["message"]
+
+
+@pytest.mark.asyncio
+async def test_wolo_import_records_tracks_all_ids_for_same_turn_guard(tmp_path: Path):
+    from wolo.tools import WoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".wolo")
+    registry = WoloToolRegistry(WoloStore(workspace))
+
+    imported = await registry._handle_import_records(
+        {
+            "records": [
+                {"date": "2026-06-01", "content": "周一开周会", "summary": "周会"},
+                {"date": "2026-06-02", "content": "周二评审", "summary": "评审"},
+            ]
+        }
+    )
+    record_ids = imported["record_ids"]
+    assert len(record_ids) == 2
+    assert set(record_ids) == registry._created_record_ids
+
+    for record_id in record_ids:
+        update = await registry._handle_update_record(
+            {"record_id": record_id, "summary": "改了摘要"}
+        )
+        assert update["ok"] is False
+        assert "同轮创建保护" in update["message"]
+
+
+@pytest.mark.asyncio
+async def test_wolo_update_record_noop_surfaces_is_error(tmp_path: Path):
+    from wolo.tools import WoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".wolo")
+    store = WoloStore(workspace)
+    creating = WoloToolRegistry(store)
+    created = await creating._handle_record(
+        {"content": "今天写文档。", "summary": "写文档", "tags": "docs", "emotion": "中性"}
+    )
+    record_id = str(created["record_id"])
+
+    updating = WoloToolRegistry(store)
+    first = await updating._handle_update_record(
+        {"record_id": record_id, "summary": "写文档"}
+    )
+    assert first["ok"] is False
+    assert first.get("_is_error") is True
+    assert first.get("_metadata", {}).get("noop") is True
+
+
+@pytest.mark.asyncio
+async def test_wolo_record_attaches_creation_metadata(tmp_path: Path):
+    from wolo.tools import WoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".wolo")
+    registry = WoloToolRegistry(WoloStore(workspace))
+
+    result = await registry._handle_record(
+        {
+            "content": "今天上线了 v2。",
+            "summary": "上线 v2",
+            "tags": "release",
+            "emotion": "顺利",
+        }
+    )
+    assert result["ok"] is True
+    assert "record_id" not in result["message"]
+    metadata = result.get("_metadata")
+    assert metadata is not None
+    assert metadata["app"] == "wolo"
+    assert metadata["domain_event"] == "record_created"
+    assert metadata["record_ids"] == [result["record_id"]]
+
+
+@pytest.mark.asyncio
+async def test_wolo_cross_turn_inferred_emotion_blocked_by_layer4(tmp_path: Path):
+    """Layer-4 must fire independently of Layer-2 to block the wolo mirror
+    of the conversation-history pollution scenario: a fresh work record
+    created in a prior turn must not accept an inferred emotion / strategy
+    / next_move update in the next turn.
+    """
+    from wolo.tools import WoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".wolo")
+    store = WoloStore(workspace)
+
+    turn_one = WoloToolRegistry(store)
+    created = await turn_one._handle_record(
+        {
+            "content": "今天排查了一个线上报错，还没定位根因。",
+            "summary": "排查线上报错",
+            "tags": "bug, investigate",
+            "emotion": "受阻",
+        }
+    )
+    record_id = str(created["record_id"])
+
+    turn_two = WoloToolRegistry(store)
+    update = await turn_two._handle_update_record(
+        {
+            "record_id": record_id,
+            "emotion": "顺利",
+            "strategy": "从日志入手定位根因",
+            "next_move": "明天复现并修复",
+        }
+    )
+    assert update["ok"] is False
+    assert "推断字段保护" in update["message"]
+
+    record = store.get_record(record_id)
+    assert record is not None
+    assert record.emotion == "受阻"
+    assert record.strategy == ""
+    assert record.next_move == ""

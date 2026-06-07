@@ -363,7 +363,10 @@ async def test_wolo_record_tool_persists_traceable_attachments(tmp_path: Path):
     tool_names = {tool.name for tool in build_oh_registry(registry).list_tools()}
     show = CliRunner().invoke(app, ["show", record.id, "--workspace", str(workspace)])
 
-    assert "record_id=" in result
+    assert "record_id=" not in result  # record_id must not leak into user-visible text
+    assert "收到～已记下这条" in result
+    assert record is not None
+    assert record.id  # record persisted; id is available via store, not via message
     assert entry.channel == "feishu"
     assert entry.sender_id == "ou_user"
     assert entry.chat_id == "chat_1"
