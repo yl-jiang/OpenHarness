@@ -223,3 +223,17 @@ def resolve_current_model(provider_profile: str) -> str:
 
     settings = load_settings().merge_cli_overrides(active_profile=provider_profile)
     return settings.model
+
+
+def resolve_vision_model() -> str:
+    """Resolve the configured vision model name, or empty string."""
+    from openharness.config.settings import load_settings
+
+    settings = load_settings()
+    cfg = settings.vision
+    if cfg.model and cfg.api_key:
+        return cfg.model
+    from openharness.config.settings import VisionModelConfig
+
+    env = VisionModelConfig.from_env()
+    return env.model if env.model and env.api_key else ""

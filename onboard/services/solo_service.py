@@ -24,6 +24,7 @@ from onboard.services.common import (
     newest_first,
     paginate,
     resolve_current_model,
+    resolve_vision_model,
     split_csv,
     stream_feed_digest_run,
     to_jsonable,
@@ -44,6 +45,7 @@ class SoloService:
         todos = self.store.list_todos()
         pending_todos = [todo for todo in todos if todo.status != "done"]
         llm_usage = self.store.llm_usage_summary()
+        vision_usage = self.store.vision_usage_summary()
         month_start, month_end = current_month_range()
         target_tz = datetime.now().astimezone().tzinfo or timezone.utc
         monthly_tokens = self.store.llm_token_daily_summary(
@@ -86,7 +88,9 @@ class SoloService:
             "llm_daily_input_tokens": int(daily_llm_usage["total_input_tokens"]),
             "llm_daily_output_tokens": int(daily_llm_usage["total_output_tokens"]),
             "llm_daily_usage_models": daily_llm_usage["models"],
+            "vision_total_calls": int(vision_usage["total_calls"]),
             "current_model": resolve_current_model(config.provider_profile),
+            "vision_model": resolve_vision_model(),
             "emotion_distribution": emotion_distribution(records),
             "daily_counts": daily_counts(records),
             "top_tags": top_tags(records),

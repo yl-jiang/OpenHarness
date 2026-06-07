@@ -172,6 +172,8 @@ export interface AppStats {
   llm_daily_input_tokens: number;
   llm_daily_output_tokens: number;
   llm_daily_usage_models: ModelUsagePoint[];
+  vision_total_calls: number;
+  vision_model: string;
   current_model: string;
   total_decisions?: number;
   total_highlights?: number;

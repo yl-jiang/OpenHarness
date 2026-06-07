@@ -30,14 +30,18 @@ export function Dashboard({ appName }: { appName: AppName }) {
         <StatsCard label="Records" value={data.total_records} />
         <StatsCard label="This week" value={data.this_week_records} />
         <StatsCard label="Pending todos" value={data.pending_todos} />
-        <StatsCard label="LLM calls" value={data.llm_total_calls} />
-        <StatsCard label="Current model" value={data.current_model} />
+        <StatsCard label="Model calls" value={data.llm_total_calls} />
+        <StatsCard label="Vision calls" value={data.vision_total_calls} />
+      </div>
+      <div className="grid grid-cols-6 gap-3">
+        <StatsCard label="Current LLM model" value={data.current_model} />
+        {data.vision_model ? <StatsCard label="Current vision model" value={data.vision_model} /> : null}
       </div>
 
       <section className="p-5 border border-border rounded-lg bg-surface-1">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
-            <h3 className="text-sm font-medium text-text m-0">LLM Token Usage</h3>
+            <h3 className="text-sm font-medium text-text m-0">Token Usage</h3>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-text-muted">
               <span>
                 Daily totals · current month view
@@ -76,7 +80,7 @@ export function Dashboard({ appName }: { appName: AppName }) {
       <section className="p-5 border border-border rounded-lg bg-surface-1">
         <div className="flex items-start justify-between gap-4 mb-4">
           <div>
-            <h3 className="text-sm font-medium text-text m-0">LLM Model Usage</h3>
+            <h3 className="text-sm font-medium text-text m-0">Model Usage</h3>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-text-muted">
               <span>
                 Daily totals · current month view
