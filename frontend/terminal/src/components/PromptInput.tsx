@@ -1,7 +1,8 @@
-import React, {useEffect, useRef, useState} from 'react';
+import React, {useEffect, useMemo, useRef, useState} from 'react';
 import {Box, Text} from 'ink';
 import stringWidth from 'string-width';
 import ScrollableTextInput from './ScrollableTextInput.js';
+import {ShimmerText, buildPulsePalette} from './ShimmerText.js';
 import {EXPAND_TRIGGER_SYMBOL} from './ExpandedComposer.js';
 import {HalfLinePaddedBox} from './HalfLinePaddedBox.js';
 import {useTerminalSize} from '../hooks/useTerminalSize.js';
@@ -181,7 +182,13 @@ function PromptInputInner({
 	// Colors from theme
 	const accentColor = theme.colors.accent;
 	const prefixColor = busy || showBackgroundActivity ? theme.colors.warning : isShellIdle ? theme.colors.warning : accentColor;
-	const lineColor = theme.colors.muted;
+	const borderPulse = useMemo(
+		() => buildPulsePalette(theme.colors.muted, theme.colors.warning, SPINNER_FRAMES.length),
+		[theme.colors.muted, theme.colors.warning],
+	);
+	const lineColor = (busy || showBackgroundActivity) && animateSpinner
+		? borderPulse[frameIndex]
+		: theme.colors.muted;
 
 	const placeholder = isVimNormal
 		? '  NORMAL — press i to insert'
@@ -269,7 +276,12 @@ function PromptInputInner({
 					<Box alignItems="flex-start">
 						<Text color={prefixColor} bold>{prefix}</Text>
 						{busy ? (
-							<Text color={theme.colors.warning} dimColor>{statusText}</Text>
+							<ShimmerText
+								text={statusText}
+								baseColor={theme.colors.muted}
+								brightColor={theme.colors.warning}
+								animate={animateSpinner}
+							/>
 						) : (
 							<ScrollableTextInput
 								key={inputKey}
