@@ -940,7 +940,7 @@ async def test_solo_query_runner_treats_quoted_message_as_reference_only(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_solo_update_record_rejects_same_turn_mutation(tmp_path: Path):
+async def test_solo_update_record_allows_same_turn_supplement(tmp_path: Path):
     from solo.tools import SoloToolRegistry
 
     workspace = initialize_workspace(tmp_path / ".solo")
@@ -967,13 +967,12 @@ async def test_solo_update_record_rejects_same_turn_mutation(tmp_path: Path):
         }
     )
 
-    assert update["ok"] is False
-    assert "不要在同一轮补改刚创建的记录" in str(update["message"])
+    assert update["ok"] is True
     record = store.get_record(record_id)
     assert record is not None
-    assert record.corrected_content == "今天晚饭家人做了红烧肉，我没吃。"
-    assert record.tags == "生活, 家庭, 饮食, 家人"
-    assert record.emotion_reason == ""
+    assert record.corrected_content == "今天晚饭家人做了红烧肉，因为昨天不舒服没食欲，没吃。"
+    assert record.tags == "生活, 家庭, 饮食, 家人, 健康, 不舒服"
+    assert record.emotion_reason == "昨天不舒服导致没食欲"
 
 
 @pytest.mark.asyncio

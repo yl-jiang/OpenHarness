@@ -29,7 +29,7 @@ from openharness.engine.types import ToolMetadataKey
 from openharness.permissions.checker import PermissionChecker
 from openharness.permissions.modes import PermissionMode
 from openharness.api.recording_client import wrap_with_model_call_recorder
-from openharness.skills import load_skill_registry
+from openharness.skills import load_skill_registry_cached
 from openharness.tools.base import ToolRegistry
 from openharness.ui.runtime import _resolve_api_client_from_settings, _resolve_vision_config
 from openharness.utils.log import get_logger
@@ -354,7 +354,7 @@ def _build_system_prompt(workspace: Path) -> str:
 
 
 def _build_skills_prompt(workspace: Path) -> str | None:
-    registry = load_skill_registry(None, extra_skill_dirs=[get_skills_dir(workspace)])
+    registry = load_skill_registry_cached(None, extra_skill_dirs=[get_skills_dir(workspace)])
     skills = [skill for skill in registry.list_skills() if not skill.disable_model_invocation]
     if not skills:
         return None
@@ -503,6 +503,11 @@ class WoloQueryRunner:
                     if candidate and not event.message.tool_uses:
                         last_text = candidate
                 elif isinstance(event, ToolExecutionCompleted):
+                    if not event.is_error and "\u274c" in event.output:
+                        logger.debug(
+                            "wolo tool blocked or failed tool=%s output=%r",
+                            event.tool_name, event.output.strip()[:200],
+                        )
                     if event.is_error:
                         tool_errors.append(f"{event.tool_name}: {event.output.strip()[:200]}")
                     elif event.output.strip():
@@ -539,6 +544,11 @@ class WoloQueryRunner:
                         if candidate and not event.message.tool_uses:
                             last_text = candidate
                     elif isinstance(event, ToolExecutionCompleted):
+                        if not event.is_error and "\u274c" in event.output:
+                            logger.debug(
+                                "wolo retry: tool blocked tool=%s output=%r",
+                                event.tool_name, event.output.strip()[:200],
+                            )
                         if event.is_error:
                             tool_errors.append(f"{event.tool_name}: {event.output.strip()[:200]}")
                         elif event.output.strip():

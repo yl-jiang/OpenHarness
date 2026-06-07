@@ -211,7 +211,6 @@ def test_skills_section_uses_runtime_skill_tool_names(tmp_path: Path, monkeypatc
     )
 
     assert "skill_load(name=" in prompt
-    assert "skill_search(query=" in prompt
     assert "skill_manager" not in prompt
 
 

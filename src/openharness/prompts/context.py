@@ -198,12 +198,7 @@ def _build_skills_section(
         "The following skills are available. "
         "When a user's request matches a skill, invoke "
         "`skill_load(name=\"<skill_name>\")` "
-        "to load detailed instructions before proceeding. "
-        "If the list below is long or the user's intent is specific, prefer "
-        "`skill_search(query=\"<natural language>\")` "
-        "to find the most relevant skill(s) by hybrid keyword/semantic ranking "
-        "instead of scanning the full list. "
-        "Use `skill_list()` for a full catalogue dump.",
+        "to load detailed instructions before proceeding.",
         "",
     ]
     for skill in skills:

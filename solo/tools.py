@@ -97,7 +97,6 @@ class SoloToolRegistry:
         self._source_context = dict(source_context or {})
         self._progress_callback = progress_callback
         self._background_tasks: set[Any] = set()
-        self._created_record_ids: set[str] = set()
 
     def _processor(self) -> SoloProcessor:
         if self.processor is None:
@@ -257,7 +256,6 @@ class SoloToolRegistry:
                 attachments=list(entry.attachments),
             )
             self.store.add_record(record)
-            self._created_record_ids.add(record.id)
             return {
                 "ok": True,
                 "entry_id": entry.id,
@@ -729,15 +727,7 @@ class SoloToolRegistry:
     async def _handle_update_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Update fields of an existing solo record."""
         record_id = _required_text(arguments, "record_id")
-        if record_id in self._created_record_ids:
-            return {
-                "ok": False,
-                "message": (
-                    "❌ 不要在同一轮补改刚创建的记录。"
-                    "请在 solo_record 里一次性提供明确事实，不要基于猜测补写原因或症状。"
-                ),
-            }
-        
+
         # Valid fields for update
         updates = {}
         for field in [
