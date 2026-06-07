@@ -68,9 +68,11 @@ class ToolMetadataKey(str, Enum):
     # Session-only cache: not persisted across sessions.
     FILE_READ_CACHE = "file_read_cache"
     TOOL_CALL_HISTORY = "tool_call_history"
+    TOOL_NOOP_HISTORY = "tool_noop_history"
     TOOL_NAME_REPAIR_NOTICES = "tool_name_repair_notices"
     AGENT_RUN_CONTEXT = "agent_run_context"
     VISION_MODEL_CONFIG = "vision_model_config"
+    VISION_CALL_RECORDER = "vision_call_recorder"
     IMAGE_GENERATION_CONFIG = "image_generation_config"
     UTILITY_CLIENT_RESOLUTION = "utility_client_resolution"
 
@@ -114,5 +116,6 @@ class ToolMetadataKey(str, Enum):
             cls.SELF_EVOLUTION_STATE,
             cls.FILE_READ_CACHE,
             cls.TOOL_CALL_HISTORY,
+            cls.TOOL_NOOP_HISTORY,
             cls.TOOL_NAME_REPAIR_NOTICES,
         )

@@ -16,6 +16,7 @@ from openharness.engine.stream_events import StreamEvent
 from openharness.engine.tool_loop_guard import (
     build_doom_loop_result,
     record_tool_call_result,
+    should_block_noop_call,
     should_block_tool_call,
 )
 from openharness.engine.tool_pipeline import ToolExecutionPipeline, ToolPipelineStage, ToolPipelineState
@@ -669,6 +670,19 @@ async def _execute_tool_call(
             tool_use_id=tool_use_id,
             tool_name=tool_name,
             reason=doom_loop.reason,
+        )
+
+    noop_loop = should_block_noop_call(context.tool_metadata, tool_name, tool_input)
+    if noop_loop.blocked:
+        logger.warning("blocked repeated no-op tool call: %s id=%s", tool_name, tool_use_id)
+        return ToolResultBlock(
+            tool_use_id=tool_use_id,
+            content=(
+                f"{noop_loop.reason} The record has already reached the target state. "
+                "Do not retry this call; reply to the user in a natural sentence instead."
+            ),
+            is_error=True,
+            result_metadata={"noop": True},
         )
 
     result = await ToolExecutionPipeline(_default_tool_pipeline_stages()).run(

@@ -101,10 +101,10 @@ async def test_execute_with_image_path(tmp_path: Path, monkeypatch: pytest.Monke
         )
     )
 
-    async def fake_call_vision_model(**kwargs) -> str:
+    async def fake_call_vision_model(**kwargs):
         assert kwargs["media_type"] == "image/png"
         assert kwargs["model"] == "gpt-4o"
-        return "a tiny png"
+        return "a tiny png", {"input_tokens": 10, "output_tokens": 5}
 
     monkeypatch.setattr(ImageToTextTool, "_call_vision_model", staticmethod(fake_call_vision_model))
     result = await ImageToTextTool().execute(

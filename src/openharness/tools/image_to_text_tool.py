@@ -130,7 +130,7 @@ class ImageToTextTool(BaseTool):
             )
 
         try:
-            description = await self._call_vision_model(
+            description, usage = await self._call_vision_model(
                 image_data=image_data,
                 media_type=media_type or arguments.media_type,
                 prompt=arguments.prompt,
@@ -144,6 +144,14 @@ class ImageToTextTool(BaseTool):
             return ToolResult(
                 output=f"image_to_text failed: vision model error: {exc}",
                 is_error=True,
+            )
+
+        recorder = context.metadata.get(ToolMetadataKey.VISION_CALL_RECORDER.value)
+        if callable(recorder):
+            recorder(
+                model,
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
             )
 
         return ToolResult(output=f"[Image description via {model}]\n\n{description}")
@@ -201,7 +209,7 @@ class ImageToTextTool(BaseTool):
         api_key: str,
         base_url: str,
         max_tokens: int,
-    ) -> str:
+    ) -> tuple[str, dict[str, int]]:
         """Call the configured vision model via the OpenAI-compatible API."""
         client = OpenAICompatibleClient(
             api_key=api_key,
@@ -212,6 +220,7 @@ class ImageToTextTool(BaseTool):
             ImageBlock(media_type=media_type, data=image_data),
         ]
         collected_text = ""
+        usage = {"input_tokens": 0, "output_tokens": 0}
         async for event in client.stream_message(
             ApiMessageRequest(
                 model=model,
@@ -227,5 +236,9 @@ class ImageToTextTool(BaseTool):
                 text = event.message.text
                 if text and text not in collected_text:
                     collected_text = text
+                usage = {
+                    "input_tokens": max(0, int(event.usage.input_tokens)),
+                    "output_tokens": max(0, int(event.usage.output_tokens)),
+                }
 
-        return collected_text.strip() or "(no description returned)"
+        return collected_text.strip() or "(no description returned)", usage
