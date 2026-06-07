@@ -522,7 +522,10 @@ async def test_standalone_solo_record_tool_persists_traceable_attachments(tmp_pa
     runner = CliRunner()
     show = runner.invoke(app, ["show", record.id, "--workspace", str(workspace)])
 
-    assert "record_id=" in result
+    assert "record_id=" not in result  # record_id must not leak into user-visible text
+    assert "收到～已记下这条" in result
+    assert record is not None
+    assert record.id  # record persisted; id is available via store, not via message
     assert entry.channel == "telegram"
     assert entry.sender_id == "user-1"
     assert entry.chat_id == "chat-1"
@@ -940,7 +943,11 @@ async def test_solo_query_runner_treats_quoted_message_as_reference_only(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_solo_update_record_allows_same_turn_supplement(tmp_path: Path):
+async def test_solo_update_record_rejects_same_turn_supplement(tmp_path: Path):
+    """Layer-2 same-turn guard: updating a record created earlier in the same
+    registry instance is rejected so the model cannot chain supplement / polish
+    calls on a freshly-created record.
+    """
     from solo.tools import SoloToolRegistry
 
     workspace = initialize_workspace(tmp_path / ".solo")
@@ -967,12 +974,230 @@ async def test_solo_update_record_allows_same_turn_supplement(tmp_path: Path):
         }
     )
 
+    assert update["ok"] is False
+    assert "同轮创建保护" in update["message"]
+    assert record_id in update["message"]
+    # The store must NOT have been mutated — the original record is preserved.
+    record = store.get_record(record_id)
+    assert record is not None
+    assert record.corrected_content == "今天晚饭家人做了红烧肉，我没吃。"
+    assert record.tags == "生活, 家庭, 饮食, 家人"
+    assert record.emotion_reason == ""
+
+
+@pytest.mark.asyncio
+async def test_solo_update_record_allows_cross_turn_correction(tmp_path: Path):
+    """Cross-turn corrections must still work. A fresh registry instance has
+    an empty _created_record_ids set, so an update on an older record (one
+    created by a previous turn / registry) succeeds.
+    """
+    from solo.tools import SoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    creating_registry = SoloToolRegistry(store)
+    created = await creating_registry._handle_record(
+        {
+            "content": "今天开了个会。",
+            "summary": "开会",
+            "tags": "工作",
+            "emotion": "中性",
+        }
+    )
+    record_id = str(created["record_id"])
+
+    # A brand-new registry simulates a new user turn — same-turn guard is empty.
+    correcting_registry = SoloToolRegistry(store)
+    update = await correcting_registry._handle_update_record(
+        {
+            "record_id": record_id,
+            "summary": "开了项目复盘会，决定聚焦 A 方案",
+            "tags": "工作, 复盘",
+        }
+    )
+
     assert update["ok"] is True
     record = store.get_record(record_id)
     assert record is not None
-    assert record.corrected_content == "今天晚饭家人做了红烧肉，因为昨天不舒服没食欲，没吃。"
-    assert record.tags == "生活, 家庭, 饮食, 家人, 健康, 不舒服"
-    assert record.emotion_reason == "昨天不舒服导致没食欲"
+    assert record.summary == "开了项目复盘会，决定聚焦 A 方案"
+    assert record.tags == "工作, 复盘"
+
+
+@pytest.mark.asyncio
+async def test_solo_update_record_same_turn_guard_flag_off(tmp_path: Path, monkeypatch):
+    """When SOLO_DISABLE_SAME_TURN_UPDATE_GUARD=1 the registry falls back to
+    Layer-4 hallucination guard, which only rejects subjective fields on a
+    recently-created record. A plain structural update (summary/tags) succeeds.
+    """
+    from solo.tools import SoloToolRegistry
+
+    monkeypatch.setenv("SOLO_DISABLE_SAME_TURN_UPDATE_GUARD", "1")
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    registry = SoloToolRegistry(store)
+
+    created = await registry._handle_record(
+        {
+            "content": "今天散步了半小时。",
+            "summary": "散步",
+            "tags": "健康",
+            "emotion": "中性",
+        }
+    )
+    record_id = str(created["record_id"])
+
+    # Plain structural update — Layer-4 allows it.
+    update = await registry._handle_update_record(
+        {"record_id": record_id, "tags": "健康, 运动"}
+    )
+    assert update["ok"] is True
+
+    # Subjective update on a fresh record — Layer-4 rejects it.
+    hallucination = await registry._handle_update_record(
+        {"record_id": record_id, "emotion": "积极", "emotion_reason": "运动后心情好"}
+    )
+    assert hallucination["ok"] is False
+    assert "推断字段保护" in hallucination["message"]
+
+
+@pytest.mark.asyncio
+async def test_solo_import_records_tracks_all_ids_for_same_turn_guard(tmp_path: Path):
+    """solo_import_records returns N fresh ids; an update on any of them in
+    the same registry must be rejected by the Layer-2 guard.
+    """
+    from solo.tools import SoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    registry = SoloToolRegistry(store)
+
+    imported = await registry._handle_import_records(
+        {
+            "records": [
+                {"date": "2026-06-01", "content": "早上跑步", "summary": "跑步"},
+                {"date": "2026-06-02", "content": "下午游泳", "summary": "游泳"},
+            ]
+        }
+    )
+    record_ids = imported["record_ids"]
+    assert len(record_ids) == 2
+    assert set(record_ids) == registry._created_record_ids
+
+    for record_id in record_ids:
+        update = await registry._handle_update_record(
+            {"record_id": record_id, "summary": "改了摘要"}
+        )
+        assert update["ok"] is False
+        assert "同轮创建保护" in update["message"]
+
+
+@pytest.mark.asyncio
+async def test_solo_update_record_noop_surfaces_is_error(tmp_path: Path):
+    """A no-op update is returned as ok=False with _is_error=True and
+    _metadata.noop=True so the adapter surfaces it as an error and the
+    engine loop guard can block the second identical no-op.
+    """
+    from solo.tools import SoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    creating_registry = SoloToolRegistry(store)
+    created = await creating_registry._handle_record(
+        {"content": "今天看了电影。", "summary": "看电影", "tags": "娱乐", "emotion": "中性"}
+    )
+    record_id = str(created["record_id"])
+
+    # Cross-turn registry so Layer-2 doesn't fire — we want to exercise the
+    # no-op branch specifically.
+    updating_registry = SoloToolRegistry(store)
+    first = await updating_registry._handle_update_record(
+        {"record_id": record_id, "summary": "看电影"}
+    )
+    assert first["ok"] is False
+    assert first.get("_is_error") is True
+    assert first.get("_metadata", {}).get("noop") is True
+    assert "无需重复更新" in first["message"]
+
+    second = await updating_registry._handle_update_record(
+        {"record_id": record_id, "summary": "看电影"}
+    )
+    assert second["ok"] is False
+    assert second.get("_is_error") is True
+
+
+@pytest.mark.asyncio
+async def test_solo_record_attaches_creation_metadata(tmp_path: Path):
+    """Layer-1: _handle_record attaches app/domain_event/record_ids metadata
+    and no longer leaks the record_id into the user-visible message.
+    """
+    from solo.tools import SoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    registry = SoloToolRegistry(SoloStore(workspace))
+
+    result = await registry._handle_record(
+        {
+            "content": "今天陪家人吃饭。",
+            "summary": "陪家人吃饭",
+            "tags": "家庭",
+            "emotion": "积极",
+        }
+    )
+    assert result["ok"] is True
+    assert "record_id" not in result["message"]  # no leaked id
+    metadata = result.get("_metadata")
+    assert metadata is not None
+    assert metadata["app"] == "solo"
+    assert metadata["domain_event"] == "record_created"
+    assert metadata["record_ids"] == [result["record_id"]]
+
+
+@pytest.mark.asyncio
+async def test_solo_cross_turn_inferred_emotion_blocked_by_layer4(tmp_path: Path):
+    """Layer-4 must fire independently of Layer-2 to block the conversation-
+    history pollution scenario: a fresh record created in a prior turn must
+    not accept an inferred emotion / emotion_reason update in the next turn
+    just because a previous record was corrected to the same value.
+
+    Regression test for the "小朋友醒了一下又睡了 → 积极" incident: the model
+    replayed a prior user correction onto a brand-new record via update on a
+    record id that was outside the same-turn _created_record_ids set.
+    """
+    from solo.tools import SoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+
+    # Turn 1: a different registry creates the record.
+    turn_one = SoloToolRegistry(store)
+    created = await turn_one._handle_record(
+        {
+            "content": "小朋友半小时前醒了一下，然后又睡了。",
+            "summary": "小朋友短暂醒来后又继续睡了",
+            "tags": "家庭, 育儿",
+            "emotion": "中性",
+        }
+    )
+    record_id = str(created["record_id"])
+
+    # Turn 2: a brand-new registry (empty _created_record_ids, so Layer-2
+    # does not fire) tries to apply an inferred emotion via update.
+    turn_two = SoloToolRegistry(store)
+    update = await turn_two._handle_update_record(
+        {
+            "record_id": record_id,
+            "emotion": "积极",
+            "emotion_reason": "小朋友继续睡了，自己又可以继续忙",
+        }
+    )
+    assert update["ok"] is False
+    assert "推断字段保护" in update["message"]
+
+    # Store must not be mutated by the rejected update.
+    record = store.get_record(record_id)
+    assert record is not None
+    assert record.emotion == "中性"
+    assert record.emotion_reason == ""
 
 
 @pytest.mark.asyncio
