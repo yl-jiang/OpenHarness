@@ -32,7 +32,15 @@ from openharness.utils.log import get_logger
 
 from wolo.core.artifacts import persist_work_artifacts
 from wolo.core.memory import add_memory_entry
-from wolo.core.models import ProfileUpdate, WoloEntry, WoloRecord
+from wolo.core.models import (
+    ProfileUpdate,
+    WoloDecision,
+    WoloEntry,
+    WoloExperiment,
+    WoloHighlight,
+    WoloRecord,
+    WoloTodo,
+)
 from wolo.commands import format_wolo_llm_usage
 from wolo.processor import WoloProcessor
 from wolo.core.store import WoloStore
@@ -174,6 +182,10 @@ class WoloToolRegistry:
             WoloDomainTool(_tool_blockers(), self._handle_blockers),
             WoloDomainTool(_tool_decisions(), self._handle_decisions),
             WoloDomainTool(_tool_highlights(), self._handle_highlights),
+            WoloDomainTool(_tool_add_todo(), self._handle_add_todo),
+            WoloDomainTool(_tool_add_decision(), self._handle_add_decision),
+            WoloDomainTool(_tool_add_highlight(), self._handle_add_highlight),
+            WoloDomainTool(_tool_add_experiment(), self._handle_add_experiment),
             WoloDomainTool(_tool_work_query(), self._handle_work_query),
             WoloDomainTool(_tool_patterns(), self._handle_patterns),
             WoloDomainTool(_tool_playbook(), self._handle_playbook),
@@ -756,6 +768,132 @@ class WoloToolRegistry:
             "ok": True,
             "highlights": [item.to_dict() for item in highlights],
             "message": _format_highlights(highlights, empty="暂无重要事项。"),
+        }
+
+    async def _handle_add_todo(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Create a single work todo item.
+
+        Use for user-stated action items (e.g. "这周要完成 X", "明天约 Y 对齐").
+        Call once per distinct todo; link to the originating record via record_id.
+        """
+        title = _required_text(arguments, "title")
+        todo = WoloTodo(
+            id=uuid4().hex[:12],
+            record_id=str(arguments.get("record_id") or ""),
+            title=title,
+            project=str(arguments.get("project") or ""),
+            priority=str(arguments.get("priority") or "medium"),
+            due_date=str(arguments.get("due_date") or ""),
+            status="pending",
+            source="explicit",
+            created_at=_now(),
+        )
+        self.store.add_todo(todo)
+        return {
+            "ok": True,
+            "todo_id": todo.id,
+            "message": f"✅ 已添加待办：{title}",
+            "_metadata": {
+                "app": "wolo",
+                "domain_event": "todo_created",
+                "todo_ids": [todo.id],
+            },
+        }
+
+    async def _handle_add_decision(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Record a conclusion-level decision the user just made.
+
+        Use for explicit statements like "决定用 X 方案" / "我们定了 Y 不做 Z".
+        Not for tentative thoughts or open questions.
+        """
+        title = _required_text(arguments, "title")
+        decision = WoloDecision(
+            id=uuid4().hex[:12],
+            record_id=str(arguments.get("record_id") or ""),
+            title=title,
+            rationale=str(arguments.get("rationale") or ""),
+            impact=str(arguments.get("impact") or ""),
+            project=str(arguments.get("project") or ""),
+            source="explicit",
+            created_at=_now(),
+        )
+        self.store.add_decision(decision)
+        return {
+            "ok": True,
+            "decision_id": decision.id,
+            "message": f"✅ 已记录决策：{title}",
+            "_metadata": {
+                "app": "wolo",
+                "domain_event": "decision_created",
+                "decision_ids": [decision.id],
+            },
+        }
+
+    async def _handle_add_highlight(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Record a highlight entry of the given kind.
+
+        kind must be one of: important, prompt, tool, blocker, risk.
+        Use for user-stated lessons, blockers, risks, or important sync points.
+        """
+        title = _required_text(arguments, "title")
+        kind = _required_text(arguments, "kind")
+        valid_kinds = ("important", "prompt", "tool", "blocker", "risk")
+        if kind not in valid_kinds:
+            raise ValueError(f"kind must be one of {valid_kinds}, got {kind!r}")
+        highlight = WoloHighlight(
+            id=uuid4().hex[:12],
+            record_id=str(arguments.get("record_id") or ""),
+            kind=kind,
+            title=title,
+            content=str(arguments.get("detail") or arguments.get("content") or ""),
+            project=str(arguments.get("project") or ""),
+            tags=str(arguments.get("tags") or ""),
+            source="explicit",
+            created_at=_now(),
+        )
+        self.store.add_highlight(highlight)
+        return {
+            "ok": True,
+            "highlight_id": highlight.id,
+            "message": f"✅ 已记录 highlight({kind})：{title}",
+            "_metadata": {
+                "app": "wolo",
+                "domain_event": "highlight_created",
+                "highlight_ids": [highlight.id],
+            },
+        }
+
+    async def _handle_add_experiment(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Record a verifiable engineering / process experiment the user proposed.
+
+        Use for explicit "I'll try X to see if Y" style statements, not vague wishes.
+        """
+        title = _required_text(arguments, "title")
+        experiment = WoloExperiment(
+            id=uuid4().hex[:12],
+            record_id=str(arguments.get("record_id") or ""),
+            title=title,
+            hypothesis=str(arguments.get("hypothesis") or ""),
+            problem=str(arguments.get("problem") or ""),
+            strategy=str(arguments.get("strategy") or ""),
+            next_move=str(arguments.get("next_move") or ""),
+            success_signal=str(arguments.get("success_signal") or ""),
+            deadline=str(arguments.get("deadline") or ""),
+            project=str(arguments.get("project") or ""),
+            status="active",
+            source="explicit",
+            created_at=_now(),
+        )
+        self.store.add_experiment(experiment)
+        return {
+            "ok": True,
+            "experiment_id": experiment.id,
+            "message": f"✅ 已记录实验：{title}",
+            "_metadata": {
+                "app": "wolo",
+                "domain_event": "experiment_created",
+                "experiment_ids": [experiment.id],
+            },
         }
 
     async def _handle_work_query(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1800,6 +1938,92 @@ def _tool_highlights() -> ToolDefinition:
             ("project", "string", "Project filter.", False),
             ("query", "string", "Text query.", False),
             ("limit", "integer", "Number of highlights.", False),
+        ],
+    )
+
+
+def _tool_add_todo() -> ToolDefinition:
+    return _definition(
+        "wolo_add_todo",
+        (
+            "Create a new work todo item. Use when the user explicitly lists work "
+            "tasks they plan to do or need to do (e.g. '这周完成...', "
+            "'明天约...对齐'). Call once per distinct todo; do NOT bundle "
+            "several items into a single call. If the todo was mentioned alongside "
+            "a record you just saved via wolo_record, pass its record_id so the "
+            "todo stays linked to its source."
+        ),
+        [
+            ("title", "string", "Clear, actionable todo title describing one concrete work task.", True),
+            ("project", "string", "Related project name.", False),
+            ("priority", "string", "Priority: high/medium/low (default medium).", False),
+            ("due_date", "string", "Optional due date YYYY-MM-DD.", False),
+            ("record_id", "string", "Optional related wolo_record id.", False),
+        ],
+    )
+
+
+def _tool_add_decision() -> ToolDefinition:
+    return _definition(
+        "wolo_add_decision",
+        (
+            "Record a conclusion-level decision the user explicitly made "
+            "(e.g. '决定用 X 方案', '我们定了 Y 不做 Z', '最终选了 A 因为 B'). "
+            "Do NOT record tentative thoughts, open questions, or options still "
+            "being weighed — only decisions that have actually been settled."
+        ),
+        [
+            ("title", "string", "Short statement of the decision itself.", True),
+            ("rationale", "string", "Why this option was picked (the reasoning given).", False),
+            ("impact", "string", "Expected impact or scope of the decision.", False),
+            ("project", "string", "Related project name.", False),
+            ("record_id", "string", "Optional related wolo_record id.", False),
+        ],
+    )
+
+
+def _tool_add_highlight() -> ToolDefinition:
+    return _definition(
+        "wolo_add_highlight",
+        (
+            "Create a new highlight entry. Use when the user calls out an important "
+            "matter, a prompt/tool lesson, a blocker, or a risk. Set 'kind' to one "
+            "of: important, prompt, tool, blocker, risk. Call once per distinct "
+            "highlight. Kind hints: important = milestone / sync fact; "
+            "prompt = reusable prompt pattern or anti-pattern; "
+            "tool = tool / CLI / API usage lesson; "
+            "blocker = something currently blocking delivery; "
+            "risk = signal that may worsen later if ignored."
+        ),
+        [
+            ("title", "string", "Clear, informative highlight title.", True),
+            ("kind", "string", "important/prompt/tool/blocker/risk (required).", True),
+            ("detail", "string", "Optional supporting detail or context.", False),
+            ("project", "string", "Optional related project name.", False),
+            ("tags", "string", "Optional comma-separated tags.", False),
+            ("record_id", "string", "Optional related wolo_record id.", False),
+        ],
+    )
+
+
+def _tool_add_experiment() -> ToolDefinition:
+    return _definition(
+        "wolo_add_experiment",
+        (
+            "Record a verifiable engineering or process experiment the user "
+            "explicitly proposed (e.g. '试试把 X 改成 Y，看 Z 指标会不会涨', "
+            "'本周试一下每日站会缩到 10 分钟'). Do NOT record vague wishes."
+        ),
+        [
+            ("title", "string", "Short descriptive experiment title.", True),
+            ("hypothesis", "string", "What we expect to observe if the change works.", False),
+            ("problem", "string", "The problem or friction this experiment targets.", False),
+            ("strategy", "string", "What will be changed or tried.", False),
+            ("next_move", "string", "The smallest concrete next step.", False),
+            ("success_signal", "string", "How to tell the experiment worked.", False),
+            ("deadline", "string", "Observation window or deadline YYYY-MM-DD.", False),
+            ("project", "string", "Optional related project name.", False),
+            ("record_id", "string", "Optional related wolo_record id.", False),
         ],
     )
 

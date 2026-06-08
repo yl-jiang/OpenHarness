@@ -31,7 +31,7 @@ from openharness.tools.skill_write_tool import SkillWriteTool
 from openharness.utils.log import get_logger
 
 from solo.core.memory import add_memory_entry
-from solo.core.models import ProfileUpdate, SoloEntry, SoloRecord
+from solo.core.models import ProfileUpdate, SoloEntry, SoloRecord, SoloTodo
 from solo.commands import format_solo_llm_usage
 from solo.processor import SoloProcessor
 from solo.core.store import SoloStore
@@ -168,6 +168,7 @@ class SoloToolRegistry:
             SoloDomainTool(_tool_search(), self._handle_search),
             SoloDomainTool(_tool_show(), self._handle_show),
             SoloDomainTool(_tool_todos(), self._handle_todos),
+            SoloDomainTool(_tool_add_todo(), self._handle_add_todo),
             SoloDomainTool(_tool_experiments(), self._handle_experiments),
             SoloDomainTool(_tool_patterns(), self._handle_patterns),
             SoloDomainTool(_tool_rulebook(), self._handle_rulebook),
@@ -652,6 +653,38 @@ class SoloToolRegistry:
             "ok": True,
             "todos": [todo.to_dict() for todo in todos],
             "message": _format_todos(todos),
+        }
+
+    async def _handle_add_todo(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Create a single personal todo item.
+
+        Intended for explicit, user-stated action items the model captured from
+        the current message (e.g. "这周要做 X", "明天记得 Y"). Call once
+        per distinct todo; link to the originating record via ``record_id`` when
+        the todo was mentioned alongside a record you just saved.
+        """
+        title = _required_text(arguments, "title")
+        todo = SoloTodo(
+            id=uuid4().hex[:12],
+            record_id=str(arguments.get("record_id") or ""),
+            title=title,
+            category=str(arguments.get("category") or ""),
+            priority=str(arguments.get("priority") or "medium"),
+            due_date=str(arguments.get("due_date") or ""),
+            status="pending",
+            source="explicit",
+            created_at=_now(),
+        )
+        self.store.add_todo(todo)
+        return {
+            "ok": True,
+            "todo_id": todo.id,
+            "message": f"✅ 已添加待办：{title}",
+            "_metadata": {
+                "app": "solo",
+                "domain_event": "todo_created",
+                "todo_ids": [todo.id],
+            },
         }
 
     async def _handle_experiments(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1630,6 +1663,28 @@ def _tool_todos() -> ToolDefinition:
             ("status", "string", "Todo status: pending/done. Defaults to pending.", False),
             ("category", "string", "Category filter (健康/家庭/社交/购物/学习/其他).", False),
             ("limit", "integer", "Number of todos.", False),
+        ],
+    )
+
+
+def _tool_add_todo() -> ToolDefinition:
+    return _definition(
+        "solo_add_todo",
+        (
+            "Create a new personal todo item. Use when the user explicitly lists "
+            "things they plan to do, need to do, or want to be reminded of "
+            "(e.g. '这周要...', '明天记得...', '买...'). "
+            "Call this tool once per distinct todo; do NOT bundle several items "
+            "into a single call. If the todo was mentioned alongside a record "
+            "you just saved via solo_record, pass its record_id so the todo "
+            "stays linked to its source."
+        ),
+        [
+            ("title", "string", "Clear, actionable todo title describing one concrete task.", True),
+            ("category", "string", "Category: 健康/家庭/社交/购物/学习/工作/家务/其他.", False),
+            ("priority", "string", "Priority: high/medium/low (default medium).", False),
+            ("due_date", "string", "Optional due date YYYY-MM-DD.", False),
+            ("record_id", "string", "Optional related solo_record id returned by solo_record.", False),
         ],
     )
 
