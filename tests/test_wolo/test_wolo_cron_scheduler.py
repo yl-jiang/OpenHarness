@@ -143,11 +143,23 @@ async def test_wolo_execute_job_uses_custom_timeout(
     timeout_seen: dict[str, int] = {}
     notify = AsyncMock()
 
+    class _Stream:
+        def __init__(self, data: bytes) -> None:
+            self._data = data
+
+        async def read(self, n: int = -1) -> bytes:
+            out, self._data = self._data, b""
+            return out
+
     class _Process:
         returncode = 0
 
-        async def communicate(self) -> tuple[bytes, bytes]:
-            return (b"weekly report archived", b"")
+        def __init__(self) -> None:
+            self.stdout = _Stream(b"weekly report archived")
+            self.stderr = _Stream(b"")
+
+        async def wait(self) -> int:
+            return self.returncode
 
     async def _fake_wait_for(awaitable, timeout):
         timeout_seen["value"] = timeout

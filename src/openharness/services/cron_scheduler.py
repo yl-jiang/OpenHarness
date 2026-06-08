@@ -9,6 +9,7 @@ log.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import shlex
@@ -256,6 +257,10 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
         return entry
 
     logger.info("Executing cron job %r: %s", name, command)
+    timeout_seconds = int(job.get("timeout_s") or 300)
+    stdout_buffer = bytearray()
+    stderr_buffer = bytearray()
+    reader_tasks: list[asyncio.Task[None]] = []
     try:
         process = await create_shell_subprocess(
             command,
@@ -263,16 +268,36 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
-            timeout=300,
-        )
+
+        async def _drain(stream: asyncio.StreamReader | None, sink: bytearray) -> None:
+            if stream is None:
+                return
+            while True:
+                chunk = await stream.read(1 << 16)
+                if not chunk:
+                    return
+                sink.extend(chunk)
+
+        if process.stdout is not None:
+            reader_tasks.append(asyncio.create_task(_drain(process.stdout, stdout_buffer)))
+        if process.stderr is not None:
+            reader_tasks.append(asyncio.create_task(_drain(process.stderr, stderr_buffer)))
+
+        await asyncio.wait_for(process.wait(), timeout=timeout_seconds)
+        for task in reader_tasks:
+            with contextlib.suppress(Exception):
+                await task
+        stdout = bytes(stdout_buffer)
+        stderr = bytes(stderr_buffer)
     except asyncio.TimeoutError:
         try:
             process.kill()
-            await process.wait()
         except Exception:
             pass
+        for task in reader_tasks:
+            task.cancel()
+        with contextlib.suppress(Exception):
+            await process.wait()
         entry = {
             "name": name,
             "command": command,
@@ -280,8 +305,11 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
             "ended_at": datetime.now(timezone.utc).isoformat(),
             "returncode": -1,
             "status": "timeout",
-            "stdout": "",
-            "stderr": "Job timed out after 300s",
+            "stdout": bytes(stdout_buffer).decode("utf-8", errors="replace")[-2000:],
+            "stderr": (
+                f"Job timed out after {timeout_seconds}s\n"
+                + bytes(stderr_buffer).decode("utf-8", errors="replace")[-2000:]
+            ),
         }
         mark_job_run(name, success=False)
         await _notify_job_result(job, entry)

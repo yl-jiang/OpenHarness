@@ -6,6 +6,7 @@ Reads jobs from the wolo workspace cron registry (not openharness's shared one).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -677,27 +678,61 @@ async def execute_job(job: dict[str, Any]) -> dict[str, Any]:
         return entry
 
     logger.info("Executing cron job %r: %s", name, command)
+    stdout_buffer = bytearray()
+    stderr_buffer = bytearray()
+    reader_tasks: list[asyncio.Task[None]] = []
     try:
         process = await create_shell_subprocess(
             command, cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_s)
+
+        async def _drain(stream: asyncio.StreamReader | None, sink: bytearray) -> None:
+            if stream is None:
+                return
+            while True:
+                chunk = await stream.read(1 << 16)
+                if not chunk:
+                    return
+                sink.extend(chunk)
+
+        if process.stdout is not None:
+            reader_tasks.append(asyncio.create_task(_drain(process.stdout, stdout_buffer)))
+        if process.stderr is not None:
+            reader_tasks.append(asyncio.create_task(_drain(process.stderr, stderr_buffer)))
+
+        await asyncio.wait_for(process.wait(), timeout=timeout_s)
+        for task in reader_tasks:
+            with contextlib.suppress(Exception):
+                await task
+        stdout = bytes(stdout_buffer)
+        stderr = bytes(stderr_buffer)
     except Exception as exc:  # noqa: BLE001
         if isinstance(exc, asyncio.TimeoutError):
-            try:
+            with contextlib.suppress(Exception):
                 process.kill()
+            for task in reader_tasks:
+                task.cancel()
+            with contextlib.suppress(Exception):
                 await process.wait()
-            except Exception:
-                pass
         status = "timeout" if isinstance(exc, asyncio.TimeoutError) else "error"
-        stderr_text = f"Job timed out after {timeout_s}s" if isinstance(exc, asyncio.TimeoutError) else str(exc)
+        stderr_text = (
+            f"Job timed out after {timeout_s}s\n"
+            + bytes(stderr_buffer).decode("utf-8", errors="replace")[-2000:]
+            if isinstance(exc, asyncio.TimeoutError)
+            else str(exc)
+        )
         entry = {
             "name": name, "command": command,
             "started_at": started_at.isoformat(),
             "ended_at": datetime.now(timezone.utc).isoformat(),
-            "returncode": -1, "status": status, "stdout": "", "stderr": stderr_text,
+            "returncode": -1, "status": status,
+            "stdout": (
+                bytes(stdout_buffer).decode("utf-8", errors="replace")[-2000:]
+                if isinstance(exc, asyncio.TimeoutError) else ""
+            ),
+            "stderr": stderr_text,
         }
         _finalize_job_run(job, success=False)
         await _notify_job_result(job, entry)
