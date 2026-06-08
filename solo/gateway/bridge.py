@@ -48,6 +48,10 @@ def _hash_message(message: InboundMessage) -> str:
     return hashlib.sha256(normalized.encode()).hexdigest()
 
 
+def _hash_reply(text: str) -> str:
+    return hashlib.md5(text[:2000].encode(), usedforsecurity=False).hexdigest()
+
+
 def _content_snippet(text: str, *, limit: int = 160) -> str:
     normalized = " ".join(text.split())
     if len(normalized) <= limit:
@@ -108,7 +112,8 @@ class SoloGatewayBridge:
         self._session_tasks: dict[str, asyncio.Task[None]] = {}
         self._session_cancel_reasons: dict[str, str] = {}
         self._session_content_hashes: dict[str, str] = {}  # session_key -> hash of in-flight content
-        self._recent_success_hashes: dict[str, tuple[str, float]] = {}  # session_key -> (hash, monotonic_ts)
+        self._recent_success_hashes: dict[str, tuple[str, str, float]] = {}  # session_key -> (msg_hash, reply_hash, monotonic_ts)
+        self._session_last_replies: dict[str, str] = {}  # session_key -> last reply text
 
     async def run(self) -> None:
         self._running = True
@@ -162,8 +167,13 @@ class SoloGatewayBridge:
             # Dedup: same content was successfully processed within the window
             entry = self._recent_success_hashes.get(session_key)
             if entry is not None:
-                stored_hash, stored_ts = entry
-                if stored_hash == content_hash and time.monotonic() - stored_ts < _CONTENT_DEDUP_WINDOW:
+                stored_hash, stored_reply_hash, stored_ts = entry
+                current_reply_hash = _hash_reply(self._session_last_replies.get(session_key, ""))
+                if (
+                    stored_hash == content_hash
+                    and stored_reply_hash == current_reply_hash
+                    and time.monotonic() - stored_ts < _CONTENT_DEDUP_WINDOW
+                ):
                     logger.info(
                         "solo content dedup (recent) channel=%s session_key=%s",
                         message.channel,
@@ -307,7 +317,9 @@ class SoloGatewayBridge:
         finally:
             self._session_content_hashes.pop(message.session_key, None)
         if _succeeded:
-            self._recent_success_hashes[message.session_key] = (content_hash, time.monotonic())
+            reply_hash = _hash_reply(reply)
+            self._recent_success_hashes[message.session_key] = (content_hash, reply_hash, time.monotonic())
+        self._session_last_replies[message.session_key] = reply
         await self._publish_reply(message, reply, media=reply_media)
 
     async def _handle_record(self, message: InboundMessage, store: SoloStore, content: str) -> tuple[str, list[str]]:

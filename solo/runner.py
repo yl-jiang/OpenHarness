@@ -211,6 +211,33 @@ def _build_similar_records_context(store: SoloStore, user_text: str, *, max_resu
     return "\n".join(lines)
 
 
+_PENDING_TODOS_HEADER = (
+    "## Pending Todos",
+    "",
+    "The following todos are currently pending. "
+    "When the user's message implies completion of any of these, "
+    "call solo_done (or solo_update_todo with status=done) to mark it complete.",
+    "",
+)
+
+
+def _build_pending_todos_context(store: SoloStore) -> str:
+    """Inject a compact summary of pending todos into the user message prefix."""
+    try:
+        todos = store.list_todos(status="pending", limit=20)
+    except Exception:
+        return ""
+    if not todos:
+        return ""
+    lines = list(_PENDING_TODOS_HEADER)
+    for todo in todos:
+        due = f" (due: {todo.due_date})" if todo.due_date else ""
+        category = f" [{todo.category}]" if todo.category else ""
+        lines.append(f"- {todo.id}: {todo.title}{category}{due}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _split_quoted_reply(user_text: str) -> tuple[str | None, str]:
     if not user_text.startswith(_QUOTED_MESSAGE_PREFIX):
         return None, user_text
@@ -486,6 +513,7 @@ class SoloQueryRunner:
         # remains static and can be fully KV-Cache shared across turns.
         search_text, prepared_user_text = _prepare_user_turn_text(user_text, source_context)
         prefix = _FACT_DISCIPLINE_CONTEXT
+        prefix += _build_pending_todos_context(self._store)
         if include_time_context:
             prefix += build_time_context()
         if include_similar_context:

@@ -439,12 +439,14 @@ class WoloToolRegistry:
 
         reminder_message = _required_text(arguments, "message")
         due_at_utc, notify, local_due, delay_text = self._prepare_one_shot(arguments, time_field="remind_at")
+        session_key = str(self._source_context.get("session_key") or "").strip()
         job = schedule_one_shot_reminder(
             "wolo",
             workspace=self.store.workspace,
             remind_at=due_at_utc,
             message=reminder_message,
             notify=notify,
+            session_key=session_key,
         )
         return {
             "ok": True,

@@ -97,6 +97,7 @@ def schedule_one_shot_reminder(
     remind_at: datetime,
     message: str,
     notify: dict[str, str],
+    session_key: str = "",
 ) -> dict[str, Any]:
     """Persist a one-shot reminder job for the app-local scheduler."""
 
@@ -105,17 +106,20 @@ def schedule_one_shot_reminder(
         raise ValueError("message is required for reminder jobs")
 
     due_at = remind_at if remind_at.tzinfo is not None else remind_at.replace(tzinfo=timezone.utc)
+    payload: dict[str, Any] = {
+        "kind": "reminder",
+        "message": reminder_text,
+        "notification_text": f"⏰ 提醒：{reminder_text}",
+    }
+    if session_key:
+        payload["session_key"] = session_key
     job = {
         "name": f"{app}-reminder-{uuid4().hex[:12]}",
         "kind": "one_shot",
         "enabled": True,
         "next_run": due_at.astimezone(timezone.utc).isoformat(),
         "notify": notify,
-        "payload": {
-            "kind": "reminder",
-            "message": reminder_text,
-            "notification_text": f"⏰ 提醒：{reminder_text}",
-        },
+        "payload": payload,
     }
     _upsert_cron_job(job, workspace)
     logger.info("Registered one-shot reminder job: %s next_run=%s", job["name"], job["next_run"])

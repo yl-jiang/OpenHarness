@@ -213,6 +213,34 @@ def _append_history(entry: dict[str, Any]) -> None:
         fh.write(json.dumps(entry) + "\n")
 
 
+def _inject_reminder_into_session(job: dict[str, Any]) -> None:
+    """Inject the reminder text as an assistant message into the session history.
+
+    This makes the reminder visible to the model when the user replies,
+    preventing misattribution of the reply to an unrelated topic.
+    """
+    payload = job.get("payload") or {}
+    session_key = str(payload.get("session_key") or "").strip()
+    reminder_text = str(payload.get("message") or "").strip()
+    if not session_key or not reminder_text:
+        return
+    try:
+        from wolo.core.session import load_conversation, save_conversation
+        from openharness.engine.messages import ConversationMessage, TextBlock
+
+        messages, sid = load_conversation(Path(_WORKSPACE) if _WORKSPACE else Path("."), session_key)
+        messages.append(
+            ConversationMessage(
+                role="assistant",
+                content=[TextBlock(text=f"[系统提醒] {reminder_text}")],
+            )
+        )
+        save_conversation(Path(_WORKSPACE) if _WORKSPACE else Path("."), session_key, messages, sid)
+        logger.info("Injected reminder into session %s (%d messages)", session_key, len(messages))
+    except Exception:  # noqa: BLE001
+        logger.debug("Failed to inject reminder into session %s", session_key, exc_info=True)
+
+
 # ---------------------------------------------------------------------------
 # PID file helpers
 # ---------------------------------------------------------------------------
@@ -562,6 +590,8 @@ async def _execute_inline_task(
     await _notify_job_result(job, entry)
     _reconcile_notify_streak(job, entry)
     _append_history(entry)
+    if label == "reminder":
+        _inject_reminder_into_session(job)
     logger.info("Job %r finished %s dispatch", job["name"], label)
     return entry
 
