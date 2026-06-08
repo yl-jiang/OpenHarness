@@ -18,9 +18,13 @@ from feed_digest.research import OpenCliCommand, RawEvidence, ResearchAction, Re
 
 logger = get_logger(__name__)
 
-_EXTRACT_EVIDENCE_BATCH_SIZE = 1
-_EXTRACT_MAX_ITEMS_PER_CALL = 8
+_EXTRACT_EVIDENCE_BATCH_SIZE = 3
+_EXTRACT_MAX_ITEMS_PER_CALL = 24
 _EXTRACT_MAX_CONCURRENT_CALLS = 4
+
+_SCORE_MAX_CONCURRENT_CALLS = 2
+
+_DEDUP_CHUNK_SIZE = 20
 
 
 class _JsonOutputInput(BaseModel):
@@ -392,108 +396,27 @@ class FeedDigestAIPipeline:
             logger.warning("score_and_filter called with empty items list")
             return []
 
-        passed: list[FeedItem] = []   # above threshold, not noise
-        pool: list[FeedItem] = []     # all scored items (including below threshold)
+        batches = [
+            items[batch_start : batch_start + batch_size]
+            for batch_start in range(0, len(items), batch_size)
+        ]
+        semaphore = asyncio.Semaphore(_SCORE_MAX_CONCURRENT_CALLS)
 
-        for batch_start in range(0, len(items), batch_size):
-            batch = items[batch_start : batch_start + batch_size]
-            batch_text = "\n".join(
-                f"[{i}] title={item.title!r}\nurl={item.url}\ncontent={item.content[:300]!r}"
-                for i, item in enumerate(batch)
-            )
-            system = _SCORE_SYSTEM
-            user = f"领域：{domain}\n\n条目列表：\n{batch_text}"
-            try:
-                raw = await self._complete(
-                    system_prompt=system,
-                    user_prompt=user,
-                    reasoning_json_fallback="list",
+        async def _score_one(batch: list[FeedItem]) -> tuple[list[FeedItem], list[FeedItem]]:
+            async with semaphore:
+                return await self._score_batch(
+                    batch,
+                    domain=domain,
+                    min_relevance=min_relevance,
+                    min_signal=min_signal,
                 )
-                scores = _parse_json_list(raw)
-                scored_indices: set[int] = set()
-                for entry in scores:
-                    idx = int(entry.get("index", -1))
-                    if idx < 0 or idx >= len(batch):
-                        continue
-                    scored_indices.add(idx)
-                    item = batch[idx]
-                    rel = float(entry.get("relevance_score") or 0)
-                    sig = float(entry.get("signal_score") or 0)
-                    is_noise = bool(entry.get("is_noise"))
-                    scored = FeedItem(
-                        source=item.source,
-                        title=item.title,
-                        url=item.url,
-                        content=item.content,
-                        published_at=item.published_at,
-                        author=item.author,
-                        domain=item.domain,
-                        preset=item.preset,
-                        score=(rel + sig) / 2,
-                        summary=item.summary,
-                        tags=item.tags,
-                        key_facts=item.key_facts,
-                        importance_reason=str(entry.get("importance_reason") or ""),
-                        cluster_id=item.cluster_id,
-                        cluster_title=item.cluster_title,
-                        duplicate_of=item.duplicate_of,
-                        metadata=item.metadata,
-                    )
-                    pool.append(scored)
-                    if not is_noise and rel >= min_relevance and sig >= min_signal:
-                        passed.append(scored)
-                # Items the AI didn't score at all — add to pool with heuristic
-                # scores so per-source guarantee can still draw from them.
-                for i, item in enumerate(batch):
-                    if i in scored_indices:
-                        continue
-                    pool.append(
-                        FeedItem(
-                            source=item.source,
-                            title=item.title,
-                            url=item.url,
-                            content=item.content,
-                            published_at=item.published_at,
-                            author=item.author,
-                            domain=item.domain,
-                            preset=item.preset,
-                            score=_heuristic_score(item),
-                            summary=item.summary,
-                            tags=item.tags,
-                            key_facts=item.key_facts,
-                            importance_reason=item.importance_reason,
-                            cluster_id=item.cluster_id,
-                            cluster_title=item.cluster_title,
-                            duplicate_of=item.duplicate_of,
-                            metadata=item.metadata,
-                        )
-                    )
-            except Exception as exc:
-                logger.warning("AI score batch failed: %s", exc)
-                # Fallback: heuristic sort by star/points signal extracted from content
-                for item in batch:
-                    heuristic_score = _heuristic_score(item)
-                    fallback = FeedItem(
-                        source=item.source,
-                        title=item.title,
-                        url=item.url,
-                        content=item.content,
-                        published_at=item.published_at,
-                        author=item.author,
-                        domain=item.domain,
-                        preset=item.preset,
-                        score=heuristic_score,
-                        summary=item.summary,
-                        tags=item.tags,
-                        key_facts=item.key_facts,
-                        importance_reason=item.importance_reason,
-                        cluster_id=item.cluster_id,
-                        cluster_title=item.cluster_title,
-                        duplicate_of=item.duplicate_of,
-                        metadata=item.metadata,
-                    )
-                    passed.append(fallback)
-                    pool.append(fallback)
+
+        results = await asyncio.gather(*[_score_one(b) for b in batches])
+        passed: list[FeedItem] = []
+        pool: list[FeedItem] = []
+        for batch_passed, batch_pool in results:
+            passed.extend(batch_passed)
+            pool.extend(batch_pool)
 
         # Per-source guarantee: if a source has fewer than min_per_source items
         # in `passed`, supplement from pool (sorted by score, highest first).
@@ -525,6 +448,111 @@ class FeedDigestAIPipeline:
                 )
 
         return sorted(passed, key=lambda x: x.score, reverse=True)
+
+    async def _score_batch(
+        self,
+        batch: list[FeedItem],
+        *,
+        domain: str,
+        min_relevance: float,
+        min_signal: float,
+    ) -> tuple[list[FeedItem], list[FeedItem]]:
+        """Score a single batch of items; return (passed, pool) lists."""
+        passed: list[FeedItem] = []
+        pool: list[FeedItem] = []
+        batch_text = "\n".join(
+            f"[{i}] title={item.title!r}\nurl={item.url}\ncontent={item.content[:300]!r}"
+            for i, item in enumerate(batch)
+        )
+        try:
+            raw = await self._complete(
+                system_prompt=_SCORE_SYSTEM,
+                user_prompt=f"领域：{domain}\n\n条目列表：\n{batch_text}",
+                reasoning_json_fallback="list",
+            )
+            scores = _parse_json_list(raw)
+            scored_indices: set[int] = set()
+            for entry in scores:
+                idx = int(entry.get("index", -1))
+                if idx < 0 or idx >= len(batch):
+                    continue
+                scored_indices.add(idx)
+                item = batch[idx]
+                rel = float(entry.get("relevance_score") or 0)
+                sig = float(entry.get("signal_score") or 0)
+                is_noise = bool(entry.get("is_noise"))
+                scored = FeedItem(
+                    source=item.source,
+                    title=item.title,
+                    url=item.url,
+                    content=item.content,
+                    published_at=item.published_at,
+                    author=item.author,
+                    domain=item.domain,
+                    preset=item.preset,
+                    score=(rel + sig) / 2,
+                    summary=item.summary,
+                    tags=item.tags,
+                    key_facts=item.key_facts,
+                    importance_reason=str(entry.get("importance_reason") or ""),
+                    cluster_id=item.cluster_id,
+                    cluster_title=item.cluster_title,
+                    duplicate_of=item.duplicate_of,
+                    metadata=item.metadata,
+                )
+                pool.append(scored)
+                if not is_noise and rel >= min_relevance and sig >= min_signal:
+                    passed.append(scored)
+            for i, item in enumerate(batch):
+                if i in scored_indices:
+                    continue
+                pool.append(
+                    FeedItem(
+                        source=item.source,
+                        title=item.title,
+                        url=item.url,
+                        content=item.content,
+                        published_at=item.published_at,
+                        author=item.author,
+                        domain=item.domain,
+                        preset=item.preset,
+                        score=_heuristic_score(item),
+                        summary=item.summary,
+                        tags=item.tags,
+                        key_facts=item.key_facts,
+                        importance_reason=item.importance_reason,
+                        cluster_id=item.cluster_id,
+                        cluster_title=item.cluster_title,
+                        duplicate_of=item.duplicate_of,
+                        metadata=item.metadata,
+                    )
+                )
+        except Exception as exc:
+            logger.warning("AI score batch failed: %s", exc)
+            for item in batch:
+                heuristic_score = _heuristic_score(item)
+                fallback = FeedItem(
+                    source=item.source,
+                    title=item.title,
+                    url=item.url,
+                    content=item.content,
+                    published_at=item.published_at,
+                    author=item.author,
+                    domain=item.domain,
+                    preset=item.preset,
+                    score=heuristic_score,
+                    summary=item.summary,
+                    tags=item.tags,
+                    key_facts=item.key_facts,
+                    importance_reason=item.importance_reason,
+                    cluster_id=item.cluster_id,
+                    cluster_title=item.cluster_title,
+                    duplicate_of=item.duplicate_of,
+                    metadata=item.metadata,
+                )
+                passed.append(fallback)
+                pool.append(fallback)
+        return passed, pool
 
     async def plan_research_actions(
         self,
@@ -645,13 +673,21 @@ class FeedDigestAIPipeline:
         batch_entries = await asyncio.gather(*[_extract_batch(batch) for batch in batches])
         for batch, entries in zip(batches, batch_entries, strict=True):
             evidence_by_source = {ev.source: ev for ev in batch}
-            # batch_size=1 → every extracted item belongs to this one evidence source.
-            # Normalise: LLM sometimes returns "Hacker News" instead of "hackernews".
+            # Case-insensitive alias map so the LLM's free-form source labels
+            # (e.g. "Hacker News", "hackernews") resolve to the canonical key.
+            source_aliases: dict[str, str] = {}
+            for ev in batch:
+                source_aliases[ev.source.lower()] = ev.source
+                for token in ev.source.replace("_", " ").replace("-", " ").split():
+                    source_aliases.setdefault(token.lower(), ev.source)
             canonical_source = batch[0].source if batch else ""
             for entry in entries:
-                source = str(entry.get("source") or "").strip()
-                if source not in evidence_by_source:
-                    source = canonical_source
+                raw_source = str(entry.get("source") or "").strip()
+                if raw_source in evidence_by_source:
+                    source = raw_source
+                else:
+                    resolved = source_aliases.get(raw_source.lower())
+                    source = resolved if resolved is not None else canonical_source
                 title = str(entry.get("title") or "").strip()
                 url = str(entry.get("url") or "").strip()
                 if not source or not title or not url or url in seen:
@@ -681,26 +717,64 @@ class FeedDigestAIPipeline:
         return items
 
     async def deduplicate(self, items: list[FeedItem]) -> list[FeedItem]:
-        """Semantic dedup + clustering via AI."""
+        """Semantic dedup + clustering via AI, chunked for large inputs."""
         if len(items) <= 1:
             return items
+
+        canonical_urls: set[str] = set()
+        cluster_titles: dict[str, str] = {}
+        kept: list[FeedItem] = []
+
+        for chunk_start in range(0, len(items), _DEDUP_CHUNK_SIZE):
+            chunk = items[chunk_start : chunk_start + _DEDUP_CHUNK_SIZE]
+            chunk_kept = await self._dedup_chunk(
+                chunk,
+                prior_canonical=canonical_urls,
+                prior_cluster_titles=cluster_titles,
+            )
+            for item in chunk_kept:
+                canonical_urls.add(item.url)
+                if item.cluster_id and item.cluster_title:
+                    cluster_titles.setdefault(item.cluster_id, item.cluster_title)
+            kept.extend(chunk_kept)
+
+        return kept
+
+    async def _dedup_chunk(
+        self,
+        chunk: list[FeedItem],
+        *,
+        prior_canonical: set[str],
+        prior_cluster_titles: dict[str, str],
+    ) -> list[FeedItem]:
+        """Dedup a single chunk, with visibility into earlier chunks' canonical URLs."""
+        if len(chunk) <= 1:
+            return list(chunk)
         items_text = "\n".join(
             f"url={item.url}\ntitle={item.title!r}\ncontent={item.content[:200]!r}"
-            for item in items
+            for item in chunk
+        )
+        prior_text = (
+            (
+                "\n已知来自前序批次的规范 URL（若当前条目与这些 URL 重复，canonical_url 指向它们）：\n"
+                + "\n".join(f"- {u}" for u in sorted(prior_canonical)[:50])
+            )
+            if prior_canonical
+            else ""
         )
         try:
             raw = await self._complete(
                 system_prompt=_DEDUP_SYSTEM,
-                user_prompt=f"以下是待去重的条目列表：\n\n{items_text}",
+                user_prompt=f"以下是待去重的条目列表：\n\n{items_text}\n{prior_text}",
                 reasoning_json_fallback="list",
             )
             dedup_map = {entry["url"]: entry for entry in _parse_json_list(raw) if "url" in entry}
         except Exception as exc:
-            logger.warning("AI dedup failed: %s — skipping dedup", exc)
-            return items
+            logger.warning("AI dedup chunk failed: %s — skipping chunk dedup", exc)
+            return list(chunk)
 
         result: list[FeedItem] = []
-        for item in items:
+        for item in chunk:
             info = dedup_map.get(item.url, {})
             canonical_url = info.get("canonical_url") or item.url
             duplicate_of = "" if canonical_url == item.url else canonical_url

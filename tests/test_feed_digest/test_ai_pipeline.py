@@ -333,7 +333,9 @@ async def test_extract_items_batches_evidence_to_avoid_oversized_json_response()
     items = await pipeline.extract_items_from_evidence(
         [
             RawEvidence(source="aibase", command="opencli aibase news", content="title: AIbase item"),
-            RawEvidence(source="hackernews", command="opencli hackernews top", content="title: HN item"),
+            RawEvidence(source="hackernews", command="opencli hackernews top", content="title: HN item 1"),
+            RawEvidence(source="lobsters", command="opencli lobsters hot", content="title: Lobsters item"),
+            RawEvidence(source="producthunt", command="opencli producthunt today", content="title: PH item"),
         ],
         domain="AI & Machine Learning",
         objective="Find important AI news",
@@ -341,8 +343,10 @@ async def test_extract_items_batches_evidence_to_avoid_oversized_json_response()
     )
 
     assert len(pipeline.prompts) == 2
-    assert all("Max items: 8" in prompt for prompt in pipeline.prompts)
-    assert [item.source for item in items] == ["aibase", "hackernews"]
+    assert all("Max items: 24" in prompt for prompt in pipeline.prompts)
+    # First batch (aibase + hackernews + lobsters) contains 'source=aibase' → mock returns an aibase item.
+    # Second batch (producthunt only) → mock returns 'source=hackernews' which canonicalises to producthunt.
+    assert [item.source for item in items] == ["aibase", "producthunt"]
 
 
 def test_parse_json_list_salvages_complete_items_from_truncated_array() -> None:
