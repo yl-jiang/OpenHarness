@@ -1531,12 +1531,15 @@ class FeishuChannel(BaseChannel):
             # Add reaction only after policy says this message will be handled.
             await self._add_reaction(message_id, self.config.react_emoji)
 
-            # If this is a reply (quote), fetch the quoted message content
+            # If this is a reply (quote), fetch the quoted message content.
+            # parent_id is set for threaded replies in groups.
+            # root_id is set when users quote a message in DM conversations.
             parent_id = getattr(message, "parent_id", None)
+            quoted_ref = parent_id or getattr(message, "root_id", None)
             quoted_message: dict[str, str] | None = None
-            if parent_id:
+            if quoted_ref and quoted_ref != message_id:
                 quoted_message = await self._fetch_quoted_message(
-                    parent_id,
+                    quoted_ref,
                     current_sender_id=sender_id,
                 )
 
