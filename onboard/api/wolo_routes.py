@@ -140,6 +140,13 @@ def todo_done(todo_id: str, workspace: str | None = None) -> dict[str, bool]:
     return {"ok": True}
 
 
+@router.put("/todos/{todo_id}/reopen")
+def todo_reopen(todo_id: str, workspace: str | None = None) -> dict[str, bool]:
+    if not _service(workspace).reopen_todo(todo_id):
+        raise HTTPException(status_code=404, detail="Todo not found or not in done status")
+    return {"ok": True}
+
+
 @router.get("/reports")
 def reports(workspace: str | None = None, type: str | None = None) -> list[dict[str, Any]]:  # noqa: A002
     return _service(workspace).list_reports(report_type=type)

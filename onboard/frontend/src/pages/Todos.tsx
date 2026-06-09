@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  closestCenter,
+  closestCorners,
   DndContext,
   DragOverlay,
   PointerSensor,
+  useDroppable,
   useSensor,
   useSensors,
   type DragEndEvent,
@@ -27,6 +28,13 @@ const columns: { key: TodoStatus; label: string; dot: string }[] = [
   { key: 'in_progress', label: 'In Progress', dot: 'bg-warning' },
   { key: 'done', label: 'Done', dot: 'bg-success' },
 ];
+
+/** Prefix column IDs so they never collide with todo IDs. */
+const colId = (status: TodoStatus) => `col:${status}`;
+const statusFromColId = (id: string): TodoStatus | null => {
+  if (typeof id === 'string' && id.startsWith('col:')) return id.slice(4) as TodoStatus;
+  return null;
+};
 
 function todoTime(todo: Todo): string {
   if (todo.status === 'done') return todo.completed_at || todo.created_at;
@@ -52,7 +60,8 @@ function isOverdue(todo: Todo): boolean {
   return due.getTime() < Date.now();
 }
 
-/** Render a todo card's content (shared between SortableCard and DragOverlay). */
+// --- Sub-components ---
+
 function CardContent({ todo, overdue }: { todo: Todo; overdue: boolean }) {
   return (
     <>
@@ -80,28 +89,16 @@ function CardContent({ todo, overdue }: { todo: Todo; overdue: boolean }) {
   );
 }
 
-/** A single sortable card inside a column. */
-function SortableCard({
-  todo,
-  isDragging,
-}: {
-  todo: Todo;
-  isDragging: boolean;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging: isSortableDragging } = useSortable({ id: todo.id });
+function SortableCard({ todo, isDragging }: { todo: Todo; isDragging: boolean }) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: todo.id });
   const overdue = isOverdue(todo);
-
   return (
     <article
       ref={setNodeRef}
-      style={{
-        transform: CSS.Transform.toString(transform),
-        transition,
-        opacity: isDragging ? 0.3 : 1,
-      }}
+      style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.3 : 1 }}
       className={`p-3.5 border rounded-md bg-surface-1 hover:bg-surface-2 transition-colors cursor-grab active:cursor-grabbing ${
         overdue ? 'border-danger/40' : 'border-border'
-      } ${isSortableDragging ? 'z-50' : ''}`}
+      }`}
       {...attributes}
       {...listeners}
     >
@@ -110,6 +107,35 @@ function SortableCard({
   );
 }
 
+function DroppableColumn({
+  status,
+  items,
+  children,
+  isDragging,
+}: {
+  status: TodoStatus;
+  items: string[];
+  children: React.ReactNode;
+  isDragging: boolean;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id: colId(status) });
+  const highlight = isDragging && isOver;
+  return (
+    <SortableContext items={items} strategy={verticalListSortingStrategy}>
+      <div
+        ref={setNodeRef}
+        className={`flex flex-col gap-2.5 min-h-[80px] rounded-md transition-colors duration-150 ${
+          highlight ? 'bg-accent-solo/5 border-2 border-dashed border-accent-solo/30' : 'border-2 border-transparent'
+        }`}
+      >
+        {children}
+      </div>
+    </SortableContext>
+  );
+}
+
+// --- Main ---
+
 export function Todos({ appName }: { appName: AppName }) {
   const { data, error, loading, reload } = useApi(() => api.todos(appName), [appName], { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS });
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
@@ -117,7 +143,6 @@ export function Todos({ appName }: { appName: AppName }) {
   const [activeId, setActiveId] = useState<string | null>(null);
   const { toast } = useToast();
 
-  // Sync server data → local state
   useEffect(() => {
     if (data) setLocalItems([...data]);
   }, [data]);
@@ -141,9 +166,16 @@ export function Todos({ appName }: { appName: AppName }) {
     return map;
   }, [filtered]);
 
-  const findColumn = useCallback(
-    (id: string | number) => columns.find((col) => columnItems[col.key].some((t) => t.id === id))?.key,
-    [columnItems],
+  /** Resolve a DnD id (todo id or column id) to a TodoStatus. */
+  const resolveColumn = useCallback(
+    (id: string | number | undefined): TodoStatus | null => {
+      if (id == null) return null;
+      const colStatus = statusFromColId(String(id));
+      if (colStatus) return colStatus;
+      const item = localItems.find((t) => t.id === id);
+      return item?.status ?? null;
+    },
+    [localItems],
   );
 
   const activeTodo = activeId ? localItems.find((t) => t.id === activeId) : null;
@@ -158,24 +190,28 @@ export function Todos({ appName }: { appName: AppName }) {
     const { active, over } = event;
     if (!over) return;
 
-    const activeCol = findColumn(active.id as string);
-    const overCol = findColumn(over.id as string);
+    const activeCol = resolveColumn(active.id);
+    const overCol = resolveColumn(over.id);
     if (!activeCol || !overCol || activeCol === overCol) return;
 
-    // Live cross-column reorder (visual only)
+    // Live cross-column move: update status so card visually relocates
     setLocalItems((prev) => {
       const activeItem = prev.find((t) => t.id === active.id);
-      if (!activeItem) return prev;
-      const overIndex = prev.findIndex((t) => t.id === over.id);
-      const rest = prev.filter((t) => t.id !== active.id);
-      const updated = { ...activeItem, status: overCol };
-      if (overIndex === -1) {
-        rest.push(updated);
-      } else {
-        const idx = rest.findIndex((t) => t.id === over.id);
-        rest.splice(idx, 0, updated);
+      if (!activeItem || activeItem.status === overCol) return prev;
+
+      const next = prev.map((t) =>
+        t.id === active.id ? { ...t, status: overCol } : t,
+      );
+
+      // Reorder: place active item adjacent to over item
+      const overIdx = next.findIndex((t) => t.id === over.id);
+      if (overIdx !== -1) {
+        const activeIdx = next.findIndex((t) => t.id === active.id);
+        const [moved] = next.splice(activeIdx, 1);
+        const newOverIdx = next.findIndex((t) => t.id === over.id);
+        next.splice(newOverIdx, 0, moved);
       }
-      return rest;
+      return next;
     });
   }
 
@@ -184,17 +220,17 @@ export function Todos({ appName }: { appName: AppName }) {
     const id = active.id as string;
     setActiveId(null);
 
-    if (!over) return;
-
     const original = data?.find((t) => t.id === id);
     if (!original) return;
 
-    const targetCol = findColumn(over.id as string);
+    const targetCol = resolveColumn(over?.id);
     if (!targetCol || original.status === targetCol) return;
 
-    // Optimistic: status already updated via onDragOver
+    // Status already changed via onDragOver; persist to server
     try {
-      if (targetCol === 'done') {
+      if (original.status === 'done' && targetCol !== 'done') {
+        await api.reopenTodo(appName, id);
+      } else if (targetCol === 'done') {
         await api.markTodoDone(appName, id);
       } else if (targetCol === 'in_progress') {
         await api.startTodo(appName, id);
@@ -240,14 +276,14 @@ export function Todos({ appName }: { appName: AppName }) {
 
       <DndContext
         sensors={sensors}
-        collisionDetection={closestCenter}
+        collisionDetection={closestCorners}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {columns.map((col) => (
-            <section key={col.key} className="space-y-2.5 min-h-[120px]">
+            <section key={col.key} className="space-y-2.5">
               <div className="flex items-center gap-2 mb-3">
                 <span className={`w-2 h-2 rounded-full ${col.dot}`} />
                 <span className="text-[12px] font-medium uppercase tracking-wider text-text-muted">{col.label}</span>
@@ -255,30 +291,26 @@ export function Todos({ appName }: { appName: AppName }) {
                   {columnItems[col.key].length}
                 </span>
               </div>
-              <SortableContext
+              <DroppableColumn
+                status={col.key}
                 items={columnItems[col.key].map((t) => t.id)}
-                strategy={verticalListSortingStrategy}
+                isDragging={activeId !== null}
               >
-                <div className="flex flex-col gap-2.5">
-                  {columnItems[col.key].map((todo) => (
-                    <SortableCard
-                      key={todo.id}
-                      todo={todo}
-                      isDragging={activeId === todo.id}
-                    />
-                  ))}
-                </div>
-              </SortableContext>
+                {columnItems[col.key].map((todo) => (
+                  <SortableCard
+                    key={todo.id}
+                    todo={todo}
+                    isDragging={activeId === todo.id}
+                  />
+                ))}
+              </DroppableColumn>
             </section>
           ))}
         </div>
 
         <DragOverlay dropAnimation={{ duration: 200, easing: 'ease' }}>
           {activeTodo ? (
-            <article
-              className={`p-3.5 border rounded-md bg-surface-2 border-border shadow-lg`}
-              style={{ cursor: 'grabbing' }}
-            >
+            <article className="p-3.5 border rounded-md bg-surface-2 border-border shadow-lg" style={{ cursor: 'grabbing' }}>
               <CardContent todo={activeTodo} overdue={isOverdue(activeTodo)} />
             </article>
           ) : null}

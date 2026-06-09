@@ -60,6 +60,8 @@ export const api = {
     request<{ ok: boolean }>(`/api/${app}/todos/${id}/start`, { method: 'PUT' }),
   revertTodo: (app: AppName, id: string) =>
     request<{ ok: boolean }>(`/api/${app}/todos/${id}/revert`, { method: 'PUT' }),
+  reopenTodo: (app: AppName, id: string) =>
+    request<{ ok: boolean }>(`/api/${app}/todos/${id}/reopen`, { method: 'PUT' }),
   reports: (app: AppName, params: Record<string, QueryValue> = {}) =>
     request<Report[]>(`/api/${app}/reports${query(params)}`),
   report: (app: AppName, id: string) => request<Report>(`/api/${app}/reports/${id}`),

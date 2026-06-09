@@ -179,6 +179,9 @@ class SoloService:
     def complete_todo(self, todo_id: str) -> bool:
         return self.store.complete_todo(todo_id)
 
+    def reopen_todo(self, todo_id: str) -> bool:
+        return self.store.reopen_todo(todo_id)
+
     def list_reports(self, report_type: str | None = None) -> list[dict[str, Any]]:
         reports = self.store.list_reports()
         if report_type:

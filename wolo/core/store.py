@@ -830,6 +830,14 @@ class WoloStore:
         self._db.commit()
         return cur.rowcount > 0
 
+    def reopen_todo(self, todo_id: str) -> bool:
+        cur = self._db.execute(
+            "UPDATE todos SET status='pending', completed_at='' WHERE id=? AND status='done'",
+            (todo_id,),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
     def update_todo(self, todo_id: str, **updates: Any) -> bool:
         """Update an existing todo by ID with new field values."""
         cur = self._db.execute("SELECT * FROM todos WHERE id = ?", (todo_id,))
