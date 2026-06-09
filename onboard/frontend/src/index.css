@@ -14,7 +14,7 @@
 
   --color-text: #fafaf9;
   --color-text-secondary: #a1a1aa;
-  --color-text-muted: #63636e;
+  --color-text-muted: #7a7a85;
 
   --color-accent-solo: #d4a574;
   --color-accent-solo-dim: rgba(212, 165, 116, 0.12);
@@ -113,6 +113,53 @@ body {
 @keyframes count-up {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* === Responsive === */
+@media (max-width: 767px) {
+  .layout-grid {
+    grid-template-columns: 1fr !important;
+  }
+  .sidebar-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    width: 260px;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+  }
+  .sidebar-panel.sidebar-open {
+    transform: translateX(0);
+  }
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(0, 0, 0, 0.5);
+  }
+  .mobile-header {
+    display: flex;
+  }
+  .content-area {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+}
+
+@media (min-width: 768px) {
+  .sidebar-backdrop {
+    display: none !important;
+  }
+  .mobile-header {
+    display: none !important;
+  }
+}
+
+/* === Focus visible === */
+:focus-visible {
+  outline: 2px solid var(--color-accent-solo);
+  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {

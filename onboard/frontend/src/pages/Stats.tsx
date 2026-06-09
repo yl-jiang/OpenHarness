@@ -14,7 +14,7 @@ export function Stats({ appName }: { appName: AppName }) {
   return (
     <div className="space-y-5">
       <h2 className="font-serif text-2xl text-text m-0">Statistics</h2>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <section className="p-5 border border-border rounded-lg bg-surface-1">
           <h3 className="text-sm font-medium text-text m-0 mb-4">Daily Records</h3>
           <DailyLineChart data={data.daily_counts} />

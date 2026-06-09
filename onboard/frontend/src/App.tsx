@@ -1,23 +1,31 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
 
 import { api } from './api/client';
 import type { AppName } from './api/types';
 import { Layout } from './components/Layout';
-import { Chat } from './pages/Chat';
 import { Dashboard } from './pages/Dashboard';
-import { Decisions } from './pages/Decisions';
-import { Entries } from './pages/Entries';
-import { FeedDigests } from './pages/FeedDigests';
-import { Highlights } from './pages/Highlights';
-import { RecordDetail } from './pages/RecordDetail';
-import { Records } from './pages/Records';
-import { Reports } from './pages/Reports';
-import { ReportView } from './pages/ReportView';
-import { Search } from './pages/Search';
-import { Settings } from './pages/Settings';
-import { Stats } from './pages/Stats';
-import { Todos } from './pages/Todos';
+
+// Lazy-loaded pages for code splitting
+const Chat = lazy(() => import('./pages/Chat').then((m) => ({ default: m.Chat })));
+const Decisions = lazy(() => import('./pages/Decisions').then((m) => ({ default: m.Decisions })));
+const Entries = lazy(() => import('./pages/Entries').then((m) => ({ default: m.Entries })));
+const FeedDigests = lazy(() => import('./pages/FeedDigests').then((m) => ({ default: m.FeedDigests })));
+const Highlights = lazy(() => import('./pages/Highlights').then((m) => ({ default: m.Highlights })));
+const RecordDetail = lazy(() => import('./pages/RecordDetail').then((m) => ({ default: m.RecordDetail })));
+const Records = lazy(() => import('./pages/Records').then((m) => ({ default: m.Records })));
+const Reports = lazy(() => import('./pages/Reports').then((m) => ({ default: m.Reports })));
+const ReportView = lazy(() => import('./pages/ReportView').then((m) => ({ default: m.ReportView })));
+const Search = lazy(() => import('./pages/Search').then((m) => ({ default: m.Search })));
+const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
+const Stats = lazy(() => import('./pages/Stats').then((m) => ({ default: m.Stats })));
+const Todos = lazy(() => import('./pages/Todos').then((m) => ({ default: m.Todos })));
+
+function PageLoader() {
+  return (
+    <div className="h-60 rounded-lg bg-gradient-to-r from-surface-1 via-surface-2 to-surface-1 bg-[length:200%_auto] animate-[shimmer_1.5s_linear_infinite]" />
+  );
+}
 
 function initialApp(): AppName {
   return localStorage.getItem('onboard-app') === 'wolo' ? 'wolo' : 'solo';
@@ -56,20 +64,20 @@ export function App() {
           }
         >
           <Route index element={<Dashboard appName={appName} />} />
-          <Route path="entries" element={<Entries appName={appName} />} />
-          <Route path="records" element={<Records appName={appName} />} />
-          <Route path="records/:id" element={<RecordDetail appName={appName} />} />
-          <Route path="todos" element={<Todos appName={appName} />} />
-          <Route path="reports" element={<Reports appName={appName} />} />
-          <Route path="reports/:id" element={<ReportView appName={appName} />} />
-          <Route path="feeds" element={<FeedDigests appName={appName} />} />
-          <Route path="feeds/:id" element={<FeedDigests appName={appName} />} />
-          <Route path="stats" element={<Stats appName={appName} />} />
-          <Route path="search" element={<Search appName={appName} />} />
-          <Route path="chat" element={<Chat appName={appName} />} />
-          <Route path="settings" element={<Settings appName={appName} />} />
-          <Route path="decisions" element={<Decisions />} />
-          <Route path="highlights" element={<Highlights />} />
+          <Route path="entries" element={<Suspense fallback={<PageLoader />}><Entries appName={appName} /></Suspense>} />
+          <Route path="records" element={<Suspense fallback={<PageLoader />}><Records appName={appName} /></Suspense>} />
+          <Route path="records/:id" element={<Suspense fallback={<PageLoader />}><RecordDetail appName={appName} /></Suspense>} />
+          <Route path="todos" element={<Suspense fallback={<PageLoader />}><Todos appName={appName} /></Suspense>} />
+          <Route path="reports" element={<Suspense fallback={<PageLoader />}><Reports appName={appName} /></Suspense>} />
+          <Route path="reports/:id" element={<Suspense fallback={<PageLoader />}><ReportView appName={appName} /></Suspense>} />
+          <Route path="feeds" element={<Suspense fallback={<PageLoader />}><FeedDigests appName={appName} /></Suspense>} />
+          <Route path="feeds/:id" element={<Suspense fallback={<PageLoader />}><FeedDigests appName={appName} /></Suspense>} />
+          <Route path="stats" element={<Suspense fallback={<PageLoader />}><Stats appName={appName} /></Suspense>} />
+          <Route path="search" element={<Suspense fallback={<PageLoader />}><Search appName={appName} /></Suspense>} />
+          <Route path="chat" element={<Suspense fallback={<PageLoader />}><Chat appName={appName} /></Suspense>} />
+          <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings appName={appName} /></Suspense>} />
+          <Route path="decisions" element={<Suspense fallback={<PageLoader />}><Decisions /></Suspense>} />
+          <Route path="highlights" element={<Suspense fallback={<PageLoader />}><Highlights /></Suspense>} />
         </Route>
       </Routes>
     </BrowserRouter>

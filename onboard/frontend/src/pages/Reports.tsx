@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 
 import { api } from '../api/client';
 import type { AppName, Report, ReportType } from '../api/types';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { useToast } from '../components/ToastProvider';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
 function formatGeneratedTime(raw: string): string {
@@ -96,6 +98,8 @@ export function Reports({ appName }: { appName: AppName }) {
   const [generating, setGenerating] = useReportGenerating(appName);
   const [genError, setGenError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const { toast } = useToast();
 
   async function generate(type: ReportType) {
     setGenerating(type);
@@ -103,21 +107,27 @@ export function Reports({ appName }: { appName: AppName }) {
     try {
       await api.generateReport(appName, type);
       reload();
+      toast(`${type} report generated`, 'success');
     } catch (err) {
-      setGenError(`Failed to generate ${type} report${err instanceof Error ? `: ${err.message}` : ''}`);
+      const msg = `Failed to generate ${type} report${err instanceof Error ? `: ${err.message}` : ''}`;
+      setGenError(msg);
+      toast(msg, 'error');
     } finally {
       setGenerating(null);
     }
   }
 
   async function deleteReport(id: string) {
-    if (!confirm('Delete this report permanently?')) return;
     setDeleting(id);
+    setConfirmDeleteId(null);
     try {
       await api.deleteReport(appName, id);
       reload();
+      toast('Report deleted', 'success');
     } catch (err) {
-      setGenError(`Failed to delete${err instanceof Error ? `: ${err.message}` : ''}`);
+      const msg = `Failed to delete${err instanceof Error ? `: ${err.message}` : ''}`;
+      setGenError(msg);
+      toast(msg, 'error');
     } finally {
       setDeleting(null);
     }
@@ -127,7 +137,7 @@ export function Reports({ appName }: { appName: AppName }) {
     return <div className="h-60 rounded-lg bg-gradient-to-r from-surface-1 via-surface-2 to-surface-1 bg-[length:200%_auto] animate-[shimmer_1.5s_linear_infinite]" />;
   }
   if (error || !data) {
-    return <div className="border border-danger/30 rounded-lg bg-danger/5 p-5 text-sm text-text">{error ?? 'Failed to load reports.'}</div>;
+    return <div className="border border-danger/30 rounded-lg bg-danger/5 p-5 text-sm text-text" role="alert">{error ?? 'Failed to load reports.'}</div>;
   }
 
   const weekly = sortByPeriod(data.filter((r) => r.report_type === 'weekly'));
@@ -148,7 +158,7 @@ export function Reports({ appName }: { appName: AppName }) {
       </div>
 
       {genError && (
-        <div className="flex items-center gap-2 border border-danger/30 rounded-md bg-danger/5 px-4 py-2.5 text-[13px] text-text">
+        <div className="flex items-center gap-2 border border-danger/30 rounded-md bg-danger/5 px-4 py-2.5 text-[13px] text-text" role="alert">
           <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-danger" />
           {genError}
           <button onClick={() => setGenError(null)} className="ml-auto text-text-muted hover:text-text text-[11px] cursor-pointer bg-transparent border-none">dismiss</button>
@@ -202,9 +212,10 @@ export function Reports({ appName }: { appName: AppName }) {
                     <span className="inline-flex items-center gap-3">
                       <Link to={`/reports/${report.id}`} className="text-[12px] text-accent-solo hover:underline no-underline">Open →</Link>
                       <button
-                        onClick={() => deleteReport(report.id)}
+                        onClick={() => setConfirmDeleteId(report.id)}
                         disabled={deleting === report.id}
                         className="text-[12px] text-text-muted hover:text-danger cursor-pointer bg-transparent border-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        aria-label={`Delete report ${period || report.id}`}
                       >
                         {deleting === report.id ? '…' : '✕'}
                       </button>
@@ -216,6 +227,16 @@ export function Reports({ appName }: { appName: AppName }) {
           )}
         </section>
       ))}
+
+      <ConfirmDialog
+        open={confirmDeleteId !== null}
+        title="Delete report?"
+        description="This action cannot be undone."
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => confirmDeleteId && deleteReport(confirmDeleteId)}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
     </div>
   );
 }

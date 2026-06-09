@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 
 import { api } from '../api/client';
 import type { AppName } from '../api/types';
+import { Breadcrumb } from '../components/Breadcrumb';
 import { MarkdownView } from '../components/MarkdownView';
 import { useApi } from '../hooks/useApi';
 
@@ -96,77 +97,83 @@ export function ReportView({ appName }: { appName: AppName }) {
       : null;
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_280px] gap-6 items-start">
-      <article className="min-w-0 border border-border rounded-lg bg-surface-1 p-6 md:p-8">
-        <div className="flex items-center justify-between gap-4 mb-5 pb-4 border-b border-border">
-          <h2 className="font-serif text-xl text-text m-0 capitalize">{data.report_type} Report</h2>
-          <span className="text-[11px] font-mono text-text-muted whitespace-nowrap">{formatCreatedAt(data.created_at)}</span>
-        </div>
-        {data.content ? (
-          <MarkdownView content={data.content} headingIds={headings.map((h) => h.id)} />
-        ) : (
-          <div className="border border-warning/30 rounded-md bg-warning/5 p-5 space-y-2">
-            <p className="text-sm text-text m-0 font-medium">Report generated but no content was produced.</p>
-            <p className="text-[13px] text-text-secondary m-0 leading-relaxed">
-              Possible causes: AI provider not configured (check Settings → Gateway), no records in the selected period, or the LLM returned an empty response.
-            </p>
+    <div className="max-w-5xl">
+      <Breadcrumb items={[
+        { label: 'Reports', to: '/reports' },
+        { label: `${data.report_type} Report` },
+      ]} />
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_280px] gap-6 items-start">
+        <article className="min-w-0 border border-border rounded-lg bg-surface-1 p-6 md:p-8">
+          <div className="flex items-center justify-between gap-4 mb-5 pb-4 border-b border-border">
+            <h2 className="font-serif text-xl text-text m-0 capitalize">{data.report_type} Report</h2>
+            <span className="text-[11px] font-mono text-text-muted whitespace-nowrap">{formatCreatedAt(data.created_at)}</span>
           </div>
-        )}
-      </article>
+          {data.content ? (
+            <MarkdownView content={data.content} headingIds={headings.map((h) => h.id)} />
+          ) : (
+            <div className="border border-warning/30 rounded-md bg-warning/5 p-5 space-y-2">
+              <p className="text-sm text-text m-0 font-medium">Report generated but no content was produced.</p>
+              <p className="text-[13px] text-text-secondary m-0 leading-relaxed">
+                Possible causes: AI provider not configured (check Settings → Gateway), no records in the selected period, or the LLM returned an empty response.
+              </p>
+            </div>
+          )}
+        </article>
 
-      <aside className="hidden lg:flex lg:flex-col gap-4 sticky top-20">
-        <div className="border border-border rounded-lg bg-surface-1 p-4 space-y-3">
-          <h3 className="text-[11px] font-mono uppercase tracking-wider text-text-muted m-0">Report Info</h3>
-          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-[12px]">
-            <dt className="text-text-muted">Type</dt>
-            <dd className="text-text m-0 capitalize">{data.report_type}</dd>
-            {periodLabel ? (
-              <>
-                <dt className="text-text-muted">Period</dt>
-                <dd className="text-text m-0 font-mono">{periodLabel}</dd>
-              </>
-            ) : null}
-            <dt className="text-text-muted">Generated</dt>
-            <dd className="text-text m-0 font-mono">{formatCreatedAt(data.created_at)}</dd>
-            <dt className="text-text-muted">App</dt>
-            <dd className="text-text m-0 font-mono uppercase">{appName}</dd>
-          </dl>
-        </div>
+        <aside className="hidden lg:flex lg:flex-col gap-4 sticky top-20">
+          <div className="border border-border rounded-lg bg-surface-1 p-4 space-y-3">
+            <h3 className="text-[11px] font-mono uppercase tracking-wider text-text-muted m-0">Report Info</h3>
+            <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-2 text-[12px]">
+              <dt className="text-text-muted">Type</dt>
+              <dd className="text-text m-0 capitalize">{data.report_type}</dd>
+              {periodLabel ? (
+                <>
+                  <dt className="text-text-muted">Period</dt>
+                  <dd className="text-text m-0 font-mono">{periodLabel}</dd>
+                </>
+              ) : null}
+              <dt className="text-text-muted">Generated</dt>
+              <dd className="text-text m-0 font-mono">{formatCreatedAt(data.created_at)}</dd>
+              <dt className="text-text-muted">App</dt>
+              <dd className="text-text m-0 font-mono uppercase">{appName}</dd>
+            </dl>
+          </div>
 
-        {headings.length > 0 ? (
-          <nav className="border border-border rounded-lg bg-surface-1 p-4">
-            <h3 className="text-[11px] font-mono uppercase tracking-wider text-text-muted m-0 mb-3">Contents</h3>
-            <ul className="list-none m-0 p-0 space-y-1.5 max-h-[60vh] overflow-y-auto pr-1">
-              {headings.map((h) => (
-                <li
-                  key={h.id}
-                  style={{ paddingLeft: `${(h.level - 1) * 10}px` }}
-                >
-                  <a
-                    href={`#${h.id}`}
-                    onClick={(e) => {
-                      e.preventDefault();
-                      const el = document.getElementById(h.id);
-                      if (el) {
-                        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                        setActiveId(h.id);
-                      }
-                    }}
-                    className={`block text-[12px] leading-snug no-underline truncate transition-colors ${
-                      activeId === h.id
-                        ? 'text-accent-solo'
-                        : 'text-text-secondary hover:text-text'
-                    }`}
-                    title={h.text}
+          {headings.length > 0 ? (
+            <nav className="border border-border rounded-lg bg-surface-1 p-4">
+              <h3 className="text-[11px] font-mono uppercase tracking-wider text-text-muted m-0 mb-3">Contents</h3>
+              <ul className="list-none m-0 p-0 space-y-1.5 max-h-[60vh] overflow-y-auto pr-1">
+                {headings.map((h) => (
+                  <li
+                    key={h.id}
+                    style={{ paddingLeft: `${(h.level - 1) * 10}px` }}
                   >
-                    {h.text}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </nav>
-        ) : null}
-      </aside>
+                    <a
+                      href={`#${h.id}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        const el = document.getElementById(h.id);
+                        if (el) {
+                          el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          setActiveId(h.id);
+                        }
+                      }}
+                      className={`block text-[12px] leading-snug no-underline truncate transition-colors ${
+                        activeId === h.id
+                          ? 'text-accent-solo'
+                          : 'text-text-secondary hover:text-text'
+                      }`}
+                      title={h.text}
+                    >
+                      {h.text}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          ) : null}
+        </aside>
+      </div>
     </div>
   );
 }

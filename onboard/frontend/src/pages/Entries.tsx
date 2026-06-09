@@ -40,8 +40,9 @@ export function Entries({ appName }: { appName: AppName }) {
       </div>
       <DataTable<Entry>
         rows={[...data.items].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())}
+        pageSize={30}
         columns={[
-          { key: 'created_at', title: 'Time', render: (row) => {
+          { key: 'created_at', title: 'Time', sortValue: (row) => new Date(row.created_at).getTime(), render: (row) => {
             const { date, time } = formatTime(row.created_at);
             return (
               <span className="font-mono text-[12px] whitespace-nowrap">
@@ -50,7 +51,7 @@ export function Entries({ appName }: { appName: AppName }) {
               </span>
             );
           }},
-          { key: 'channel', title: 'Channel', render: (row) => <span className="inline-block px-1.5 py-0.5 text-[11px] rounded bg-surface-3 text-text-secondary">{row.channel}</span> },
+          { key: 'channel', title: 'Channel', sortValue: (row) => row.channel, render: (row) => <span className="inline-block px-1.5 py-0.5 text-[11px] rounded bg-surface-3 text-text-secondary">{row.channel}</span> },
           { key: 'content', title: 'Content', render: (row) => <span className="text-text line-clamp-2">{row.content}</span> },
         ]}
       />

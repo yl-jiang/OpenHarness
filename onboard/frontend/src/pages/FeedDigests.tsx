@@ -3,7 +3,10 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { api } from '../api/client';
 import type { AppName, FeedDigest, FeedDigestMeta } from '../api/types';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { EmptyState } from '../components/EmptyState';
 import { MarkdownView } from '../components/MarkdownView';
+import { useToast } from '../components/ToastProvider';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
 function formatRelativeDate(raw: string): string {
@@ -151,9 +154,11 @@ export function FeedDigests({ appName }: { appName: AppName }) {
   const { id = '' } = useParams();
   const [actionError, setActionError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [{ running, runMessage }, setRunState] = useDigestRunState(appName);
   const [runPreset, setRunPreset] = useState<string>('ai_news');
   const [showMeta, setShowMeta] = useState(false);
+  const { toast } = useToast();
   const accent = appName === 'solo' ? 'text-accent-solo' : 'text-accent-wolo';
   const accentBorder = appName === 'solo' ? 'border-accent-solo/30 bg-accent-solo-dim/30' : 'border-accent-wolo/30 bg-accent-wolo-dim/30';
   const accentBtn = appName === 'solo' ? 'bg-accent-solo/10 border-accent-solo/30 hover:bg-accent-solo/20 text-accent-solo' : 'bg-accent-wolo/10 border-accent-wolo/30 hover:bg-accent-wolo/20 text-accent-wolo';
@@ -168,19 +173,22 @@ export function FeedDigests({ appName }: { appName: AppName }) {
   );
 
   async function deleteDigest(digestId: string) {
-    if (!confirm('Delete this feed digest permanently?')) return;
     setDeleting(digestId);
+    setConfirmDeleteId(null);
     setActionError(null);
     try {
       await api.deleteFeedDigest(appName, digestId);
       listState.reload();
+      toast('Feed digest deleted', 'success');
       if (id === digestId) {
         navigate('/feeds');
       } else {
         detailState.reload();
       }
     } catch (err) {
-      setActionError(`Failed to delete feed digest${err instanceof Error ? `: ${err.message}` : ''}`);
+      const msg = `Failed to delete feed digest${err instanceof Error ? `: ${err.message}` : ''}`;
+      setActionError(msg);
+      toast(msg, 'error');
     } finally {
       setDeleting(null);
     }
@@ -293,10 +301,11 @@ export function FeedDigests({ appName }: { appName: AppName }) {
         {/* Digest list */}
         <section className="border border-border rounded-lg overflow-hidden bg-surface-1">
           {digests.length === 0 ? (
-            <div className="p-8 text-center">
-              <div className="text-[13px] text-text-muted">No feed digests yet.</div>
-              <div className="mt-1 text-[12px] text-text-muted/60">Run a fetch to generate your first digest.</div>
-            </div>
+            <EmptyState
+              icon={<span>◎</span>}
+              title="No feed digests yet"
+              description="Run a fetch to generate your first digest."
+            />
           ) : (
             <div className="divide-y divide-border">
               {digests.map((digest, index) => {
@@ -349,10 +358,11 @@ export function FeedDigests({ appName }: { appName: AppName }) {
                       </div>
                     </Link>
                     <button
-                      onClick={() => deleteDigest(digest.id)}
+                      onClick={() => setConfirmDeleteId(digest.id)}
                       disabled={deleting === digest.id}
                       className="absolute top-2.5 right-2.5 text-[11px] text-text-muted/0 group-hover:text-text-muted hover:!text-danger cursor-pointer bg-transparent border-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                       title="Delete digest"
+                      aria-label={`Delete digest ${digest.id}`}
                     >
                       {deleting === digest.id ? '...' : 'x'}
                     </button>
@@ -402,7 +412,7 @@ export function FeedDigests({ appName }: { appName: AppName }) {
                     {showMeta ? 'Hide metadata' : 'Metadata'}
                   </button>
                   <button
-                    onClick={() => deleteDigest(selected.id)}
+                    onClick={() => setConfirmDeleteId(selected.id)}
                     disabled={deleting === selected.id}
                     className="text-[12px] px-3 py-1.5 rounded-md border border-border bg-surface-2 text-text-secondary hover:text-danger hover:border-danger/30 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                   >
@@ -457,6 +467,16 @@ export function FeedDigests({ appName }: { appName: AppName }) {
           )}
         </section>
       </div>
+
+      <ConfirmDialog
+        open={confirmDeleteId !== null}
+        title="Delete feed digest?"
+        description="This action cannot be undone."
+        confirmLabel="Delete"
+        danger
+        onConfirm={() => confirmDeleteId && deleteDigest(confirmDeleteId)}
+        onCancel={() => setConfirmDeleteId(null)}
+      />
     </div>
   );
 }

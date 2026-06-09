@@ -3,6 +3,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 're
 import { api } from '../api/client';
 import type { AppName, ChatSession } from '../api/types';
 import { useWebSocket } from '../hooks/useWebSocket';
+import { EmptyState } from './EmptyState';
 import { MarkdownView } from './MarkdownView';
 
 interface ChatMessage {
@@ -52,6 +53,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const messageCounter = useRef(0);
   const messagesRef = useRef<HTMLElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   function createMessage(message: Omit<ChatMessage, 'id' | 'timestamp'>): ChatMessage {
     messageCounter.current += 1;
@@ -169,6 +171,14 @@ export function ChatPanel({ appName }: { appName: AppName }) {
   useEffect(() => { messageCache.set(appName, messages); }, [appName, messages]);
   useEffect(() => { streamingCache.set(appName, streaming); }, [appName, streaming]);
   useEffect(() => { messagesRef.current?.scrollTo({ top: messagesRef.current.scrollHeight }); }, [messages, streaming]);
+
+  // Auto-grow textarea
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+  }, [input]);
 
   // Load session list
   const loadSessions = useCallback(async (search?: string) => {
@@ -424,15 +434,11 @@ export function ChatPanel({ appName }: { appName: AppName }) {
         {/* Messages */}
         <section ref={messagesRef} className="flex-1 overflow-y-auto p-5 space-y-3" aria-live="polite">
           {messages.length === 0 ? (
-            <div className="flex items-start gap-4 max-w-lg border border-dashed border-border rounded-lg p-5 text-text-secondary">
-              <span className="shrink-0 w-10 h-10 grid place-items-center rounded-md bg-accent-solo-dim text-accent-solo font-mono font-bold text-sm">?</span>
-              <div>
-                <h3 className="text-sm font-medium text-text m-0">Start a conversation</h3>
-                <p className="text-[13px] mt-1.5 leading-relaxed m-0">
-                  Ask for a summary, search past records, or trigger a work-log action. Tool activity appears inline.
-                </p>
-              </div>
-            </div>
+            <EmptyState
+              icon={<span className="font-mono font-bold text-sm">?</span>}
+              title="Start a conversation"
+              description="Ask for a summary, search past records, or trigger a work-log action. Tool activity appears inline."
+            />
           ) : null}
 
           {messages.map((msg) => (
@@ -554,14 +560,16 @@ export function ChatPanel({ appName }: { appName: AppName }) {
               onClick={() => fileInputRef.current?.click()}
               className="shrink-0 p-2 text-text-muted hover:text-text transition-colors rounded"
               title="Attach file"
+              aria-label="Attach file"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21.44 11.05l-9.19 9.19a6 6 0 01-8.49-8.49l9.19-9.19a4 4 0 015.66 5.66l-9.2 9.19a2 2 0 01-2.83-2.83l8.49-8.48"/></svg>
             </button>
             <textarea
+              ref={textareaRef}
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onPaste={handlePaste}
-              placeholder={socket.connected ? `Message ${displayName}... (Enter to send, paste/drop files)` : 'Connecting...'}
+              placeholder={socket.connected ? `Message ${displayName}...` : 'Connecting...'}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault();
@@ -570,15 +578,20 @@ export function ChatPanel({ appName }: { appName: AppName }) {
               }}
               className="flex-1 min-h-[44px] max-h-[160px] px-3 py-2.5 text-[13px] bg-transparent border-none text-text placeholder:text-text-muted outline-none resize-none"
               rows={1}
+              aria-label="Chat message"
             />
             <button
               type="submit"
               disabled={!canSend}
               className="shrink-0 p-2 text-text-muted hover:text-text disabled:opacity-30 disabled:hover:text-text-muted transition-colors rounded"
               title="Send"
+              aria-label="Send message"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
+          </div>
+          <div className="mt-1.5">
+            <span className="text-[10px] text-text-muted/60">Enter to send · Shift+Enter for new line · Paste or drop files</span>
           </div>
         </form>
       </div>
