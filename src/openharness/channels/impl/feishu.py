@@ -627,11 +627,18 @@ class FeishuChannel(BaseChannel):
         body_raw = getattr(msg, "body", None)
         body_content = getattr(body_raw, "content", None) if body_raw else None
         if not body_content:
+            body_content = getattr(body_raw, "content_json", None) if body_raw else None
+        if not body_content:
+            body_content = getattr(msg, "content", None)
+        if not body_content:
             return ""
-        try:
-            content_json = json.loads(body_content)
-        except (json.JSONDecodeError, TypeError):
-            return ""
+        if isinstance(body_content, dict):
+            content_json = body_content
+        else:
+            try:
+                content_json = json.loads(body_content)
+            except (json.JSONDecodeError, TypeError):
+                return ""
         if msg_type == "text":
             return content_json.get("text", "")
         if msg_type == "post":
@@ -640,7 +647,6 @@ class FeishuChannel(BaseChannel):
         if msg_type == "interactive":
             return _extract_share_card_content(content_json, msg_type) or ""
         if msg_type == "merge_forward":
-            # Nested merge_forward inside another merge_forward; don't recurse.
             return "[merged forward messages]"
         return content_json.get("text", "")
 
@@ -722,14 +728,52 @@ class FeishuChannel(BaseChannel):
             logger.warning("Error fetching quoted message %s: %s", message_id, e)
             return None
 
-    def _fetch_merge_forward_content_sync(self, message_id: str) -> str:
-        """Fetch and expand all sub-messages of a merge_forward message.
+    @staticmethod
+    def _extract_sub_message_content(msg: Any) -> tuple[str, list[str]]:
+        """Extract text and image keys from a sub-message in a merge_forward."""
+        msg_type = getattr(msg, "msg_type", "text")
+        body_raw = getattr(msg, "body", None)
+        body_content = getattr(body_raw, "content", None) if body_raw else None
+        if not body_content:
+            body_content = getattr(body_raw, "content_json", None) if body_raw else None
+        if not body_content:
+            body_content = getattr(msg, "content", None)
+        if not body_content:
+            logger.debug(
+                "merge_forward sub-message has no body content msg_type=%s body_attrs=%s",
+                msg_type,
+                dir(body_raw) if body_raw else "None",
+            )
+            return "", []
+        if isinstance(body_content, dict):
+            content_json = body_content
+        else:
+            try:
+                content_json = json.loads(body_content)
+            except (json.JSONDecodeError, TypeError):
+                return "", []
 
-        The GetMessage API returns items[0] as the merge_forward envelope and
-        items[1:] as the individual sub-messages.  We extract text from each
-        sub-message and concatenate them with sender/index context.
+        if msg_type == "text":
+            return content_json.get("text", ""), []
+        if msg_type == "post":
+            return _extract_post_content(content_json)
+        if msg_type == "image":
+            key = content_json.get("image_key", "")
+            return "", [key] if key else []
+        if msg_type == "interactive":
+            return _extract_share_card_content(content_json, msg_type) or "", []
+        if msg_type == "merge_forward":
+            return "[merged forward messages]", []
+        return content_json.get("text", ""), []
+
+    def _fetch_merge_forward_content_sync(self, message_id: str) -> tuple[str, list[tuple[str, str]]]:
+        """Fetch and expand sub-messages of a merge_forward message.
+
+        Returns (text, images) where images is a list of (image_key, sub_message_id)
+        pairs — sub_message_id is needed for the Feishu resource download API.
         """
         from lark_oapi.api.im.v1 import GetMessageRequest
+        fallback = "[merged forward messages]"
         try:
             request = GetMessageRequest.builder().message_id(message_id).build()
             response = self._client.im.v1.message.get(request)
@@ -738,39 +782,54 @@ class FeishuChannel(BaseChannel):
                     "Failed to fetch merge_forward message %s: code=%s, msg=%s",
                     message_id, response.code, response.msg,
                 )
-                return "[merged forward messages]"
+                return fallback, []
             items = getattr(response.data, "items", None)
             if not items or len(items) <= 1:
-                return "[merged forward messages]"
-            # items[0] is the envelope; items[1:] are the sub-messages
+                return fallback, []
             parts: list[str] = []
+            all_images: list[tuple[str, str]] = []
             for idx, sub_msg in enumerate(items[1:], start=1):
+                sub_msg_id = getattr(sub_msg, "message_id", "") or message_id
                 sender_raw = getattr(sub_msg, "sender", None)
                 sender_name = ""
                 if sender_raw:
                     sender_id = getattr(sender_raw, "id", "") or ""
                     sender_name = self._resolve_sender_display_name_sync(sender_id) if sender_id else ""
-                text = self._extract_text_from_message_item(sub_msg)
+                text, image_keys = self._extract_sub_message_content(sub_msg)
+                for key in image_keys:
+                    all_images.append((key, sub_msg_id))
                 msg_type = getattr(sub_msg, "msg_type", "")
                 if not text:
                     text = MSG_TYPE_MAP.get(msg_type, f"[{msg_type}]")
                 label = sender_name or f"message {idx}"
                 parts.append(f"{label}: {text}")
             if not parts:
-                return "[merged forward messages]"
-            return "[merged forward messages]\n" + "\n".join(parts)
+                return fallback, []
+            return "[merged forward messages]\n" + "\n".join(parts), all_images
         except Exception as e:
             logger.warning("Error fetching merge_forward message %s: %s", message_id, e)
-            return "[merged forward messages]"
+            return fallback, []
 
-    async def _fetch_merge_forward_content(self, message_id: str) -> str:
-        """Async wrapper for _fetch_merge_forward_content_sync."""
+    async def _fetch_merge_forward_content(self, message_id: str) -> tuple[str, list[str]]:
+        """Fetch merge_forward text and download images from sub-messages.
+
+        Returns (text, media_paths) where media_paths are local file paths
+        of downloaded images.
+        """
         if not self._client or not message_id:
-            return "[merged forward messages]"
+            return "[merged forward messages]", []
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
+        text, images = await loop.run_in_executor(
             None, self._fetch_merge_forward_content_sync, message_id,
         )
+        media_paths: list[str] = []
+        for img_key, sub_msg_id in images:
+            file_path, _ = await self._download_and_save_media(
+                "image", {"image_key": img_key}, sub_msg_id,
+            )
+            if file_path:
+                media_paths.append(file_path)
+        return text, media_paths
 
     async def _fetch_quoted_message(self, message_id: str, *, current_sender_id: str) -> dict[str, str] | None:
         """Fetch structured quoted message metadata or ``None``."""
@@ -1487,10 +1546,10 @@ class FeishuChannel(BaseChannel):
                 content_parts.append(content_text)
 
             elif msg_type == "merge_forward":
-                # Expand sub-messages from merged forward
-                text = await self._fetch_merge_forward_content(message_id)
+                text, forward_media = await self._fetch_merge_forward_content(message_id)
                 if text:
                     content_parts.append(text)
+                media_paths.extend(forward_media)
 
             elif msg_type in ("share_chat", "share_user", "interactive", "share_calendar_event", "system"):
                 # Handle share cards and interactive messages

@@ -20,13 +20,14 @@ def _make_channel() -> FeishuChannel:
     )
 
 
-def _make_message_item(msg_type: str, content: dict, sender_id: str = "") -> SimpleNamespace:
+def _make_message_item(msg_type: str, content: dict, sender_id: str = "", message_id: str = "") -> SimpleNamespace:
     """Build a fake message item matching the lark_oapi GetMessage response shape."""
     sender = SimpleNamespace(id=sender_id, id_type="open_id", sender_type="user")
     return SimpleNamespace(
         msg_type=msg_type,
         body=SimpleNamespace(content=json.dumps(content)),
         sender=sender,
+        message_id=message_id,
     )
 
 
@@ -102,11 +103,12 @@ class TestFetchMergeForwardContentSync:
         channel._client = fake_client
         # Mock sender name resolution to return known names
         with patch.object(channel, "_resolve_sender_display_name_sync", side_effect=lambda oid: {"ou_alice": "Alice", "ou_bob": "Bob"}.get(oid, oid)):
-            result = channel._fetch_merge_forward_content_sync("om_test123")
+            text, images = channel._fetch_merge_forward_content_sync("om_test123")
 
-        assert "[merged forward messages]" in result
-        assert "Alice: first message" in result
-        assert "Bob: second message" in result
+        assert "[merged forward messages]" in text
+        assert "Alice: first message" in text
+        assert "Bob: second message" in text
+        assert images == []
 
     def test_fallback_when_no_sub_messages(self):
         channel = _make_channel()
@@ -123,8 +125,9 @@ class TestFetchMergeForwardContentSync:
             )
         )
         channel._client = fake_client
-        result = channel._fetch_merge_forward_content_sync("om_test")
-        assert result == "[merged forward messages]"
+        text, images = channel._fetch_merge_forward_content_sync("om_test")
+        assert text == "[merged forward messages]"
+        assert images == []
 
     def test_fallback_on_api_failure(self):
         channel = _make_channel()
@@ -141,8 +144,9 @@ class TestFetchMergeForwardContentSync:
             )
         )
         channel._client = fake_client
-        result = channel._fetch_merge_forward_content_sync("om_test")
-        assert result == "[merged forward messages]"
+        text, images = channel._fetch_merge_forward_content_sync("om_test")
+        assert text == "[merged forward messages]"
+        assert images == []
 
     def test_fallback_on_exception(self):
         channel = _make_channel()
@@ -158,19 +162,20 @@ class TestFetchMergeForwardContentSync:
             )
         )
         channel._client = fake_client
-        result = channel._fetch_merge_forward_content_sync("om_test")
-        assert result == "[merged forward messages]"
+        text, images = channel._fetch_merge_forward_content_sync("om_test")
+        assert text == "[merged forward messages]"
+        assert images == []
 
     def test_mixed_message_types(self):
         """Sub-messages can be different types (text, post, image, etc.)."""
         channel = _make_channel()
         envelope = _make_message_item("merge_forward", {})
-        sub_text = _make_message_item("text", {"text": "hello"}, sender_id="ou_a")
+        sub_text = _make_message_item("text", {"text": "hello"}, sender_id="ou_a", message_id="om_sub1")
         sub_post = _make_message_item("post", {
             "zh_cn": {"title": "", "content": [[{"tag": "text", "text": "rich text"}]]}
-        }, sender_id="ou_b")
+        }, sender_id="ou_b", message_id="om_sub2")
         # Image message: no text extractable, should use MSG_TYPE_MAP fallback
-        sub_image = _make_message_item("image", {"image_key": "img_xxx"}, sender_id="ou_c")
+        sub_image = _make_message_item("image", {"image_key": "img_xxx"}, sender_id="ou_c", message_id="om_sub3")
 
         fake_response = SimpleNamespace(
             success=lambda: True,
@@ -185,11 +190,12 @@ class TestFetchMergeForwardContentSync:
         )
         channel._client = fake_client
         with patch.object(channel, "_resolve_sender_display_name_sync", return_value=""):
-            result = channel._fetch_merge_forward_content_sync("om_test")
+            text, images = channel._fetch_merge_forward_content_sync("om_test")
 
-        assert "hello" in result
-        assert "rich text" in result
-        assert "[image]" in result
+        assert "hello" in text
+        assert "rich text" in text
+        assert "[image]" in text
+        assert images == [("img_xxx", "om_sub3")]
 
 
 # ── _fetch_merge_forward_content (async) ─────────────────────────────────
@@ -199,13 +205,15 @@ class TestFetchMergeForwardContentSync:
 async def test_fetch_merge_forward_content_no_client():
     channel = _make_channel()
     channel._client = None
-    result = await channel._fetch_merge_forward_content("om_test")
-    assert result == "[merged forward messages]"
+    text, media = await channel._fetch_merge_forward_content("om_test")
+    assert text == "[merged forward messages]"
+    assert media == []
 
 
 @pytest.mark.asyncio
 async def test_fetch_merge_forward_content_no_message_id():
     channel = _make_channel()
     channel._client = object()  # non-None
-    result = await channel._fetch_merge_forward_content("")
-    assert result == "[merged forward messages]"
+    text, media = await channel._fetch_merge_forward_content("")
+    assert text == "[merged forward messages]"
+    assert media == []
