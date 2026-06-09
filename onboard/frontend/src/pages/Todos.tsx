@@ -89,9 +89,18 @@ function CardContent({ todo, overdue }: { todo: Todo; overdue: boolean }) {
   );
 }
 
-function SortableCard({ todo, isDragging }: { todo: Todo; isDragging: boolean }) {
+function SortableCard({
+  todo,
+  isDragging,
+  onAction,
+}: {
+  todo: Todo;
+  isDragging: boolean;
+  onAction: (todo: Todo, target: TodoStatus) => void;
+}) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: todo.id });
   const overdue = isOverdue(todo);
+  const btnBase = 'text-[11px] px-2 py-1 rounded border border-border bg-transparent text-text-secondary hover:text-text hover:border-text-muted cursor-pointer transition-colors active:scale-[0.97]';
   return (
     <article
       ref={setNodeRef}
@@ -103,6 +112,23 @@ function SortableCard({ todo, isDragging }: { todo: Todo; isDragging: boolean })
       {...listeners}
     >
       <CardContent todo={todo} overdue={overdue} />
+      <div
+        className="flex items-center gap-1.5 mt-2.5"
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        {todo.status === 'done' ? (
+          <button onClick={() => onAction(todo, 'pending')} className={btnBase}>↩ Reopen</button>
+        ) : null}
+        {todo.status === 'pending' ? (
+          <button onClick={() => onAction(todo, 'in_progress')} className={btnBase}>▶ Start</button>
+        ) : null}
+        {todo.status === 'in_progress' ? (
+          <button onClick={() => onAction(todo, 'pending')} className={btnBase}>← Pending</button>
+        ) : null}
+        {todo.status !== 'done' ? (
+          <button onClick={() => onAction(todo, 'done')} className={btnBase}>✓ Mark done</button>
+        ) : null}
+      </div>
     </article>
   );
 }
@@ -245,6 +271,26 @@ export function Todos({ appName }: { appName: AppName }) {
     }
   }
 
+  // --- Action handler (button clicks) ---
+
+  async function handleAction(todo: Todo, target: TodoStatus) {
+    try {
+      if (todo.status === 'done' && target !== 'done') {
+        await api.reopenTodo(appName, todo.id);
+      } else if (target === 'done') {
+        await api.markTodoDone(appName, todo.id);
+      } else if (target === 'in_progress') {
+        await api.startTodo(appName, todo.id);
+      } else {
+        await api.revertTodo(appName, todo.id);
+      }
+      toast(`"${todo.title}" → ${columns.find((c) => c.key === target)?.label}`, 'success');
+      reload();
+    } catch {
+      toast('Failed to update todo', 'error');
+    }
+  }
+
   // --- Render ---
 
   if (loading) {
@@ -301,6 +347,7 @@ export function Todos({ appName }: { appName: AppName }) {
                     key={todo.id}
                     todo={todo}
                     isDragging={activeId === todo.id}
+                    onAction={handleAction}
                   />
                 ))}
               </DroppableColumn>
