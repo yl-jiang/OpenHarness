@@ -7,9 +7,6 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
-  ComposedChart,
-  Line,
-  LineChart,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -304,7 +301,22 @@ export function ModelTokenUsageChart({
     <div className="space-y-3">
       <div className="h-[300px]">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{ top: 8, right: 16, bottom: 4, left: 8 }}>
+          <AreaChart data={chartData} margin={{ top: 8, right: 16, bottom: 4, left: 8 }}>
+            <defs>
+              {series.flatMap(({ model, colors }) => {
+                const key = sanitizeModelKey(model);
+                return [
+                  <linearGradient key={`gi_${key}`} id={`tokenIn_${key}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={colors.input} stopOpacity={0.28} />
+                    <stop offset="100%" stopColor={colors.input} stopOpacity={0.02} />
+                  </linearGradient>,
+                  <linearGradient key={`go_${key}`} id={`tokenOut_${key}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={colors.output} stopOpacity={0.22} />
+                    <stop offset="100%" stopColor={colors.output} stopOpacity={0.02} />
+                  </linearGradient>,
+                ];
+              })}
+            </defs>
             <CartesianGrid stroke="#1f1f24" strokeDasharray="2 4" />
             <XAxis
               dataKey="date"
@@ -334,36 +346,43 @@ export function ModelTokenUsageChart({
                 />
               )}
             />
-            {series.flatMap(({ model, colors }) => [
-              <Line
-                key={inputKey(model)}
-                type="linear"
-                dataKey={inputKey(model)}
-                name={`${model} input`}
-                stroke={colors.input}
-                strokeWidth={1.75}
-                isAnimationActive={isAnimationActive}
-                animationDuration={900}
-                animationEasing="ease-out"
-                dot={{ r: 2.5, fill: colors.input, strokeWidth: 0 }}
-                activeDot={{ r: 4 }}
-              />,
-              <Line
-                key={outputKey(model)}
-                type="linear"
-                dataKey={outputKey(model)}
-                name={`${model} output`}
-                stroke={colors.output}
-                strokeWidth={1.75}
-                strokeDasharray="6 4"
-                isAnimationActive={isAnimationActive}
-                animationDuration={900}
-                animationEasing="ease-out"
-                dot={{ r: 2.5, fill: colors.output, strokeWidth: 0 }}
-                activeDot={{ r: 4 }}
-              />,
-            ])}
-          </ComposedChart>
+            {series.flatMap(({ model, colors }) => {
+              const key = sanitizeModelKey(model);
+              return [
+                <Area
+                  key={inputKey(model)}
+                  type="linear"
+                  dataKey={inputKey(model)}
+                  name={`${model} input`}
+                  stroke={colors.input}
+                  strokeWidth={1.75}
+                  fill={`url(#tokenIn_${key})`}
+                  baseValue={0}
+                  isAnimationActive={isAnimationActive}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                  dot={{ r: 2.5, fill: colors.input, strokeWidth: 0 }}
+                  activeDot={{ r: 4 }}
+                />,
+                <Area
+                  key={outputKey(model)}
+                  type="linear"
+                  dataKey={outputKey(model)}
+                  name={`${model} output`}
+                  stroke={colors.output}
+                  strokeWidth={1.75}
+                  strokeDasharray="6 4"
+                  fill={`url(#tokenOut_${key})`}
+                  baseValue={0}
+                  isAnimationActive={isAnimationActive}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                  dot={{ r: 2.5, fill: colors.output, strokeWidth: 0 }}
+                  activeDot={{ r: 4 }}
+                />,
+              ];
+            })}
+          </AreaChart>
         </ResponsiveContainer>
       </div>
       {series.length > 0 && (
@@ -375,13 +394,16 @@ export function ModelTokenUsageChart({
             >
               <span className="text-text">{model}</span>
               <span className="inline-flex items-center gap-1 text-text-muted">
-                <span className="h-0.5 w-4 rounded-full" style={{ backgroundColor: colors.input }} />
+                <span
+                  className="h-2 w-4 rounded-sm"
+                  style={{ backgroundColor: colors.input, opacity: 0.35, boxShadow: `inset 0 0 0 1px ${colors.input}` }}
+                />
                 input
               </span>
               <span className="inline-flex items-center gap-1 text-text-muted">
                 <span
-                  className="h-0 w-4 border-t border-dashed"
-                  style={{ borderColor: colors.output, borderTopWidth: '2px' }}
+                  className="h-2 w-4 rounded-sm border border-dashed"
+                  style={{ borderColor: colors.output }}
                 />
                 output
               </span>
@@ -436,7 +458,18 @@ export function ModelCallUsageChart({
     <div className="space-y-3">
       <div className="h-[300px]">
         <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={chartData} margin={{ top: 8, right: 16, bottom: 4, left: 8 }}>
+          <AreaChart data={chartData} margin={{ top: 8, right: 16, bottom: 4, left: 8 }}>
+            <defs>
+              {series.map(({ model, color }) => {
+                const key = sanitizeModelKey(model);
+                return (
+                  <linearGradient key={key} id={`call_${key}`} x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={color} stopOpacity={0.28} />
+                    <stop offset="100%" stopColor={color} stopOpacity={0.02} />
+                  </linearGradient>
+                );
+              })}
+            </defs>
             <CartesianGrid stroke="#1f1f24" strokeDasharray="2 4" />
             <XAxis
               dataKey="date"
@@ -466,22 +499,27 @@ export function ModelCallUsageChart({
                 />
               )}
             />
-            {series.map(({ model, color }) => (
-              <Line
-                key={callCountKey(model)}
-                type="linear"
-                dataKey={callCountKey(model)}
-                name={`${model} calls`}
-                stroke={color}
-                strokeWidth={1.75}
-                isAnimationActive={isAnimationActive}
-                animationDuration={900}
-                animationEasing="ease-out"
-                dot={{ r: 2.5, fill: color, strokeWidth: 0 }}
-                activeDot={{ r: 4 }}
-              />
-            ))}
-          </ComposedChart>
+            {series.map(({ model, color }) => {
+              const key = sanitizeModelKey(model);
+              return (
+                <Area
+                  key={callCountKey(model)}
+                  type="linear"
+                  dataKey={callCountKey(model)}
+                  name={`${model} calls`}
+                  stroke={color}
+                  strokeWidth={1.75}
+                  fill={`url(#call_${key})`}
+                  baseValue={0}
+                  isAnimationActive={isAnimationActive}
+                  animationDuration={900}
+                  animationEasing="ease-out"
+                  dot={{ r: 2.5, fill: color, strokeWidth: 0 }}
+                  activeDot={{ r: 4 }}
+                />
+              );
+            })}
+          </AreaChart>
         </ResponsiveContainer>
       </div>
       {series.length > 0 && (
@@ -493,7 +531,10 @@ export function ModelCallUsageChart({
             >
               <span className="text-text">{model}</span>
               <span className="inline-flex items-center gap-1 text-text-muted">
-                <span className="h-0.5 w-4 rounded-full" style={{ backgroundColor: color }} />
+                <span
+                  className="h-2 w-4 rounded-sm"
+                  style={{ backgroundColor: color, opacity: 0.35, boxShadow: `inset 0 0 0 1px ${color}` }}
+                />
                 calls
               </span>
             </div>
