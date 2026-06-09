@@ -147,7 +147,13 @@ class OpenCliRunner:
         timeout_seconds: int,
         max_output_chars: int,
     ) -> RawEvidence:
-        self._validate(action, catalog)
+        if not any(cmd.site == action.site and cmd.name == action.command for cmd in catalog):
+            return RawEvidence(
+                source=action.source,
+                command=f"{action.site}/{action.command}",
+                error=f"OpenCLI command {action.site}/{action.command} is not present in catalog",
+                elapsed_s=0,
+            )
         argv = action.argv()
         command_display = shlex.join(argv)
         started = time.monotonic()
@@ -180,11 +186,6 @@ class OpenCliRunner:
             content=stdout[:max_output_chars],
             elapsed_s=elapsed,
         )
-
-    @staticmethod
-    def _validate(action: ResearchAction, catalog: list[OpenCliCommand]) -> None:
-        if not any(cmd.site == action.site and cmd.name == action.command for cmd in catalog):
-            raise ValueError(f"OpenCLI command {action.site}/{action.command} is not present in OpenCLI catalog")
 
     @staticmethod
     def _run_subprocess(argv: list[str], timeout_seconds: int) -> subprocess.CompletedProcess[str]:
