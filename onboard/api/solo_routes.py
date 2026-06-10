@@ -252,3 +252,243 @@ async def run_feed_digest_stream(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ── Project management ──────────────────────────────────────────────
+
+
+class ProjectCreateRequest(BaseModel):
+    title: str
+    description: str = ""
+    priority: str = "medium"
+    start_date: str = ""
+    target_date: str = ""
+    tags: str = ""
+
+
+class ProjectUpdateRequest(BaseModel):
+    title: str | None = None
+    description: str | None = None
+    priority: str | None = None
+    start_date: str | None = None
+    target_date: str | None = None
+    tags: str | None = None
+
+
+class MilestoneCreateRequest(BaseModel):
+    title: str
+    description: str = ""
+    target_date: str = ""
+
+
+class ProjectLinkCreateRequest(BaseModel):
+    entity_type: str
+    entity_id: str
+    source: str = "user"
+
+
+class ArchiveRequest(BaseModel):
+    reason: str = ""
+
+
+@router.get("/projects")
+def projects(
+    workspace: str | None = None,
+    status: str | None = None,
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    return _service(workspace).list_projects(status=status, limit=limit, offset=offset)
+
+
+@router.post("/projects")
+def create_project(request: ProjectCreateRequest, workspace: str | None = None):
+    return _service(workspace).create_project(request.model_dump())
+
+
+@router.get("/projects/{project_id}")
+def get_project(project_id: str, workspace: str | None = None):
+    result = _service(workspace).get_project(project_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return result
+
+
+@router.put("/projects/{project_id}")
+def update_project(project_id: str, request: ProjectUpdateRequest, workspace: str | None = None):
+    data = {k: v for k, v in request.model_dump().items() if v is not None}
+    if not data:
+        raise HTTPException(status_code=422, detail="No fields to update")
+    result = _service(workspace).update_project(project_id, data)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return result
+
+
+@router.delete("/projects/{project_id}")
+def delete_project(project_id: str, workspace: str | None = None):
+    ok = _service(workspace).delete_project(project_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"deleted": True}
+
+
+@router.put("/projects/{project_id}/complete")
+def complete_project(project_id: str, workspace: str | None = None):
+    result = _service(workspace).complete_project(project_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return result
+
+
+@router.put("/projects/{project_id}/archive")
+def archive_project(
+    project_id: str,
+    request: ArchiveRequest | None = None,
+    workspace: str | None = None,
+):
+    reason = request.reason if request else ""
+    result = _service(workspace).archive_project(project_id, reason)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return result
+
+
+@router.put("/projects/{project_id}/reactivate")
+def reactivate_project(project_id: str, workspace: str | None = None):
+    result = _service(workspace).reactivate_project(project_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return result
+
+
+@router.get("/projects/{project_id}/milestones")
+def milestones(project_id: str, workspace: str | None = None):
+    return _service(workspace).list_milestones(project_id)
+
+
+@router.post("/projects/{project_id}/milestones")
+def create_milestone(project_id: str, request: MilestoneCreateRequest, workspace: str | None = None):
+    return _service(workspace).create_milestone(project_id, request.model_dump())
+
+
+@router.put("/milestones/{milestone_id}/complete")
+def complete_milestone(milestone_id: str, workspace: str | None = None):
+    ok = _service(workspace).complete_milestone(milestone_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    return {"ok": True}
+
+
+@router.delete("/milestones/{milestone_id}")
+def delete_milestone(milestone_id: str, workspace: str | None = None):
+    ok = _service(workspace).delete_milestone(milestone_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    return {"deleted": True}
+
+
+@router.get("/projects/{project_id}/links")
+def project_links(project_id: str, workspace: str | None = None):
+    return _service(workspace).list_project_links(project_id)
+
+
+@router.post("/projects/{project_id}/links")
+def create_project_link(project_id: str, request: ProjectLinkCreateRequest, workspace: str | None = None):
+    return _service(workspace).create_project_link(project_id, request.model_dump())
+
+
+@router.delete("/project-links/{link_id}")
+def delete_project_link(link_id: str, workspace: str | None = None):
+    ok = _service(workspace).delete_project_link(link_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Link not found")
+    return {"deleted": True}
+
+
+@router.put("/project-links/{link_id}/accept")
+def accept_project_link(link_id: str, workspace: str | None = None):
+    ok = _service(workspace).accept_project_link(link_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Link not found")
+    return {"ok": True}
+
+
+@router.put("/project-links/{link_id}/reject")
+def reject_project_link(link_id: str, workspace: str | None = None):
+    ok = _service(workspace).reject_project_link(link_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Link not found")
+    return {"ok": True}
+
+
+@router.post("/projects/{project_id}/review")
+def review_project(project_id: str, workspace: str | None = None):
+    svc = _service(workspace)
+    project = svc.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    milestones = svc.list_milestones(project_id)
+    links = svc.list_project_links(project_id)
+
+    lines = []
+    lines.append(f"# Project Review: {project.get('title', '')}")
+    lines.append("")
+    if project.get("description"):
+        lines.append(project["description"])
+        lines.append("")
+    lines.append(f"- Status: {project.get('status', '')}")
+    lines.append(f"- Priority: {project.get('priority', '')}")
+    if project.get("start_date"):
+        lines.append(f"- Start: {project['start_date']}")
+    if project.get("target_date"):
+        lines.append(f"- Target: {project['target_date']}")
+    if project.get("completed_at"):
+        lines.append(f"- Completed: {project['completed_at']}")
+    lines.append("")
+    lines.append("## Milestones")
+    if milestones:
+        for m in milestones:
+            status = "✓" if m.get("status") == "completed" else "○"
+            date = f" ({m.get('target_date', '')})" if m.get("target_date") else ""
+            lines.append(f"- {status} {m.get('title', '')}{date}")
+    else:
+        lines.append("- No milestones defined")
+    lines.append("")
+    entity_counts: dict[str, int] = {}
+    for lnk in links:
+        if lnk.get("status") == "active":
+            et = lnk.get("entity_type", "unknown")
+            entity_counts[et] = entity_counts.get(et, 0) + 1
+    lines.append("## Linked Entities")
+    if entity_counts:
+        for et, count in sorted(entity_counts.items()):
+            lines.append(f"- {et}: {count}")
+    else:
+        lines.append("- No entities linked")
+    lines.append("")
+    lines.append("## Statistics")
+    lines.append(f"- Completion: {project.get('completion_pct', 'N/A')}% ({project.get('completion_source', 'none')})")
+    lines.append(f"- Milestones: {project.get('completed_milestone_count', 0)}/{project.get('milestone_count', 0)}")
+    lines.append(f"- Linked records: {project.get('linked_record_count', 0)}")
+    lines.append(f"- Linked todos: {project.get('linked_todo_count', 0)}")
+    lines.append(f"- Activity (7d): {project.get('activity_7d', 0)}")
+    lines.append(f"- Activity (30d): {project.get('activity_30d', 0)}")
+    lines.append(f"- Risk: {project.get('risk_status', 'normal')}")
+    review_content = "\n".join(lines)
+
+    # Save as report
+    from uuid import uuid4
+    from solo.core.models import SoloReport
+    from solo.core.utils import _now
+    report = SoloReport(
+        id=str(uuid4()),
+        report_type="project_review",
+        content=review_content,
+        created_at=_now(),
+        period_start=project.get("start_date") or project.get("created_at", ""),
+        period_end=project.get("completed_at") or _now(),
+        metadata={"project_id": project_id, "project_title": project.get("title", "")},
+    )
+    svc.store.add_report(report)
+    return {"id": report.id, "content": review_content, "report_type": "project_review"}

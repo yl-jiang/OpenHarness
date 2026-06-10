@@ -271,3 +271,114 @@ class SoloService:
     def stop_gateway(self, cwd: str | Path | None = None) -> dict[str, Any]:
         stopped = stop_gateway_process(cwd, self.workspace)
         return {"status": "stopped" if stopped else "unknown", "stopped": stopped}
+
+    # ── Project management ──────────────────────────────────────────
+
+    def list_projects(self, status=None, limit=None, offset=0):
+        return self.store.list_projects_with_detail(status=status, limit=limit, offset=offset)
+
+    def get_project(self, project_id):
+        return self.store.get_project_detail(project_id)
+
+    def create_project(self, data):
+        from uuid import uuid4
+        from solo.core.utils import _now
+        from solo.core.models import Project
+
+        now = _now()
+        project = Project(
+            id=str(uuid4()),
+            title=data["title"],
+            description=data.get("description", ""),
+            priority=data.get("priority", "medium"),
+            start_date=data.get("start_date", ""),
+            target_date=data.get("target_date", ""),
+            tags=data.get("tags", ""),
+            created_at=now,
+            updated_at=now,
+        )
+        self.store.create_project(project)
+        return self.store.get_project_detail(project.id)
+
+    def update_project(self, project_id, data):
+        self.store.update_project(project_id, **data)
+        return self.store.get_project_detail(project_id)
+
+    def complete_project(self, project_id):
+        self.store.complete_project(project_id)
+        return self.store.get_project_detail(project_id)
+
+    def archive_project(self, project_id, reason=""):
+        self.store.archive_project(project_id, reason)
+        return self.store.get_project_detail(project_id)
+
+    def reactivate_project(self, project_id):
+        self.store.reactivate_project(project_id)
+        return self.store.get_project_detail(project_id)
+
+    def delete_project(self, project_id):
+        return self.store.delete_project(project_id)
+
+    def list_milestones(self, project_id):
+        milestones = self.store.list_milestones(project_id)
+        return [m.to_dict() for m in milestones]
+
+    def create_milestone(self, project_id, data):
+        from uuid import uuid4
+        from solo.core.utils import _now
+        from solo.core.models import Milestone
+
+        now = _now()
+        milestone = Milestone(
+            id=str(uuid4()),
+            project_id=project_id,
+            title=data["title"],
+            description=data.get("description", ""),
+            target_date=data.get("target_date", ""),
+            created_at=now,
+            updated_at=now,
+        )
+        self.store.create_milestone(milestone)
+        return milestone.to_dict()
+
+    def update_milestone(self, milestone_id, data):
+        self.store.update_milestone(milestone_id, **data)
+        return True
+
+    def complete_milestone(self, milestone_id):
+        self.store.complete_milestone(milestone_id)
+        return True
+
+    def delete_milestone(self, milestone_id):
+        return self.store.delete_milestone(milestone_id)
+
+    def list_project_links(self, project_id):
+        links = self.store.list_project_links(project_id=project_id)
+        return [lnk.to_dict() for lnk in links]
+
+    def create_project_link(self, project_id, data):
+        from uuid import uuid4
+        from solo.core.utils import _now
+        from solo.core.models import ProjectLink
+
+        now = _now()
+        link = ProjectLink(
+            id=str(uuid4()),
+            project_id=project_id,
+            entity_type=data["entity_type"],
+            entity_id=data["entity_id"],
+            source=data.get("source", "user"),
+            created_at=now,
+            updated_at=now,
+        )
+        self.store.create_project_link(link)
+        return link.to_dict()
+
+    def delete_project_link(self, link_id):
+        return self.store.delete_project_link(link_id)
+
+    def accept_project_link(self, link_id):
+        return self.store.accept_project_link(link_id)
+
+    def reject_project_link(self, link_id):
+        return self.store.reject_project_link(link_id)
