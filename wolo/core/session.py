@@ -71,7 +71,7 @@ def _write_dream_snapshot(
         logger.warning("wolo session: failed to write dream snapshot %s", path)
 
 
-def _maybe_migrate_json_sessions(workspace: Path, conn: sqlite3.Connection) -> None:
+def _migrate_legacy_sessions_to_sqlite(workspace: Path, conn: sqlite3.Connection) -> None:
     """One-time migration from JSON session files into SQLite."""
     cur = conn.execute(
         "SELECT 1 FROM conversations LIMIT 1"
@@ -122,7 +122,7 @@ def save_conversation(
 
     conn = _get_db(workspace)
     try:
-        _maybe_migrate_json_sessions(workspace, conn)
+        _migrate_legacy_sessions_to_sqlite(workspace, conn)
         conn.execute(
             "INSERT INTO conversations (session_key, session_id, messages, message_count, created_at, updated_at) "
             "VALUES (?, ?, ?, ?, ?, ?) "
@@ -157,7 +157,7 @@ def load_conversation(
     healed_session_id: str | None = None
     result: tuple[list[ConversationMessage], str | None] = ([], None)
     try:
-        _maybe_migrate_json_sessions(workspace, conn)
+        _migrate_legacy_sessions_to_sqlite(workspace, conn)
         cur = conn.execute(
             "SELECT session_id, messages FROM conversations WHERE session_key = ?",
             (session_key,),
@@ -207,7 +207,7 @@ def list_conversations(workspace: Path, limit: int = 20) -> list[dict]:
     """List recent conversations, newest first."""
     conn = _get_db(workspace)
     try:
-        _maybe_migrate_json_sessions(workspace, conn)
+        _migrate_legacy_sessions_to_sqlite(workspace, conn)
         cur = conn.execute(
             "SELECT session_key, session_id, message_count, updated_at "
             "FROM conversations ORDER BY updated_at DESC LIMIT ?",

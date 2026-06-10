@@ -1,4 +1,4 @@
-"""Auto-register weekly/monthly report cron jobs for the wolo app."""
+"""Auto-register weekly/monthly/yearly report cron jobs for the wolo app."""
 
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ _DEFAULT_TIMEZONE = "Asia/Shanghai"
 _DEFAULT_TIMEOUT_SECONDS = 900
 _WEEKLY_REPORT_SCHEDULE = "0 21 * * 0"
 _MONTHLY_REPORT_SCHEDULE = "0 21 28-31 * *"
+_YEARLY_REPORT_SCHEDULE = "0 21 1 1 *"
 
 
 def _cron_registry_path(workspace: str | Path | None) -> Path:
@@ -171,9 +172,10 @@ def ensure_report_jobs(
     timezone_name: str = _DEFAULT_TIMEZONE,
     weekly_schedule: str = _WEEKLY_REPORT_SCHEDULE,
     monthly_schedule: str = _MONTHLY_REPORT_SCHEDULE,
+    yearly_schedule: str = _YEARLY_REPORT_SCHEDULE,
     timeout_s: int = _DEFAULT_TIMEOUT_SECONDS,
 ) -> None:
-    """Register or update recurring weekly/monthly report cron jobs."""
+    """Register or update recurring weekly/monthly/yearly report cron jobs."""
     _ensure_report_job(
         app,
         report_type="weekly",
@@ -187,6 +189,14 @@ def ensure_report_jobs(
         report_type="monthly",
         workspace=workspace,
         schedule=monthly_schedule,
+        timezone_name=timezone_name,
+        timeout_s=timeout_s,
+    )
+    _ensure_report_job(
+        app,
+        report_type="yearly",
+        workspace=workspace,
+        schedule=yearly_schedule,
         timezone_name=timezone_name,
         timeout_s=timeout_s,
     )

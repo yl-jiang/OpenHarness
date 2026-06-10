@@ -59,6 +59,12 @@ def _resolve_report_period(report_type: str, due_local: datetime) -> tuple[str, 
             return None
         month_start = anchor_date.replace(day=1)
         return month_start.isoformat(), anchor_date.isoformat()
+    if report_type == "yearly":
+        if (anchor_date.month, anchor_date.day) != (1, 1):
+            return None
+        year_start = anchor_date.replace(year=anchor_date.year - 1, month=1, day=1)
+        year_end = anchor_date.replace(year=anchor_date.year - 1, month=12, day=31)
+        return year_start.isoformat(), year_end.isoformat()
     raise ValueError(f"unsupported report type: {report_type}")
 
 
@@ -95,7 +101,7 @@ async def _main(
         period = _resolve_report_period(report_type, due_local)
         if period is None:
             print(
-                "SKIPPED: monthly report only runs on the month's last local day "
+                f"SKIPPED: {report_type} report guard not met "
                 f"(due_local_date={due_local.date().isoformat()} tz={resolved_timezone})"
             )
             return 0

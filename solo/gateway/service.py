@@ -119,14 +119,10 @@ class SoloGatewayService:
             self._workspace,
         )
 
-        # One-shot migration: retire the legacy todo-reminder cron job.
-        # The heartbeat watchdog now owns the todo/due-today signal, so keeping
-        # the cron would just produce permanent notify failures that poison
-        # the heartbeat fingerprint.
-        _migrate_legacy_todo_cron(self._workspace)
+        _cleanup_legacy_todo_cron(self._workspace)
         # Auto-register feed digest cron job
         _register_feed_digest_cron(self._workspace, self._config)
-        # Auto-register weekly/monthly report cron jobs
+        # Auto-register weekly/monthly/yearly report cron jobs
         _register_report_cron(self._workspace)
         # Ensure cron scheduler daemon is running so registered jobs get executed
         _ensure_cron_daemon(self._workspace)
@@ -433,7 +429,7 @@ def _register_feed_digest_cron(
 
 
 def _register_report_cron(workspace: str | Path | None) -> None:
-    """Best-effort registration of the solo weekly/monthly report cron jobs."""
+    """Best-effort registration of the solo weekly/monthly/yearly report cron jobs."""
     try:
         from solo.gateway.report_cron import ensure_report_jobs
 
@@ -442,7 +438,7 @@ def _register_report_cron(workspace: str | Path | None) -> None:
         logger.warning("Failed to register solo report cron jobs: %s", exc)
 
 
-def _migrate_legacy_todo_cron(workspace: str | Path | None) -> None:
+def _cleanup_legacy_todo_cron(workspace: str | Path | None) -> None:
     """Retire the legacy `solo-todo-reminder` cron job and stale one-shot reminders.
 
     The heartbeat watchdog now serves the overdue / due-today todo signal with
