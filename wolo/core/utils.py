@@ -34,7 +34,7 @@ def _get_period(created_at: str) -> str:
     """Determine the time period of the day from ISO created_at string."""
     try:
         dt = datetime.fromisoformat(created_at)
-        hour = dt.hour
+        hour = dt.astimezone().hour
         for i, boundary in enumerate(_PERIOD_BOUNDARIES):
             next_boundary = _PERIOD_BOUNDARIES[i + 1] if i + 1 < len(_PERIOD_BOUNDARIES) else 24
             if boundary <= hour < next_boundary:
