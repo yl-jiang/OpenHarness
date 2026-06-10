@@ -629,9 +629,10 @@ async def test_wolo_query_runner_treats_quoted_message_as_reference_only(tmp_pat
         def __init__(self, **kwargs):
             self.messages: list[ConversationMessage] = []
             self.tool_metadata = kwargs["tool_metadata"]
+            captured["system_prompt"] = kwargs.get("system_prompt", "")
 
         def set_system_prompt(self, prompt: str):
-            del prompt
+            captured["system_prompt"] = prompt
 
         def load_messages(self, messages):
             self.messages = list(messages)
@@ -665,8 +666,9 @@ async def test_wolo_query_runner_treats_quoted_message_as_reference_only(tmp_pat
 
     assert result == "收到"
     assert search_queries == ["你刚才说这个 blocker 已经解决了,具体是哪条记录?"]
+    system_prompt = str(captured["system_prompt"])
     prompt = str(captured["prompt"])
-    assert "## Fact Discipline" in prompt
+    assert "## Fact Discipline" in system_prompt
     assert "## Reply Context (Reference Only)" in prompt
     assert "Use it only as background context" in prompt
     assert "- role: participant" in prompt

@@ -1399,8 +1399,8 @@ def _tool_record() -> ToolDefinition:
             "past event; preserve the original tense."
         ),
         [
-            ("content", "string", "Original solo content as the user wrote it.", True),
-            ("corrected_content", "string", "Lightly cleaned-up version — fix typos, punctuation, and colloquial phrasing ONLY. NEVER change the event tense (planned→happened / future→past) or add unstated facts, timelines, or people. Example: '昨晚太晚了,今天看' → keep as '昨晚太晚了,今天看...', do NOT rewrite as '昨晚看了'.", False),
+            ("content", "string", "Faithful paraphrase of the user's current message. Must preserve all facts, opinions, and claims the user actually expressed. Do NOT add facts, opinions, or reflections the user did not state in this turn — even if a recent conversation topic suggests them.", True),
+            ("corrected_content", "string", "Cleanup of speech-to-text artifacts in `content` ONLY: removing redundancy/filler words, fixing typos, adding punctuation, smoothing broken grammar. Think copy-editor pass, not rewrite. MUST NOT introduce any fact, opinion, or claim that is not already present in `content` — every fact in `corrected_content` must also appear in `content`. NEVER change the event tense (planned→happened / future→past). Example: 'too late last night, will watch today' → keep the future tense, do NOT rewrite as 'watched last night'.", False),
             ("summary", "string", "One-sentence summary.", False),
             ("tags", "string", "Comma-separated tags.", False),
             ("emotion", "string", "Emotion label: 积极/消极/中性/复杂.", False),

@@ -66,15 +66,20 @@ _FACT_DISCIPLINE_CONTEXT = (
     "- Only use facts explicitly stated by the current user in this turn or directly supported by retrieved records.\n"
     "- Do not infer missing reasons, diagnoses, motives, timelines, or explanations.\n"
     "- Do NOT rewrite a future plan as a past event. "
-    "Example: '昨晚太晚了,今天看' means the user planned to watch today because last night was too late; "
-    "do NOT rewrite it as '昨晚已经看了' or '昨晚看了'. Preserve the original tense.\n"
+    "Example: 'too late last night, will watch today' means the user planned to watch today because last night was too late; "
+    "do NOT rewrite it as 'watched last night'. Preserve the original tense.\n"
     "- Do NOT generalize emotion / emotion_reason / sample_type corrections from earlier turns onto "
-    "new records. A prior correction like '改成积极' applied to one record does NOT mean new records "
+    "new records. A prior correction like 'change to positive' applied to one record does NOT mean new records "
     "about similar topics should carry the same emotion — each record's emotion must come from the "
     "current user message. When the current message does not state an emotion, leave emotion empty or "
-    "中性; do NOT silently copy the most recent historical label.\n"
+    "`中性`; do NOT silently copy the most recent historical label.\n"
     "- Do NOT call solo_update_record to patch in an emotion or emotion_reason the current user did "
-    "not state, even if a similar-looking record was corrected to that value in a past turn.\n\n"
+    "not state, even if a similar-looking record was corrected to that value in a past turn.\n"
+    "- Grounding (tool calls): in your reply text you may reflect, connect topics, or reference prior "
+    "context freely. But when you record what the user said (e.g. via solo_record or "
+    "solo_import_records), the `content` field must be a faithful paraphrase of what the user "
+    "actually stated in this turn — never add facts, opinions, or reflections they did not express, "
+    "even if the surrounding conversation is priming you toward a different topic.\n\n"
 )
 
 
@@ -390,6 +395,7 @@ def _build_system_prompt(workspace: Path) -> str:
     if skills_prompt:
         sections.append(skills_prompt)
 
+    sections.append(_FACT_DISCIPLINE_CONTEXT.strip())
     sections.append(TOOL_ROUTER_PROMPT.strip())
 
     return "\n\n".join(sections)
@@ -515,8 +521,7 @@ class SoloQueryRunner:
         # Prefix the user message with volatile context so the *system prompt*
         # remains static and can be fully KV-Cache shared across turns.
         search_text, prepared_user_text = _prepare_user_turn_text(user_text, source_context)
-        prefix = _FACT_DISCIPLINE_CONTEXT
-        prefix += _build_pending_todos_context(self._store)
+        prefix = _build_pending_todos_context(self._store)
         if include_time_context:
             prefix += build_time_context()
         if include_similar_context:

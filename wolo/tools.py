@@ -1594,8 +1594,8 @@ def _tool_record() -> ToolDefinition:
             "completed event; preserve the original tense."
         ),
         [
-            ("content", "string", "Original work-log content as the user wrote it.", True),
-            ("corrected_content", "string", "Lightly cleaned-up work note — fix typos, punctuation, and colloquial phrasing ONLY. NEVER change the event tense (planned→done / future→past) or add unstated facts, timelines, people, or outcomes. Example: '今天太晚了，明天再推上线' → keep the 'plan to push tomorrow' tense, do NOT rewrite as '今天已经推上线了'.", False),
+            ("content", "string", "Faithful paraphrase of the user's current message. Must preserve all facts, opinions, and claims the user actually expressed. Do NOT add facts, opinions, or reflections the user did not state in this turn — even if a recent conversation topic suggests them.", True),
+            ("corrected_content", "string", "Cleanup of speech-to-text artifacts in `content` ONLY: removing redundancy/filler words, fixing typos, adding punctuation, smoothing broken grammar. Think copy-editor pass, not rewrite. MUST NOT introduce any fact, opinion, or claim that is not already present in `content` — every fact in `corrected_content` must also appear in `content`. NEVER change the event tense (planned→done / future→past). Example: 'too late today, will push to production tomorrow' → keep the future tense, do NOT rewrite as 'pushed to production today'.", False),
             ("summary", "string", "One-sentence work summary with outcome, decision, blocker, or next action.", False),
             ("tags", "string", "Comma-separated project/work tags, e.g. project, meeting, code, prompt, tool, bug, review, blocker, decision.", False),
             ("emotion", "string", "Work status label: 顺利/受阻/中性/高压/完成/风险.", False),

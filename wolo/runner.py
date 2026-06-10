@@ -66,15 +66,20 @@ _FACT_DISCIPLINE_CONTEXT = (
     "- Only use facts explicitly stated by the current user in this turn or directly supported by retrieved records.\n"
     "- Do not infer missing reasons, diagnoses, motives, timelines, or explanations.\n"
     "- Do NOT rewrite a future plan as a completed event. "
-    "Example: '今天太晚了，明天再推上线' means the user plans to push tomorrow because today is too late; "
-    "do NOT rewrite it as '今天已经推上线了' or '已推上线'. Preserve the original tense.\n"
+    "Example: 'too late today, will push to production tomorrow' means the user plans to push tomorrow because today is too late; "
+    "do NOT rewrite it as 'pushed to production today'. Preserve the original tense.\n"
     "- Do NOT generalize emotion / emotion_reason / sample_type / problem_essence / strategy / next_move "
     "/ validation_signal corrections from earlier turns onto new records. A prior correction applied to "
     "one record does NOT mean new records about similar topics should carry the same fields — each "
     "record's subjective fields must come from the current user message. When the current message does "
-    "not state them, leave them empty / 中性; do NOT silently copy the most recent historical label.\n"
+    "not state them, leave them empty / `中性`; do NOT silently copy the most recent historical label.\n"
     "- Do NOT call wolo_update_record to patch in a subjective field the current user did not state, "
-    "even if a similar-looking record was corrected to that value in a past turn.\n\n"
+    "even if a similar-looking record was corrected to that value in a past turn.\n"
+    "- Grounding (tool calls): in your reply text you may reflect, connect topics, or reference prior "
+    "context freely. But when you record what the user said (e.g. via wolo_record or "
+    "wolo_import_records), the `content` field must be a faithful paraphrase of what the user "
+    "actually stated in this turn — never add facts, opinions, or reflections they did not express, "
+    "even if the surrounding conversation is priming you toward a different topic.\n\n"
 )
 
 
@@ -390,6 +395,7 @@ def _build_system_prompt(workspace: Path) -> str:
     if skills_prompt:
         sections.append(skills_prompt)
 
+    sections.append(_FACT_DISCIPLINE_CONTEXT.strip())
     sections.append(TOOL_ROUTER_PROMPT.strip())
 
     return "\n\n".join(sections)
@@ -516,8 +522,7 @@ class WoloQueryRunner:
         # Prefix the user message with volatile context so the *system prompt*
         # remains static and can be fully KV-Cache shared across turns.
         search_text, prepared_user_text = _prepare_user_turn_text(user_text, source_context)
-        prefix = _FACT_DISCIPLINE_CONTEXT
-        prefix += _build_pending_todos_context(self._store)
+        prefix = _build_pending_todos_context(self._store)
         if include_time_context:
             prefix += build_time_context()
         if include_similar_context:
