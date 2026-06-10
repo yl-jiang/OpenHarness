@@ -13,6 +13,9 @@ import type {
   Report,
   SearchResult,
   Todo,
+  Project,
+  Milestone,
+  ProjectLink,
 } from './types';
 
 type QueryValue = string | number | boolean | null | undefined;
@@ -183,4 +186,40 @@ export const api = {
     }
     return (await response.json()) as { path: string; disk_path: string };
   },
+
+  // ── Projects ──────────────────────────────────────────────────────
+  projects: (app: AppName, params: Record<string, QueryValue> = {}) =>
+    request<Project[]>(`/api/${app}/projects${query(params)}`),
+  project: (app: AppName, id: string) =>
+    request<Project>(`/api/${app}/projects/${id}`),
+  createProject: (app: AppName, data: Record<string, unknown>) =>
+    request<Project>(`/api/${app}/projects`, { method: "POST", body: JSON.stringify(data) }),
+  updateProject: (app: AppName, id: string, data: Record<string, unknown>) =>
+    request<Project>(`/api/${app}/projects/${id}`, { method: "PUT", body: JSON.stringify(data) }),
+  deleteProject: (app: AppName, id: string) =>
+    request<{ deleted: boolean }>(`/api/${app}/projects/${id}`, { method: "DELETE" }),
+  completeProject: (app: AppName, id: string) =>
+    request<Project>(`/api/${app}/projects/${id}/complete`, { method: "PUT" }),
+  archiveProject: (app: AppName, id: string, reason?: string) =>
+    request<Project>(`/api/${app}/projects/${id}/archive`, { method: "PUT", body: JSON.stringify({ reason: reason || "" }) }),
+  reactivateProject: (app: AppName, id: string) =>
+    request<Project>(`/api/${app}/projects/${id}/reactivate`, { method: "PUT" }),
+  milestones: (app: AppName, projectId: string) =>
+    request<Milestone[]>(`/api/${app}/projects/${projectId}/milestones`),
+  createMilestone: (app: AppName, projectId: string, data: Record<string, unknown>) =>
+    request<Milestone>(`/api/${app}/projects/${projectId}/milestones`, { method: "POST", body: JSON.stringify(data) }),
+  completeMilestone: (app: AppName, milestoneId: string) =>
+    request<{ ok: boolean }>(`/api/${app}/milestones/${milestoneId}/complete`, { method: "PUT" }),
+  deleteMilestone: (app: AppName, milestoneId: string) =>
+    request<{ deleted: boolean }>(`/api/${app}/milestones/${milestoneId}`, { method: "DELETE" }),
+  projectLinks: (app: AppName, projectId: string) =>
+    request<ProjectLink[]>(`/api/${app}/projects/${projectId}/links`),
+  createProjectLink: (app: AppName, projectId: string, data: Record<string, unknown>) =>
+    request<ProjectLink>(`/api/${app}/projects/${projectId}/links`, { method: "POST", body: JSON.stringify(data) }),
+  deleteProjectLink: (app: AppName, linkId: string) =>
+    request<{ deleted: boolean }>(`/api/${app}/project-links/${linkId}`, { method: "DELETE" }),
+  acceptProjectLink: (app: AppName, linkId: string) =>
+    request<{ ok: boolean }>(`/api/${app}/project-links/${linkId}/accept`, { method: "PUT" }),
+  rejectProjectLink: (app: AppName, linkId: string) =>
+    request<{ ok: boolean }>(`/api/${app}/project-links/${linkId}/reject`, { method: "PUT" }),
 };

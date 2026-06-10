@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { api } from '../api/client';
-import type { AppName } from '../api/types';
+import type { AppName, Project } from '../api/types';
 import { ActivityHeatmap, EmotionBarList, ModelCallUsageChart, ModelTokenUsageChart, formatTokenAmount } from '../components/Charts';
 import { StatsCard } from '../components/StatsCard';
+import { RiskBadge } from '../components/ProjectStatusBadge';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
 // --- Date card helpers ---
@@ -74,6 +75,35 @@ function DateCard() {
         {occasion ? <span className="normal-case ml-2 text-accent-solo">{occasion}</span> : null}
       </div>
     </article>
+  );
+}
+
+
+function ActiveProjects({ app }: { app: AppName }) {
+  const [projects, setProjects] = useState<Project[]>([]);
+  useEffect(() => {
+    api.projects(app, { status: "active", limit: 5 }).then(setProjects).catch(() => {});
+  }, [app]);
+
+  if (projects.length === 0) {
+    return <p className="text-xs text-text-muted m-0">No active projects. <Link to="/projects" className="text-accent-solo no-underline">Create one →</Link></p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {projects.map((p) => (
+        <Link key={p.id} to={`/projects/${p.id}`} className="flex items-center justify-between px-3 py-2 rounded-md bg-surface-2 hover:bg-surface-3 transition-colors no-underline">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm text-text truncate">{p.title}</span>
+            <RiskBadge status={p.risk_status} />
+          </div>
+          <div className="flex items-center gap-3 text-[11px] text-text-muted flex-shrink-0">
+            <span>{p.completed_milestone_count}/{p.milestone_count} milestones</span>
+            <span>{p.completion_pct !== null ? `${p.completion_pct}%` : "-"}</span>
+          </div>
+        </Link>
+      ))}
+    </div>
   );
 }
 
@@ -191,6 +221,16 @@ export function Dashboard({ appName }: { appName: AppName }) {
           startDate={data.llm_monthly_start_date}
           endDate={data.llm_monthly_end_date}
         />
+      </section>
+
+
+      {/* Active Projects */}
+      <section className="p-5 border border-border rounded-lg bg-surface-1">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-medium text-text m-0">Active Projects</h3>
+          <Link to="/projects" className="text-[12px] text-text-muted hover:text-text no-underline transition-colors">View all →</Link>
+        </div>
+        <ActiveProjects app={appName} />
       </section>
 
       {/* Charts grid */}

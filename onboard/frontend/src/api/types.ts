@@ -234,3 +234,66 @@ export type WsServerMessage =
   | { type: 'complete'; content: string }
   | { type: 'session_key'; session_key: string }
   | { type: 'error'; message: string };
+
+// ── Project management types ──────────────────────────────────────
+
+export type ProjectStatus = "active" | "completed" | "archived";
+export type ProjectRiskStatus = "normal" | "attention" | "at_risk";
+export type ProjectCompletionSource = "milestones" | "todos" | "none";
+export type ProjectLinkStatus = "active" | "pending" | "rejected";
+export type ProjectLinkSource = "user" | "ai_high_confidence" | "ai_candidate" | "migration";
+export type ProjectEntityType = "record" | "todo" | "decision" | "highlight" | "experiment";
+
+export interface Project {
+  id: string;
+  title: string;
+  description: string;
+  status: ProjectStatus;
+  priority: TodoPriority;
+  start_date: string;
+  target_date: string;
+  completed_at: string;
+  archived_at: string;
+  archive_reason: string;
+  tags: string;
+  created_at: string;
+  updated_at: string;
+  stakeholders?: string;
+  success_criteria?: string;
+  completion_pct: number | null;
+  completion_source: ProjectCompletionSource;
+  milestone_count: number;
+  completed_milestone_count: number;
+  linked_record_count: number;
+  linked_todo_count: number;
+  completed_linked_todo_count: number;
+  activity_7d: number;
+  activity_30d: number;
+  last_activity_at: string;
+  risk_status: ProjectRiskStatus;
+  open_blocker_count: number;
+}
+
+export interface Milestone {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string;
+  status: "pending" | "completed";
+  target_date: string;
+  completed_at: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectLink {
+  id: string;
+  project_id: string;
+  entity_type: ProjectEntityType;
+  entity_id: string;
+  source: ProjectLinkSource;
+  confidence: string;
+  status: ProjectLinkStatus;
+  created_at: string;
+  updated_at: string;
+}

@@ -20,6 +20,8 @@ const Search = lazy(() => import('./pages/Search').then((m) => ({ default: m.Sea
 const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
 const Stats = lazy(() => import('./pages/Stats').then((m) => ({ default: m.Stats })));
 const Todos = lazy(() => import('./pages/Todos').then((m) => ({ default: m.Todos })));
+const Projects = lazy(() => import("./pages/Projects").then((m) => ({ default: m.Projects })));
+const ProjectDetail = lazy(() => import("./pages/ProjectDetail").then((m) => ({ default: m.ProjectDetail })));
 
 function PageLoader() {
   return (
@@ -76,6 +78,8 @@ export function App() {
           <Route path="search" element={<Suspense fallback={<PageLoader />}><Search appName={appName} /></Suspense>} />
           <Route path="chat" element={<Suspense fallback={<PageLoader />}><Chat appName={appName} /></Suspense>} />
           <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings appName={appName} /></Suspense>} />
+          <Route path="projects" element={<Suspense fallback={<PageLoader />}><Projects appName={appName} /></Suspense>} />
+          <Route path="projects/:id" element={<Suspense fallback={<PageLoader />}><ProjectDetail appName={appName} /></Suspense>} />
           <Route path="decisions" element={<Suspense fallback={<PageLoader />}><Decisions /></Suspense>} />
           <Route path="highlights" element={<Suspense fallback={<PageLoader />}><Highlights /></Suspense>} />
         </Route>
