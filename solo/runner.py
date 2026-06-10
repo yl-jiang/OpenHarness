@@ -371,11 +371,8 @@ def _build_user_message(text: str, media: list[str] | None) -> str | Conversatio
 
 
 def _build_system_prompt(workspace: Path) -> str:
-    """Build the system prompt by combining routing rules with persona files and memory."""
-    sections = [TOOL_ROUTER_PROMPT.strip()]
-    skills_prompt = _build_skills_prompt(workspace)
-    if skills_prompt:
-        sections.append(skills_prompt)
+    """Build the system prompt by combining persona, context, and routing rules."""
+    sections: list[str] = []
 
     soul = _read_file(get_soul_path(workspace))
     if soul:
@@ -388,6 +385,12 @@ def _build_system_prompt(workspace: Path) -> str:
     memory = load_memory_prompt(workspace)
     if memory:
         sections.append(memory)
+
+    skills_prompt = _build_skills_prompt(workspace)
+    if skills_prompt:
+        sections.append(skills_prompt)
+
+    sections.append(TOOL_ROUTER_PROMPT.strip())
 
     return "\n\n".join(sections)
 
