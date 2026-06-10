@@ -16,8 +16,12 @@ from solo.core.attachments import (
     resolve_stored_attachment_path,
 )
 from solo.core.models import (
+    Milestone,
     PendingConfirmation,
     ProfileUpdate,
+    Project,
+    ProjectAlias,
+    ProjectLink,
     SoloConfig,
     SoloEntry,
     SoloExperiment,
@@ -29,7 +33,7 @@ from solo.core.workspace import get_attachments_dir, get_data_dir, initialize_wo
 from solo.core.utils import _now
 
 DB_FILENAME = "store.db"
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS entries (
@@ -157,6 +161,69 @@ CREATE TABLE IF NOT EXISTS vision_calls (
 );
 CREATE INDEX IF NOT EXISTS idx_vision_calls_model ON vision_calls(model);
 CREATE INDEX IF NOT EXISTS idx_vision_calls_created_at ON vision_calls(created_at);
+
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    priority TEXT NOT NULL DEFAULT 'medium',
+    start_date TEXT NOT NULL DEFAULT '',
+    target_date TEXT NOT NULL DEFAULT '',
+    completed_at TEXT NOT NULL DEFAULT '',
+    archived_at TEXT NOT NULL DEFAULT '',
+    archive_reason TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+CREATE INDEX IF NOT EXISTS idx_projects_target_date ON projects(target_date);
+CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at);
+
+CREATE TABLE IF NOT EXISTS milestones (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending',
+    target_date TEXT NOT NULL DEFAULT '',
+    completed_at TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_milestones_project_id ON milestones(project_id);
+CREATE INDEX IF NOT EXISTS idx_milestones_status ON milestones(status);
+
+CREATE TABLE IF NOT EXISTS project_links (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'user',
+    confidence TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    UNIQUE(project_id, entity_type, entity_id)
+);
+CREATE INDEX IF NOT EXISTS idx_project_links_project_id ON project_links(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_links_entity ON project_links(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_project_links_status ON project_links(status);
+
+CREATE TABLE IF NOT EXISTS project_aliases (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'user',
+    created_at TEXT NOT NULL DEFAULT '',
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+    UNIQUE(project_id, alias)
+);
+CREATE INDEX IF NOT EXISTS idx_project_aliases_project_id ON project_aliases(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_aliases_alias ON project_aliases(alias);
 
 CREATE TABLE IF NOT EXISTS _meta (
     key TEXT PRIMARY KEY,
@@ -287,6 +354,76 @@ class SoloStore:
             self._conn.execute("ALTER TABLE reports ADD COLUMN period_end TEXT NOT NULL DEFAULT ''")
         if "metadata" not in report_cols:
             self._conn.execute("ALTER TABLE reports ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'" )
+
+
+        # Migration v5: project management tables
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                priority TEXT NOT NULL DEFAULT 'medium',
+                start_date TEXT NOT NULL DEFAULT '',
+                target_date TEXT NOT NULL DEFAULT '',
+                completed_at TEXT NOT NULL DEFAULT '',
+                archived_at TEXT NOT NULL DEFAULT '',
+                archive_reason TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_target_date ON projects(target_date)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_projects_updated_at ON projects(updated_at)")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS milestones (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'pending',
+                target_date TEXT NOT NULL DEFAULT '',
+                completed_at TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_milestones_project_id ON milestones(project_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_milestones_status ON milestones(status)")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS project_links (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'user',
+                confidence TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                UNIQUE(project_id, entity_type, entity_id)
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_links_project_id ON project_links(project_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_links_entity ON project_links(entity_type, entity_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_links_status ON project_links(status)")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS project_aliases (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                alias TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'user',
+                created_at TEXT NOT NULL DEFAULT '',
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                UNIQUE(project_id, alias)
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_aliases_project_id ON project_aliases(project_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_aliases_alias ON project_aliases(alias)")
 
     def _maybe_migrate_jsonl(self) -> None:
         """Import existing JSONL data into SQLite on first run."""
@@ -444,6 +581,51 @@ class SoloStore:
             e.environment_design, e.success_criteria, e.observation_window, e.status,
             e.source, e.created_at,
         )
+        return cols, vals
+
+
+    @staticmethod
+    def _project_to_row(p: Project):
+        cols = (
+            "id", "title", "description", "status", "priority", "start_date",
+            "target_date", "completed_at", "archived_at", "archive_reason",
+            "tags", "created_at", "updated_at",
+        )
+        vals = (
+            p.id, p.title, p.description, p.status, p.priority, p.start_date,
+            p.target_date, p.completed_at, p.archived_at, p.archive_reason,
+            p.tags, p.created_at, p.updated_at,
+        )
+        return cols, vals
+
+    @staticmethod
+    def _milestone_to_row(m: Milestone):
+        cols = (
+            "id", "project_id", "title", "description", "status",
+            "target_date", "completed_at", "created_at", "updated_at",
+        )
+        vals = (
+            m.id, m.project_id, m.title, m.description, m.status,
+            m.target_date, m.completed_at, m.created_at, m.updated_at,
+        )
+        return cols, vals
+
+    @staticmethod
+    def _project_link_to_row(pl: ProjectLink):
+        cols = (
+            "id", "project_id", "entity_type", "entity_id", "source",
+            "confidence", "status", "created_at", "updated_at",
+        )
+        vals = (
+            pl.id, pl.project_id, pl.entity_type, pl.entity_id, pl.source,
+            pl.confidence, pl.status, pl.created_at, pl.updated_at,
+        )
+        return cols, vals
+
+    @staticmethod
+    def _project_alias_to_row(pa: ProjectAlias):
+        cols = ("id", "project_id", "alias", "source", "created_at")
+        vals = (pa.id, pa.project_id, pa.alias, pa.source, pa.created_at)
         return cols, vals
 
     # --- Public API (unchanged signatures) ---
@@ -1411,6 +1593,39 @@ class SoloStore:
             created_at=row[11],
         )
 
+
+    @staticmethod
+    def _row_to_project(row: tuple) -> Project:
+        return Project(
+            id=row[0], title=row[1], description=row[2], status=row[3],
+            priority=row[4], start_date=row[5], target_date=row[6],
+            completed_at=row[7], archived_at=row[8], archive_reason=row[9],
+            tags=row[10], created_at=row[11], updated_at=row[12],
+        )
+
+    @staticmethod
+    def _row_to_milestone(row: tuple) -> Milestone:
+        return Milestone(
+            id=row[0], project_id=row[1], title=row[2], description=row[3],
+            status=row[4], target_date=row[5], completed_at=row[6],
+            created_at=row[7], updated_at=row[8],
+        )
+
+    @staticmethod
+    def _row_to_project_link(row: tuple) -> ProjectLink:
+        return ProjectLink(
+            id=row[0], project_id=row[1], entity_type=row[2], entity_id=row[3],
+            source=row[4], confidence=row[5], status=row[6],
+            created_at=row[7], updated_at=row[8],
+        )
+
+    @staticmethod
+    def _row_to_project_alias(row: tuple) -> ProjectAlias:
+        return ProjectAlias(
+            id=row[0], project_id=row[1], alias=row[2], source=row[3],
+            created_at=row[4],
+        )
+
     # --- Private helpers ---
 
     def _entry_date(self, entry: SoloEntry) -> str:
@@ -1467,6 +1682,373 @@ class SoloStore:
     def _optional_text(self, value: object) -> str | None:
         text = str(value).strip() if value is not None else ""
         return text or None
+
+
+    # --- Project CRUD ---
+
+    def create_project(self, project: Project) -> None:
+        cols, vals = self._project_to_row(project)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO projects ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
+
+    def update_project(self, project_id: str, **fields: Any) -> bool:
+        allowed = {
+            "title", "description", "status", "priority", "start_date",
+            "target_date", "completed_at", "archived_at", "archive_reason",
+            "tags", "updated_at",
+        }
+        sets = []
+        params: list[Any] = []
+        for k, v in fields.items():
+            if k in allowed:
+                sets.append(f"{k}=?")
+                params.append(v)
+        if not sets:
+            return False
+        sets.append("updated_at=?")
+        params.append(_now())
+        params.append(project_id)
+        cur = self._db.execute(
+            f"UPDATE projects SET {', '.join(sets)} WHERE id=?", params
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def delete_project(self, project_id: str) -> bool:
+        cur = self._db.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def complete_project(self, project_id: str) -> bool:
+        now = _now()
+        cur = self._db.execute(
+            "UPDATE projects SET status='completed', completed_at=?, updated_at=? WHERE id=?",
+            (now, now, project_id),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def archive_project(self, project_id: str, reason: str = "") -> bool:
+        now = _now()
+        cur = self._db.execute(
+            "UPDATE projects SET status='archived', archived_at=?, archive_reason=?, updated_at=? WHERE id=?",
+            (now, reason, now, project_id),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def reactivate_project(self, project_id: str) -> bool:
+        now = _now()
+        cur = self._db.execute(
+            "UPDATE projects SET status='active', completed_at='', archived_at='', archive_reason='', updated_at=? WHERE id=?",
+            (now, project_id),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def get_project(self, project_id: str) -> Project | None:
+        cur = self._db.execute("SELECT * FROM projects WHERE id = ?", (project_id,))
+        row = cur.fetchone()
+        return self._row_to_project(row) if row else None
+
+    def list_projects(
+        self,
+        *,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[Project]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        sql = f"SELECT * FROM projects{where} ORDER BY updated_at DESC, rowid DESC"
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+        elif offset:
+            sql += " LIMIT -1 OFFSET ?"
+            params.append(offset)
+        cur = self._db.execute(sql, params)
+        return [self._row_to_project(row) for row in cur.fetchall()]
+
+    # --- Milestone CRUD ---
+
+    def create_milestone(self, milestone: Milestone) -> None:
+        cols, vals = self._milestone_to_row(milestone)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO milestones ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
+
+    def update_milestone(self, milestone_id: str, **fields: Any) -> bool:
+        allowed = {
+            "title", "description", "status", "target_date",
+            "completed_at", "updated_at",
+        }
+        sets = []
+        params: list[Any] = []
+        for k, v in fields.items():
+            if k in allowed:
+                sets.append(f"{k}=?")
+                params.append(v)
+        if not sets:
+            return False
+        sets.append("updated_at=?")
+        params.append(_now())
+        params.append(milestone_id)
+        cur = self._db.execute(
+            f"UPDATE milestones SET {', '.join(sets)} WHERE id=?", params
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def complete_milestone(self, milestone_id: str) -> bool:
+        now = _now()
+        cur = self._db.execute(
+            "UPDATE milestones SET status='completed', completed_at=?, updated_at=? WHERE id=?",
+            (now, now, milestone_id),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def delete_milestone(self, milestone_id: str) -> bool:
+        cur = self._db.execute("DELETE FROM milestones WHERE id = ?", (milestone_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def list_milestones(self, project_id: str) -> list[Milestone]:
+        cur = self._db.execute(
+            "SELECT * FROM milestones WHERE project_id = ? ORDER BY rowid",
+            (project_id,),
+        )
+        return [self._row_to_milestone(row) for row in cur.fetchall()]
+
+    # --- ProjectLink CRUD ---
+
+    def create_project_link(self, link: ProjectLink) -> None:
+        cols, vals = self._project_link_to_row(link)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO project_links ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
+
+    def update_project_link(self, link_id: str, **fields: Any) -> bool:
+        allowed = {
+            "entity_type", "entity_id", "source", "confidence",
+            "status", "updated_at",
+        }
+        sets = []
+        params: list[Any] = []
+        for k, v in fields.items():
+            if k in allowed:
+                sets.append(f"{k}=?")
+                params.append(v)
+        if not sets:
+            return False
+        sets.append("updated_at=?")
+        params.append(_now())
+        params.append(link_id)
+        cur = self._db.execute(
+            f"UPDATE project_links SET {', '.join(sets)} WHERE id=?", params
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def delete_project_link(self, link_id: str) -> bool:
+        cur = self._db.execute("DELETE FROM project_links WHERE id = ?", (link_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def list_project_links(
+        self,
+        *,
+        project_id: str | None = None,
+        entity_type: str | None = None,
+        entity_id: str | None = None,
+        status: str | None = None,
+    ) -> list[ProjectLink]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if project_id:
+            clauses.append("project_id = ?")
+            params.append(project_id)
+        if entity_type:
+            clauses.append("entity_type = ?")
+            params.append(entity_type)
+        if entity_id:
+            clauses.append("entity_id = ?")
+            params.append(entity_id)
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        cur = self._db.execute(
+            f"SELECT * FROM project_links{where} ORDER BY rowid", params
+        )
+        return [self._row_to_project_link(row) for row in cur.fetchall()]
+
+    def accept_project_link(self, link_id: str) -> bool:
+        now = _now()
+        cur = self._db.execute(
+            "UPDATE project_links SET status='active', updated_at=? WHERE id=?",
+            (now, link_id),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def reject_project_link(self, link_id: str) -> bool:
+        now = _now()
+        cur = self._db.execute(
+            "UPDATE project_links SET status='rejected', updated_at=? WHERE id=?",
+            (now, link_id),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    # --- ProjectAlias CRUD ---
+
+    def create_project_alias(self, alias: ProjectAlias) -> None:
+        cols, vals = self._project_alias_to_row(alias)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO project_aliases ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
+
+    def delete_project_alias(self, alias_id: str) -> bool:
+        cur = self._db.execute("DELETE FROM project_aliases WHERE id = ?", (alias_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def list_project_aliases(self, project_id: str) -> list[ProjectAlias]:
+        cur = self._db.execute(
+            "SELECT * FROM project_aliases WHERE project_id = ? ORDER BY rowid",
+            (project_id,),
+        )
+        return [self._row_to_project_alias(row) for row in cur.fetchall()]
+
+    # --- Derived fields ---
+
+    def get_project_detail(self, project_id: str) -> dict | None:
+        project = self.get_project(project_id)
+        if project is None:
+            return None
+        detail = project.to_dict()
+
+        milestones = self.list_milestones(project_id)
+        milestone_count = len(milestones)
+        completed_milestone_count = sum(1 for m in milestones if m.status == "completed")
+
+        links = self.list_project_links(project_id=project_id, status="active")
+        linked_todo_ids = [lnk.entity_id for lnk in links if lnk.entity_type == "todo"]
+        linked_record_count = sum(1 for lnk in links if lnk.entity_type == "record")
+        linked_todo_count = len(linked_todo_ids)
+
+        # Calculate completion from linked todos
+        completed_linked_todo_count = 0
+        if linked_todo_ids:
+            placeholders = ", ".join("?" * len(linked_todo_ids))
+            cur = self._db.execute(
+                f"SELECT id, status FROM todos WHERE id IN ({placeholders})",
+                linked_todo_ids,
+            )
+            for row in cur.fetchall():
+                if row[1] == "done":
+                    completed_linked_todo_count += 1
+
+        # Completion percentage
+        completion_pct: int | None = None
+        completion_source = "none"
+        if milestone_count > 0:
+            completion_pct = int(round(completed_milestone_count / milestone_count * 100))
+            completion_source = "milestones"
+        elif linked_todo_count > 0:
+            completion_pct = int(round(completed_linked_todo_count / linked_todo_count * 100))
+            completion_source = "todos"
+
+        detail["completion_pct"] = completion_pct
+        detail["completion_source"] = completion_source
+        detail["milestone_count"] = milestone_count
+        detail["completed_milestone_count"] = completed_milestone_count
+        detail["linked_record_count"] = linked_record_count
+        detail["linked_todo_count"] = linked_todo_count
+        detail["completed_linked_todo_count"] = completed_linked_todo_count
+
+        # Activity counts
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        cutoff_7d = (now - timedelta(days=7)).isoformat()
+        cutoff_30d = (now - timedelta(days=30)).isoformat()
+
+        all_links = self.list_project_links(project_id=project_id)
+        activity_7d = sum(
+            1 for lnk in all_links if lnk.created_at and lnk.created_at >= cutoff_7d
+        )
+        activity_30d = sum(
+            1 for lnk in all_links if lnk.created_at and lnk.created_at >= cutoff_30d
+        )
+        detail["activity_7d"] = activity_7d
+        detail["activity_30d"] = activity_30d
+
+        # Last activity
+        timestamps = [lnk.created_at for lnk in all_links if lnk.created_at]
+        if milestones:
+            timestamps.extend(m.created_at for m in milestones if m.created_at)
+            timestamps.extend(m.completed_at for m in milestones if m.completed_at)
+        detail["last_activity_at"] = max(timestamps) if timestamps else ""
+
+        # Risk status
+        risk_status = "normal"
+        if project.target_date and project.status != "completed":
+            try:
+                target = datetime.fromisoformat(project.target_date).date()
+                today = now.date()
+                if target < today:
+                    risk_status = "at_risk"
+                elif target <= today + timedelta(days=7):
+                    if completion_pct is None or completion_pct < 80:
+                        risk_status = "attention"
+            except ValueError:
+                pass
+        if risk_status == "normal" and activity_30d == 0 and all_links:
+            # 30 days no activity and there are links
+            if detail["last_activity_at"]:
+                try:
+                    last = datetime.fromisoformat(detail["last_activity_at"])
+                    if last.tzinfo is None:
+                        last = last.replace(tzinfo=timezone.utc)
+                    if (now - last).days >= 30:
+                        risk_status = "attention"
+                except ValueError:
+                    pass
+        detail["risk_status"] = risk_status
+
+        # Open blocker count (simplified: count all linked entities)
+        detail["open_blocker_count"] = len(all_links)
+
+        return detail
+
+    def list_projects_with_detail(
+        self,
+        *,
+        status: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict]:
+        projects = self.list_projects(status=status, limit=limit, offset=offset)
+        return [
+            self.get_project_detail(p.id)  # type: ignore[misc]
+            for p in projects
+            if self.get_project_detail(p.id) is not None
+        ]
 
 
 def _tokenize_enhanced(text: str) -> list[str]:

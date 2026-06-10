@@ -428,3 +428,120 @@ class ProcessResult:
     pending_reminder: str | None = None
     missing_day_reminder: str | None = None
     daily_question: str | None = None
+
+
+@dataclass(frozen=True)
+class Project:
+    id: str
+    title: str
+    description: str = ""
+    status: str = "active"  # active | completed | archived
+    priority: str = "medium"  # high | medium | low
+    start_date: str = ""
+    target_date: str = ""
+    completed_at: str = ""
+    archived_at: str = ""
+    archive_reason: str = ""
+    tags: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+    stakeholders: str = ""
+    success_criteria: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "Project":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "title": self.title, "description": self.description,
+            "status": self.status, "priority": self.priority,
+            "start_date": self.start_date, "target_date": self.target_date,
+            "completed_at": self.completed_at, "archived_at": self.archived_at,
+            "archive_reason": self.archive_reason, "tags": self.tags,
+            "created_at": self.created_at, "updated_at": self.updated_at,
+            "stakeholders": self.stakeholders, "success_criteria": self.success_criteria,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class Milestone:
+    id: str
+    project_id: str
+    title: str
+    description: str = ""
+    status: str = "pending"  # pending | completed
+    target_date: str = ""
+    completed_at: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "Milestone":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "project_id": self.project_id, "title": self.title,
+            "description": self.description, "status": self.status,
+            "target_date": self.target_date, "completed_at": self.completed_at,
+            "created_at": self.created_at, "updated_at": self.updated_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class ProjectLink:
+    id: str
+    project_id: str
+    entity_type: str  # record | todo | decision | highlight | experiment
+    entity_id: str
+    source: str = "user"  # user | ai_high_confidence | ai_candidate | migration
+    confidence: str = ""
+    status: str = "active"  # active | pending | rejected
+    created_at: str = ""
+    updated_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "ProjectLink":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "project_id": self.project_id,
+            "entity_type": self.entity_type, "entity_id": self.entity_id,
+            "source": self.source, "confidence": self.confidence,
+            "status": self.status, "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class ProjectAlias:
+    id: str
+    project_id: str
+    alias: str
+    source: str = "user"
+    created_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "ProjectAlias":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "project_id": self.project_id,
+            "alias": self.alias, "source": self.source,
+            "created_at": self.created_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)

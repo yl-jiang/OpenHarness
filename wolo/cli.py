@@ -21,7 +21,17 @@ from wolo.gateway.service import (
     start_gateway_process,
     stop_gateway_process,
 )
-from wolo.core.models import WoloConfig, WoloEntry, WoloRecord
+from uuid import uuid4
+
+from wolo.core.models import (
+    Milestone,
+    Project,
+        ProjectLink,
+    WoloConfig,
+    WoloEntry,
+    WoloRecord,
+)
+from wolo.core.utils import _now
 from wolo.processor import WoloProcessor
 from wolo.core.store import WoloStore
 from wolo.core.workspace import get_config_path, get_logs_dir, get_workspace_root, initialize_workspace, workspace_health
@@ -35,6 +45,10 @@ gateway_app = typer.Typer(name="gateway", help="管理 wolo 后台网关")
 heartbeat_app = typer.Typer(name="heartbeat", help="查看或触发 wolo heartbeat")
 onboard_app = typer.Typer(name="onboard", help="管理 onboard WebUI 仪表盘")
 feed_digest_app = typer.Typer(name="feed-digest", help="管理资讯简报任务")
+project_app = typer.Typer(name="project", help="管理 wolo 工作项目")
+milestone_app = typer.Typer(name="milestone", help="管理项目里程碑")
+project_app.add_typer(milestone_app)
+app.add_typer(project_app)
 app.add_typer(gateway_app)
 app.add_typer(heartbeat_app)
 app.add_typer(onboard_app)
@@ -610,6 +624,365 @@ def gateway_uninstall_service_cmd(
         print("❌ Failed to uninstall wolo gateway service (or not found).", file=sys.stderr)
 
 
+
+# ---------------------------------------------------------------------------
+# project commands
+# ---------------------------------------------------------------------------
+
+def _resolve_project(store: WoloStore, ref: str) -> Project | None:
+    """Resolve project by ID first, then by exact title match."""
+    p = store.get_project(ref)
+    if p:
+        return p
+    projects = store.list_projects()
+    for proj in projects:
+        if proj.title == ref:
+            return proj
+    ref_lower = ref.lower()
+    for proj in projects:
+        if proj.title.lower() == ref_lower:
+            return proj
+    return None
+
+
+@project_app.command("list", help="查看项目列表")
+def project_list_cmd(
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+    status: str | None = typer.Option(None, "--status", help="Filter: active / completed / archived"),
+    limit: int = typer.Option(50, "--limit", min=1),
+) -> None:
+    from rich.console import Console
+    from rich.table import Table
+
+    store = WoloStore(workspace)
+    projects = store.list_projects_with_detail(status=status, limit=limit)
+    if not projects:
+        print("No projects found.")
+        return
+
+    console = Console()
+    table = Table(title="项目列表")
+    table.add_column("项目", style="bold")
+    table.add_column("进度", justify="right")
+    table.add_column("里程碑", justify="right")
+    table.add_column("目标日期")
+    table.add_column("风险")
+
+    for p in projects:
+        pct = p.get("completion_pct")
+        pct_str = f"{pct:.0%}" if pct is not None else "-"
+        ms_str = f"{p.get('completed_milestone_count', 0)}/{p.get('milestone_count', 0)}"
+        target = p.get("target_date", "") or "-"
+        risk = p.get("risk_status", "normal")
+        risk_style = {"normal": "green", "attention": "yellow", "at_risk": "red"}.get(risk, "")
+        title_display = f"{p['title']}\n  [dim]{p['id'][:8]}[/dim]"
+        table.add_row(
+            title_display,
+            pct_str,
+            ms_str,
+            target,
+            f"[{risk_style}]{risk}[/{risk_style}]" if risk_style else risk,
+        )
+    console.print(table)
+
+
+@project_app.command("create", help="创建新项目")
+def project_create_cmd(
+    title: str = typer.Argument(..., help="项目标题"),
+    description: str = typer.Option("", "--description", "-d", help="项目描述"),
+    target_date: str = typer.Option("", "--target-date", help="目标日期 (YYYY-MM-DD)"),
+    priority: str = typer.Option("medium", "--priority", "-p", help="high / medium / low"),
+    tags: str = typer.Option("", "--tags", help="逗号分隔的标签"),
+    stakeholders: str = typer.Option("", "--stakeholders", help="逗号分隔的干系人"),
+    success_criteria: str = typer.Option("", "--success-criteria", help="成功标准"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    now = _now()
+    project = Project(
+        id=str(uuid4()),
+        title=title,
+        description=description,
+        target_date=target_date,
+        priority=priority,
+        tags=tags,
+        stakeholders=stakeholders,
+        success_criteria=success_criteria,
+        start_date=now[:10],
+        created_at=now,
+        updated_at=now,
+    )
+    store.create_project(project)
+    print(f"Created project: {project.title} ({project.id[:8]})")
+
+
+@project_app.command("show", help="查看项目详情")
+def project_show_cmd(
+    ref: str = typer.Argument(..., help="项目 ID 或标题"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    from rich.console import Console
+    from rich.table import Table
+
+    store = WoloStore(workspace)
+    project = _resolve_project(store, ref)
+    if project is None:
+        print(f"Project not found: {ref}")
+        raise typer.Exit(1)
+
+    detail = store.get_project_detail(project.id)
+    if detail is None:
+        print(f"Project detail not available: {ref}")
+        raise typer.Exit(1)
+
+    console = Console()
+    console.print(f"\n[bold]{detail['title']}[/bold]  ({detail['id'][:8]})")
+    console.print(f"  状态: {detail['status']}  优先级: {detail['priority']}")
+    if detail.get("description"):
+        console.print(f"  描述: {detail['description']}")
+    if detail.get("stakeholders"):
+        console.print(f"  干系人: {detail['stakeholders']}")
+    if detail.get("success_criteria"):
+        console.print(f"  成功标准: {detail['success_criteria']}")
+    if detail.get("tags"):
+        console.print(f"  标签: {detail['tags']}")
+    if detail.get("target_date"):
+        console.print(f"  目标日期: {detail['target_date']}")
+
+    pct = detail.get("completion_pct")
+    if pct is not None:
+        console.print(f"  进度: {pct:.0%} (来源: {detail.get('completion_source', '-')})")
+
+    console.print(
+        f"  关联: records={detail.get('linked_record_count', 0)} "
+        f"todos={detail.get('linked_todo_count', 0)} "
+        f"blockers={detail.get('open_blocker_count', 0)}"
+    )
+    console.print(
+        f"  活跃: 7d={detail.get('activity_7d', 0)} 30d={detail.get('activity_30d', 0)} "
+        f"risk={detail.get('risk_status', 'normal')}"
+    )
+
+    milestones = store.list_milestones(project.id)
+    if milestones:
+        table = Table(title="里程碑")
+        table.add_column("ID", style="dim")
+        table.add_column("标题")
+        table.add_column("状态")
+        table.add_column("目标日期")
+        for m in milestones:
+            style = "green" if m.status == "completed" else "yellow"
+            table.add_row(m.id[:8], m.title, f"[{style}]{m.status}[/{style}]", m.target_date or "-")
+        console.print(table)
+
+    aliases = store.list_project_aliases(project.id)
+    if aliases:
+        console.print(f"  别名: {', '.join(a.alias for a in aliases)}")
+
+
+@project_app.command("update", help="更新项目信息")
+def project_update_cmd(
+    ref: str = typer.Argument(..., help="项目 ID 或标题"),
+    title: str | None = typer.Option(None, "--title", help="新标题"),
+    description: str | None = typer.Option(None, "--description", "-d", help="新描述"),
+    target_date: str | None = typer.Option(None, "--target-date", help="目标日期 (YYYY-MM-DD)"),
+    priority: str | None = typer.Option(None, "--priority", "-p", help="high / medium / low"),
+    tags: str | None = typer.Option(None, "--tags", help="逗号分隔的标签"),
+    stakeholders: str | None = typer.Option(None, "--stakeholders", help="逗号分隔的干系人"),
+    success_criteria: str | None = typer.Option(None, "--success-criteria", help="成功标准"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    project = _resolve_project(store, ref)
+    if project is None:
+        print(f"Project not found: {ref}")
+        raise typer.Exit(1)
+
+    updates: dict[str, str] = {}
+    if title is not None:
+        updates["title"] = title
+    if description is not None:
+        updates["description"] = description
+    if target_date is not None:
+        updates["target_date"] = target_date
+    if priority is not None:
+        updates["priority"] = priority
+    if tags is not None:
+        updates["tags"] = tags
+    if stakeholders is not None:
+        updates["stakeholders"] = stakeholders
+    if success_criteria is not None:
+        updates["success_criteria"] = success_criteria
+
+    if not updates:
+        print("No fields to update.")
+        return
+    store.update_project(project.id, **updates)
+    print(f"Updated project: {project.title} ({project.id[:8]})")
+
+
+@project_app.command("complete", help="标记项目为已完成")
+def project_complete_cmd(
+    ref: str = typer.Argument(..., help="项目 ID 或标题"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    project = _resolve_project(store, ref)
+    if project is None:
+        print(f"Project not found: {ref}")
+        raise typer.Exit(1)
+    if store.complete_project(project.id):
+        print(f"Completed project: {project.title} ({project.id[:8]})")
+    else:
+        print(f"Project is not active: {project.title}")
+
+
+@project_app.command("archive", help="归档项目")
+def project_archive_cmd(
+    ref: str = typer.Argument(..., help="项目 ID 或标题"),
+    reason: str = typer.Option("", "--reason", "-r", help="归档原因"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    project = _resolve_project(store, ref)
+    if project is None:
+        print(f"Project not found: {ref}")
+        raise typer.Exit(1)
+    if store.archive_project(project.id, reason=reason):
+        print(f"Archived project: {project.title} ({project.id[:8]})")
+    else:
+        print(f"Failed to archive project: {project.title}")
+
+
+@project_app.command("reactivate", help="重新激活已归档或已完成的项目")
+def project_reactivate_cmd(
+    ref: str = typer.Argument(..., help="项目 ID 或标题"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    project = _resolve_project(store, ref)
+    if project is None:
+        print(f"Project not found: {ref}")
+        raise typer.Exit(1)
+    if store.reactivate_project(project.id):
+        print(f"Reactivated project: {project.title} ({project.id[:8]})")
+    else:
+        print(f"Failed to reactivate project: {project.title}")
+
+
+@project_app.command("delete", help="删除项目（不删除关联的源实体）")
+def project_delete_cmd(
+    ref: str = typer.Argument(..., help="项目 ID 或标题"),
+    force: bool = typer.Option(False, "--force", "-f", help="跳过确认"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    project = _resolve_project(store, ref)
+    if project is None:
+        print(f"Project not found: {ref}")
+        raise typer.Exit(1)
+    if not force:
+        typer.confirm(
+            f"Delete project '{project.title}'? Linked records/todos/decisions will NOT be deleted.",
+            abort=True,
+        )
+    if store.delete_project(project.id):
+        print(f"Deleted project: {project.title} ({project.id[:8]})")
+    else:
+        print(f"Failed to delete project: {project.title}")
+
+
+@project_app.command("link", help="将实体关联到项目")
+def project_link_cmd(
+    ref: str = typer.Argument(..., help="项目 ID 或标题"),
+    entity_type: str = typer.Option(..., "--type", "-t", help="record / todo / decision / highlight / experiment"),
+    entity_id: str = typer.Option(..., "--id", help="实体 ID"),
+    source: str = typer.Option("user", "--source", help="user / ai_high_confidence / ai_candidate / migration"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    project = _resolve_project(store, ref)
+    if project is None:
+        print(f"Project not found: {ref}")
+        raise typer.Exit(1)
+    now = _now()
+    link = ProjectLink(
+        id=str(uuid4()),
+        project_id=project.id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        source=source,
+        status="active",
+        created_at=now,
+        updated_at=now,
+    )
+    store.create_project_link(link)
+    print(f"Linked {entity_type} {entity_id[:8]} to project {project.title}")
+
+
+@project_app.command("unlink", help="取消实体与项目的关联")
+def project_unlink_cmd(
+    link_id: str = typer.Argument(..., help="关联 ID"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    if store.delete_project_link(link_id):
+        print(f"Removed project link: {link_id[:8]}")
+    else:
+        print(f"Project link not found: {link_id}")
+
+
+# --- milestone sub-group ---
+
+@milestone_app.command("add", help="为项目添加里程碑")
+def milestone_add_cmd(
+    ref: str = typer.Argument(..., help="项目 ID 或标题"),
+    title: str = typer.Argument(..., help="里程碑标题"),
+    target_date: str = typer.Option("", "--target-date", help="目标日期 (YYYY-MM-DD)"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    project = _resolve_project(store, ref)
+    if project is None:
+        print(f"Project not found: {ref}")
+        raise typer.Exit(1)
+    now = _now()
+    milestone = Milestone(
+        id=str(uuid4()),
+        project_id=project.id,
+        title=title,
+        target_date=target_date,
+        created_at=now,
+        updated_at=now,
+    )
+    store.create_milestone(milestone)
+    print(f"Added milestone: {milestone.title} ({milestone.id[:8]}) to {project.title}")
+
+
+@milestone_app.command("complete", help="标记里程碑为已完成")
+def milestone_complete_cmd(
+    milestone_id: str = typer.Argument(..., help="里程碑 ID"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    if store.complete_milestone(milestone_id):
+        print(f"Completed milestone: {milestone_id[:8]}")
+    else:
+        print(f"Milestone not found or already completed: {milestone_id}")
+
+
+@milestone_app.command("delete", help="删除里程碑")
+def milestone_delete_cmd(
+    milestone_id: str = typer.Argument(..., help="里程碑 ID"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    store = WoloStore(workspace)
+    if store.delete_milestone(milestone_id):
+        print(f"Deleted milestone: {milestone_id[:8]}")
+    else:
+        print(f"Milestone not found: {milestone_id}")
+
+
 def _configure_gateway_logging(workspace: str | Path | None = None) -> None:
     """Configure foreground gateway logging."""
     config = load_config(workspace)
@@ -848,3 +1221,88 @@ def _prompt_channels(
 def _csv_prompt(message: str, *, default: str = "") -> list[str]:
     raw = _text_prompt(message, default=default)
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+@project_app.command("review", help="生成项目回顾报告")
+def project_review_cmd(
+    project: str = typer.Argument(..., help="项目 ID 或标题"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    from wolo.core.models import WoloReport
+    store = WoloStore(workspace)
+    p = _resolve_project(store, project)
+    if p is None:
+        print(f"Project not found: {project}")
+        raise typer.Exit(1)
+
+    detail = store.get_project_detail(p.id)
+    milestones = store.list_milestones(p.id)
+    links = store.list_project_links(project_id=p.id)
+
+    lines = []
+    lines.append(f"# Project Review: {p.title}")
+    lines.append("")
+    if p.description:
+        lines.append(p.description)
+        lines.append("")
+    lines.append(f"- Status: {p.status}")
+    lines.append(f"- Priority: {p.priority}")
+    if p.stakeholders:
+        lines.append(f"- Stakeholders: {p.stakeholders}")
+    if p.success_criteria:
+        lines.append(f"- Success criteria: {p.success_criteria}")
+    if p.start_date:
+        lines.append(f"- Start: {p.start_date}")
+    if p.target_date:
+        lines.append(f"- Target: {p.target_date}")
+    if p.completed_at:
+        lines.append(f"- Completed: {p.completed_at}")
+    lines.append("")
+
+    lines.append("## Milestones")
+    if milestones:
+        for m in milestones:
+            status = "✓" if m.status == "completed" else "○"
+            date = f" ({m.target_date})" if m.target_date else ""
+            lines.append(f"- {status} {m.title}{date}")
+    else:
+        lines.append("- No milestones defined")
+    lines.append("")
+
+    entity_counts = {}
+    for lnk in links:
+        if lnk.status == "active":
+            entity_counts[lnk.entity_type] = entity_counts.get(lnk.entity_type, 0) + 1
+    lines.append("## Linked Entities")
+    if entity_counts:
+        for et, count in sorted(entity_counts.items()):
+            lines.append(f"- {et}: {count}")
+    else:
+        lines.append("- No entities linked")
+    lines.append("")
+
+    lines.append("## Statistics")
+    lines.append(f"- Completion: {detail.get('completion_pct', 'N/A')}% ({detail.get('completion_source', 'none')})")
+    lines.append(f"- Milestones: {detail.get('completed_milestone_count', 0)}/{detail.get('milestone_count', 0)}")
+    lines.append(f"- Linked records: {detail.get('linked_record_count', 0)}")
+    lines.append(f"- Linked todos: {detail.get('linked_todo_count', 0)}")
+    lines.append(f"- Activity (7d): {detail.get('activity_7d', 0)}")
+    lines.append(f"- Activity (30d): {detail.get('activity_30d', 0)}")
+    lines.append(f"- Risk: {detail.get('risk_status', 'normal')}")
+    lines.append("")
+
+    review_content = "\n".join(lines)
+
+    from uuid import uuid4
+    report = WoloReport(
+        id=str(uuid4()),
+        report_type="project_review",
+        content=review_content,
+        created_at=_now(),
+        period_start=p.start_date or p.created_at,
+        period_end=p.completed_at or _now(),
+        metadata={"project_id": p.id, "project_title": p.title},
+    )
+    store.add_report(report)
+    print(review_content)
+    print(f"\n✅ Review report saved (id: {report.id})")
+

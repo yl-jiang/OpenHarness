@@ -21,7 +21,14 @@ from solo.gateway.service import (
     start_gateway_process,
     stop_gateway_process,
 )
-from solo.core.models import SoloConfig, SoloEntry, SoloRecord
+from uuid import uuid4
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+
+from solo.core.models import Project, Milestone, ProjectLink, SoloConfig, SoloEntry, SoloRecord
+from solo.core.utils import _now
 from solo.processor import SoloProcessor
 from solo.core.store import SoloStore
 from solo.core.workspace import get_config_path, get_logs_dir, get_workspace_root, initialize_workspace, workspace_health
@@ -35,10 +42,14 @@ gateway_app = typer.Typer(name="gateway", help="管理 solo 后台网关")
 heartbeat_app = typer.Typer(name="heartbeat", help="查看或触发 solo heartbeat")
 onboard_app = typer.Typer(name="onboard", help="管理 onboard WebUI 仪表盘")
 feed_digest_app = typer.Typer(name="feed-digest", help="管理资讯简报任务")
+project_app = typer.Typer(name="project", help="管理 solo 项目")
+milestone_app = typer.Typer(name="milestone", help="管理项目里程碑")
 app.add_typer(gateway_app)
 app.add_typer(heartbeat_app)
 app.add_typer(onboard_app)
 app.add_typer(feed_digest_app)
+app.add_typer(project_app)
+project_app.add_typer(milestone_app)
 
 _INTERACTIVE_CHANNELS = ("telegram", "slack", "discord", "feishu")
 _WORKSPACE_HELP = "solo 工作目录路径，默认 ~/.solo"
@@ -612,6 +623,373 @@ class _SoloFormatter(logging.Formatter):
         return super().format(record)
 
 
+def _resolve_project(store: SoloStore, ref: str) -> Project | None:
+    """Resolve project by ID first, then by exact title match."""
+    p = store.get_project(ref)
+    if p:
+        return p
+    projects = store.list_projects()
+    for proj in projects:
+        if proj.title == ref:
+            return proj
+    # Try case-insensitive
+    ref_lower = ref.lower()
+    for proj in projects:
+        if proj.title.lower() == ref_lower:
+            return proj
+    return None
+
+
+@project_app.command("list", help="列出所有项目")
+def project_list_cmd(
+    status: str = typer.Option("active", help="项目状态筛选: active/completed/archived/all"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """List all projects with detail."""
+    store = SoloStore(workspace)
+    status_filter = None if status == "all" else status
+    projects = store.list_projects_with_detail(status=status_filter)
+
+    if not projects:
+        print(f"No {status} projects found.")
+        return
+
+    console = Console()
+    table = Table(title=f"{status.capitalize()} Projects")
+    table.add_column("项目", style="cyan", no_wrap=True)
+    table.add_column("进度", justify="right")
+    table.add_column("里程碑", justify="center")
+    table.add_column("目标日期", justify="center")
+    table.add_column("风险", justify="center")
+
+    for p in projects:
+        title = p["title"]
+        completion_pct = p.get("completion_pct")
+        if completion_pct is not None:
+            bar_len = 10
+            filled = int(bar_len * completion_pct / 100)
+            bar = "#" * filled + "-" * (bar_len - filled)
+            progress = f"[{bar}] {completion_pct}%"
+        else:
+            progress = "-"
+
+        milestone_count = p.get("milestone_count", 0)
+        completed_milestone_count = p.get("completed_milestone_count", 0)
+        milestones = f"{completed_milestone_count}/{milestone_count}" if milestone_count > 0 else "-"
+
+        target_date = p.get("target_date", "") or "-"
+
+        risk_status = p.get("risk_status", "normal")
+        risk_label = {"normal": "ok", "attention": "warn", "at_risk": "risk"}.get(risk_status, "ok")
+        risk_color = {"normal": "green", "attention": "yellow", "at_risk": "red"}.get(risk_status, "green")
+        risk = f"[{risk_color}]{risk_label}[/{risk_color}]"
+
+        table.add_row(title, progress, milestones, target_date, risk)
+
+    console.print(table)
+
+
+@project_app.command("create", help="创建新项目")
+def project_create_cmd(
+    title: str = typer.Argument(..., help="项目标题"),
+    description: str = typer.Option("", help="项目描述"),
+    target_date: str = typer.Option("", "--target-date", help="目标日期 YYYY-MM-DD"),
+    priority: str = typer.Option("medium", help="优先级: high/medium/low"),
+    tags: str = typer.Option("", help="标签，逗号分隔"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Create a new project."""
+    store = SoloStore(workspace)
+    now = _now()
+    project = Project(
+        id=str(uuid4()),
+        title=title,
+        description=description,
+        status="active",
+        priority=priority,
+        start_date=now[:10],
+        target_date=target_date,
+        tags=tags,
+        created_at=now,
+        updated_at=now,
+    )
+    store.create_project(project)
+    print(f"Created project '{title}' (id={project.id})")
+
+
+@project_app.command("show", help="查看项目详情")
+def project_show_cmd(
+    project: str = typer.Argument(..., help="项目 ID 或标题"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Show project details."""
+    store = SoloStore(workspace)
+    proj = _resolve_project(store, project)
+    if not proj:
+        print(f"Project not found: {project}")
+        raise typer.Exit(1)
+
+    detail = store.get_project_detail(proj.id)
+    if not detail:
+        print(f"Failed to load project detail: {proj.id}")
+        raise typer.Exit(1)
+
+    console = Console()
+
+    completion_pct = detail.get("completion_pct")
+    progress_line = f"{completion_pct}%" if completion_pct is not None else "-"
+
+    info_lines = [
+        f"[bold cyan]{proj.title}[/bold cyan]",
+        f"ID: {proj.id}",
+        f"Status: {proj.status}  Priority: {proj.priority}",
+        f"Description: {proj.description or '-'}",
+        f"Target: {proj.target_date or '-'}  Tags: {proj.tags or '-'}",
+        f"Progress: {progress_line}",
+        f"Created: {proj.created_at}",
+    ]
+    console.print(Panel("\n".join(info_lines), title="Project"))
+
+    milestones = store.list_milestones(proj.id)
+    if milestones:
+        ms_table = Table(title="Milestones")
+        ms_table.add_column("Title", style="cyan")
+        ms_table.add_column("Status", justify="center")
+        ms_table.add_column("Target", justify="center")
+        for m in milestones:
+            icon = "done" if m.status == "completed" else "pending"
+            ms_table.add_row(m.title, icon, m.target_date or "-")
+        console.print(ms_table)
+
+    links = store.list_project_links(project_id=proj.id, status="active")
+    if links:
+        entity_counts: dict[str, int] = {}
+        for lnk in links:
+            entity_counts[lnk.entity_type] = entity_counts.get(lnk.entity_type, 0) + 1
+        link_lines = [f"{k}: {v}" for k, v in entity_counts.items()]
+        console.print(Panel("\n".join(link_lines), title="Linked Entities"))
+
+
+@project_app.command("update", help="更新项目信息")
+def project_update_cmd(
+    project: str = typer.Argument(..., help="项目 ID 或标题"),
+    title: str = typer.Option(None, help="新标题"),
+    description: str = typer.Option(None, help="新描述"),
+    target_date: str = typer.Option(None, "--target-date", help="新目标日期"),
+    priority: str = typer.Option(None, help="新优先级"),
+    tags: str = typer.Option(None, help="新标签"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Update project information."""
+    store = SoloStore(workspace)
+    proj = _resolve_project(store, project)
+    if not proj:
+        print(f"Project not found: {project}")
+        raise typer.Exit(1)
+
+    fields: dict[str, str] = {}
+    if title is not None:
+        fields["title"] = title
+    if description is not None:
+        fields["description"] = description
+    if target_date is not None:
+        fields["target_date"] = target_date
+    if priority is not None:
+        fields["priority"] = priority
+    if tags is not None:
+        fields["tags"] = tags
+
+    if not fields:
+        print("No fields to update.")
+        return
+
+    if store.update_project(proj.id, **fields):
+        print(f"Updated project '{proj.title}'")
+    else:
+        print(f"Failed to update project '{proj.title}'")
+        raise typer.Exit(1)
+
+
+@project_app.command("complete", help="标记项目完成")
+def project_complete_cmd(
+    project: str = typer.Argument(..., help="项目 ID 或标题"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Mark a project as completed."""
+    store = SoloStore(workspace)
+    proj = _resolve_project(store, project)
+    if not proj:
+        print(f"Project not found: {project}")
+        raise typer.Exit(1)
+
+    if store.complete_project(proj.id):
+        print(f"Completed project '{proj.title}'")
+    else:
+        print(f"Failed to complete project '{proj.title}'")
+        raise typer.Exit(1)
+
+
+@project_app.command("archive", help="归档项目")
+def project_archive_cmd(
+    project: str = typer.Argument(..., help="项目 ID 或标题"),
+    reason: str = typer.Option("", "--reason", help="归档原因"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Archive a project."""
+    store = SoloStore(workspace)
+    proj = _resolve_project(store, project)
+    if not proj:
+        print(f"Project not found: {project}")
+        raise typer.Exit(1)
+
+    if store.archive_project(proj.id, reason):
+        print(f"Archived project '{proj.title}'")
+    else:
+        print(f"Failed to archive project '{proj.title}'")
+        raise typer.Exit(1)
+
+
+@project_app.command("reactivate", help="重新激活项目")
+def project_reactivate_cmd(
+    project: str = typer.Argument(..., help="项目 ID 或标题"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Reactivate a completed or archived project."""
+    store = SoloStore(workspace)
+    proj = _resolve_project(store, project)
+    if not proj:
+        print(f"Project not found: {project}")
+        raise typer.Exit(1)
+
+    if store.reactivate_project(proj.id):
+        print(f"Reactivated project '{proj.title}'")
+    else:
+        print(f"Failed to reactivate project '{proj.title}'")
+        raise typer.Exit(1)
+
+
+@project_app.command("delete", help="删除项目（不删除关联的原始记录）")
+def project_delete_cmd(
+    project: str = typer.Argument(..., help="项目 ID 或标题"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Delete a project (does NOT delete linked records/todos)."""
+    store = SoloStore(workspace)
+    proj = _resolve_project(store, project)
+    if not proj:
+        print(f"Project not found: {project}")
+        raise typer.Exit(1)
+
+    print(f"Warning: Deleting project '{proj.title}' will NOT delete linked records, todos, or other entities.")
+    if not typer.confirm("Are you sure you want to delete this project?"):
+        raise typer.Abort()
+
+    if store.delete_project(proj.id):
+        print(f"Deleted project '{proj.title}'")
+    else:
+        print(f"Failed to delete project '{proj.title}'")
+        raise typer.Exit(1)
+
+
+@milestone_app.command("add", help="添加里程碑")
+def milestone_add_cmd(
+    project: str = typer.Argument(..., help="项目 ID 或标题"),
+    title: str = typer.Argument(..., help="里程碑标题"),
+    target_date: str = typer.Option("", "--target-date", help="目标日期 YYYY-MM-DD"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Add a milestone to a project."""
+    store = SoloStore(workspace)
+    proj = _resolve_project(store, project)
+    if not proj:
+        print(f"Project not found: {project}")
+        raise typer.Exit(1)
+
+    now = _now()
+    milestone = Milestone(
+        id=str(uuid4()),
+        project_id=proj.id,
+        title=title,
+        status="pending",
+        target_date=target_date,
+        created_at=now,
+        updated_at=now,
+    )
+    store.create_milestone(milestone)
+    print(f"Added milestone '{title}' to project '{proj.title}'")
+
+
+@milestone_app.command("complete", help="标记里程碑完成")
+def milestone_complete_cmd(
+    milestone_id: str = typer.Argument(..., help="里程碑 ID"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Mark a milestone as completed."""
+    store = SoloStore(workspace)
+    if store.complete_milestone(milestone_id):
+        print(f"Completed milestone {milestone_id}")
+    else:
+        print(f"Milestone not found: {milestone_id}")
+        raise typer.Exit(1)
+
+
+@milestone_app.command("delete", help="删除里程碑")
+def milestone_delete_cmd(
+    milestone_id: str = typer.Argument(..., help="里程碑 ID"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Delete a milestone."""
+    store = SoloStore(workspace)
+    if store.delete_milestone(milestone_id):
+        print(f"Deleted milestone {milestone_id}")
+    else:
+        print(f"Milestone not found: {milestone_id}")
+        raise typer.Exit(1)
+
+
+@project_app.command("link", help="关联实体到项目")
+def project_link_cmd(
+    project: str = typer.Argument(..., help="项目 ID 或标题"),
+    entity_type: str = typer.Argument(..., help="实体类型: record/todo/decision/highlight/experiment"),
+    entity_id: str = typer.Argument(..., help="实体 ID"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Link an entity to a project."""
+    store = SoloStore(workspace)
+    proj = _resolve_project(store, project)
+    if not proj:
+        print(f"Project not found: {project}")
+        raise typer.Exit(1)
+
+    now = _now()
+    link = ProjectLink(
+        id=str(uuid4()),
+        project_id=proj.id,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        source="user",
+        status="active",
+        created_at=now,
+        updated_at=now,
+    )
+    store.create_project_link(link)
+    print(f"Linked {entity_type} '{entity_id}' to project '{proj.title}'")
+
+
+@project_app.command("unlink", help="解除实体与项目的关联")
+def project_unlink_cmd(
+    link_id: str = typer.Argument(..., help="关联 ID"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    """Unlink an entity from a project."""
+    store = SoloStore(workspace)
+    if store.delete_project_link(link_id):
+        print(f"Unlinked {link_id}")
+    else:
+        print(f"Link not found: {link_id}")
+        raise typer.Exit(1)
+
+
 def _can_use_questionary() -> bool:
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         return False
@@ -758,3 +1136,89 @@ def _prompt_channels(
 def _csv_prompt(message: str, *, default: str = "") -> list[str]:
     raw = _text_prompt(message, default=default)
     return [item.strip() for item in raw.split(",") if item.strip()]
+
+@project_app.command("review", help="生成项目回顾报告")
+def project_review_cmd(
+    project: str = typer.Argument(..., help="项目 ID 或标题"),
+    workspace: str | None = typer.Option(None, "--workspace", help=_WORKSPACE_HELP),
+) -> None:
+    from solo.core.models import SoloReport
+    store = SoloStore(workspace)
+    p = _resolve_project(store, project)
+    if p is None:
+        print(f"Project not found: {project}")
+        raise typer.Exit(1)
+
+    detail = store.get_project_detail(p.id)
+    milestones = store.list_milestones(p.id)
+    links = store.list_project_links(project_id=p.id)
+
+    # Build review content
+    lines = []
+    lines.append(f"# Project Review: {p.title}")
+    lines.append("")
+    if p.description:
+        lines.append(p.description)
+        lines.append("")
+    lines.append(f"- Status: {p.status}")
+    lines.append(f"- Priority: {p.priority}")
+    if p.start_date:
+        lines.append(f"- Start: {p.start_date}")
+    if p.target_date:
+        lines.append(f"- Target: {p.target_date}")
+    if p.completed_at:
+        lines.append(f"- Completed: {p.completed_at}")
+    lines.append("")
+
+    # Milestones
+    lines.append("## Milestones")
+    if milestones:
+        for m in milestones:
+            status = "✓" if m.status == "completed" else "○"
+            date = f" ({m.target_date})" if m.target_date else ""
+            lines.append(f"- {status} {m.title}{date}")
+    else:
+        lines.append("- No milestones defined")
+    lines.append("")
+
+    # Linked entities summary
+    entity_counts = {}
+    for lnk in links:
+        if lnk.status == "active":
+            entity_counts[lnk.entity_type] = entity_counts.get(lnk.entity_type, 0) + 1
+    lines.append("## Linked Entities")
+    if entity_counts:
+        for et, count in sorted(entity_counts.items()):
+            lines.append(f"- {et}: {count}")
+    else:
+        lines.append("- No entities linked")
+    lines.append("")
+
+    # Statistics
+    lines.append("## Statistics")
+    lines.append(f"- Completion: {detail.get('completion_pct', 'N/A')}% ({detail.get('completion_source', 'none')})")
+    lines.append(f"- Milestones: {detail.get('completed_milestone_count', 0)}/{detail.get('milestone_count', 0)}")
+    lines.append(f"- Linked records: {detail.get('linked_record_count', 0)}")
+    lines.append(f"- Linked todos: {detail.get('linked_todo_count', 0)}")
+    lines.append(f"- Activity (7d): {detail.get('activity_7d', 0)}")
+    lines.append(f"- Activity (30d): {detail.get('activity_30d', 0)}")
+    lines.append(f"- Risk: {detail.get('risk_status', 'normal')}")
+    lines.append("")
+
+    review_content = "\n".join(lines)
+
+    # Save as report
+    from uuid import uuid4
+    report = SoloReport(
+        id=str(uuid4()),
+        report_type="project_review",
+        content=review_content,
+        created_at=_now(),
+        period_start=p.start_date or p.created_at,
+        period_end=p.completed_at or _now(),
+        metadata={"project_id": p.id, "project_title": p.title},
+    )
+    store.add_report(report)
+    print(review_content)
+    print(f"\n✅ Review report saved (id: {report.id})")
+
