@@ -70,13 +70,13 @@ def test_project_links_unique_index(store: WoloStore) -> None:
     assert "idx_project_links_unique" in indexes
 
 
-def test_schema_version_is_5(store: WoloStore) -> None:
+def test_schema_version_is_6(store: WoloStore) -> None:
     store.initialize()
     row = store._db.execute(
         "SELECT value FROM _meta WHERE key='schema_version'"
     ).fetchone()
     assert row is not None
-    assert row[0] == "5"
+    assert row[0] == "6"
 
 
 # ---- Project CRUD ----

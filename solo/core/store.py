@@ -33,7 +33,7 @@ from solo.core.workspace import get_attachments_dir, get_data_dir, initialize_wo
 from solo.core.utils import _now
 
 DB_FILENAME = "store.db"
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS entries (
@@ -425,6 +425,15 @@ class SoloStore:
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_aliases_project_id ON project_aliases(project_id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_aliases_alias ON project_aliases(alias)")
 
+        try:
+            self._conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS "
+                "idx_entries_content_message_id_attachments "
+                "ON entries(content, COALESCE(message_id, ''), attachments)"
+            )
+        except sqlite3.OperationalError:
+            pass
+
     def _maybe_migrate_jsonl(self) -> None:
         """Import existing JSONL data into SQLite on first run."""
         cur = self._db.execute("SELECT value FROM _meta WHERE key='migrated_jsonl'")
@@ -664,9 +673,19 @@ class SoloStore:
             raise ValueError("solo content cannot be empty")
         self.initialize()
         context = dict(source_context or {})
+        resolved_message_id = self._optional_text(context.get("message_id") or message_id)
+        entry_media = [str(item) for item in (context.get("media") or media or []) if str(item).strip()]
+        dedup_attachments = json.dumps(entry_media, ensure_ascii=False)
+        cur = self._db.execute(
+            "SELECT id, content, created_at, channel, sender_id, chat_id, message_id, metadata, attachments "
+            "FROM entries WHERE content = ? AND COALESCE(message_id, '') = ? AND attachments = ? LIMIT 1",
+            (text, resolved_message_id or "", dedup_attachments),
+        )
+        existing = cur.fetchone()
+        if existing is not None:
+            return self._row_to_entry(existing)
         created_text = created_at or _now()
         entry_id = uuid4().hex[:12]
-        entry_media = [str(item) for item in (context.get("media") or media or []) if str(item).strip()]
         attachments = self._persist_entry_attachments(entry_id, entry_media, created_text)
         entry = SoloEntry(
             id=entry_id,
@@ -675,20 +694,31 @@ class SoloStore:
             channel=str(context.get("channel") or channel),
             sender_id=str(context.get("sender_id") or sender_id),
             chat_id=str(context.get("chat_id") or chat_id),
-            message_id=self._optional_text(context.get("message_id") or message_id),
+            message_id=resolved_message_id,
             metadata=self._merge_entry_metadata(metadata, context),
             attachments=attachments,
         )
-        self._db.execute(
-            "INSERT INTO entries (id, content, created_at, channel, sender_id, chat_id, message_id, metadata, attachments) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                entry.id, entry.content, entry.created_at, entry.channel,
-                entry.sender_id, entry.chat_id, entry.message_id,
-                json.dumps(entry.metadata or {}, ensure_ascii=False),
-                json.dumps([a.to_dict() for a in entry.attachments], ensure_ascii=False),
-            ),
-        )
+        try:
+            self._db.execute(
+                "INSERT OR IGNORE INTO entries (id, content, created_at, channel, sender_id, chat_id, message_id, metadata, attachments) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    entry.id, entry.content, entry.created_at, entry.channel,
+                    entry.sender_id, entry.chat_id, entry.message_id,
+                    json.dumps(entry.metadata or {}, ensure_ascii=False),
+                    json.dumps([a.to_dict() for a in entry.attachments], ensure_ascii=False),
+                ),
+            )
+        except sqlite3.IntegrityError:
+            cur = self._db.execute(
+                "SELECT id, content, created_at, channel, sender_id, chat_id, message_id, metadata, attachments "
+                "FROM entries WHERE content = ? AND COALESCE(message_id, '') = ? AND attachments = ? LIMIT 1",
+                (text, resolved_message_id or "", dedup_attachments),
+            )
+            row = cur.fetchone()
+            if row is not None:
+                return self._row_to_entry(row)
+            raise
         self._db.commit()
         return entry
 
