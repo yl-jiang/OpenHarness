@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-import json
 from uuid import uuid4
 
 from openharness.utils.log import get_logger
@@ -24,8 +23,6 @@ from solo.core.models import (
     PendingConfirmation,
     ProcessResult,
     ProfileUpdate,
-    ProjectLink,
-    ProjectSuggestion,
     SoloEntry,
     SoloRecord,
     SoloReport,
@@ -323,95 +320,6 @@ class SoloProcessor:
         for update in artifacts.get("suggested_profile_updates") or []:
             if isinstance(update, dict) and str(update.get("confidence") or "").lower() != "low":
                 self.store.add_profile_update(self._profile_update(record.id, update))
-
-        # Phase 1: auto-link record to projects
-        await self._link_record_to_projects(record, artifacts)
-
-    async def _link_record_to_projects(
-        self,
-        record: SoloRecord,
-        artifacts: dict[str, object],
-    ) -> None:
-        """Deterministic auto-linking: match record to existing projects.
-
-        Called after artifacts are persisted.  Uses todo categories as
-        project hints (solo has no ``project`` field on artifacts).
-        """
-        from common.project_ai.matcher import match_record
-
-        # Gather active projects
-        projects = self.store.list_projects(status="active")
-        if not projects:
-            return
-
-        project_dicts = [p.to_dict() for p in projects]
-        aliases_by_project: dict[str, list[str]] = {}
-        for p in projects:
-            aliases = self.store.list_project_aliases(p.id)
-            aliases_by_project[p.id] = [a.alias for a in aliases]
-
-        # Solo: use todo categories as project hints
-        artifact_projects: list[str] = []
-        for item in (artifacts.get("todos") or []):
-            if isinstance(item, dict):
-                cat = str(item.get("category") or "")
-                if cat:
-                    artifact_projects.append(cat)
-
-        try:
-            result = await match_record(
-                record_id=record.id,
-                record_content=record.raw_content or "",
-                record_summary=record.summary or "",
-                artifact_projects=artifact_projects,
-                projects=project_dicts,
-                aliases_by_project=aliases_by_project,
-                agent=None,  # deterministic only for now
-            )
-        except Exception:
-            logger.warning("project linking failed record_id=%s", record.id, exc_info=True)
-            return
-
-        now = _now()
-
-        # Auto-links: high confidence → create active ProjectLink
-        for candidate in result.auto_links:
-            try:
-                link = ProjectLink(
-                    id=str(uuid4()),
-                    project_id=candidate.project_id,
-                    entity_type="record",
-                    entity_id=record.id,
-                    source="ai_high_confidence",
-                    confidence="high",
-                    status="active",
-                    created_at=now,
-                    updated_at=now,
-                )
-                self.store.create_project_link(link)
-            except Exception:
-                logger.debug("duplicate auto-link skipped project=%s record=%s", candidate.project_id, record.id)
-
-        # Suggestions: medium confidence → create pending suggestion
-        for candidate in result.suggestions:
-            suggestion = ProjectSuggestion(
-                id=str(uuid4()),
-                suggestion_type="link_entity",
-                project_id=candidate.project_id,
-                title=f"关联记录到「{candidate.project_title}」",
-                rationale=candidate.rationale,
-                proposed_payload_json=json.dumps({
-                    "entity_type": "record",
-                    "entity_id": record.id,
-                }),
-                evidence_json=json.dumps(candidate.evidence),
-                confidence=candidate.confidence,
-                status="pending",
-                source="ai",
-                created_at=now,
-                updated_at=now,
-            )
-            self.store.create_project_suggestion(suggestion)
 
     async def generate_report(
         self,
