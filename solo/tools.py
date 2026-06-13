@@ -31,7 +31,7 @@ from openharness.tools.skill_write_tool import SkillWriteTool
 from openharness.utils.log import get_logger
 
 from solo.core.memory import add_memory_entry
-from solo.core.models import ProfileUpdate, SoloEntry, SoloRecord, SoloTodo
+from solo.core.models import ProfileUpdate, Project, ProjectLink, ProjectSuggestion, SoloEntry, SoloRecord, SoloTodo
 from solo.commands import format_solo_llm_usage
 from solo.processor import SoloProcessor
 from solo.core.store import SoloStore
@@ -187,6 +187,12 @@ class SoloToolRegistry:
             SoloDomainTool(_tool_export(), self._handle_export),
             SoloDomainTool(_tool_heartbeat_task(), self._handle_heartbeat_task),
             SoloDomainTool(_tool_fetch_digest(), self._handle_fetch_digest),
+            SoloDomainTool(_tool_projects(), self._handle_projects),
+            SoloDomainTool(_tool_project_scan(), self._handle_project_scan),
+            SoloDomainTool(_tool_project_create(), self._handle_project_create),
+            SoloDomainTool(_tool_project_suggestions(), self._handle_project_suggestions),
+            SoloDomainTool(_tool_project_review(), self._handle_project_review),
+            SoloDomainTool(_tool_project_detail(), self._handle_project_detail),
         ]
 
     def tool_schemas(self) -> list[dict[str, Any]]:
@@ -1312,6 +1318,115 @@ class SoloToolRegistry:
 
         await self._push_progress(report.content)
 
+    # ── Project management handlers ──────────────────────────────
+
+    async def _handle_projects(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        status = _optional_text(arguments, "status") or "active"
+        projects = self.store.list_projects(status=status)
+        items = []
+        for p in projects:
+            milestones = self.store.list_milestones(p.id)
+            done = sum(1 for m in milestones if m.status == "completed")
+            items.append({
+                "id": p.id,
+                "title": p.title,
+                "description": p.description,
+                "status": p.status,
+                "priority": p.priority,
+                "start_date": p.start_date,
+                "target_date": p.target_date,
+                "milestones": f"{done}/{len(milestones)}",
+            })
+        return {"ok": True, "projects": items, "count": len(items)}
+
+    async def _handle_project_scan(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        from common.project_ai.discovery import scan_for_projects
+
+        agent = self._agent_factory() if self._agent_factory else None
+        candidates = await scan_for_projects(store=self.store, agent=agent)
+        now = _now()
+        created = 0
+        for c in candidates:
+            suggestion = ProjectSuggestion(
+                id=str(uuid4()),
+                suggestion_type=c.get("suggestion_type", "create_project"),
+                title=c.get("title", ""),
+                rationale=c.get("rationale", ""),
+                evidence_json=json.dumps(c.get("evidence", []), ensure_ascii=False),
+                confidence=float(c.get("confidence", 0)),
+                status="pending",
+                source="ai_scan",
+                created_at=now,
+                updated_at=now,
+            )
+            self.store.create_project_suggestion(suggestion)
+            created += 1
+        return {"ok": True, "candidates_found": created}
+
+    async def _handle_project_create(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        title = _required_text(arguments, "title")
+        description = _optional_text(arguments, "description") or ""
+        now = _now()
+        project = Project(
+            id=str(uuid4()),
+            title=title,
+            description=description,
+            status="active",
+            priority=_optional_text(arguments, "priority") or "medium",
+            start_date=now[:10],
+            created_at=now,
+            updated_at=now,
+        )
+        self.store.create_project(project)
+        milestones = arguments.get("milestones") or []
+        if isinstance(milestones, list):
+            for i, ms_title in enumerate(milestones):
+                if isinstance(ms_title, str) and ms_title.strip():
+                    from solo.core.models import Milestone
+                    ms = Milestone(
+                        id=str(uuid4()),
+                        project_id=project.id,
+                        title=ms_title.strip(),
+                        created_at=now,
+                        updated_at=now,
+                    )
+                    self.store.create_milestone(ms)
+        return {"ok": True, "project_id": project.id, "title": title}
+
+    async def _handle_project_suggestions(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        status = _optional_text(arguments, "status") or "pending"
+        suggestions = self.store.list_project_suggestions(status=status)
+        items = [
+            {
+                "id": s.id,
+                "type": s.suggestion_type,
+                "title": s.title,
+                "rationale": s.rationale,
+                "confidence": s.confidence,
+                "status": s.status,
+            }
+            for s in suggestions
+        ]
+        return {"ok": True, "suggestions": items, "count": len(items)}
+
+    async def _handle_project_review(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        suggestion_id = _required_text(arguments, "suggestion_id")
+        action = _required_text(arguments, "action")
+        if action == "accept":
+            ok = self.store.accept_project_suggestion(suggestion_id)
+        elif action == "reject":
+            ok = self.store.reject_project_suggestion(suggestion_id)
+        else:
+            return {"ok": False, "error": f"Unknown action: {action}"}
+        return {"ok": ok}
+
+    async def _handle_project_detail(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        project_id = _required_text(arguments, "project_id")
+        detail = self.store.get_project_detail(project_id)
+        if not detail:
+            return {"ok": False, "error": "Project not found"}
+        return {"ok": True, "project": detail}
+
 
 class _AnyInput(BaseModel):
     """Permissive Pydantic model that accepts any tool arguments as extra fields."""
@@ -1934,6 +2049,86 @@ def _tool_fetch_digest() -> ToolDefinition:
         [
             ("domain", "string", "Domain ID to fetch (e.g. 'ai_news', 'tech', 'finance', 'politics'). Omit to run all enabled domains.", False),
             ("date", "string", "Target date YYYY-MM-DD. Defaults to today.", False),
+        ],
+    )
+
+
+def _tool_projects() -> ToolDefinition:
+    return _definition(
+        "solo_projects",
+        (
+            "List user's projects with status and progress. "
+            "Use when the user asks about their projects, or when you need project context to make better decisions."
+        ),
+        [
+            ("status", "string", "Filter: 'active' (default), 'completed', 'archived', 'all'.", False),
+        ],
+    )
+
+
+def _tool_project_scan() -> ToolDefinition:
+    return _definition(
+        "solo_project_scan",
+        (
+            "Scan recent records to discover potential new projects. "
+            "Use proactively when you notice recurring themes, goal-oriented behavior, or sustained tracking "
+            "in the user's records that might indicate an untracked project."
+        ),
+        [],
+    )
+
+
+def _tool_project_create() -> ToolDefinition:
+    return _definition(
+        "solo_project_create",
+        (
+            "Create a new project. Use when the user explicitly states a new goal, commitment, or ongoing endeavor, "
+            "or when you identify a clear project from records and the user confirms."
+        ),
+        [
+            ("title", "string", "Project title — specific and goal-oriented.", True),
+            ("description", "string", "Brief description of the project goal.", False),
+            ("priority", "string", "'high', 'medium' (default), or 'low'.", False),
+            ("milestones", "string", "JSON array of milestone title strings.", False),
+        ],
+    )
+
+
+def _tool_project_suggestions() -> ToolDefinition:
+    return _definition(
+        "solo_project_suggestions",
+        (
+            "List pending project suggestions from AI scans or record linking. "
+            "Use to review AI-discovered project candidates before accepting or rejecting them."
+        ),
+        [
+            ("status", "string", "Filter: 'pending' (default), 'accepted', 'rejected', 'all'.", False),
+        ],
+    )
+
+
+def _tool_project_review() -> ToolDefinition:
+    return _definition(
+        "solo_project_review",
+        (
+            "Accept or reject a project suggestion. Use after reviewing suggestions from solo_project_suggestions."
+        ),
+        [
+            ("suggestion_id", "string", "ID of the suggestion to review.", True),
+            ("action", "string", "'accept' or 'reject'.", True),
+        ],
+    )
+
+
+def _tool_project_detail() -> ToolDefinition:
+    return _definition(
+        "solo_project_detail",
+        (
+            "Get detailed project information including milestones, linked records, signals, and recent activity. "
+            "Use when the user asks about a specific project's progress."
+        ),
+        [
+            ("project_id", "string", "Project ID.", True),
         ],
     )
 
