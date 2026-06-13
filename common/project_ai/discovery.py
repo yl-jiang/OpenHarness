@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 # Minimum confidence for LLM-discovered project candidates (stricter than the
 # shared CONFIDENCE_SUGGEST used for record-linking).
-LLM_DISCOVERY_MIN_CONFIDENCE = 0.70
+LLM_DISCOVERY_MIN_CONFIDENCE = 0.85
 
 # How many days of records to scan for discovery
 DISCOVERY_WINDOW_DAYS = 90
@@ -164,9 +164,9 @@ _MAX_CONCURRENT_EVALS = 5
 # Max candidate topics to evaluate per scan
 _MAX_TOPICS_TO_EVALUATE = 10
 # Min occurrences for a tag to become a candidate topic
-_TOPIC_MIN_OCCURRENCES = 3
+_TOPIC_MIN_OCCURRENCES = 5
 # Min distinct dates for a tag to become a candidate topic
-_TOPIC_MIN_DATES = 2
+_TOPIC_MIN_DATES = 3
 
 
 async def _llm_discover(
@@ -370,13 +370,7 @@ async def scan_for_projects(
             existing_names=existing_names,
             agent=agent,
         )
-        # If LLM returned nothing, fall back to deterministic
-        if not candidates:
-            candidates = _deterministic_discover(
-                records=records,
-                artifact_projects=artifact_projects,
-                existing_names=existing_names,
-            )
+        # No fallback: if LLM found no projects, trust that judgment.
     else:
         candidates = _deterministic_discover(
             records=records,

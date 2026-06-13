@@ -70,12 +70,16 @@ Look for records containing language like: "决定...", "开始...", "计划..."
 "打算...", "坚持...", "挑战...", "想要...", "从今天起...", "每周/每天/每月...", \
 or any phrasing that signals commitment to an ongoing activity.
 
-## Confidence calibration (stricter than before)
-- >= 0.90: Explicit goal statement found in a record + 5+ tracking records across 3+ days
-- 0.80-0.89: Strong implicit goal intention + 3+ tracking records across 2+ days
-- 0.70-0.79: Emerging pattern with at least 2 related records on different days and a \
-plausible goal interpretation — but no explicit commitment found
-- < 0.70: Do NOT include
+## Confidence calibration (very strict — most topics should get 0 candidates)
+- >= 0.90: Explicit goal statement found in a record (e.g. "决定每天...", "开始坚持...") \
++ 5+ tracking records across 3+ days — this is the ONLY level that should typically produce suggestions
+- 0.85-0.89: Very strong implicit goal intention with clear action language + 5+ tracking records across 3+ days
+- < 0.85: Do NOT include. When in doubt, return empty candidates.
+
+IMPORTANT: If the topic is a common daily life category (sleep, diet, health, exercise, family, \
+work, commute, weather, mood) and there is NO explicit goal statement like "决定...", \
+"开始...", "坚持...", "挑战...", the confidence MUST be below 0.85. \
+Mere repeated mentions of a topic are NOT evidence of a project.
 
 ## Output rules
 - Suggest 0-3 candidates max. Prefer fewer, higher-quality suggestions.
