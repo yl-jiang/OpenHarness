@@ -118,8 +118,10 @@ async def test_metadata_auto_calculation(tmp_path: Path):
     # Test record on a holiday weekend in spring
     # 2026-05-01 is Friday (Labor Day)
     # 2026-05-02 is Saturday
-    store.record("今天去劳动节聚会", created_at="2026-05-01T10:00:00+00:00", metadata={"record_date": "2026-05-01"})
-    store.record("周六休息", created_at="2026-05-02T23:30:00+00:00", metadata={"record_date": "2026-05-02"})
+    # Use naive datetimes so period is computed from the local hour consistently
+    # across timezones (10:00 -> 上午, 23:30 -> 深夜).
+    store.record("今天去劳动节聚会", created_at="2026-05-01T10:00:00", metadata={"record_date": "2026-05-01"})
+    store.record("周六休息", created_at="2026-05-02T23:30:00", metadata={"record_date": "2026-05-02"})
     
     await processor.process_pending()
     
