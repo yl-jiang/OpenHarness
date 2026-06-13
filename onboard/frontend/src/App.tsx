@@ -1,5 +1,5 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
-import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { createBrowserRouter, RouterProvider } from 'react-router-dom';
 
 import { api } from './api/client';
 import type { AppName } from './api/types';
@@ -18,15 +18,19 @@ const Reports = lazy(() => import('./pages/Reports').then((m) => ({ default: m.R
 const ReportView = lazy(() => import('./pages/ReportView').then((m) => ({ default: m.ReportView })));
 const Search = lazy(() => import('./pages/Search').then((m) => ({ default: m.Search })));
 const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
-const Stats = lazy(() => import('./pages/Stats').then((m) => ({ default: m.Stats })));
 const Todos = lazy(() => import('./pages/Todos').then((m) => ({ default: m.Todos })));
 const Projects = lazy(() => import("./pages/Projects").then((m) => ({ default: m.Projects })));
 const ProjectDetail = lazy(() => import("./pages/ProjectDetail").then((m) => ({ default: m.ProjectDetail })));
+const ProjectInbox = lazy(() => import("./pages/ProjectInbox").then((m) => ({ default: m.ProjectInbox })));
 
 function PageLoader() {
   return (
     <div className="h-60 rounded-lg bg-gradient-to-r from-surface-1 via-surface-2 to-surface-1 bg-[length:200%_auto] animate-[shimmer_1.5s_linear_infinite]" />
   );
+}
+
+function Loader({ appName }: { appName: AppName }) {
+  return <Suspense fallback={<PageLoader />}><Dashboard appName={appName} /></Suspense>;
 }
 
 function initialApp(): AppName {
@@ -43,47 +47,42 @@ export function App() {
     api
       .gatewayStatus(appName)
       .then((status) => {
-        if (!cancelled) {
-          setGatewayStatus(status.status);
-        }
+        if (!cancelled) setGatewayStatus(status.status);
       })
       .catch(() => {
-        if (!cancelled) {
-          setGatewayStatus('unknown');
-        }
+        if (!cancelled) setGatewayStatus('unknown');
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [appName]);
 
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route
-          element={
-            <Layout appName={appName} onAppChange={setAppName} gatewayStatus={gatewayStatus} />
-          }
-        >
-          <Route index element={<Dashboard appName={appName} />} />
-          <Route path="entries" element={<Suspense fallback={<PageLoader />}><Entries appName={appName} /></Suspense>} />
-          <Route path="records" element={<Suspense fallback={<PageLoader />}><Records appName={appName} /></Suspense>} />
-          <Route path="records/:id" element={<Suspense fallback={<PageLoader />}><RecordDetail appName={appName} /></Suspense>} />
-          <Route path="todos" element={<Suspense fallback={<PageLoader />}><Todos appName={appName} /></Suspense>} />
-          <Route path="reports" element={<Suspense fallback={<PageLoader />}><Reports appName={appName} /></Suspense>} />
-          <Route path="reports/:id" element={<Suspense fallback={<PageLoader />}><ReportView appName={appName} /></Suspense>} />
-          <Route path="feeds" element={<Suspense fallback={<PageLoader />}><FeedDigests appName={appName} /></Suspense>} />
-          <Route path="feeds/:id" element={<Suspense fallback={<PageLoader />}><FeedDigests appName={appName} /></Suspense>} />
-          <Route path="stats" element={<Suspense fallback={<PageLoader />}><Stats appName={appName} /></Suspense>} />
-          <Route path="search" element={<Suspense fallback={<PageLoader />}><Search appName={appName} /></Suspense>} />
-          <Route path="chat" element={<Suspense fallback={<PageLoader />}><Chat appName={appName} /></Suspense>} />
-          <Route path="settings" element={<Suspense fallback={<PageLoader />}><Settings appName={appName} /></Suspense>} />
-          <Route path="projects" element={<Suspense fallback={<PageLoader />}><Projects appName={appName} /></Suspense>} />
-          <Route path="projects/:id" element={<Suspense fallback={<PageLoader />}><ProjectDetail appName={appName} /></Suspense>} />
-          <Route path="decisions" element={<Suspense fallback={<PageLoader />}><Decisions /></Suspense>} />
-          <Route path="highlights" element={<Suspense fallback={<PageLoader />}><Highlights /></Suspense>} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+  const SuspenseLoader = ({ children }: { children: React.ReactNode }) => (
+    <Suspense fallback={<PageLoader />}>{children}</Suspense>
   );
+
+  const router = useMemo(() => createBrowserRouter([
+    {
+      element: <Layout appName={appName} onAppChange={setAppName} gatewayStatus={gatewayStatus} />,
+      children: [
+        { index: true, element: <Loader appName={appName} /> },
+        { path: 'entries', element: <SuspenseLoader><Entries appName={appName} /></SuspenseLoader> },
+        { path: 'records', element: <SuspenseLoader><Records appName={appName} /></SuspenseLoader> },
+        { path: 'records/:id', element: <SuspenseLoader><RecordDetail appName={appName} /></SuspenseLoader> },
+        { path: 'todos', element: <SuspenseLoader><Todos appName={appName} /></SuspenseLoader> },
+        { path: 'reports', element: <SuspenseLoader><Reports appName={appName} /></SuspenseLoader> },
+        { path: 'reports/:id', element: <SuspenseLoader><ReportView appName={appName} /></SuspenseLoader> },
+        { path: 'feeds', element: <SuspenseLoader><FeedDigests appName={appName} /></SuspenseLoader> },
+        { path: 'feeds/:id', element: <SuspenseLoader><FeedDigests appName={appName} /></SuspenseLoader> },
+        { path: 'search', element: <SuspenseLoader><Search appName={appName} /></SuspenseLoader> },
+        { path: 'chat', element: <SuspenseLoader><Chat appName={appName} /></SuspenseLoader> },
+        { path: 'settings', element: <SuspenseLoader><Settings appName={appName} /></SuspenseLoader> },
+        { path: 'projects', element: <SuspenseLoader><Projects appName={appName} /></SuspenseLoader> },
+        { path: 'projects/inbox', element: <SuspenseLoader><ProjectInbox appName={appName} /></SuspenseLoader> },
+        { path: 'projects/:id', element: <SuspenseLoader><ProjectDetail appName={appName} /></SuspenseLoader> },
+        { path: 'decisions', element: <SuspenseLoader><Decisions /></SuspenseLoader> },
+        { path: 'highlights', element: <SuspenseLoader><Highlights /></SuspenseLoader> },
+      ],
+    },
+  ]), [appName, gatewayStatus]);
+
+  return <RouterProvider router={router} />;
 }

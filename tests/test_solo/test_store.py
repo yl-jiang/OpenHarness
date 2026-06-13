@@ -3,10 +3,21 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
-from solo.core.models import Milestone, Project, ProjectAlias, ProjectLink, SoloTodo
+from solo.core.models import (
+    Milestone,
+    Project,
+    ProjectAlias,
+    ProjectCheckin,
+    ProjectLink,
+    ProjectSignal,
+    ProjectSnapshot,
+    ProjectSuggestion,
+    SoloTodo,
+)
 from solo.core.store import SoloStore
 
 
@@ -316,3 +327,196 @@ class TestRiskCalculation:
         detail = store.get_project_detail("p1")
         assert detail is not None
         assert detail["risk_status"] == "normal"
+
+
+class TestStatusAllFilter:
+    """Phase 0: status='all' returns all projects regardless of status."""
+
+    def test_list_projects_status_all(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        store.create_project(Project(id="p1", title="Active", status="active"))
+        store.create_project(Project(id="p2", title="Done", status="completed"))
+        store.create_project(Project(id="p3", title="Old", status="archived"))
+        result = store.list_projects(status="all")
+        assert len(result) == 3
+
+
+class TestOpenBlockerCount:
+    """Phase 0: Solo has no blocker concept, open_blocker_count should be 0."""
+
+    def test_open_blocker_count_is_zero(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        store.create_project(Project(id="p1", title="Test"))
+        store.create_project_link(
+            ProjectLink(id="pl1", project_id="p1", entity_type="record", entity_id="r1")
+        )
+        store.create_project_link(
+            ProjectLink(id="pl2", project_id="p1", entity_type="todo", entity_id="t1")
+        )
+        detail = store.get_project_detail("p1")
+        assert detail is not None
+        assert detail["open_blocker_count"] == 0
+
+
+class TestResolveEntitySummary:
+    """Phase 0: resolve_entity_summary returns human-readable titles."""
+
+    def test_resolve_record_summary(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        store._db.execute(
+            "INSERT INTO records (id, entry_id, date, raw_content, corrected_content, summary, tags, emotion) "
+            "VALUES ('r1', 'e1', '2026-01-01', 'raw', 'corrected', 'Went hiking', '', '')"
+        )
+        store._db.commit()
+        assert store.resolve_entity_summary("record", "r1") == "Went hiking"
+
+    def test_resolve_todo_title(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        store.add_todo(SoloTodo(id="t1", record_id="r1", title="Buy groceries", created_at="2026-01-01T00:00:00"))
+        assert store.resolve_entity_summary("todo", "t1") == "Buy groceries"
+
+    def test_resolve_nonexistent(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        assert store.resolve_entity_summary("record", "nonexistent") == ""
+
+
+class TestProjectSuggestions:
+    """Phase 1: ProjectSuggestion CRUD tests."""
+
+    def test_create_and_list_suggestion(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        sid = str(uuid4())
+        suggestion = ProjectSuggestion(
+            id=sid,
+            suggestion_type="link_entity",
+            project_id="p1",
+            title="Test suggestion",
+            rationale="Record mentions project",
+            confidence=0.75,
+        )
+        store.create_project_suggestion(suggestion)
+        results = store.list_project_suggestions()
+        assert len(results) == 1
+        assert results[0].id == sid
+        assert results[0].suggestion_type == "link_entity"
+        assert results[0].title == "Test suggestion"
+        assert results[0].confidence == 0.75
+        assert results[0].status == "pending"
+
+    def test_accept_suggestion(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        sid = str(uuid4())
+        store.create_project_suggestion(
+            ProjectSuggestion(id=sid, suggestion_type="link_entity", title="Suggest")
+        )
+        assert store.accept_project_suggestion(sid)
+        results = store.list_project_suggestions()
+        assert len(results) == 1
+        assert results[0].status == "accepted"
+
+    def test_reject_suggestion(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        sid = str(uuid4())
+        store.create_project_suggestion(
+            ProjectSuggestion(id=sid, suggestion_type="link_entity", title="Suggest")
+        )
+        assert store.reject_project_suggestion(sid)
+        results = store.list_project_suggestions()
+        assert len(results) == 1
+        assert results[0].status == "rejected"
+
+    def test_snooze_suggestion(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        sid = str(uuid4())
+        store.create_project_suggestion(
+            ProjectSuggestion(id=sid, suggestion_type="link_entity", title="Suggest")
+        )
+        assert store.snooze_project_suggestion(sid)
+        results = store.list_project_suggestions()
+        assert len(results) == 1
+        assert results[0].status == "snoozed"
+
+    def test_filter_by_status(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        sid1 = str(uuid4())
+        sid2 = str(uuid4())
+        store.create_project_suggestion(
+            ProjectSuggestion(id=sid1, suggestion_type="link_entity", title="Pending one")
+        )
+        store.create_project_suggestion(
+            ProjectSuggestion(id=sid2, suggestion_type="link_entity", title="Accepted one")
+        )
+        store.accept_project_suggestion(sid2)
+
+        pending = store.list_project_suggestions(status="pending")
+        assert len(pending) == 1
+        assert pending[0].id == sid1
+
+        accepted = store.list_project_suggestions(status="accepted")
+        assert len(accepted) == 1
+        assert accepted[0].id == sid2
+
+
+class TestProjectSignalsAndSnapshots:
+    """Tests for Phase 3: signals, snapshots, checkins CRUD."""
+
+    def test_create_and_list_signals(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        store.create_project(Project(id="p1", title="Test", status="active"))
+        sig = ProjectSignal(
+            id="s1", project_id="p1", signal_type="risk",
+            summary="Overdue target", severity="critical",
+            created_at="2026-06-12T00:00:00+00:00",
+        )
+        store.create_project_signal(sig)
+        signals = store.list_project_signals("p1")
+        assert len(signals) == 1
+        assert signals[0].signal_type == "risk"
+
+    def test_delete_signal(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        store.create_project(Project(id="p1", title="Test", status="active"))
+        sig = ProjectSignal(id="s1", project_id="p1", signal_type="progress", summary="OK", created_at="")
+        store.create_project_signal(sig)
+        assert store.delete_project_signal("s1")
+        assert store.list_project_signals("p1") == []
+
+    def test_create_and_list_snapshots(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        store.create_project(Project(id="p1", title="Test", status="active"))
+        snap = ProjectSnapshot(
+            id="sn1", project_id="p1", snapshot_date="2026-06-12",
+            summary="On track", health="normal", completion_pct=50,
+            activity_7d=3, next_action="Continue work",
+            created_at="2026-06-12T00:00:00+00:00",
+        )
+        store.create_project_snapshot(snap)
+        snapshots = store.list_project_snapshots("p1")
+        assert len(snapshots) == 1
+        latest = store.get_latest_project_snapshot("p1")
+        assert latest is not None
+        assert latest.health == "normal"
+
+    def test_create_and_list_checkins(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        store.create_project(Project(id="p1", title="Test", status="active"))
+        ci = ProjectCheckin(
+            id="c1", project_id="p1", question="Any progress?",
+            status="sent", created_at="2026-06-12T00:00:00+00:00",
+        )
+        store.create_project_checkin(ci)
+        checkins = store.list_project_checkins("p1")
+        assert len(checkins) == 1
+        assert checkins[0].question == "Any progress?"
+
+    def test_update_checkin(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        store.create_project(Project(id="p1", title="Test", status="active"))
+        ci = ProjectCheckin(
+            id="c1", project_id="p1", question="Status?",
+            status="sent", created_at="2026-06-12T00:00:00+00:00",
+        )
+        store.create_project_checkin(ci)
+        assert store.update_project_checkin("c1", status="answered", responded_at="2026-06-12T12:00:00+00:00")
+        checkins = store.list_project_checkins("p1", status="answered")
+        assert len(checkins) == 1

@@ -1,57 +1,67 @@
-import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 
-import { api } from '../api/client';
-import type { AppName, Project } from '../api/types';
-import { ActivityHeatmap, EmotionBarList, ModelCallUsageChart, ModelTokenUsageChart, formatTokenAmount } from '../components/Charts';
-import { StatsCard } from '../components/StatsCard';
-import { RiskBadge } from '../components/ProjectStatusBadge';
-import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
+import { api } from "../api/client";
+import type { AppName, Project, ProjectBrief as ProjectBriefData } from "../api/types";
+import {
+  ActivityHeatmap,
+  EmotionPieChart,
+  ModelCallUsageChart,
+  ModelTokenUsageChart,
+  TagBarChart,
+  formatTokenAmount,
+  tokenPalette,
+} from "../components/Charts";
+import { ProjectRowCard } from "../components/ProjectRowCard";
+import { SciFiBackground } from "../components/SciFiBackground";
+import { StatsCard } from "../components/StatsCard";
+import { LIVE_REFRESH_INTERVAL_MS, useApi } from "../hooks/useApi";
 
-// --- Date card helpers ---
+/* ─── Date / greeting helpers ─────────────────────────────────── */
 
-const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** Approximate solar term dates (month, day, name). Stable year-to-year (±1 day). */
 const SOLAR_TERMS: [number, number, string][] = [
-  [1, 5, 'Minor Cold'], [1, 20, 'Major Cold'],
-  [2, 4, 'Start of Spring'], [2, 19, 'Rain Water'],
-  [3, 5, 'Awakening of Insects'], [3, 20, 'Spring Equinox'],
-  [4, 4, 'Clear and Bright'], [4, 20, 'Grain Rain'],
-  [5, 5, 'Start of Summer'], [5, 21, 'Lesser Fullness'],
-  [6, 5, 'Grain in Ear'], [6, 21, 'Summer Solstice'],
-  [7, 7, 'Lesser Heat'], [7, 22, 'Greater Heat'],
-  [8, 7, 'Start of Autumn'], [8, 23, 'End of Heat'],
-  [9, 7, 'White Dew'], [9, 23, 'Autumnal Equinox'],
-  [10, 8, 'Cold Dew'], [10, 23, 'Frost\'s Descent'],
-  [11, 7, 'Start of Winter'], [11, 22, 'Minor Snow'],
-  [12, 7, 'Major Snow'], [12, 22, 'Winter Solstice'],
+  [1, 5, "Minor Cold"], [1, 20, "Major Cold"],
+  [2, 4, "Start of Spring"], [2, 19, "Rain Water"],
+  [3, 5, "Awakening of Insects"], [3, 20, "Spring Equinox"],
+  [4, 4, "Clear and Bright"], [4, 20, "Grain Rain"],
+  [5, 5, "Start of Summer"], [5, 21, "Lesser Fullness"],
+  [6, 5, "Grain in Ear"], [6, 21, "Summer Solstice"],
+  [7, 7, "Lesser Heat"], [7, 22, "Greater Heat"],
+  [8, 7, "Start of Autumn"], [8, 23, "End of Heat"],
+  [9, 7, "White Dew"], [9, 23, "Autumnal Equinox"],
+  [10, 8, "Cold Dew"], [10, 23, "Frost's Descent"],
+  [11, 7, "Start of Winter"], [11, 22, "Minor Snow"],
+  [12, 7, "Major Snow"], [12, 22, "Winter Solstice"],
 ];
 
-/**
- * Fixed-date special occasions (Gregorian calendar).
- * Solar terms are appended at runtime from SOLAR_TERMS.
- */
 const FIXED_OCCASIONS: Record<string, string> = {
-  '1-1': 'New Year\'s Day',
-  '2-14': 'Valentine\'s Day',
-  '3-8': 'International Women\'s Day',
-  '4-1': 'April Fools\' Day',
-  '5-1': 'Labour Day',
-  '5-4': 'Youth Day',
-  '6-1': 'Children\'s Day',
-  '7-1': 'CPC Founding Day',
-  '8-1': 'Army Day',
-  '9-10': 'Teachers\' Day',
-  '10-1': 'National Day',
-  '12-25': 'Christmas',
-  '12-31': 'New Year\'s Eve',
+  "1-1": "New Year's Day",
+  "2-14": "Valentine's Day",
+  "3-8": "Women's Day",
+  "4-1": "April Fools'",
+  "5-1": "Labour Day",
+  "5-4": "Youth Day",
+  "6-1": "Children's Day",
+  "9-10": "Teachers' Day",
+  "10-1": "National Day",
+  "12-25": "Christmas",
+  "12-31": "New Year's Eve",
 };
-// Auto-add solar terms (same key format)
 for (const [m, d, name] of SOLAR_TERMS) FIXED_OCCASIONS[`${m}-${d}`] = name;
 
-function DateCard() {
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 6) return "Still up";
+  if (h < 12) return "Good morning";
+  if (h < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+/* ─── Clock (compact, for hero header) ───────────────────────── */
+
+function Clock() {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 1000);
@@ -59,203 +69,340 @@ function DateCard() {
   }, []);
   const key = `${now.getMonth() + 1}-${now.getDate()}`;
   const occasion = FIXED_OCCASIONS[key] ?? null;
-  const time = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false });
+  const time = now.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const dateStr = `${MONTHS[now.getMonth()]} ${now.getDate()}, ${now.getFullYear()}`;
+
   return (
-    <article className="p-5 rounded-lg border border-border bg-surface-1 hover:bg-surface-2 transition-colors group sm:col-span-2">
-      <div className="flex items-baseline justify-between">
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-3xl font-serif text-text tabular-nums leading-none">{now.getDate()}</span>
-          <span className="text-sm font-medium text-text">{MONTHS[now.getMonth()]}</span>
-          <span className="text-[12px] font-mono text-text-muted">{now.getFullYear()}</span>
-        </div>
-        <span className="text-xl font-mono text-text tabular-nums">{time}</span>
+    <div className="text-right">
+      <div className="font-mono text-[13px] text-text tabular-nums tracking-wider">{time}</div>
+      <div className="text-[11px] text-text-muted mt-0.5">
+        {dateStr}
+        {occasion && <span className="normal-case ml-1 text-accent-solo">{occasion}</span>}
       </div>
-      <div className="mt-1.5 text-[12px] uppercase tracking-wider text-text-muted">
-        {WEEKDAYS[now.getDay()]}
-        {occasion ? <span className="normal-case ml-2 text-accent-solo">{occasion}</span> : null}
-      </div>
-    </article>
+    </div>
   );
 }
 
+/* ─── QuickLinks ──────────────────────────────────────────────── */
 
-function ActiveProjects({ app }: { app: AppName }) {
+const QUICK_LINKS = [
+  { to: "/entries", icon: "&#x229E;", label: "New Entry" },
+  { to: "/projects", icon: "&#x25A6;", label: "Projects" },
+  { to: "/reports", icon: "&#x25A4;", label: "Reports" },
+  { to: "/chat", icon: "&#x2299;", label: "Chat" },
+] as const;
+
+/* ─── ProjectBrief (main column) ──────────────────────────────── */
+
+function ProjectBrief({ app }: { app: AppName }) {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [brief, setBrief] = useState<ProjectBriefData | null>(null);
+
   useEffect(() => {
-    api.projects(app, { status: "active", limit: 5 }).then(setProjects).catch(() => {});
+    api.projects(app, { status: "active", limit: 8 }).then(setProjects).catch(() => {});
+    api.projectBrief(app).then(setBrief).catch(() => {});
   }, [app]);
 
-  if (projects.length === 0) {
-    return <p className="text-xs text-text-muted m-0">No active projects. <Link to="/projects" className="text-accent-solo no-underline">Create one →</Link></p>;
+  const hasRisk = brief && brief.at_risk.length > 0;
+  const hasAttention = brief && brief.attention.length > 0;
+
+  if (projects.length === 0 && !hasRisk && !hasAttention) {
+    return (
+      <div className="flex items-center justify-between py-8 px-4 rounded-lg border border-border bg-surface-1">
+        <span className="text-[13px] text-text-muted">No active projects yet.</span>
+        <Link
+          to="/projects"
+          className="text-[12px] text-accent-solo hover:underline no-underline font-medium"
+        >
+          Create one &rarr;
+        </Link>
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-2">
-      {projects.map((p) => (
-        <Link key={p.id} to={`/projects/${p.id}`} className="flex items-center justify-between px-3 py-2 rounded-md bg-surface-2 hover:bg-surface-3 transition-colors no-underline">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm text-text truncate">{p.title}</span>
-            <RiskBadge status={p.risk_status} />
+    <div className="min-w-0">
+      {/* Needs Attention banner */}
+      {(hasRisk || hasAttention) && (
+        <div className="mb-3 border border-danger/20 rounded-md px-3 py-2 bg-danger/5">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-danger mb-1">
+            Needs Attention
           </div>
-          <div className="flex items-center gap-3 text-[11px] text-text-muted flex-shrink-0">
-            <span>{p.completed_milestone_count}/{p.milestone_count} milestones</span>
-            <span>{p.completion_pct !== null ? `${p.completion_pct}%` : "-"}</span>
+          <div className="space-y-0.5">
+            {[...(brief?.at_risk ?? []), ...(brief?.attention ?? [])]
+              .slice(0, 3)
+              .map((p) => (
+                <Link
+                  key={p.id}
+                  to={`/projects/${p.id}`}
+                  className="block text-[12px] text-text-secondary hover:text-text no-underline truncate"
+                >
+                  {p.risk_status === "at_risk" ? "\u26A0 " : "\u25CF "}
+                  {p.title}
+                </Link>
+              ))}
           </div>
-        </Link>
-      ))}
+        </div>
+      )}
+
+      {/* Project rows */}
+      <div className="rounded-lg border border-border bg-surface-1 overflow-hidden">
+        {projects.map((p) => (
+          <ProjectRowCard key={p.id} project={p} />
+        ))}
+      </div>
     </div>
   );
 }
 
-export function Dashboard({ appName }: { appName: AppName }) {
-  const { data, error, loading } = useApi(() => api.stats(appName), [appName], { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS });
+/* ─── Section wrapper ─────────────────────────────────────────── */
 
-  if (loading) {
-    return <div className="h-60 rounded-lg bg-gradient-to-r from-surface-1 via-surface-2 to-surface-1 bg-[length:200%_auto] animate-[shimmer_1.5s_linear_infinite]" />;
-  }
-  if (error || !data) {
-    return <div className="border border-danger/30 rounded-lg bg-danger/5 p-5 text-sm text-text">{error ?? 'Failed to load dashboard.'}</div>;
-  }
-
+function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="space-y-6">
-      {/* Section label */}
-      <div className="flex items-baseline justify-between">
-        <h2 className="font-serif text-2xl text-text m-0">Overview</h2>
-        <span className="text-[11px] font-mono text-text-muted uppercase tracking-wider">{appName} · today</span>
+    <section>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[13px] font-medium text-text-secondary m-0">{title}</h3>
+        {action}
       </div>
+      {children}
+    </section>
+  );
+}
 
-      {/* Stats row */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <StatsCard label="Entries" value={data.total_entries} />
-        <StatsCard label="Records" value={data.total_records} />
-        <StatsCard label="This week" value={data.this_week_records} />
-        <StatsCard label="Pending todos" value={data.pending_todos} />
-        <StatsCard label="Model calls" value={data.llm_total_calls} />
-        <StatsCard label="Vision calls" value={data.vision_total_calls} />
-      </div>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        <article className="p-5 rounded-lg border border-border bg-surface-1 hover:bg-surface-2 transition-colors group sm:col-span-2">
-          <div className="text-sm font-medium text-text truncate" title={data.current_model}>
-            {data.current_model || '—'}
-          </div>
-          <div className="mt-1.5 text-[12px] uppercase tracking-wider text-text-muted font-medium">Current LLM model</div>
-        </article>
-        {data.vision_model ? (
-          <article className="p-5 rounded-lg border border-border bg-surface-1 hover:bg-surface-2 transition-colors group sm:col-span-2">
-            <div className="text-sm font-medium text-text truncate" title={data.vision_model}>
-              {data.vision_model}
-            </div>
-            <div className="mt-1.5 text-[12px] uppercase tracking-wider text-text-muted font-medium">Current vision model</div>
-          </article>
-        ) : null}
-        <DateCard />
-      </div>
+function SectionLink({ to, children }: { to: string; children: React.ReactNode }) {
+  return (
+    <Link to={to} className="text-[11px] text-text-muted hover:text-text no-underline">
+      {children}
+    </Link>
+  );
+}
 
-      <section className="p-5 border border-border rounded-lg bg-surface-1">
-        <div className="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h3 className="text-sm font-medium text-text m-0">Token Usage</h3>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-text-muted">
-              <span>
-                Daily totals · current month view
-              </span>
-              <span>focus · {data.llm_daily_focus_date}</span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-success animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
-                live · 5s
-              </span>
+/* ─── Dashboard ───────────────────────────────────────────────── */
+
+export function Dashboard({ appName }: { appName: AppName }) {
+  const { data, error, loading } = useApi(
+    () => api.stats(appName),
+    [appName],
+    { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS },
+  );
+
+  const accent = appName === "solo" ? "#d4a574" : "#5eead4";
+
+  const focusCards = useMemo(() => {
+    if (!data) return [];
+    const items: { label: string; value: number; icon: string; accent?: string }[] = [
+      { label: "Records", value: data.total_records, icon: "\u25C7" },
+      { label: "This Week", value: data.this_week_records, icon: "\u25B3" },
+      {
+        label: "Pending",
+        value: data.pending_todos,
+        icon: "\u2610",
+        accent: data.pending_todos > 0 ? "#fbbf24" : undefined,
+      },
+      { label: "Model Calls", value: data.llm_total_calls, icon: "\u2299" },
+    ];
+    if (appName === "wolo") {
+      if (data.open_blockers) {
+        items.push({ label: "Blockers", value: data.open_blockers, icon: "\u26A0", accent: "#f87171" });
+      }
+      items.push({ label: "Decisions", value: data.total_decisions ?? 0, icon: "\u29EB" });
+    }
+    return items;
+  }, [data, appName]);
+
+  const modelColorMap = useMemo(() => {
+    const models = Array.from(
+      new Set((data?.llm_monthly_tokens ?? []).map((t: any) => t.model)),
+    ).sort();
+    const map: Record<string, string> = {};
+    models.forEach((m, i) => {
+      map[m] = tokenPalette[i % tokenPalette.length].input;
+    });
+    return map;
+  }, [data]);
+
+  /* ── Loading / error states ── */
+  if (loading) {
+    return (
+      <div className="space-y-5 animate-pulse">
+        <div className="h-24 rounded-lg bg-surface-2" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-20 rounded-lg bg-surface-2" />
+          ))}
+        </div>
+        <div className="h-64 rounded-lg bg-surface-2" />
+      </div>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <div className="border border-danger/30 rounded-lg bg-danger/5 p-5 text-[13px] text-text">
+        {error ?? "Failed to load dashboard."}
+      </div>
+    );
+  }
+
+  /* ── Render ── */
+  return (
+    <>
+    <SciFiBackground accent={accent} />
+    <div className="relative space-y-6" style={{ zIndex: 1 }}>
+      {/* Zone 1: Hero Header */}
+      <header className="flex items-start justify-between">
+        <div>
+          <h2 className="text-[28px] font-serif text-text m-0 leading-tight">
+            {greeting()}
+          </h2>
+          <p className="text-[12px] text-text-muted mt-1 m-0">
+            {data.this_week_records} records this week
+            {data.pending_todos > 0 && (
+              <span className="text-warning"> &middot; {data.pending_todos} pending</span>
+            )}
+          </p>
+        </div>
+        <div className="flex items-start gap-4">
+          <Clock />
+          <div className="text-right">
+            <div className="text-[11px] text-text-muted">Model</div>
+            <div className="text-[12px] font-medium truncate max-w-[200px]" title={data.current_model} style={{ color: modelColorMap[data.current_model] ?? accent }}>
+              {data.current_model || "\u2014"}
             </div>
-          </div>
-          <div className="flex flex-wrap justify-end gap-2 text-[12px] font-mono">
-            <span
-              title={`${data.llm_daily_input_tokens.toLocaleString()} input tokens on ${data.llm_daily_focus_date}`}
-              className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text"
-            >
-              <span className="text-text-muted">input</span>
-              <span className="tabular-nums">{formatTokenAmount(data.llm_daily_input_tokens)}</span>
-            </span>
-            <span
-              title={`${data.llm_daily_output_tokens.toLocaleString()} output tokens on ${data.llm_daily_focus_date}`}
-              className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text"
-            >
-              <span className="text-text-muted">output</span>
-              <span className="tabular-nums">{formatTokenAmount(data.llm_daily_output_tokens)}</span>
-            </span>
+            {data.vision_model && (
+              <div className="text-[11px] truncate max-w-[200px] mt-0.5" title={data.vision_model} style={{ color: modelColorMap[data.vision_model] ?? "#a78bfa" }}>
+                {data.vision_model}
+              </div>
+            )}
           </div>
         </div>
-        <ModelTokenUsageChart
-          data={data.llm_monthly_tokens}
-          startDate={data.llm_monthly_start_date}
-          endDate={data.llm_monthly_end_date}
-        />
-      </section>
+      </header>
 
-      <section className="p-5 border border-border rounded-lg bg-surface-1">
-        <div className="flex items-start justify-between gap-4 mb-4">
-          <div>
-            <h3 className="text-sm font-medium text-text m-0">Model Usage</h3>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12px] text-text-muted">
-              <span>
-                Daily totals · current month view
-              </span>
-              <span>focus · {data.llm_daily_focus_date}</span>
-              <span className="inline-flex items-center gap-1.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-success animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
-                live · 5s
-              </span>
-            </div>
-          </div>
-          <div className="flex flex-wrap justify-end gap-2 text-[12px] font-mono">
-            <span
-              title={`${data.llm_daily_total_calls.toLocaleString()} calls on ${data.llm_daily_focus_date}`}
-              className="inline-flex items-center gap-2 rounded-full border border-border bg-surface-2 px-3 py-1.5 text-text"
-            >
-              <span className="text-text-muted">calls</span>
-              <span className="tabular-nums">{data.llm_daily_total_calls.toLocaleString()}</span>
-            </span>
-          </div>
-        </div>
-        <ModelCallUsageChart
-          data={data.llm_monthly_model_calls}
-          startDate={data.llm_monthly_start_date}
-          endDate={data.llm_monthly_end_date}
-        />
-      </section>
+      {/* Quick Actions */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {QUICK_LINKS.map((lnk) => (
+          <Link
+            key={lnk.to}
+            to={lnk.to}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border-subtle bg-surface-1 hover:bg-surface-2 no-underline transition-colors text-[12px]"
+          >
+            <span className="opacity-50" dangerouslySetInnerHTML={{ __html: lnk.icon }} />
+            <span className="text-text-secondary">{lnk.label}</span>
+          </Link>
+        ))}
+      </div>
 
+      {/* Zone 2: Stat Cards */}
+      <div
+        className="grid grid-cols-2 gap-3"
+        style={{ gridTemplateColumns: `repeat(${Math.max(focusCards.length, 2)}, minmax(0, 1fr))` }}
+      >
+        {focusCards.map((card) => (
+          <StatsCard
+            key={card.label}
+            label={card.label}
+            value={card.value}
+            icon={card.icon}
+            accent={card.accent}
+          />
+        ))}
+      </div>
 
-      {/* Active Projects */}
-      <section className="p-5 border border-border rounded-lg bg-surface-1">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-medium text-text m-0">Active Projects</h3>
-          <Link to="/projects" className="text-[12px] text-text-muted hover:text-text no-underline transition-colors">View all →</Link>
-        </div>
-        <ActiveProjects app={appName} />
-      </section>
+      {/* Zone 3: Projects */}
+      <Section
+        title="Projects"
+        action={<SectionLink to="/projects">View all</SectionLink>}
+      >
+        <ProjectBrief app={appName} />
+      </Section>
 
-      {/* Charts grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <section className="p-5 border border-border rounded-lg bg-surface-1">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-medium text-text m-0">Activity</h3>
-            <Link to="/records" className="text-[12px] text-text-muted hover:text-text no-underline transition-colors">View all →</Link>
+      {/* Zone 4: Insights */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="p-4 rounded-lg border border-border bg-surface-1">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[13px] font-medium text-text-secondary m-0">Activity</h3>
+            <SectionLink to="/records">View all</SectionLink>
           </div>
           <ActivityHeatmap data={data.daily_counts} />
-        </section>
-        <section className="p-5 border border-border rounded-lg bg-surface-1">
-          <h3 className="text-sm font-medium text-text m-0 mb-4">Emotions</h3>
-          <EmotionBarList data={data.emotion_distribution} />
-        </section>
+        </div>
+        <div className="p-4 rounded-lg border border-border bg-surface-1 flex flex-col min-h-0">
+          <h3 className="text-[13px] font-medium text-text-secondary m-0 mb-3 shrink-0">Emotions</h3>
+          <EmotionPieChart data={data.emotion_distribution} />
+        </div>
+        <div className="p-4 rounded-lg border border-border bg-surface-1">
+          <h3 className="text-[13px] font-medium text-text-secondary m-0 mb-3">Top Tags</h3>
+          <TagBarChart data={data.top_tags} />
+        </div>
       </div>
 
-      {/* Wolo extras */}
-      {appName === 'wolo' ? (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <StatsCard label="Decisions" value={data.total_decisions ?? 0} />
-          <StatsCard label="Highlights" value={data.total_highlights ?? 0} />
-          <StatsCard label="Open blockers" value={data.open_blockers ?? 0} />
+      {/* Zone 5: Usage */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+        <div className="p-4 rounded-lg border border-border bg-surface-1">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[13px] font-medium text-text-secondary m-0">Token Usage</h3>
+            <div className="flex items-center gap-3 text-[11px] font-mono">
+              <span className="inline-flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-success animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
+                live
+              </span>
+              <span>
+                <span className="text-text-muted">in </span>
+                <span className="tabular-nums text-text">
+                  {formatTokenAmount(data.llm_daily_input_tokens)}
+                </span>
+              </span>
+              <span>
+                <span className="text-text-muted">out </span>
+                <span className="tabular-nums text-text">
+                  {formatTokenAmount(data.llm_daily_output_tokens)}
+                </span>
+              </span>
+            </div>
+          </div>
+          <ModelTokenUsageChart
+            data={data.llm_monthly_tokens}
+            startDate={data.llm_monthly_start_date}
+            endDate={data.llm_monthly_end_date}
+          />
         </div>
-      ) : null}
+
+        <div className="p-4 rounded-lg border border-border bg-surface-1">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-[13px] font-medium text-text-secondary m-0">Model Usage</h3>
+            <div className="flex items-center gap-3 text-[11px] font-mono">
+              <span className="inline-flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-success animate-[pulse-dot_1.5s_ease-in-out_infinite]" />
+                live
+              </span>
+              <span>
+                <span className="text-text-muted">calls </span>
+                <span className="tabular-nums text-text">
+                  {data.llm_daily_total_calls.toLocaleString()}
+                </span>
+              </span>
+            </div>
+          </div>
+          <ModelCallUsageChart
+            data={data.llm_monthly_model_calls}
+            startDate={data.llm_monthly_start_date}
+            endDate={data.llm_monthly_end_date}
+          />
+        </div>
+      </div>
     </div>
+    </>
   );
 }

@@ -504,6 +504,7 @@ class ProjectLink:
     source: str = "user"  # user | ai_high_confidence | ai_candidate | migration
     confidence: str = ""
     status: str = "active"  # active | pending | rejected
+    sort_order: int = 0
     created_at: str = ""
     updated_at: str = ""
 
@@ -516,8 +517,8 @@ class ProjectLink:
             "id": self.id, "project_id": self.project_id,
             "entity_type": self.entity_type, "entity_id": self.entity_id,
             "source": self.source, "confidence": self.confidence,
-            "status": self.status, "created_at": self.created_at,
-            "updated_at": self.updated_at,
+            "status": self.status, "sort_order": self.sort_order,
+            "created_at": self.created_at, "updated_at": self.updated_at,
         }
 
     def to_json(self) -> str:
@@ -541,6 +542,131 @@ class ProjectAlias:
             "id": self.id, "project_id": self.project_id,
             "alias": self.alias, "source": self.source,
             "created_at": self.created_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class ProjectSuggestion:
+    id: str
+    suggestion_type: str  # link_entity | create_project | complete_milestone | ...
+    project_id: str = ""
+    title: str = ""
+    rationale: str = ""
+    proposed_payload_json: str = "{}"
+    evidence_json: str = "[]"
+    confidence: float = 0.0
+    status: str = "pending"  # pending | accepted | rejected | snoozed | expired
+    source: str = "ai"
+    created_at: str = ""
+    updated_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "ProjectSuggestion":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "suggestion_type": self.suggestion_type,
+            "project_id": self.project_id, "title": self.title,
+            "rationale": self.rationale,
+            "proposed_payload_json": self.proposed_payload_json,
+            "evidence_json": self.evidence_json,
+            "confidence": self.confidence, "status": self.status,
+            "source": self.source,
+            "created_at": self.created_at, "updated_at": self.updated_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class ProjectSignal:
+    id: str
+    project_id: str
+    signal_type: str  # progress | blocker | risk | decision | milestone_evidence | stale | momentum | scope_change
+    summary: str
+    severity: str = "info"  # info | warning | critical
+    evidence_entity_type: str = ""
+    evidence_entity_id: str = ""
+    created_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "ProjectSignal":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "project_id": self.project_id,
+            "signal_type": self.signal_type, "summary": self.summary,
+            "severity": self.severity,
+            "evidence_entity_type": self.evidence_entity_type,
+            "evidence_entity_id": self.evidence_entity_id,
+            "created_at": self.created_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class ProjectSnapshot:
+    id: str
+    project_id: str
+    snapshot_date: str
+    summary: str = ""
+    health: str = "normal"  # normal | attention | at_risk
+    completion_pct: int | None = None
+    activity_7d: int = 0
+    open_blocker_count: int = 0
+    next_action: str = ""
+    created_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "ProjectSnapshot":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "project_id": self.project_id,
+            "snapshot_date": self.snapshot_date, "summary": self.summary,
+            "health": self.health, "completion_pct": self.completion_pct,
+            "activity_7d": self.activity_7d,
+            "open_blocker_count": self.open_blocker_count,
+            "next_action": self.next_action,
+            "created_at": self.created_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class ProjectCheckin:
+    id: str
+    project_id: str
+    channel: str = "onboard"
+    question: str = ""
+    status: str = "sent"  # sent | answered | dismissed
+    response_record_id: str = ""
+    created_at: str = ""
+    responded_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "ProjectCheckin":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "project_id": self.project_id,
+            "channel": self.channel, "question": self.question,
+            "status": self.status,
+            "response_record_id": self.response_record_id,
+            "created_at": self.created_at,
+            "responded_at": self.responded_at,
         }
 
     def to_json(self) -> str:

@@ -64,6 +64,7 @@ class HeartbeatSignals:
 
     stale_confirmations: list[str] = field(default_factory=list)
     overdue_todos: list[str] = field(default_factory=list)
+    at_risk_projects: list[str] = field(default_factory=list)
     system_health: list[str] = field(default_factory=list)
     heartbeat_tasks: str = ""
 
@@ -73,6 +74,7 @@ class HeartbeatSignals:
         return bool(
             self.stale_confirmations
             or self.overdue_todos
+            or self.at_risk_projects
         )
 
     @property
@@ -91,6 +93,8 @@ class HeartbeatSignals:
             items.append(("pending_confirmation", msg))
         for msg in self.overdue_todos:
             items.append(("overdue_todo", msg))
+        for msg in self.at_risk_projects:
+            items.append(("at_risk_project", msg))
         return items
 
 
@@ -347,6 +351,19 @@ class SoloHeartbeatService:
         if self._check_scheduler_down():
             signals.system_health.append("scheduler_down")
 
+        # 4. At-risk / attention projects
+        for p in store.list_projects(status="active"):
+            detail = store.get_project_detail(p.id)
+            if detail is None:
+                continue
+            risk = detail.get("risk_status", "normal")
+            if risk in ("at_risk", "attention"):
+                pct = detail.get("completion_pct")
+                pct_str = f" ({pct}%)" if pct is not None else ""
+                signals.at_risk_projects.append(f"{p.title}{pct_str} — {risk}")
+                if len(signals.at_risk_projects) >= 3:
+                    break
+
         # 5. HEARTBEAT.md tasks (optional power-user file)
         signals.heartbeat_tasks = self._read_heartbeat_tasks()
 
@@ -472,6 +489,8 @@ class SoloHeartbeatService:
                 label = "逾期/今日到期 Todo"
             elif kind == "pending_confirmation":
                 label = "待确认记录（>24h）"
+            elif kind == "at_risk_project":
+                label = "项目风险提醒"
             else:
                 label = kind
             parts.append(f"【{label}】\n- {msg}")

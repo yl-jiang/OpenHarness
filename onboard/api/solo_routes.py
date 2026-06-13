@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, AsyncIterator
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -28,15 +28,7 @@ class ProcessRequest(BaseModel):
 
 
 def _service(workspace: str | None = None) -> SoloService:
-    key = workspace or "__default__"
-    svc = _service_cache.get(key)
-    if svc is None:
-        svc = SoloService(workspace)
-        _service_cache[key] = svc
-    return svc
-
-
-_service_cache: dict[str, SoloService] = {}
+    return SoloService(workspace)
 
 
 @router.get("/stats")
@@ -185,6 +177,12 @@ def config(workspace: str | None = None) -> dict[str, Any]:
     return _service(workspace).config()
 
 
+@router.put("/config")
+async def update_config(request: Request, workspace: str | None = None) -> dict[str, Any]:
+    body = await request.json()
+    return _service(workspace).update_config(body)
+
+
 @router.get("/gateway/status")
 def gateway_status(workspace: str | None = None) -> dict[str, Any]:
     return _service(workspace).gateway_status()
@@ -264,6 +262,7 @@ class ProjectCreateRequest(BaseModel):
     start_date: str = ""
     target_date: str = ""
     tags: str = ""
+    template: str = ""
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -291,6 +290,10 @@ class ArchiveRequest(BaseModel):
     reason: str = ""
 
 
+class ReorderLinksRequest(BaseModel):
+    link_ids: list[str]
+
+
 @router.get("/projects")
 def projects(
     workspace: str | None = None,
@@ -299,6 +302,16 @@ def projects(
     offset: int = Query(0, ge=0),
 ):
     return _service(workspace).list_projects(status=status, limit=limit, offset=offset)
+
+
+@router.get("/projects/brief")
+def project_brief(workspace: str | None = None):
+    return _service(workspace).get_project_brief()
+
+
+@router.get("/project-templates")
+def project_templates(workspace: str | None = None):
+    return _service(workspace).list_project_templates()
 
 
 @router.post("/projects")
@@ -398,6 +411,40 @@ def create_project_link(project_id: str, request: ProjectLinkCreateRequest, work
     return _service(workspace).create_project_link(project_id, request.model_dump())
 
 
+@router.put("/projects/{project_id}/links/reorder")
+def reorder_project_links(project_id: str, request: ReorderLinksRequest, workspace: str | None = None):
+    return _service(workspace).reorder_project_links(project_id, request.link_ids)
+
+
+class AliasCreateRequest(BaseModel):
+    alias: str
+
+
+class GitContextRequest(BaseModel):
+    repo_path: str
+    since_days: int = 7
+
+
+@router.get("/projects/{project_id}/aliases")
+def list_project_aliases(project_id: str, workspace: str | None = None):
+    return _service(workspace).list_project_aliases(project_id)
+
+
+@router.post("/projects/{project_id}/aliases")
+def create_project_alias(project_id: str, request: AliasCreateRequest, workspace: str | None = None):
+    return _service(workspace).create_project_alias(project_id, request.alias)
+
+
+@router.delete("/project-aliases/{alias_id}")
+def delete_project_alias(alias_id: str, workspace: str | None = None):
+    return _service(workspace).delete_project_alias(alias_id)
+
+
+@router.post("/projects/{project_id}/git-context")
+def git_context(project_id: str, request: GitContextRequest, workspace: str | None = None):
+    return _service(workspace).get_git_context(project_id, request.repo_path, request.since_days)
+
+
 @router.delete("/project-links/{link_id}")
 def delete_project_link(link_id: str, workspace: str | None = None):
     ok = _service(workspace).delete_project_link(link_id)
@@ -422,73 +469,111 @@ def reject_project_link(link_id: str, workspace: str | None = None):
     return {"ok": True}
 
 
+@router.get("/project-suggestions")
+def list_project_suggestions(
+    status: str | None = None,
+    limit: int | None = None,
+    workspace: str | None = None,
+):
+    return _service(workspace).list_project_suggestions(status=status, limit=limit)
+
+
+@router.put("/project-suggestions/{suggestion_id}/accept")
+def accept_project_suggestion(suggestion_id: str, workspace: str | None = None):
+    ok = _service(workspace).accept_project_suggestion(suggestion_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    return {"ok": True}
+
+
+@router.put("/project-suggestions/{suggestion_id}/reject")
+def reject_project_suggestion(suggestion_id: str, workspace: str | None = None):
+    ok = _service(workspace).reject_project_suggestion(suggestion_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    return {"ok": True}
+
+
+@router.put("/project-suggestions/{suggestion_id}/snooze")
+def snooze_project_suggestion(suggestion_id: str, workspace: str | None = None):
+    ok = _service(workspace).snooze_project_suggestion(suggestion_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+    return {"ok": True}
+
+
+@router.post("/projects/scan")
+async def scan_projects(workspace: str | None = None):
+    return await _service(workspace).scan_for_projects()
+
+
+# ── Phase 3: Project state analysis ─────────────────────────────────
+
+
+@router.get("/projects/{project_id}/timeline")
+def project_timeline(project_id: str, limit: int = 50, workspace: str | None = None):
+    return _service(workspace).get_project_timeline(project_id, limit=limit)
+
+
+@router.get("/projects/{project_id}/signals")
+async def list_project_signals(project_id: str, limit: int = 50, workspace: str | None = None):
+    svc = _service(workspace)
+    return svc.list_project_signals(project_id, limit=limit)
+
+
+@router.get("/projects/{project_id}/snapshots")
+async def list_project_snapshots(project_id: str, limit: int = 30, workspace: str | None = None):
+    svc = _service(workspace)
+    return svc.list_project_snapshots(project_id, limit=limit)
+
+
+@router.post("/projects/{project_id}/analyze")
+async def analyze_project_state(project_id: str, workspace: str | None = None):
+    svc = _service(workspace)
+    return await svc.analyze_project_state(project_id)
+
+
+@router.post("/projects/{project_id}/snapshot")
+async def generate_project_snapshot(project_id: str, workspace: str | None = None):
+    svc = _service(workspace)
+    return await svc.generate_project_snapshot(project_id)
+
+
+@router.post("/projects/{project_id}/status-update")
+async def generate_status_update(project_id: str, workspace: str | None = None):
+    svc = _service(workspace)
+    return svc.generate_status_update(project_id)
+
+
+@router.get("/project-checkins")
+async def list_checkin_questions(
+    project_id: str | None = None,
+    status: str | None = None,
+    limit: int = 20,
+    workspace: str | None = None,
+):
+    svc = _service(workspace)
+    if project_id:
+        return svc.list_project_checkins(project_id, status=status, limit=limit)
+    return await svc.generate_checkin_questions()
+
+
+@router.post("/project-checkins")
+async def create_checkin(body: dict, workspace: str | None = None):
+    svc = _service(workspace)
+    return svc.create_project_checkin(body)
+
+
+@router.put("/project-checkins/{checkin_id}")
+async def update_checkin(checkin_id: str, body: dict, workspace: str | None = None):
+    svc = _service(workspace)
+    return {"ok": svc.update_project_checkin(checkin_id, **body)}
+
+
 @router.post("/projects/{project_id}/review")
 def review_project(project_id: str, workspace: str | None = None):
     svc = _service(workspace)
-    project = svc.get_project(project_id)
-    if project is None:
+    result = svc.generate_project_review(project_id)
+    if not result:
         raise HTTPException(status_code=404, detail="Project not found")
-    milestones = svc.list_milestones(project_id)
-    links = svc.list_project_links(project_id)
-
-    lines = []
-    lines.append(f"# Project Review: {project.get('title', '')}")
-    lines.append("")
-    if project.get("description"):
-        lines.append(project["description"])
-        lines.append("")
-    lines.append(f"- Status: {project.get('status', '')}")
-    lines.append(f"- Priority: {project.get('priority', '')}")
-    if project.get("start_date"):
-        lines.append(f"- Start: {project['start_date']}")
-    if project.get("target_date"):
-        lines.append(f"- Target: {project['target_date']}")
-    if project.get("completed_at"):
-        lines.append(f"- Completed: {project['completed_at']}")
-    lines.append("")
-    lines.append("## Milestones")
-    if milestones:
-        for m in milestones:
-            status = "✓" if m.get("status") == "completed" else "○"
-            date = f" ({m.get('target_date', '')})" if m.get("target_date") else ""
-            lines.append(f"- {status} {m.get('title', '')}{date}")
-    else:
-        lines.append("- No milestones defined")
-    lines.append("")
-    entity_counts: dict[str, int] = {}
-    for lnk in links:
-        if lnk.get("status") == "active":
-            et = lnk.get("entity_type", "unknown")
-            entity_counts[et] = entity_counts.get(et, 0) + 1
-    lines.append("## Linked Entities")
-    if entity_counts:
-        for et, count in sorted(entity_counts.items()):
-            lines.append(f"- {et}: {count}")
-    else:
-        lines.append("- No entities linked")
-    lines.append("")
-    lines.append("## Statistics")
-    lines.append(f"- Completion: {project.get('completion_pct', 'N/A')}% ({project.get('completion_source', 'none')})")
-    lines.append(f"- Milestones: {project.get('completed_milestone_count', 0)}/{project.get('milestone_count', 0)}")
-    lines.append(f"- Linked records: {project.get('linked_record_count', 0)}")
-    lines.append(f"- Linked todos: {project.get('linked_todo_count', 0)}")
-    lines.append(f"- Activity (7d): {project.get('activity_7d', 0)}")
-    lines.append(f"- Activity (30d): {project.get('activity_30d', 0)}")
-    lines.append(f"- Risk: {project.get('risk_status', 'normal')}")
-    review_content = "\n".join(lines)
-
-    # Save as report
-    from uuid import uuid4
-    from solo.core.models import SoloReport
-    from solo.core.utils import _now
-    report = SoloReport(
-        id=str(uuid4()),
-        report_type="project_review",
-        content=review_content,
-        created_at=_now(),
-        period_start=project.get("start_date") or project.get("created_at", ""),
-        period_end=project.get("completed_at") or _now(),
-        metadata={"project_id": project_id, "project_title": project.get("title", "")},
-    )
-    svc.store.add_report(report)
-    return {"id": report.id, "content": review_content, "report_type": "project_review"}
+    return result

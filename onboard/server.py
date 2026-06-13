@@ -79,7 +79,10 @@ def create_app() -> FastAPI:
             requested = (dist_dir / full_path).resolve()
             if requested.is_file() and requested.is_relative_to(dist_dir):
                 return FileResponse(requested)
-            return FileResponse(dist_dir / "index.html")
+            return FileResponse(
+                dist_dir / "index.html",
+                headers={"Cache-Control": "no-cache"},
+            )
 
     else:
         app.add_api_route(

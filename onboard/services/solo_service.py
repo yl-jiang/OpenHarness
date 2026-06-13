@@ -7,10 +7,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 from solo.agent import OpenHarnessSoloAgent
-from solo.config import load_config
+from solo.config import load_config, save_config as _save_config
+from solo.core.models import ProjectSignal, ProjectSnapshot, ProjectCheckin
 from solo.core.store import SoloStore
 from solo.gateway.service import gateway_status, start_gateway_process, stop_gateway_process
 from solo.processor import SoloProcessor
+
+from common.project_ai.signals import analyze_project_state, generate_daily_snapshot, generate_checkin_questions
 
 from onboard.services.common import (
     count_this_week,
@@ -34,6 +37,8 @@ from onboard.services.common import (
 
 class SoloService:
     """Small service wrapper around SoloStore for WebUI routes."""
+
+    _app_type: str = "solo"
 
     def __init__(self, workspace: str | Path | None = None) -> None:
         self.workspace = workspace
@@ -252,6 +257,15 @@ class SoloService:
         config = load_config(self.workspace)
         return {"workspace": str(self.store.workspace), **config.model_dump()}
 
+    def update_config(self, updates: dict[str, Any]) -> dict[str, Any]:
+        from solo.core.models import SoloConfig
+        current = load_config(self.workspace)
+        merged = {**current.model_dump(), **updates}
+        merged.pop("workspace", None)
+        new_config = SoloConfig.model_validate(merged)
+        _save_config(new_config, self.workspace)
+        return self.config()
+
     def gateway_status(self) -> dict[str, Any]:
         state = gateway_status(workspace=self.workspace)
         return {
@@ -274,6 +288,10 @@ class SoloService:
 
     # ── Project management ──────────────────────────────────────────
 
+    def list_project_templates(self):
+        from common.project_ai.templates import list_templates
+        return [t.to_dict() for t in list_templates(self._app_type)]
+
     def list_projects(self, status=None, limit=None, offset=0):
         return self.store.list_projects_with_detail(status=status, limit=limit, offset=offset)
 
@@ -283,21 +301,37 @@ class SoloService:
     def create_project(self, data):
         from uuid import uuid4
         from solo.core.utils import _now
-        from solo.core.models import Project
+        from solo.core.models import Project, Milestone
+        from common.project_ai.templates import get_template
+
+        tpl_id = data.get("template", "")
+        tpl = get_template(tpl_id) if tpl_id else None
 
         now = _now()
         project = Project(
             id=str(uuid4()),
             title=data["title"],
-            description=data.get("description", ""),
-            priority=data.get("priority", "medium"),
+            description=data.get("description") or (tpl.description if tpl else ""),
+            priority=data.get("priority") or (tpl.priority if tpl else "medium"),
             start_date=data.get("start_date", ""),
             target_date=data.get("target_date", ""),
-            tags=data.get("tags", ""),
+            tags=data.get("tags") or (tpl.tags if tpl else ""),
             created_at=now,
             updated_at=now,
         )
         self.store.create_project(project)
+
+        if tpl and tpl.milestones:
+            for i, title in enumerate(tpl.milestones):
+                ms = Milestone(
+                    id=str(uuid4()),
+                    project_id=project.id,
+                    title=title,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.store.create_milestone(ms)
+
         return self.store.get_project_detail(project.id)
 
     def update_project(self, project_id, data):
@@ -318,6 +352,65 @@ class SoloService:
 
     def delete_project(self, project_id):
         return self.store.delete_project(project_id)
+
+    def get_project_timeline(self, project_id, limit=50):
+        """Aggregate milestones, signals, snapshots into a unified timeline."""
+        events = []
+
+        # Milestones
+        for m in self.store.list_milestones(project_id):
+            events.append({
+                "date": m.completed_at or m.target_date or m.created_at,
+                "type": "milestone_completed" if m.status == "completed" else "milestone",
+                "title": m.title,
+                "detail": "",
+            })
+            if m.target_date and m.status != "completed":
+                events.append({
+                    "date": m.target_date,
+                    "type": "milestone_target",
+                    "title": f"Target: {m.title}",
+                    "detail": "",
+                })
+
+        # Signals (recent, high-severity)
+        for s in self.store.list_project_signals(project_id, limit=20):
+            events.append({
+                "date": s.created_at,
+                "type": f"signal_{s.signal_type}",
+                "title": s.summary,
+                "detail": s.severity,
+            })
+
+        # Snapshots
+        for snap in self.store.list_project_snapshots(project_id, limit=10):
+            events.append({
+                "date": snap.snapshot_date,
+                "type": "snapshot",
+                "title": snap.summary or f"Health: {snap.health}",
+                "detail": f"{snap.completion_pct or 0}% done, activity_7d={snap.activity_7d}",
+            })
+
+        # Project itself
+        project = self.store.get_project(project_id)
+        if project:
+            events.append({
+                "date": project.created_at,
+                "type": "project_created",
+                "title": f"Project created: {project.title}",
+                "detail": "",
+            })
+            if project.completed_at:
+                events.append({
+                    "date": project.completed_at,
+                    "type": "project_completed",
+                    "title": "Project completed",
+                    "detail": "",
+                })
+
+        # Sort descending by date, cap
+        events.sort(key=lambda e: e.get("date", ""), reverse=True)
+        return events[:limit]
 
     def list_milestones(self, project_id):
         milestones = self.store.list_milestones(project_id)
@@ -354,7 +447,12 @@ class SoloService:
 
     def list_project_links(self, project_id):
         links = self.store.list_project_links(project_id=project_id)
-        return [lnk.to_dict() for lnk in links]
+        result = []
+        for lnk in links:
+            d = lnk.to_dict()
+            d["entity_title"] = self.store.resolve_entity_summary(lnk.entity_type, lnk.entity_id)
+            result.append(d)
+        return result
 
     def create_project_link(self, project_id, data):
         from uuid import uuid4
@@ -382,3 +480,387 @@ class SoloService:
 
     def reject_project_link(self, link_id):
         return self.store.reject_project_link(link_id)
+
+    def reorder_project_links(self, project_id, link_ids):
+        self.store.reorder_project_links(project_id, link_ids)
+        return {"ok": True}
+
+    def list_project_aliases(self, project_id):
+        return [a.to_dict() for a in self.store.list_project_aliases(project_id)]
+
+    def create_project_alias(self, project_id, alias_text):
+        from uuid import uuid4
+        from solo.core.models import ProjectAlias
+        from solo.core.utils import _now
+
+        pa = ProjectAlias(
+            id=str(uuid4()),
+            project_id=project_id,
+            alias=alias_text.strip(),
+            source="user",
+            created_at=_now(),
+        )
+        self.store.create_project_alias(pa)
+        return pa.to_dict()
+
+    def delete_project_alias(self, alias_id):
+        return {"deleted": self.store.delete_project_alias(alias_id)}
+
+    def get_git_context(self, project_id, repo_path, since_days=7):
+        """Fetch recent git commits filtered by project title and aliases."""
+        from common.project_ai.external_context import fetch_git_commits, filter_commits_by_project
+
+        project = self.store.get_project(project_id)
+        if not project:
+            return []
+        aliases = [a.alias for a in self.store.list_project_aliases(project_id)]
+        commits = fetch_git_commits(repo_path, since_days=since_days)
+        return [c.to_dict() for c in filter_commits_by_project(commits, project.title, aliases)]
+
+    # ── Project suggestions ─────────────────────────────────────────
+
+    def list_project_suggestions(self, status=None, limit=None):
+        return [
+            s.to_dict()
+            for s in self.store.list_project_suggestions(status=status, limit=limit)
+        ]
+
+    def accept_project_suggestion(self, suggestion_id):
+        suggestion = self._get_suggestion_or_none(suggestion_id)
+        if suggestion is None:
+            return False
+        ok = self.store.accept_project_suggestion(suggestion_id)
+        if not ok:
+            return False
+
+        import json
+        from uuid import uuid4
+        from solo.core.models import Project, ProjectLink, Milestone
+        from solo.core.utils import _now
+
+        payload = json.loads(suggestion.proposed_payload_json)
+
+        if suggestion.suggestion_type == "link_entity":
+            now = _now()
+            link = ProjectLink(
+                id=str(uuid4()),
+                project_id=suggestion.project_id,
+                entity_type=payload.get("entity_type", "record"),
+                entity_id=payload.get("entity_id", ""),
+                source="ai_candidate",
+                confidence="medium",
+                status="active",
+                created_at=now,
+                updated_at=now,
+            )
+            try:
+                self.store.create_project_link(link)
+            except Exception:
+                pass
+
+        elif suggestion.suggestion_type == "create_project":
+            now = _now()
+            project = Project(
+                id=str(uuid4()),
+                title=payload.get("title", suggestion.title),
+                description=payload.get("description", suggestion.rationale),
+                status="active",
+                priority="medium",
+                tags=payload.get("tags", ""),
+                start_date=now[:10],
+                created_at=now,
+                updated_at=now,
+            )
+            self.store.create_project(project)
+            # Create suggested milestones
+            for ms_title in payload.get("suggested_milestones", []):
+                ms = Milestone(
+                    id=str(uuid4()),
+                    project_id=project.id,
+                    title=ms_title,
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.store.create_milestone(ms)
+            # Link evidence records
+            evidence = json.loads(suggestion.evidence_json)
+            for ev in evidence:
+                if ev.get("entity_type") == "record" and ev.get("entity_id"):
+                    try:
+                        link = ProjectLink(
+                            id=str(uuid4()),
+                            project_id=project.id,
+                            entity_type="record",
+                            entity_id=ev["entity_id"],
+                            source="ai_candidate",
+                            confidence="medium",
+                            status="active",
+                            created_at=now,
+                            updated_at=now,
+                        )
+                        self.store.create_project_link(link)
+                    except Exception:
+                        pass
+
+        return ok
+
+    def reject_project_suggestion(self, suggestion_id):
+        return self.store.reject_project_suggestion(suggestion_id)
+
+    def snooze_project_suggestion(self, suggestion_id):
+        return self.store.snooze_project_suggestion(suggestion_id)
+
+    async def scan_for_projects(self):
+        """Trigger project discovery scan on recent records."""
+        from common.project_ai.discovery import scan_for_projects
+        from solo.core.models import ProjectSuggestion
+        from solo.core.utils import _now
+        from uuid import uuid4
+        import json
+
+        candidates = await scan_for_projects(store=self.store, agent=None)
+        created = 0
+        now = _now()
+        for c in candidates:
+            suggestion = ProjectSuggestion(
+                id=str(uuid4()),
+                suggestion_type="create_project",
+                title=c["title"],
+                rationale=c.get("rationale", ""),
+                proposed_payload_json=json.dumps({
+                    "title": c["title"],
+                    "description": c.get("rationale", ""),
+                    "suggested_milestones": c.get("suggested_milestones", []),
+                }),
+                evidence_json=json.dumps(c.get("evidence", [])),
+                confidence=c.get("confidence", 0.6),
+                status="pending",
+                source="ai",
+                created_at=now,
+                updated_at=now,
+            )
+            self.store.create_project_suggestion(suggestion)
+            created += 1
+        return {"created": created, "candidates": candidates}
+
+    def get_project_brief(self):
+        """Return dashboard brief: at-risk projects, attention projects, pending suggestion count."""
+        all_projects = self.store.list_projects_with_detail(status="active", limit=50)
+        at_risk = [p for p in all_projects if p.get("risk_status") == "at_risk"]
+        attention = [p for p in all_projects if p.get("risk_status") == "attention"]
+        pending_count = len(self.store.list_project_suggestions(status="pending"))
+        return {
+            "at_risk": at_risk[:5],
+            "attention": attention[:5],
+            "pending_suggestion_count": pending_count,
+            "active_project_count": len(all_projects),
+        }
+
+    # --- Project State Analysis ---
+
+    async def analyze_project_state(self, project_id: str) -> dict:
+        """Analyze a project's state and persist signals."""
+        from uuid import uuid4
+        result = await analyze_project_state(
+            store=self.store, project_id=project_id, agent=None,
+        )
+        # Persist signals
+        for sig in result.get("signals", []):
+            signal = ProjectSignal(
+                id=str(uuid4()),
+                project_id=project_id,
+                signal_type=sig["signal_type"],
+                summary=sig["summary"],
+                severity=sig.get("severity", "info"),
+                evidence_entity_type=sig.get("evidence_entity_type", ""),
+                evidence_entity_id=sig.get("evidence_entity_id", ""),
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+            self.store.create_project_signal(signal)
+        return result
+
+    def list_project_signals(self, project_id: str, *, limit: int | None = 50) -> list[dict]:
+        signals = self.store.list_project_signals(project_id, limit=limit)
+        return [s.to_dict() for s in signals]
+
+    async def generate_project_snapshot(self, project_id: str) -> dict | None:
+        """Generate and persist a daily snapshot."""
+        from uuid import uuid4
+        data = await generate_daily_snapshot(
+            store=self.store, project_id=project_id, agent=None,
+        )
+        if not data:
+            return None
+        snapshot = ProjectSnapshot(
+            id=str(uuid4()),
+            created_at=datetime.now(timezone.utc).isoformat(),
+            **data,
+        )
+        self.store.create_project_snapshot(snapshot)
+        return snapshot.to_dict()
+
+    def list_project_snapshots(self, project_id: str, *, limit: int | None = 30) -> list[dict]:
+        snapshots = self.store.list_project_snapshots(project_id, limit=limit)
+        return [s.to_dict() for s in snapshots]
+
+    def generate_status_update(self, project_id: str) -> dict:
+        """Generate a text status update from current project detail."""
+        detail = self.store.get_project_detail(project_id)
+        if detail is None:
+            return {"text": ""}
+        title = detail.get("title", "")
+        pct = detail.get("completion_pct")
+        risk = detail.get("risk_status", "normal")
+        a7 = detail.get("activity_7d", 0)
+        blockers = detail.get("open_blocker_count", 0)
+        ms_done = detail.get("completed_milestone_count", 0)
+        ms_total = detail.get("milestone_count", 0)
+
+        lines = [f"## {title}"]
+        if pct is not None:
+            lines.append(f"Progress: {pct}%")
+        if ms_total > 0:
+            lines.append(f"Milestones: {ms_done}/{ms_total} completed")
+        lines.append(f"Activity this week: {a7}")
+        if blockers > 0:
+            lines.append(f"Open blockers: {blockers}")
+        if risk == "at_risk":
+            lines.append("Status: AT RISK — needs immediate attention")
+        elif risk == "attention":
+            lines.append("Status: Needs attention")
+        else:
+            lines.append("Status: On track")
+        return {"text": "\n".join(lines)}
+
+    def generate_project_review(self, project_id: str) -> dict:
+        """Generate a project review (template-based or LLM-enhanced)."""
+        detail = self.store.get_project_detail(project_id)
+        if detail is None:
+            return {}
+
+        milestones = self.store.list_milestones(project_id)
+        links = self.store.list_project_links(project_id=project_id, status="active")
+
+        # Build entity summaries
+        entity_summaries: list[str] = []
+        for lnk in links:
+            summary = self.store.resolve_entity_summary(lnk.entity_type, lnk.entity_id)
+            if summary:
+                entity_summaries.append(f"- [{lnk.entity_type}] {summary}")
+
+        # Build stats
+        pct = detail.get("completion_pct", "N/A")
+        ms_done = detail.get("completed_milestone_count", 0)
+        ms_total = detail.get("milestone_count", 0)
+        a7 = detail.get("activity_7d", 0)
+        a30 = detail.get("activity_30d", 0)
+        risk = detail.get("risk_status", "normal")
+        blockers = detail.get("open_blocker_count", 0)
+
+        # Build milestone list
+        ms_lines = []
+        for m in milestones:
+            d = m.to_dict() if hasattr(m, "to_dict") else m
+            status = "✓" if d.get("status") == "completed" else "○"
+            date = f" ({d.get('target_date', '')})" if d.get("target_date") else ""
+            ms_lines.append(f"- {status} {d.get('title', '')}{date}")
+
+        # Build context for LLM
+        context_parts = [
+            f"Title: {detail.get('title', '')}",
+            f"Status: {detail.get('status', '')}",
+            f"Description: {detail.get('description', '')}",
+            f"Completion: {pct}%",
+            f"Milestones: {ms_done}/{ms_total}",
+            f"Activity: {a7} (7d), {a30} (30d)",
+            f"Risk: {risk}, Blockers: {blockers}",
+            f"Target: {detail.get('target_date', 'none')}",
+            f"Started: {detail.get('start_date', 'unknown')}",
+            f"Completed: {detail.get('completed_at', 'N/A')}",
+        ]
+        if ms_lines:
+            context_parts.append("Milestones:\n" + "\n".join(ms_lines))
+        if entity_summaries:
+            context_parts.append("Linked entities:\n" + "\n".join(entity_summaries[:20]))
+
+        # Build template fallback
+        lines = [f"# Project Review: {detail.get('title', '')}", ""]
+        if detail.get("description"):
+            lines.extend([detail["description"], ""])
+        lines.extend([
+            f"- Status: {detail.get('status', '')}",
+            f"- Priority: {detail.get('priority', '')}",
+            f"- Start: {detail.get('start_date', '')}",
+            f"- Target: {detail.get('target_date', '')}",
+            "",
+            "## Milestones",
+        ])
+        lines.extend(ms_lines if ms_lines else ["- No milestones defined"])
+        lines.extend(["", "## Statistics"])
+        lines.extend([
+            f"- Completion: {pct}%",
+            f"- Milestones: {ms_done}/{ms_total}",
+            f"- Activity (7d): {a7}, (30d): {a30}",
+            f"- Risk: {risk}",
+        ])
+        template_content = "\n".join(lines)
+
+        # Save as report
+        from uuid import uuid4
+        from datetime import datetime, timezone
+        from solo.core.models import SoloReport
+        from solo.core.utils import _now
+
+        report = SoloReport(
+            id=str(uuid4()),
+            report_type="project_review",
+            content=template_content,
+            created_at=_now(),
+            period_start=detail.get("start_date") or detail.get("created_at", ""),
+            period_end=detail.get("completed_at") or _now(),
+            metadata={"project_id": project_id, "project_title": detail.get("title", "")},
+        )
+        self.store.add_report(report)
+
+        return {
+            "id": report.id,
+            "content": template_content,
+            "report_type": "project_review",
+            "context": "\n".join(context_parts),
+        }
+
+    async def generate_checkin_questions(self) -> list[dict]:
+        """Generate project checkin questions."""
+        return await generate_checkin_questions(
+            store=self.store, agent=None,
+            app_type=self._app_type,
+        )
+
+    def create_project_checkin(self, data: dict) -> dict:
+        from uuid import uuid4
+        checkin = ProjectCheckin(
+            id=str(uuid4()),
+            project_id=data.get("project_id", ""),
+            channel=data.get("channel", "onboard"),
+            question=data.get("question", ""),
+            status=data.get("status", "sent"),
+            response_record_id=data.get("response_record_id", ""),
+            created_at=datetime.now(timezone.utc).isoformat(),
+            responded_at=data.get("responded_at", ""),
+        )
+        self.store.create_project_checkin(checkin)
+        return checkin.to_dict()
+
+    def list_project_checkins(self, project_id: str, *, status: str | None = None, limit: int | None = 20) -> list[dict]:
+        checkins = self.store.list_project_checkins(project_id, status=status, limit=limit)
+        return [c.to_dict() for c in checkins]
+
+    def update_project_checkin(self, checkin_id: str, **fields) -> bool:
+        return self.store.update_project_checkin(checkin_id, **fields)
+
+    def _get_suggestion_or_none(self, suggestion_id):
+        suggestions = self.store.list_project_suggestions(limit=1000)
+        for s in suggestions:
+            if s.id == suggestion_id:
+                return s
+        return None

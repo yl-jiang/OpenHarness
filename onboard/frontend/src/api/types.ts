@@ -294,6 +294,119 @@ export interface ProjectLink {
   source: ProjectLinkSource;
   confidence: string;
   status: ProjectLinkStatus;
+  sort_order: number;
   created_at: string;
   updated_at: string;
+  entity_title?: string;
+}
+
+export type SuggestionType =
+  | "link_entity"
+  | "create_project"
+  | "complete_milestone"
+  | "create_milestone"
+  | "update_project"
+  | "archive_project"
+  | "reactivate_project"
+  | "merge_projects"
+  | "split_project"
+  | "ask_followup";
+
+export type SuggestionStatus = "pending" | "accepted" | "rejected" | "snoozed" | "expired";
+
+export interface ProjectSuggestion {
+  id: string;
+  suggestion_type: SuggestionType;
+  project_id: string;
+  title: string;
+  rationale: string;
+  proposed_payload_json: string;
+  evidence_json: string;
+  confidence: number;
+  status: SuggestionStatus;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectBrief {
+  at_risk: Project[];
+  attention: Project[];
+  pending_suggestion_count: number;
+  active_project_count: number;
+}
+
+export type SignalType = "progress" | "blocker" | "risk" | "decision" | "milestone_evidence" | "stale" | "momentum" | "scope_change";
+export type SignalSeverity = "info" | "warning" | "critical";
+
+export interface ProjectSignal {
+  id: string;
+  project_id: string;
+  signal_type: SignalType;
+  summary: string;
+  severity: SignalSeverity;
+  evidence_entity_type: string;
+  evidence_entity_id: string;
+  created_at: string;
+}
+
+export interface ProjectSnapshot {
+  id: string;
+  project_id: string;
+  snapshot_date: string;
+  summary: string;
+  health: ProjectRiskStatus;
+  completion_pct: number | null;
+  activity_7d: number;
+  open_blocker_count: number;
+  next_action: string;
+  created_at: string;
+}
+
+export interface ProjectCheckin {
+  id: string;
+  project_id: string;
+  channel: string;
+  question: string;
+  status: "sent" | "answered" | "dismissed";
+  response_record_id: string;
+  created_at: string;
+  responded_at: string;
+}
+
+export interface ProjectAnalysis {
+  signals: Omit<ProjectSignal, "id" | "created_at">[];
+  next_action: string;
+  summary: string;
+}
+
+export interface ProjectTemplate {
+  id: string;
+  label: string;
+  description: string;
+  priority: string;
+  tags: string;
+  milestones: string[];
+}
+
+export interface TimelineEvent {
+  date: string;
+  type: string;
+  title: string;
+  detail: string;
+}
+
+export interface ProjectAlias {
+  id: string;
+  project_id: string;
+  alias: string;
+  source: string;
+  created_at: string;
+}
+
+export interface GitCommit {
+  hash: string;
+  author: string;
+  date: string;
+  subject: string;
 }

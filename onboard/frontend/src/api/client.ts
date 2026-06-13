@@ -16,6 +16,16 @@ import type {
   Project,
   Milestone,
   ProjectLink,
+  ProjectSuggestion,
+  ProjectBrief,
+  ProjectSignal,
+  ProjectSnapshot,
+  ProjectCheckin,
+  ProjectAnalysis,
+  ProjectTemplate,
+  TimelineEvent,
+  ProjectAlias,
+  GitCommit,
 } from './types';
 
 type QueryValue = string | number | boolean | null | undefined;
@@ -147,6 +157,11 @@ export const api = {
       body: JSON.stringify({ limit: 20 }),
     }),
   config: (app: AppName) => request<Record<string, unknown>>(`/api/${app}/config`),
+  updateConfig: (app: AppName, updates: Record<string, unknown>) =>
+    request<Record<string, unknown>>(`/api/${app}/config`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+    }),
   gatewayStatus: (app: AppName) => request<GatewayStatus>(`/api/${app}/gateway/status`),
   gatewayStart: (app: AppName) =>
     request<GatewayStatus>(`/api/${app}/gateway/start`, { method: 'POST' }),
@@ -188,6 +203,8 @@ export const api = {
   },
 
   // ── Projects ──────────────────────────────────────────────────────
+  projectTemplates: (app: AppName) =>
+    request<ProjectTemplate[]>(`/api/${app}/project-templates`),
   projects: (app: AppName, params: Record<string, QueryValue> = {}) =>
     request<Project[]>(`/api/${app}/projects${query(params)}`),
   project: (app: AppName, id: string) =>
@@ -216,10 +233,61 @@ export const api = {
     request<ProjectLink[]>(`/api/${app}/projects/${projectId}/links`),
   createProjectLink: (app: AppName, projectId: string, data: Record<string, unknown>) =>
     request<ProjectLink>(`/api/${app}/projects/${projectId}/links`, { method: "POST", body: JSON.stringify(data) }),
+  reorderProjectLinks: (app: AppName, projectId: string, linkIds: string[]) =>
+    request<{ ok: boolean }>(`/api/${app}/projects/${projectId}/links/reorder`, { method: "PUT", body: JSON.stringify({ link_ids: linkIds }) }),
   deleteProjectLink: (app: AppName, linkId: string) =>
     request<{ deleted: boolean }>(`/api/${app}/project-links/${linkId}`, { method: "DELETE" }),
   acceptProjectLink: (app: AppName, linkId: string) =>
     request<{ ok: boolean }>(`/api/${app}/project-links/${linkId}/accept`, { method: "PUT" }),
   rejectProjectLink: (app: AppName, linkId: string) =>
     request<{ ok: boolean }>(`/api/${app}/project-links/${linkId}/reject`, { method: "PUT" }),
+
+  // ── Project Aliases ───────────────────────────────────────────────
+  projectAliases: (app: AppName, projectId: string) =>
+    request<ProjectAlias[]>(`/api/${app}/projects/${projectId}/aliases`),
+  createProjectAlias: (app: AppName, projectId: string, alias: string) =>
+    request<ProjectAlias>(`/api/${app}/projects/${projectId}/aliases`, { method: "POST", body: JSON.stringify({ alias }) }),
+  deleteProjectAlias: (app: AppName, aliasId: string) =>
+    request<{ deleted: boolean }>(`/api/${app}/project-aliases/${aliasId}`, { method: "DELETE" }),
+
+  // ── Git Context ───────────────────────────────────────────────────
+  gitContext: (app: AppName, projectId: string, repoPath: string, sinceDays: number = 7) =>
+    request<GitCommit[]>(`/api/${app}/projects/${projectId}/git-context`, {
+      method: "POST",
+      body: JSON.stringify({ repo_path: repoPath, since_days: sinceDays }),
+    }),
+
+  // ── Project Suggestions ──────────────────────────────────────────
+  projectSuggestions: (app: AppName, params: Record<string, QueryValue> = {}) =>
+    request<ProjectSuggestion[]>(`/api/${app}/project-suggestions${query(params)}`),
+  acceptProjectSuggestion: (app: AppName, suggestionId: string) =>
+    request<{ ok: boolean }>(`/api/${app}/project-suggestions/${suggestionId}/accept`, { method: "PUT" }),
+  rejectProjectSuggestion: (app: AppName, suggestionId: string) =>
+    request<{ ok: boolean }>(`/api/${app}/project-suggestions/${suggestionId}/reject`, { method: "PUT" }),
+  snoozeProjectSuggestion: (app: AppName, suggestionId: string) =>
+    request<{ ok: boolean }>(`/api/${app}/project-suggestions/${suggestionId}/snooze`, { method: "PUT" }),
+
+  // ── Project Discovery ────────────────────────────────────────────
+  scanProjects: (app: AppName) =>
+    request<{ created: number; candidates: unknown[] }>(`/api/${app}/projects/scan`, { method: "POST" }),
+  projectBrief: (app: AppName) =>
+    request<ProjectBrief>(`/api/${app}/projects/brief`),
+
+  // ── Project State Analysis ──────────────────────────────────────
+  projectTimeline: (app: AppName, projectId: string, limit: number = 50) =>
+    request<TimelineEvent[]>(`/api/${app}/projects/${projectId}/timeline${query({ limit })}`),
+  projectSignals: (app: AppName, projectId: string, limit: number = 50) =>
+    request<ProjectSignal[]>(`/api/${app}/projects/${projectId}/signals${query({ limit })}`),
+  projectSnapshots: (app: AppName, projectId: string, limit: number = 30) =>
+    request<ProjectSnapshot[]>(`/api/${app}/projects/${projectId}/snapshots${query({ limit })}`),
+  analyzeProjectState: (app: AppName, projectId: string) =>
+    request<ProjectAnalysis>(`/api/${app}/projects/${projectId}/analyze`, { method: "POST" }),
+  generateProjectSnapshot: (app: AppName, projectId: string) =>
+    request<ProjectSnapshot>(`/api/${app}/projects/${projectId}/snapshot`, { method: "POST" }),
+  generateStatusUpdate: (app: AppName, projectId: string) =>
+    request<{ text: string }>(`/api/${app}/projects/${projectId}/status-update`, { method: "POST" }),
+  reviewProject: (app: AppName, projectId: string) =>
+    request<{ id: string; content: string; report_type: string }>(`/api/${app}/projects/${projectId}/review`, { method: "POST" }),
+  projectCheckins: (app: AppName, params: Record<string, QueryValue> = {}) =>
+    request<ProjectCheckin[]>(`/api/${app}/project-checkins${query(params)}`),
 };

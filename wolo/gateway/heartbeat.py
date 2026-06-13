@@ -66,6 +66,7 @@ class HeartbeatSignals:
     stale_confirmations: list[str] = field(default_factory=list)
     overdue_todos: list[str] = field(default_factory=list)
     blockers: list[str] = field(default_factory=list)
+    at_risk_projects: list[str] = field(default_factory=list)
     system_health: list[str] = field(default_factory=list)
     heartbeat_tasks: str = ""
 
@@ -76,6 +77,7 @@ class HeartbeatSignals:
             self.stale_confirmations
             or self.overdue_todos
             or self.blockers
+            or self.at_risk_projects
         )
 
     @property
@@ -96,6 +98,8 @@ class HeartbeatSignals:
             items.append(("overdue_todo", msg))
         for msg in self.blockers:
             items.append(("blocker", msg))
+        for msg in self.at_risk_projects:
+            items.append(("at_risk_project", msg))
         return items
 
 
@@ -354,14 +358,29 @@ class WoloHeartbeatService:
             if len(signals.blockers) >= 5:
                 break
 
-        # 4. System-health signals: kept out of the user notification path.
+        # 4. At-risk / stale active projects
+        for p in store.list_projects(status="active"):
+            detail = store.get_project_detail(p.id)
+            if detail is None:
+                continue
+            risk = detail.get("risk_status", "normal")
+            if risk in ("at_risk", "attention"):
+                pct = detail.get("completion_pct")
+                pct_str = f" ({pct}%)" if pct is not None else ""
+                signals.at_risk_projects.append(
+                    f"{p.title}{pct_str} — {risk}"
+                )
+                if len(signals.at_risk_projects) >= 3:
+                    break
+
+        # 5. System-health signals: kept out of the user notification path.
         #    They surface via CLI / dashboard (`wolo heartbeat status`) only.
         for name in self._check_failed_cron_jobs():
             signals.system_health.append(f"failed_cron:{name}")
         if self._check_scheduler_down():
             signals.system_health.append("scheduler_down")
 
-        # 5. HEARTBEAT.md tasks (optional power-user file)
+        # 6. HEARTBEAT.md tasks (optional power-user file)
         signals.heartbeat_tasks = self._read_heartbeat_tasks()
 
         return signals
@@ -488,6 +507,8 @@ class WoloHeartbeatService:
                 label = "待确认记录（>24h）"
             elif kind == "blocker":
                 label = "活跃 Blocker"
+            elif kind == "at_risk_project":
+                label = "项目风险提醒"
             else:
                 label = kind
             parts.append(f"【{label}】\n- {msg}")

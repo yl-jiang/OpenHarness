@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 from uuid import uuid4
 
 from openharness.utils.log import get_logger
@@ -19,7 +20,16 @@ from common.constants import (
 from wolo.agent import OpenHarnessWoloAgent
 from wolo.strings import MISSING_DAY_REMINDER_TMPL, PENDING_REMINDER_TMPL
 from wolo.core.artifacts import persist_work_artifacts
-from wolo.core.models import PendingConfirmation, ProcessResult, ProfileUpdate, WoloEntry, WoloRecord, WoloReport
+from wolo.core.models import (
+    PendingConfirmation,
+    ProcessResult,
+    ProfileUpdate,
+    ProjectLink,
+    ProjectSuggestion,
+    WoloEntry,
+    WoloRecord,
+    WoloReport,
+)
 from wolo.core.store import WoloStore
 from wolo.core.utils import (
     _get_holiday,
@@ -314,6 +324,93 @@ class WoloProcessor:
             if isinstance(update, dict) and str(update.get("confidence") or "").lower() != "low":
                 self.store.add_profile_update(self._profile_update(record.id, update))
 
+        # Phase 1: auto-link record to projects
+        await self._link_record_to_projects(record, artifacts)
+
+    async def _link_record_to_projects(
+        self,
+        record: WoloRecord,
+        artifacts: dict[str, object],
+    ) -> None:
+        """Deterministic auto-linking: match record to existing projects.
+
+        Called after artifacts are persisted.  Uses the ``project`` string
+        from wolo artifacts (todos, decisions, highlights, experiments).
+        """
+        from common.project_ai.matcher import match_record
+
+        projects = self.store.list_projects(status="active")
+        if not projects:
+            return
+
+        project_dicts = [p.to_dict() for p in projects]
+        aliases_by_project: dict[str, list[str]] = {}
+        for p in projects:
+            aliases = self.store.list_project_aliases(p.id)
+            aliases_by_project[p.id] = [a.alias for a in aliases]
+
+        # Wolo: collect project strings from all artifact types
+        artifact_projects: list[str] = []
+        for key in ("todos", "decisions", "highlights", "experiments"):
+            for item in (artifacts.get(key) or []):
+                if isinstance(item, dict):
+                    proj = str(item.get("project") or "")
+                    if proj:
+                        artifact_projects.append(proj)
+
+        try:
+            result = await match_record(
+                record_id=record.id,
+                record_content=record.raw_content or "",
+                record_summary=record.summary or "",
+                artifact_projects=artifact_projects,
+                projects=project_dicts,
+                aliases_by_project=aliases_by_project,
+                agent=None,
+            )
+        except Exception:
+            logger.warning("project linking failed record_id=%s", record.id, exc_info=True)
+            return
+
+        now = _now()
+
+        for candidate in result.auto_links:
+            try:
+                link = ProjectLink(
+                    id=str(uuid4()),
+                    project_id=candidate.project_id,
+                    entity_type="record",
+                    entity_id=record.id,
+                    source="ai_high_confidence",
+                    confidence="high",
+                    status="active",
+                    created_at=now,
+                    updated_at=now,
+                )
+                self.store.create_project_link(link)
+            except Exception:
+                logger.debug("duplicate auto-link skipped project=%s record=%s", candidate.project_id, record.id)
+
+        for candidate in result.suggestions:
+            suggestion = ProjectSuggestion(
+                id=str(uuid4()),
+                suggestion_type="link_entity",
+                project_id=candidate.project_id,
+                title=f"关联记录到「{candidate.project_title}」",
+                rationale=candidate.rationale,
+                proposed_payload_json=json.dumps({
+                    "entity_type": "record",
+                    "entity_id": record.id,
+                }),
+                evidence_json=json.dumps(candidate.evidence),
+                confidence=candidate.confidence,
+                status="pending",
+                source="ai",
+                created_at=now,
+                updated_at=now,
+            )
+            self.store.create_project_suggestion(suggestion)
+
     async def generate_report(
         self,
         report_type: str,
@@ -352,6 +449,9 @@ class WoloProcessor:
             artifacts_context = self._work_artifacts_context()
             if artifacts_context:
                 context = f"{context}\n\n{artifacts_context}"
+            project_ctx = self._project_context()
+            if project_ctx:
+                context = f"{context}\n\n{project_ctx}"
             content = await self.agent.generate_report(
                 report_type, records_dicts, context, stats_summary=stats_summary,
             )
@@ -522,6 +622,30 @@ class WoloProcessor:
                 )
             )
         return "## Work Artifacts\n\n### Work Iteration Artifacts\n\n" + "\n\n".join(sections) if sections else ""
+
+    def _project_context(self) -> str:
+        """Build a project summary section for report context."""
+        projects = self.store.list_projects(status="active")
+        if not projects:
+            return ""
+        lines: list[str] = ["## Active Projects\n"]
+        for p in projects:
+            detail = self.store.get_project_detail(p.id)
+            if detail is None:
+                continue
+            pct = detail.get("completion_pct", "N/A")
+            risk = detail.get("risk_status", "normal")
+            a7 = detail.get("activity_7d", 0)
+            ms = f"{detail.get('completed_milestone_count', 0)}/{detail.get('milestone_count', 0)}"
+            blockers = detail.get("open_blocker_count", 0)
+            line = (
+                f"- **{p.title}**: {pct}% done, {ms} milestones, "
+                f"risk={risk}, activity_7d={a7}"
+            )
+            if blockers > 0:
+                line += f", blockers={blockers}"
+            lines.append(line)
+        return "\n".join(lines) if len(lines) > 1 else ""
 
     def _profile_context(self, target_date: str | None = None) -> str:
         from wolo.core.memory import load_memory_prompt

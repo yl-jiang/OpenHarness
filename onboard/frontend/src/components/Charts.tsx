@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import {
   Area,
@@ -17,7 +17,7 @@ import {
 
 import type { CountPoint, EmotionPoint, ModelCallDailyPoint, ModelTokenDailyPoint, TagPoint } from '../api/types';
 
-const palette = ['#d4a574', '#5eead4', '#a78bfa', '#fbbf24', '#f87171', '#34d399'];
+const palette = ['#b8956a', '#6a9e8e', '#8b7db8', '#c4a35a', '#b87070', '#6a8a9e'];
 
 const tooltipStyle = {
   background: '#1c1c21',
@@ -30,7 +30,7 @@ const tooltipStyle = {
 
 const tooltipLabelStyle = { color: '#a1a1aa' };
 const tooltipItemStyle = { color: '#e4e4e7' };
-const tokenPalette = [
+export const tokenPalette = [
   { input: '#60a5fa', output: '#93c5fd' },
   { input: '#f59e0b', output: '#fcd34d' },
   { input: '#34d399', output: '#86efac' },
@@ -76,6 +76,10 @@ export function formatTokenAmount(value: number): string {
 function formatLocalDateKey(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+function todayStr(): string {
+  return formatLocalDateKey(new Date());
 }
 
 function buildDateRange(startDate: string, endDate: string): string[] {
@@ -188,17 +192,36 @@ export function DailyLineChart({ data }: { data: CountPoint[] }) {
 }
 
 export function EmotionPieChart({ data }: { data: EmotionPoint[] }) {
+  if (!data.length) {
+    return <div className="text-[12px] text-text-muted py-4 text-center">No data yet</div>;
+  }
+  const total = data.reduce((sum, d) => sum + d.count, 0);
   return (
-    <ResponsiveContainer width="100%" height={200}>
-      <PieChart>
-        <Pie data={data} dataKey="count" nameKey="emotion" outerRadius={72} innerRadius={40} strokeWidth={0}>
-          {data.map((item, index) => (
-            <Cell key={item.emotion} fill={palette[index % palette.length]} />
-          ))}
-        </Pie>
-        <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-      </PieChart>
-    </ResponsiveContainer>
+    <div className="relative flex-1 min-h-0">
+      <div className="absolute inset-0 bottom-12">
+        <ResponsiveContainer width="100%" height="100%">
+          <PieChart>
+            <Pie data={data} dataKey="count" nameKey="emotion" outerRadius="85%" innerRadius="48%" strokeWidth={0}>
+              {data.map((item, index) => (
+                <Cell key={item.emotion} fill={palette[index % palette.length]} />
+              ))}
+            </Pie>
+            <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="absolute bottom-0 left-0 right-0 flex flex-wrap justify-center gap-x-5 gap-y-2 py-1">
+        {data.map((item, index) => (
+          <div key={item.emotion} className="flex items-center gap-1.5 text-[12px]">
+            <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: palette[index % palette.length] }} />
+            <span className="text-text-secondary">{item.emotion}</span>
+            <span className="text-text-muted tabular-nums">
+              {total > 0 ? Math.round((item.count / total) * 100) : 0}%
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -242,16 +265,59 @@ export function EmotionBarList({ data }: { data: EmotionPoint[] }) {
 }
 
 export function TagBarChart({ data }: { data: TagPoint[] }) {
+  const sorted = [...data].sort((a, b) => b.count - a.count).slice(0, 30);
+  const chartH = sorted.length * 28 + 24;
+  const [activeTag, setActiveTag] = useState<string | null>(null);
+
+  const handleMouseMove = useCallback((state: any) => {
+    if (state?.activeLabel != null) {
+      setActiveTag(String(state.activeLabel));
+    }
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    setActiveTag(null);
+  }, []);
+
+  const renderTick = useCallback(
+    (props: any) => {
+      const { x, y, payload } = props;
+      const isActive = payload?.value === activeTag;
+      return (
+        <text
+          x={x}
+          y={y}
+          dy={4}
+          textAnchor="end"
+          fill={isActive ? '#e4e4e7' : '#63636e'}
+          fontWeight={isActive ? 600 : 400}
+          fontSize={11}
+        >
+          {payload.value}
+        </text>
+      );
+    },
+    [activeTag],
+  );
+
   return (
-    <ResponsiveContainer width="100%" height={220}>
-      <BarChart data={data.slice(0, 12)}>
-        <CartesianGrid stroke="#1f1f24" strokeDasharray="2 4" />
-        <XAxis dataKey="tag" stroke="#63636e" tick={{ fontSize: 11 }} />
-        <YAxis stroke="#63636e" tick={{ fontSize: 11 }} allowDecimals={false} width={30} />
-        <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-        <Bar dataKey="count" fill="#5eead4" radius={[3, 3, 0, 0]} barSize={20} />
-      </BarChart>
-    </ResponsiveContainer>
+    <div className="overflow-y-auto pr-1" style={{ maxHeight: 380 }}>
+      <ResponsiveContainer width="100%" height={Math.max(chartH, 120)}>
+        <BarChart
+          data={sorted}
+          layout="vertical"
+          margin={{ top: 0, right: 8, bottom: 0, left: 0 }}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+        >
+          <CartesianGrid stroke="#1f1f24" strokeDasharray="2 4" horizontal={false} />
+          <XAxis type="number" stroke="#63636e" tick={{ fontSize: 11 }} allowDecimals={false} />
+          <YAxis type="category" dataKey="tag" stroke="#63636e" tick={renderTick} width={90} />
+          <Tooltip cursor={false} contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
+          <Bar dataKey="count" fill={palette[0]} radius={[0, 3, 3, 0]} barSize={18} activeBar={false} />
+        </BarChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
@@ -266,6 +332,7 @@ export function ModelTokenUsageChart({
 }) {
   const models = Array.from(new Set(data.map((item) => item.model))).sort();
   const visibleEndDate = endDate || startDate;
+  const today = todayStr();
   const byDateAndModel = new Map(data.map((item) => [`${item.date}:${item.model}`, item] as const));
   const allDates = buildDateRange(startDate, visibleEndDate);
   const series = models.map((model, index) => ({
@@ -275,10 +342,11 @@ export function ModelTokenUsageChart({
 
   const chartData = allDates.map((date) => {
     const row: Record<string, number | string | null> = { date };
+    const isFuture = date > today;
     models.forEach((model) => {
       const point = byDateAndModel.get(`${date}:${model}`);
-      row[inputKey(model)] = point?.input_tokens ?? 0;
-      row[outputKey(model)] = point?.output_tokens ?? 0;
+      row[inputKey(model)] = isFuture ? null : (point?.input_tokens ?? 0);
+      row[outputKey(model)] = isFuture ? null : (point?.output_tokens ?? 0);
     });
     return row;
   });
@@ -426,6 +494,7 @@ export function ModelCallUsageChart({
 }) {
   const models = Array.from(new Set(data.map((item) => item.model))).sort();
   const visibleEndDate = endDate || startDate;
+  const today = todayStr();
   const byDateAndModel = new Map(data.map((item) => [`${item.date}:${item.model}`, item] as const));
   const allDates = buildDateRange(startDate, visibleEndDate);
   const series = models.map((model, index) => ({
@@ -435,9 +504,10 @@ export function ModelCallUsageChart({
 
   const chartData = allDates.map((date) => {
     const row: Record<string, number | string | null> = { date };
+    const isFuture = date > today;
     models.forEach((model) => {
       const point = byDateAndModel.get(`${date}:${model}`);
-      row[callCountKey(model)] = point?.count ?? 0;
+      row[callCountKey(model)] = isFuture ? null : (point?.count ?? 0);
     });
     return row;
   });
@@ -612,22 +682,22 @@ export function ActivityHeatmap({ data }: { data: CountPoint[] }) {
 
   return (
     <div className="select-none">
-      <div className="flex items-center justify-between mb-2 px-0.5">
+      <div className="flex items-center justify-between mb-3 px-0.5">
         <div className="flex items-center gap-1">
           <button
             onClick={() => navigate(-1)}
-            className="w-6 h-6 rounded flex items-center justify-center text-text-muted hover:bg-surface-2 hover:text-text transition-colors text-sm"
+            className="w-7 h-7 rounded flex items-center justify-center text-text-muted hover:bg-surface-2 hover:text-text transition-colors text-sm"
           >
             ‹
           </button>
           <button
             onClick={() => navigate(1)}
-            className="w-6 h-6 rounded flex items-center justify-center text-text-muted hover:bg-surface-2 hover:text-text transition-colors text-sm"
+            className="w-7 h-7 rounded flex items-center justify-center text-text-muted hover:bg-surface-2 hover:text-text transition-colors text-sm"
           >
             ›
           </button>
         </div>
-        <span className="text-[12px] font-medium text-text">{monthLabel}</span>
+        <span className="text-[13px] font-medium text-text">{monthLabel}</span>
         {isCurrentMonth ? (
           <span className="w-10" />
         ) : (
@@ -641,7 +711,7 @@ export function ActivityHeatmap({ data }: { data: CountPoint[] }) {
       </div>
       <div className="grid grid-cols-7 text-center">
         {weekdayLabels.map((label, i) => (
-          <div key={i} className="text-[10px] text-text-muted py-1 font-medium">{label}</div>
+          <div key={i} className="text-[11px] text-text-muted py-1.5 font-medium">{label}</div>
         ))}
         {cells.map((day, i) => {
           if (day === null) return <div key={`e${i}`} />;
@@ -652,18 +722,18 @@ export function ActivityHeatmap({ data }: { data: CountPoint[] }) {
           return (
             <div
               key={`d${day}`}
-              className="flex flex-col items-center py-[2px]"
+              className="flex flex-col items-center py-1"
               title={`${dateKey}: ${count} ${count === 1 ? 'entry' : 'entries'}`}
             >
               <span
-                className={`w-[26px] h-[26px] flex items-center justify-center rounded-full text-[11px] leading-none
+                className={`w-[clamp(28px,4vw,42px)] h-[clamp(28px,4vw,42px)] flex items-center justify-center rounded-full text-[13px] leading-none
                   ${isToday ? 'bg-red-500 text-white font-semibold' : 'text-text'}`}
               >
                 {day}
               </span>
-              <div className="flex gap-[2px] h-[5px] mt-[1px]">
+              <div className="flex gap-[3px] h-[6px] mt-1">
                 {Array.from({ length: dots }).map((_, j) => (
-                  <span key={j} className="w-[3px] h-[3px] rounded-full bg-accent-solo" />
+                  <span key={j} className="w-[4px] h-[4px] rounded-full bg-accent-solo" />
                 ))}
               </div>
             </div>

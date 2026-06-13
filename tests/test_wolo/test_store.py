@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -10,7 +11,11 @@ from wolo.core.models import (
     Milestone,
     Project,
     ProjectAlias,
+    ProjectCheckin,
     ProjectLink,
+    ProjectSignal,
+    ProjectSnapshot,
+    ProjectSuggestion,
     WoloTodo,
 )
 from wolo.core.store import WoloStore
@@ -426,7 +431,7 @@ def test_completion_milestone_based(store: WoloStore) -> None:
     assert detail["milestone_count"] == 3
     assert detail["completed_milestone_count"] == 1
     assert detail["completion_source"] == "milestones"
-    assert abs(detail["completion_pct"] - 1 / 3) < 0.01
+    assert detail["completion_pct"] == 33
 
 
 def test_completion_todo_based(store: WoloStore) -> None:
@@ -452,7 +457,7 @@ def test_completion_todo_based(store: WoloStore) -> None:
     assert detail["linked_todo_count"] == 4
     assert detail["completed_linked_todo_count"] == 1
     assert detail["completion_source"] == "todos"
-    assert abs(detail["completion_pct"] - 0.25) < 0.01
+    assert detail["completion_pct"] == 25
 
 
 def test_completion_none_no_data(store: WoloStore) -> None:
@@ -477,7 +482,7 @@ def test_completion_milestones_preferred_over_todos(store: WoloStore) -> None:
     detail = store.get_project_detail("p1")
     assert detail is not None
     assert detail["completion_source"] == "milestones"
-    assert detail["completion_pct"] == 1.0
+    assert detail["completion_pct"] == 100
 
 
 # ---- Risk calculation ----
@@ -611,3 +616,206 @@ def test_project_alias_to_dict() -> None:
     d = pa.to_dict()
     assert d["alias"] == "x"
     assert d["source"] == "user"
+
+
+# ---- status="all" filter ----
+
+def test_list_projects_status_all(store: WoloStore) -> None:
+    store.initialize()
+    store.create_project(Project(id="p1", title="Active", status="active"))
+    store.create_project(Project(id="p2", title="Done", status="completed"))
+    store.create_project(Project(id="p3", title="Old", status="archived"))
+    result = store.list_projects(status="all")
+    assert len(result) == 3
+
+
+# ---- resolve_entity_summary ----
+
+def test_resolve_entity_summary(store: WoloStore) -> None:
+    store.initialize()
+    # Record
+    store._db.execute(
+        "INSERT INTO records (id, entry_id, date, raw_content, corrected_content, summary, tags, emotion) "
+        "VALUES ('r1', 'e1', '2026-01-01', 'raw', 'corrected', 'A summary', '', '')"
+    )
+    store._db.commit()
+    assert store.resolve_entity_summary("record", "r1") == "A summary"
+    # Todo
+    store.add_todo(WoloTodo(id="t1", record_id="r1", title="Fix bug", created_at="2026-01-01T00:00:00"))
+    assert store.resolve_entity_summary("todo", "t1") == "Fix bug"
+    # Decision
+    store._db.execute(
+        "INSERT INTO decisions (id, record_id, title) VALUES ('d1', 'r1', 'Use React')"
+    )
+    store._db.commit()
+    assert store.resolve_entity_summary("decision", "d1") == "Use React"
+    # Highlight with kind
+    store._db.execute(
+        "INSERT INTO highlights (id, record_id, kind, title) VALUES ('h1', 'r1', 'blocker', 'API blocked')"
+    )
+    store._db.commit()
+    assert store.resolve_entity_summary("highlight", "h1") == "API blocked [blocker]"
+    # Nonexistent
+    assert store.resolve_entity_summary("record", "nonexistent") == ""
+
+
+# ---- completion_pct is integer ----
+
+def test_completion_pct_is_integer(store: WoloStore) -> None:
+    store.initialize()
+    store.create_project(Project(id="p1", title="P"))
+    store.create_milestone(Milestone(id="m1", project_id="p1", title="M1", status="completed"))
+    store.create_milestone(Milestone(id="m2", project_id="p1", title="M2", status="pending"))
+    store.create_milestone(Milestone(id="m3", project_id="p1", title="M3", status="pending"))
+    detail = store.get_project_detail("p1")
+    assert detail is not None
+    assert isinstance(detail["completion_pct"], int)
+
+
+# ---- ProjectSuggestion CRUD (Phase 1) ----
+
+def test_create_and_list_suggestion(store: WoloStore) -> None:
+    store.initialize()
+    sid = str(uuid4())
+    suggestion = ProjectSuggestion(
+        id=sid,
+        suggestion_type="link_entity",
+        project_id="p1",
+        title="Test suggestion",
+        rationale="Record mentions project",
+        confidence=0.75,
+    )
+    store.create_project_suggestion(suggestion)
+    results = store.list_project_suggestions()
+    assert len(results) == 1
+    assert results[0].id == sid
+    assert results[0].suggestion_type == "link_entity"
+    assert results[0].title == "Test suggestion"
+    assert results[0].confidence == 0.75
+    assert results[0].status == "pending"
+
+
+def test_accept_suggestion(store: WoloStore) -> None:
+    store.initialize()
+    sid = str(uuid4())
+    store.create_project_suggestion(
+        ProjectSuggestion(id=sid, suggestion_type="link_entity", title="Suggest")
+    )
+    assert store.accept_project_suggestion(sid)
+    results = store.list_project_suggestions()
+    assert len(results) == 1
+    assert results[0].status == "accepted"
+
+
+def test_reject_suggestion(store: WoloStore) -> None:
+    store.initialize()
+    sid = str(uuid4())
+    store.create_project_suggestion(
+        ProjectSuggestion(id=sid, suggestion_type="link_entity", title="Suggest")
+    )
+    assert store.reject_project_suggestion(sid)
+    results = store.list_project_suggestions()
+    assert len(results) == 1
+    assert results[0].status == "rejected"
+
+
+def test_snooze_suggestion(store: WoloStore) -> None:
+    store.initialize()
+    sid = str(uuid4())
+    store.create_project_suggestion(
+        ProjectSuggestion(id=sid, suggestion_type="link_entity", title="Suggest")
+    )
+    assert store.snooze_project_suggestion(sid)
+    results = store.list_project_suggestions()
+    assert len(results) == 1
+    assert results[0].status == "snoozed"
+
+
+def test_filter_suggestions_by_status(store: WoloStore) -> None:
+    store.initialize()
+    sid1 = str(uuid4())
+    sid2 = str(uuid4())
+    store.create_project_suggestion(
+        ProjectSuggestion(id=sid1, suggestion_type="link_entity", title="Pending one")
+    )
+    store.create_project_suggestion(
+        ProjectSuggestion(id=sid2, suggestion_type="link_entity", title="Accepted one")
+    )
+    store.accept_project_suggestion(sid2)
+
+    pending = store.list_project_suggestions(status="pending")
+    assert len(pending) == 1
+    assert pending[0].id == sid1
+
+    accepted = store.list_project_suggestions(status="accepted")
+    assert len(accepted) == 1
+    assert accepted[0].id == sid2
+
+
+# ---- Phase 3: Signals, Snapshots, Checkins CRUD ----
+
+
+def test_create_and_list_signals(store: WoloStore) -> None:
+    store.initialize()
+    store.create_project(Project(id="p1", title="Test", status="active"))
+    sig = ProjectSignal(
+        id="s1", project_id="p1", signal_type="risk",
+        summary="Overdue target", severity="critical",
+        created_at="2026-06-12T00:00:00+00:00",
+    )
+    store.create_project_signal(sig)
+    signals = store.list_project_signals("p1")
+    assert len(signals) == 1
+    assert signals[0].signal_type == "risk"
+
+
+def test_delete_signal(store: WoloStore) -> None:
+    store.initialize()
+    store.create_project(Project(id="p1", title="Test", status="active"))
+    sig = ProjectSignal(id="s1", project_id="p1", signal_type="progress", summary="OK", created_at="")
+    store.create_project_signal(sig)
+    assert store.delete_project_signal("s1")
+    assert store.list_project_signals("p1") == []
+
+
+def test_create_and_list_snapshots(store: WoloStore) -> None:
+    store.initialize()
+    store.create_project(Project(id="p1", title="Test", status="active"))
+    snap = ProjectSnapshot(
+        id="sn1", project_id="p1", snapshot_date="2026-06-12",
+        summary="On track", health="normal", completion_pct=50,
+        activity_7d=3, next_action="Continue work",
+        created_at="2026-06-12T00:00:00+00:00",
+    )
+    store.create_project_snapshot(snap)
+    snapshots = store.list_project_snapshots("p1")
+    assert len(snapshots) == 1
+    latest = store.get_latest_project_snapshot("p1")
+    assert latest is not None
+    assert latest.health == "normal"
+
+
+def test_create_and_list_checkins(store: WoloStore) -> None:
+    store.initialize()
+    store.create_project(Project(id="p1", title="Test", status="active"))
+    ci = ProjectCheckin(
+        id="c1", project_id="p1", question="Any progress?",
+        status="sent", created_at="2026-06-12T00:00:00+00:00",
+    )
+    store.create_project_checkin(ci)
+    checkins = store.list_project_checkins("p1")
+    assert len(checkins) == 1
+    assert checkins[0].question == "Any progress?"
+
+
+def test_update_checkin(store: WoloStore) -> None:
+    store.initialize()
+    store.create_project(Project(id="p1", title="Test", status="active"))
+    ci = ProjectCheckin(
+        id="c1", project_id="p1", question="Status?",
+        status="sent", created_at="2026-06-12T00:00:00+00:00",
+    )
+    store.create_project_checkin(ci)
+    assert store.update_project_checkin("c1", status="answered", responded_at="2026-06-12T12:00:00+00:00")
+    checkins = store.list_project_checkins("p1", status="answered")
+    assert len(checkins) == 1

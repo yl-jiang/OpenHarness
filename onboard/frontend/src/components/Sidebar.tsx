@@ -9,9 +9,9 @@ const commonItems = [
   ['/records', '◈', 'Records'],
   ['/todos', '☐', 'Todos'],
   ['/projects', '▦', 'Projects'],
+  ['/projects/inbox', '⊡', 'Inbox'],
   ['/reports', '▤', 'Reports'],
   ['/feeds', '◎', 'Feed Digests'],
-  ['/stats', '⊿', 'Stats'],
   ['/search', '⌕', 'Search'],
   ['/chat', '⊙', 'Chat'],
 ] as const;

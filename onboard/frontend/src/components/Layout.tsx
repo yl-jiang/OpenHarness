@@ -16,6 +16,7 @@ export function Layout({ appName, gatewayStatus, onAppChange }: LayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const isFullBleed = location.pathname === '/chat';
+  const isDashboard = location.pathname === '/';
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   return (
@@ -66,7 +67,7 @@ export function Layout({ appName, gatewayStatus, onAppChange }: LayoutProps) {
           <SearchBar onSearch={(value) => navigate(`/search?q=${encodeURIComponent(value)}`)} globalShortcut />
           <StatusBadge status={gatewayStatus} />
         </header>
-        <section id="main-content" className={`flex-1 w-full content-area ${isFullBleed ? '' : 'max-w-[1320px] mx-auto px-4 sm:px-8 py-6'}`}>
+        <section id="main-content" className={`flex-1 w-full content-area ${isFullBleed ? '' : isDashboard ? 'px-4 sm:px-8 py-6' : 'max-w-[1320px] mx-auto px-4 sm:px-8 py-6'}`}>
           <Outlet />
         </section>
       </main>
