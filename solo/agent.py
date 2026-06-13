@@ -146,6 +146,10 @@ class OpenHarnessSoloAgent:
         result = _safe_parse_json(content)
         return _normalize_artifacts(result)
 
+    async def run_prompt(self, system_prompt: str, user_prompt: str) -> str:
+        """Public interface for single-turn LLM completion (used by project discovery)."""
+        return await self._complete(system_prompt=system_prompt, user_prompt=user_prompt)
+
     async def _complete(self, *, system_prompt: str, user_prompt: str, max_tokens: int | None = None) -> str:
         request = ApiMessageRequest(
             model=self._settings.model,

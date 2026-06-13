@@ -646,7 +646,12 @@ class WoloService:
         from uuid import uuid4
         import json
 
-        candidates = await scan_for_projects(store=self.store, agent=None)
+        config = load_config(self.workspace)
+        agent = OpenHarnessWoloAgent(
+            profile=config.provider_profile,
+            record_model_call=self.store.record_llm_call,
+        )
+        candidates = await scan_for_projects(store=self.store, agent=agent)
         created = 0
         now = _now()
         for c in candidates:
