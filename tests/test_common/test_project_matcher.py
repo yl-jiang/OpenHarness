@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
-from common.project_ai.discovery import _deterministic_discover, scan_for_projects
+from common.project_ai.discovery import _deterministic_discover, _llm_discover, scan_for_projects
 from common.project_ai.matcher import match_record
 from common.project_ai.types import (
     CONFIDENCE_AUTO_LINK,
@@ -216,11 +217,12 @@ class _MockAlias:
 
 
 class MockDiscoveryStore:
-    def __init__(self, records, projects=None, aliases=None, todos=None):
+    def __init__(self, records, projects=None, aliases=None, todos=None, suggestions=None):
         self._records = records
         self._projects = projects or []
         self._aliases = aliases or {}
         self._todos = todos or []
+        self._suggestions = suggestions or []
 
     def list_records(self, **kwargs):
         return self._records
@@ -234,6 +236,9 @@ class MockDiscoveryStore:
     def list_todos(self, **kwargs):
         return self._todos
 
+    def list_project_suggestions(self, **kwargs):
+        return self._suggestions
+
 
 # ---------------------------------------------------------------------------
 # TestDeterministicDiscovery
@@ -242,11 +247,10 @@ class MockDiscoveryStore:
 class TestDeterministicDiscovery:
 
     def test_discover_from_recurring_tags(self) -> None:
-        """3+ records sharing the same tag -> produces a create_project candidate."""
+        """15+ records sharing the same tag across 3+ dates -> produces a create_project candidate."""
         records = [
-            {"id": "r1", "summary": "note 1", "tags": "machine-learning,python", "date": "2026-01-01"},
-            {"id": "r2", "summary": "note 2", "tags": "machine-learning,data", "date": "2026-01-02"},
-            {"id": "r3", "summary": "note 3", "tags": "machine-learning,experiments", "date": "2026-01-03"},
+            {"id": f"r{i}", "summary": f"note {i}", "tags": "machine-learning,python", "date": f"2026-01-{i:02d}"}
+            for i in range(1, 17)  # 16 records, 16 distinct dates
         ]
         candidates = _deterministic_discover(
             records=records,
@@ -257,20 +261,18 @@ class TestDeterministicDiscovery:
         assert "machine-learning" in titles
         ml = next(c for c in candidates if c["title"].lower() == "machine-learning")
         assert ml["suggestion_type"] == "create_project"
-        assert ml["confidence"] >= CONFIDENCE_SUGGEST
+        assert ml["confidence"] >= 0.70
         assert len(ml["evidence"]) >= 1
 
     def test_discover_from_artifact_projects(self) -> None:
-        """Same project string in 3+ artifact_projects -> produces a candidate."""
+        """Same project string in 15+ artifact_projects across 3+ dates -> produces a candidate."""
         records = [
-            {"id": "r1", "summary": "a", "tags": "", "date": "2026-01-01"},
-            {"id": "r2", "summary": "b", "tags": "", "date": "2026-01-02"},
-            {"id": "r3", "summary": "c", "tags": "", "date": "2026-01-03"},
+            {"id": f"r{i}", "summary": "a", "tags": "", "date": f"2026-01-{i:02d}"}
+            for i in range(1, 17)
         ]
         artifacts = [
-            {"project": "infra-upgrade", "record_id": "r1"},
-            {"project": "infra-upgrade", "record_id": "r2"},
-            {"project": "infra-upgrade", "record_id": "r3"},
+            {"project": "infra-upgrade", "record_id": f"r{i}", "date": f"2026-01-{i:02d}"}
+            for i in range(1, 17)  # 16 artifacts across 16 dates
         ]
         candidates = _deterministic_discover(
             records=records,
@@ -281,11 +283,10 @@ class TestDeterministicDiscovery:
         assert "infra-upgrade" in titles_lower or "infra upgrade" in titles_lower
 
     def test_discover_skips_existing_projects(self) -> None:
-        """Tag matching an existing project title is skipped."""
+        """Tag matching an existing project title is skipped even with enough occurrences."""
         records = [
-            {"id": "r1", "summary": "a", "tags": "website", "date": "2026-01-01"},
-            {"id": "r2", "summary": "b", "tags": "website", "date": "2026-01-02"},
-            {"id": "r3", "summary": "c", "tags": "website", "date": "2026-01-03"},
+            {"id": f"r{i}", "summary": "a", "tags": "website", "date": f"2026-01-{i:02d}"}
+            for i in range(1, 17)  # 16 records
         ]
         candidates = _deterministic_discover(
             records=records,
@@ -294,6 +295,32 @@ class TestDeterministicDiscovery:
         )
         titles_lower = {c["title"].lower() for c in candidates}
         assert "website" not in titles_lower
+
+    def test_discover_requires_minimum_occurrences(self) -> None:
+        """Tags with fewer than 15 occurrences are not suggested (high threshold for LLM-less path)."""
+        records = [
+            {"id": f"r{i}", "summary": "a", "tags": "rare-topic", "date": f"2026-01-{i:02d}"}
+            for i in range(1, 11)  # 10 records — below threshold of 15
+        ]
+        candidates = _deterministic_discover(
+            records=records,
+            artifact_projects=[],
+            existing_names=set(),
+        )
+        assert candidates == []
+
+    def test_discover_requires_multi_date_span(self) -> None:
+        """Tags appearing many times but on fewer than 3 dates are not suggested."""
+        records = [
+            {"id": f"r{i}", "summary": "a", "tags": "clustered-topic", "date": "2026-01-01"}
+            for i in range(1, 21)  # 20 records, all same date
+        ]
+        candidates = _deterministic_discover(
+            records=records,
+            artifact_projects=[],
+            existing_names=set(),
+        )
+        assert candidates == []
 
     def test_discover_empty_records(self) -> None:
         """Empty records list -> no candidates."""
@@ -318,21 +345,133 @@ class TestScanForProjects:
         assert result == []
 
     def test_scan_creates_candidates(self) -> None:
-        """Store with records having recurring tags -> verify candidates returned."""
+        """Store with records having 15+ recurring tags across 3+ dates -> verify candidates."""
         records = [
-            _MockRecord("r1", summary="note 1", tags="backend,api"),
-            _MockRecord("r2", summary="note 2", tags="backend,refactor"),
-            _MockRecord("r3", summary="note 3", tags="backend,testing"),
-            _MockRecord("r4", summary="note 4", tags="api,docs"),
-            _MockRecord("r5", summary="note 5", tags="api,deploy"),
+            _MockRecord(f"r{i}", summary=f"note {i}", tags="backend,api", date=f"2026-01-{i:02d}")
+            for i in range(1, 17)  # 16 records, 16 distinct dates
         ]
         store = MockDiscoveryStore(records=records)
         result = _run(scan_for_projects(store=store))
         assert len(result) >= 1
-        # Both "backend" (3 occurrences) and "api" (3 occurrences) should appear
+        # Both "backend" (16 occurrences) and "api" (16 occurrences) should appear
         titles_lower = {c["title"].lower() for c in result}
         assert "backend" in titles_lower
         assert "api" in titles_lower
         # Every candidate must have create_project type
         for c in result:
             assert c["suggestion_type"] == "create_project"
+
+
+# ---------------------------------------------------------------------------
+# TestTwoPhaseLlmDiscovery
+# ---------------------------------------------------------------------------
+
+class _MockAgent:
+    """Mock agent that returns a predefined JSON response for any prompt."""
+
+    def __init__(self, response: dict):
+        self._response = response
+        self.call_count = 0
+        self.last_user_msgs: list[str] = []
+
+    async def run_prompt(self, system: str, user: str) -> str:
+        self.call_count += 1
+        self.last_user_msgs.append(user)
+        return json.dumps(self._response)
+
+
+class TestTwoPhaseLlmDiscovery:
+
+    def test_llm_discover_identifies_topic_clusters(self) -> None:
+        """Two-phase: local tag clustering → focused LLM eval per topic."""
+        records = [
+            {"id": f"r{i}", "summary": f"吃了水果{i}", "tags": "水果,饮食", "date": f"2026-01-{i:02d}"}
+            for i in range(1, 6)  # 5 records for "水果" across 5 dates
+        ]
+        agent = _MockAgent({
+            "candidates": [{
+                "title": "每天吃一个水果",
+                "rationale": "用户决定每天吃水果并持续追踪",
+                "evidence": [{"entity_type": "record", "entity_id": "r1"}],
+                "suggested_milestones": ["连续7天", "连续30天"],
+                "confidence": 0.85,
+                "suggestion_type": "create_project",
+            }]
+        })
+        result = _run(_llm_discover(
+            records=records,
+            artifact_projects=[],
+            existing_names=set(),
+            agent=agent,
+        ))
+        assert len(result) == 1
+        assert result[0]["title"] == "每天吃一个水果"
+        assert result[0]["confidence"] == 0.85
+        # Agent should have been called once per promising topic
+        assert agent.call_count >= 1
+        # Each call should contain focused records, not all 5 at once in a giant dump
+        for msg in agent.last_user_msgs:
+            assert "## Topic:" in msg
+
+    def test_llm_discover_returns_empty_when_no_confident_topics(self) -> None:
+        """LLM returns no candidates for any topic → empty result."""
+        records = [
+            {"id": f"r{i}", "summary": "a", "tags": "随机话题", "date": f"2026-01-{i:02d}"}
+            for i in range(1, 6)
+        ]
+        agent = _MockAgent({"candidates": []})
+        result = _run(_llm_discover(
+            records=records,
+            artifact_projects=[],
+            existing_names=set(),
+            agent=agent,
+        ))
+        assert result == []
+
+    def test_llm_discover_filters_below_confidence(self) -> None:
+        """Topics with confidence below threshold are filtered out."""
+        records = [
+            {"id": f"r{i}", "summary": "a", "tags": "弱话题", "date": f"2026-01-{i:02d}"}
+            for i in range(1, 6)
+        ]
+        agent = _MockAgent({
+            "candidates": [{
+                "title": "弱话题",
+                "rationale": "不太确定",
+                "evidence": [],
+                "suggested_milestones": [],
+                "confidence": 0.50,  # below LLM_DISCOVERY_MIN_CONFIDENCE (0.70)
+                "suggestion_type": "create_project",
+            }]
+        })
+        result = _run(_llm_discover(
+            records=records,
+            artifact_projects=[],
+            existing_names=set(),
+            agent=agent,
+        ))
+        assert result == []
+
+    def test_llm_discover_skips_existing_projects(self) -> None:
+        """LLM returns a candidate that matches an existing project → filtered."""
+        records = [
+            {"id": f"r{i}", "summary": "a", "tags": "已有项目", "date": f"2026-01-{i:02d}"}
+            for i in range(1, 6)
+        ]
+        agent = _MockAgent({
+            "candidates": [{
+                "title": "已有项目",
+                "rationale": "...",
+                "evidence": [],
+                "suggested_milestones": [],
+                "confidence": 0.85,
+                "suggestion_type": "create_project",
+            }]
+        })
+        result = _run(_llm_discover(
+            records=records,
+            artifact_projects=[],
+            existing_names={"已有项目"},
+            agent=agent,
+        ))
+        assert result == []
