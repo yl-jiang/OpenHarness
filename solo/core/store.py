@@ -21,7 +21,11 @@ from solo.core.models import (
     ProfileUpdate,
     Project,
     ProjectAlias,
+    ProjectCheckin,
     ProjectLink,
+    ProjectSignal,
+    ProjectSnapshot,
+    ProjectSuggestion,
     SoloConfig,
     SoloEntry,
     SoloExperiment,
@@ -204,6 +208,7 @@ CREATE TABLE IF NOT EXISTS project_links (
     source TEXT NOT NULL DEFAULT 'user',
     confidence TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'active',
+    sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -224,6 +229,64 @@ CREATE TABLE IF NOT EXISTS project_aliases (
 );
 CREATE INDEX IF NOT EXISTS idx_project_aliases_project_id ON project_aliases(project_id);
 CREATE INDEX IF NOT EXISTS idx_project_aliases_alias ON project_aliases(alias);
+
+CREATE TABLE IF NOT EXISTS project_suggestions (
+    id TEXT PRIMARY KEY,
+    suggestion_type TEXT NOT NULL,
+    project_id TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
+    rationale TEXT NOT NULL DEFAULT '',
+    proposed_payload_json TEXT NOT NULL DEFAULT '{}',
+    evidence_json TEXT NOT NULL DEFAULT '[]',
+    confidence REAL NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    source TEXT NOT NULL DEFAULT 'ai',
+    created_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_project_suggestions_status ON project_suggestions(status);
+CREATE INDEX IF NOT EXISTS idx_project_suggestions_project_id ON project_suggestions(project_id);
+
+CREATE TABLE IF NOT EXISTS project_signals (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    signal_type TEXT NOT NULL,
+    summary TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info',
+    evidence_entity_type TEXT NOT NULL DEFAULT '',
+    evidence_entity_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_project_signals_project_id ON project_signals(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_signals_signal_type ON project_signals(signal_type);
+
+CREATE TABLE IF NOT EXISTS project_snapshots (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    snapshot_date TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    health TEXT NOT NULL DEFAULT 'normal',
+    completion_pct INTEGER,
+    activity_7d INTEGER NOT NULL DEFAULT 0,
+    open_blocker_count INTEGER NOT NULL DEFAULT 0,
+    next_action TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_project_snapshots_project_id ON project_snapshots(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_snapshots_date ON project_snapshots(snapshot_date);
+
+CREATE TABLE IF NOT EXISTS project_checkins (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL,
+    channel TEXT NOT NULL DEFAULT 'onboard',
+    question TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'sent',
+    response_record_id TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    responded_at TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_project_checkins_project_id ON project_checkins(project_id);
+CREATE INDEX IF NOT EXISTS idx_project_checkins_status ON project_checkins(status);
 
 CREATE TABLE IF NOT EXISTS _meta (
     key TEXT PRIMARY KEY,
@@ -411,6 +474,11 @@ class SoloStore:
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_links_project_id ON project_links(project_id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_links_entity ON project_links(entity_type, entity_id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_links_status ON project_links(status)")
+        try:
+            self._conn.execute("ALTER TABLE project_links ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+            self._conn.commit()
+        except Exception:
+            pass
         self._conn.execute(
             """CREATE TABLE IF NOT EXISTS project_aliases (
                 id TEXT PRIMARY KEY,
@@ -424,6 +492,70 @@ class SoloStore:
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_aliases_project_id ON project_aliases(project_id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_aliases_alias ON project_aliases(alias)")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS project_suggestions (
+                id TEXT PRIMARY KEY,
+                suggestion_type TEXT NOT NULL,
+                project_id TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
+                rationale TEXT NOT NULL DEFAULT '',
+                proposed_payload_json TEXT NOT NULL DEFAULT '{}',
+                evidence_json TEXT NOT NULL DEFAULT '[]',
+                confidence REAL NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                source TEXT NOT NULL DEFAULT 'ai',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_suggestions_status ON project_suggestions(status)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_suggestions_project_id ON project_suggestions(project_id)")
+
+        # Migration v6: project signals, snapshots, checkins
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS project_signals (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                signal_type TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                severity TEXT NOT NULL DEFAULT 'info',
+                evidence_entity_type TEXT NOT NULL DEFAULT '',
+                evidence_entity_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_signals_project_id ON project_signals(project_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_signals_signal_type ON project_signals(signal_type)")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS project_snapshots (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                snapshot_date TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                health TEXT NOT NULL DEFAULT 'normal',
+                completion_pct INTEGER,
+                activity_7d INTEGER NOT NULL DEFAULT 0,
+                open_blocker_count INTEGER NOT NULL DEFAULT 0,
+                next_action TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_snapshots_project_id ON project_snapshots(project_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_snapshots_date ON project_snapshots(snapshot_date)")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS project_checkins (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'onboard',
+                question TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'sent',
+                response_record_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                responded_at TEXT NOT NULL DEFAULT ''
+            )"""
+        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_checkins_project_id ON project_checkins(project_id)")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_checkins_status ON project_checkins(status)")
 
         try:
             self._conn.execute(
@@ -623,11 +755,11 @@ class SoloStore:
     def _project_link_to_row(pl: ProjectLink):
         cols = (
             "id", "project_id", "entity_type", "entity_id", "source",
-            "confidence", "status", "created_at", "updated_at",
+            "confidence", "status", "sort_order", "created_at", "updated_at",
         )
         vals = (
             pl.id, pl.project_id, pl.entity_type, pl.entity_id, pl.source,
-            pl.confidence, pl.status, pl.created_at, pl.updated_at,
+            pl.confidence, pl.status, pl.sort_order, pl.created_at, pl.updated_at,
         )
         return cols, vals
 
@@ -1646,7 +1778,7 @@ class SoloStore:
         return ProjectLink(
             id=row[0], project_id=row[1], entity_type=row[2], entity_id=row[3],
             source=row[4], confidence=row[5], status=row[6],
-            created_at=row[7], updated_at=row[8],
+            sort_order=row[7], created_at=row[8], updated_at=row[9],
         )
 
     @staticmethod
@@ -1755,7 +1887,7 @@ class SoloStore:
     def complete_project(self, project_id: str) -> bool:
         now = _now()
         cur = self._db.execute(
-            "UPDATE projects SET status='completed', completed_at=?, updated_at=? WHERE id=?",
+            "UPDATE projects SET status='completed', completed_at=?, updated_at=? WHERE id=? AND status='active'",
             (now, now, project_id),
         )
         self._db.commit()
@@ -1793,7 +1925,7 @@ class SoloStore:
     ) -> list[Project]:
         clauses: list[str] = []
         params: list[Any] = []
-        if status:
+        if status and status != "all":
             clauses.append("status = ?")
             params.append(status)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
@@ -1842,7 +1974,7 @@ class SoloStore:
     def complete_milestone(self, milestone_id: str) -> bool:
         now = _now()
         cur = self._db.execute(
-            "UPDATE milestones SET status='completed', completed_at=?, updated_at=? WHERE id=?",
+            "UPDATE milestones SET status='completed', completed_at=?, updated_at=? WHERE id=? AND status='pending'",
             (now, now, milestone_id),
         )
         self._db.commit()
@@ -1920,15 +2052,24 @@ class SoloStore:
             clauses.append("status = ?")
             params.append(status)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        _pl_cols = "id, project_id, entity_type, entity_id, source, confidence, status, sort_order, created_at, updated_at"
         cur = self._db.execute(
-            f"SELECT * FROM project_links{where} ORDER BY rowid", params
+            f"SELECT {_pl_cols} FROM project_links{where} ORDER BY sort_order, rowid", params
         )
         return [self._row_to_project_link(row) for row in cur.fetchall()]
+
+    def reorder_project_links(self, project_id: str, link_ids: list[str]) -> None:
+        for idx, link_id in enumerate(link_ids):
+            self._db.execute(
+                "UPDATE project_links SET sort_order = ? WHERE project_id = ? AND id = ?",
+                (idx, project_id, link_id),
+            )
+        self._db.commit()
 
     def accept_project_link(self, link_id: str) -> bool:
         now = _now()
         cur = self._db.execute(
-            "UPDATE project_links SET status='active', updated_at=? WHERE id=?",
+            "UPDATE project_links SET status='active', updated_at=? WHERE id=? AND status='pending'",
             (now, link_id),
         )
         self._db.commit()
@@ -1937,7 +2078,7 @@ class SoloStore:
     def reject_project_link(self, link_id: str) -> bool:
         now = _now()
         cur = self._db.execute(
-            "UPDATE project_links SET status='rejected', updated_at=? WHERE id=?",
+            "UPDATE project_links SET status='rejected', updated_at=? WHERE id=? AND status IN ('pending', 'active')",
             (now, link_id),
         )
         self._db.commit()
@@ -1964,6 +2105,273 @@ class SoloStore:
             (project_id,),
         )
         return [self._row_to_project_alias(row) for row in cur.fetchall()]
+
+    def resolve_entity_summary(self, entity_type: str, entity_id: str) -> str:
+        """Return a human-readable summary for a linked entity."""
+        if entity_type == "record":
+            cur = self._db.execute("SELECT summary FROM records WHERE id = ?", (entity_id,))
+        elif entity_type == "todo":
+            cur = self._db.execute("SELECT title FROM todos WHERE id = ?", (entity_id,))
+        elif entity_type == "experiment":
+            cur = self._db.execute("SELECT title FROM experiments WHERE id = ?", (entity_id,))
+        else:
+            return ""
+        row = cur.fetchone()
+        return row[0] if row else ""
+
+    # --- ProjectSuggestion CRUD ---
+
+    def create_project_suggestion(self, suggestion: ProjectSuggestion) -> None:
+        cols, vals = self._project_suggestion_to_row(suggestion)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO project_suggestions ({', '.join(cols)}) VALUES ({placeholders})",
+            vals,
+        )
+        self._db.commit()
+
+    def list_project_suggestions(
+        self,
+        *,
+        status: str | None = None,
+        project_id: str | None = None,
+        suggestion_type: str | None = None,
+        limit: int | None = None,
+    ) -> list[ProjectSuggestion]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        if project_id is not None:
+            clauses.append("project_id = ?")
+            params.append(project_id)
+        if suggestion_type is not None:
+            clauses.append("suggestion_type = ?")
+            params.append(suggestion_type)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        lim = f"LIMIT {limit}" if limit else ""
+        cur = self._db.execute(
+            f"SELECT * FROM project_suggestions {where} ORDER BY confidence DESC, rowid DESC {lim}",
+            params,
+        )
+        return [self._row_to_project_suggestion(row) for row in cur.fetchall()]
+
+    def update_project_suggestion(self, suggestion_id: str, **fields: Any) -> bool:
+        allowed = {"status", "rationale", "title", "confidence", "updated_at"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return False
+        updates["updated_at"] = _now()
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        cur = self._db.execute(
+            f"UPDATE project_suggestions SET {set_clause} WHERE id = ?",
+            (*updates.values(), suggestion_id),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def accept_project_suggestion(self, suggestion_id: str) -> bool:
+        return self.update_project_suggestion(suggestion_id, status="accepted")
+
+    def reject_project_suggestion(self, suggestion_id: str) -> bool:
+        return self.update_project_suggestion(suggestion_id, status="rejected")
+
+    def snooze_project_suggestion(self, suggestion_id: str) -> bool:
+        return self.update_project_suggestion(suggestion_id, status="snoozed")
+
+    @staticmethod
+    def _project_suggestion_to_row(s: ProjectSuggestion) -> tuple[list[str], list[Any]]:
+        cols = [
+            "id", "suggestion_type", "project_id", "title", "rationale",
+            "proposed_payload_json", "evidence_json", "confidence", "status",
+            "source", "created_at", "updated_at",
+        ]
+        vals = [
+            s.id, s.suggestion_type, s.project_id, s.title, s.rationale,
+            s.proposed_payload_json, s.evidence_json, s.confidence, s.status,
+            s.source, s.created_at, s.updated_at,
+        ]
+        return cols, vals
+
+    @staticmethod
+    def _row_to_project_suggestion(row: tuple) -> ProjectSuggestion:
+        keys = [
+            "id", "suggestion_type", "project_id", "title", "rationale",
+            "proposed_payload_json", "evidence_json", "confidence", "status",
+            "source", "created_at", "updated_at",
+        ]
+        return ProjectSuggestion(**dict(zip(keys, row)))
+
+    # --- ProjectSignal CRUD ---
+
+    def create_project_signal(self, signal: ProjectSignal) -> None:
+        self._db.execute(
+            "INSERT INTO project_signals "
+            "(id, project_id, signal_type, summary, severity, "
+            "evidence_entity_type, evidence_entity_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                signal.id, signal.project_id, signal.signal_type,
+                signal.summary, signal.severity,
+                signal.evidence_entity_type, signal.evidence_entity_id,
+                signal.created_at,
+            ),
+        )
+        self._db.commit()
+
+    def list_project_signals(
+        self,
+        project_id: str,
+        *,
+        signal_type: str | None = None,
+        limit: int | None = None,
+    ) -> list[ProjectSignal]:
+        clauses: list[str] = ["project_id = ?"]
+        params: list[Any] = [project_id]
+        if signal_type is not None:
+            clauses.append("signal_type = ?")
+            params.append(signal_type)
+        where = f"WHERE {' AND '.join(clauses)}"
+        lim = f"LIMIT {limit}" if limit else ""
+        cur = self._db.execute(
+            f"SELECT * FROM project_signals {where} ORDER BY rowid DESC {lim}",
+            params,
+        )
+        return [self._row_to_project_signal(row) for row in cur.fetchall()]
+
+    def delete_project_signal(self, signal_id: str) -> bool:
+        cur = self._db.execute("DELETE FROM project_signals WHERE id = ?", (signal_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
+    @staticmethod
+    def _row_to_project_signal(row: tuple) -> ProjectSignal:
+        keys = [
+            "id", "project_id", "signal_type", "summary", "severity",
+            "evidence_entity_type", "evidence_entity_id", "created_at",
+        ]
+        return ProjectSignal(**dict(zip(keys, row)))
+
+    # --- ProjectSnapshot CRUD ---
+
+    def create_project_snapshot(self, snapshot: ProjectSnapshot) -> None:
+        self._db.execute(
+            "INSERT INTO project_snapshots "
+            "(id, project_id, snapshot_date, summary, health, completion_pct, "
+            "activity_7d, open_blocker_count, next_action, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                snapshot.id, snapshot.project_id, snapshot.snapshot_date,
+                snapshot.summary, snapshot.health, snapshot.completion_pct,
+                snapshot.activity_7d, snapshot.open_blocker_count,
+                snapshot.next_action, snapshot.created_at,
+            ),
+        )
+        self._db.commit()
+
+    def list_project_snapshots(
+        self,
+        project_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[ProjectSnapshot]:
+        lim = f"LIMIT {limit}" if limit else ""
+        cur = self._db.execute(
+            f"SELECT * FROM project_snapshots WHERE project_id = ? "
+            f"ORDER BY snapshot_date DESC {lim}",
+            (project_id,),
+        )
+        return [self._row_to_project_snapshot(row) for row in cur.fetchall()]
+
+    def get_latest_project_snapshot(self, project_id: str) -> ProjectSnapshot | None:
+        cur = self._db.execute(
+            "SELECT * FROM project_snapshots WHERE project_id = ? "
+            "ORDER BY snapshot_date DESC LIMIT 1",
+            (project_id,),
+        )
+        row = cur.fetchone()
+        return self._row_to_project_snapshot(row) if row else None
+
+    @staticmethod
+    def _row_to_project_snapshot(row: tuple) -> ProjectSnapshot:
+        keys = [
+            "id", "project_id", "snapshot_date", "summary", "health",
+            "completion_pct", "activity_7d", "open_blocker_count",
+            "next_action", "created_at",
+        ]
+        return ProjectSnapshot(**dict(zip(keys, row)))
+
+    # --- ProjectCheckin CRUD ---
+
+    def create_project_checkin(self, checkin: ProjectCheckin) -> None:
+        self._db.execute(
+            "INSERT INTO project_checkins "
+            "(id, project_id, channel, question, status, "
+            "response_record_id, created_at, responded_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                checkin.id, checkin.project_id, checkin.channel,
+                checkin.question, checkin.status,
+                checkin.response_record_id, checkin.created_at,
+                checkin.responded_at,
+            ),
+        )
+        self._db.commit()
+
+    def list_project_checkins(
+        self,
+        project_id: str,
+        *,
+        status: str | None = None,
+        limit: int | None = None,
+    ) -> list[ProjectCheckin]:
+        clauses: list[str] = ["project_id = ?"]
+        params: list[Any] = [project_id]
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f"WHERE {' AND '.join(clauses)}"
+        lim = f"LIMIT {limit}" if limit else ""
+        cur = self._db.execute(
+            f"SELECT * FROM project_checkins {where} ORDER BY rowid DESC {lim}",
+            params,
+        )
+        return [self._row_to_project_checkin(row) for row in cur.fetchall()]
+
+    def update_project_checkin(self, checkin_id: str, **fields: Any) -> bool:
+        allowed = {"status", "response_record_id", "responded_at"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return False
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        cur = self._db.execute(
+            f"UPDATE project_checkins SET {set_clause} WHERE id = ?",
+            (*updates.values(), checkin_id),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def get_recent_checkin_question(self, project_id: str, *, days: int = 7) -> str | None:
+        """Return the most recent checkin question for a project within the last N days."""
+        from datetime import datetime, timedelta, timezone
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        cur = self._db.execute(
+            "SELECT question FROM project_checkins "
+            "WHERE project_id = ? AND created_at >= ? "
+            "ORDER BY rowid DESC LIMIT 1",
+            (project_id, cutoff),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+    @staticmethod
+    def _row_to_project_checkin(row: tuple) -> ProjectCheckin:
+        keys = [
+            "id", "project_id", "channel", "question", "status",
+            "response_record_id", "created_at", "responded_at",
+        ]
+        return ProjectCheckin(**dict(zip(keys, row)))
 
     # --- Derived fields ---
 
@@ -2061,8 +2469,8 @@ class SoloStore:
                     pass
         detail["risk_status"] = risk_status
 
-        # Open blocker count (simplified: count all linked entities)
-        detail["open_blocker_count"] = len(all_links)
+        # Open blocker count (solo has no highlight/blocker concept)
+        detail["open_blocker_count"] = 0
 
         return detail
 
@@ -2082,14 +2490,19 @@ class SoloStore:
 
 
 def _tokenize_enhanced(text: str) -> list[str]:
-    """Tokenize text using Jieba for Chinese and regex for English."""
+    """Tokenize text: Jieba for Chinese, regex for English/numbers."""
     if not text:
         return []
 
-    import jieba
     import re
 
     text = text.lower()
-    jieba_tokens = list(jieba.cut(text))
+
+    if not re.search(r"[\u4e00-\u9fff]", text):
+        return re.findall(r"[a-z0-9]{2,}", text)
+
+    import jieba
+
+    tokens = [t.strip() for t in jieba.cut(text) if t.strip()]
     ascii_tokens = re.findall(r"[a-z0-9]{2,}", text)
-    return [t.strip() for t in jieba_tokens + ascii_tokens if t.strip()]
+    return list(dict.fromkeys(tokens + ascii_tokens))

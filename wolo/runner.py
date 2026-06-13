@@ -540,11 +540,17 @@ class WoloQueryRunner:
         had_reasoning = False
         hint_dedupe_enabled = os.environ.get(_WOLO_DISABLE_HINT_DEDUPE) != "1"
         emitted_tool_hints: set[tuple[str, str]] = set()
-        try:
-            async for event in engine.submit_message(user_message):
+
+        async def _process_stream(events, *, allow_reasoning: bool, log_prefix: str):
+            nonlocal last_text, tool_outputs, tool_errors, passthrough_output
+            nonlocal engine_error, stream_finished_reason, emitted_media, had_reasoning
+            nonlocal emitted_tool_hints
+
+            async for event in events:
                 if isinstance(event, ReasoningDelta):
-                    had_reasoning = True
-                    yield ("reasoning", event.text)
+                    if allow_reasoning:
+                        had_reasoning = True
+                        yield ("reasoning", event.text)
                 elif isinstance(event, AssistantTextDelta):
                     yield ("delta", event.text)
                 elif isinstance(event, ToolExecutionStarted):
@@ -562,8 +568,8 @@ class WoloQueryRunner:
                 elif isinstance(event, ToolExecutionCompleted):
                     if not event.is_error and "\u274c" in event.output:
                         logger.debug(
-                            "wolo tool blocked or failed tool=%s output=%r",
-                            event.tool_name, event.output.strip()[:200],
+                            "%s tool=%s output=%r",
+                            log_prefix, event.tool_name, event.output.strip()[:200],
                         )
                     if event.is_error:
                         tool_errors.append(f"{event.tool_name}: {event.output.strip()[:200]}")
@@ -579,6 +585,14 @@ class WoloQueryRunner:
                         yield ("media", json.dumps(tool_media))
                 elif isinstance(event, StreamFinished):
                     stream_finished_reason = event.reason
+
+        try:
+            async for item in _process_stream(
+                engine.submit_message(user_message),
+                allow_reasoning=True,
+                log_prefix="wolo tool blocked or failed",
+            ):
+                yield item
         except Exception as exc:
             engine_error = f"{type(exc).__name__}: {exc}"
             logger.exception("WoloQueryRunner engine error session_key=%r text=%r", session_key, user_text[:80])
@@ -593,41 +607,12 @@ class WoloQueryRunner:
         ):
             yield ("progress", "⏳ 模型思考完毕但未产生输出，正在重试...")
             try:
-                async for event in engine.submit_message("请直接输出记录结果，不需要过多思考。"):
-                    if isinstance(event, AssistantTextDelta):
-                        yield ("delta", event.text)
-                    elif isinstance(event, AssistantTurnComplete):
-                        candidate = event.message.text.strip()
-                        if candidate and not event.message.tool_uses:
-                            last_text = candidate
-                    elif isinstance(event, ToolExecutionStarted):
-                        signature = (
-                            event.tool_name,
-                            json.dumps(event.tool_input or {}, ensure_ascii=False, sort_keys=True, default=str),
-                        )
-                        if not hint_dedupe_enabled or signature not in emitted_tool_hints:
-                            yield ("tool_hint", _format_tool_hint(event.tool_name, event.tool_input))
-                        emitted_tool_hints.add(signature)
-                    elif isinstance(event, ToolExecutionCompleted):
-                        if not event.is_error and "\u274c" in event.output:
-                            logger.debug(
-                                "wolo retry: tool blocked tool=%s output=%r",
-                                event.tool_name, event.output.strip()[:200],
-                            )
-                        if event.is_error:
-                            tool_errors.append(f"{event.tool_name}: {event.output.strip()[:200]}")
-                        elif event.output.strip():
-                            output = event.output.strip()
-                            tool_outputs.append((event.tool_name, output))
-                            if event.tool_name in PASSTHROUGH_TOOLS:
-                                passthrough_output = output
-                        tool_media = _extract_tool_media(event)
-                        for path in tool_media:
-                            emitted_media.add(path)
-                        if tool_media:
-                            yield ("media", json.dumps(tool_media))
-                    elif isinstance(event, StreamFinished):
-                        stream_finished_reason = event.reason
+                async for item in _process_stream(
+                    engine.submit_message("请直接输出记录结果，不需要过多思考。"),
+                    allow_reasoning=False,
+                    log_prefix="wolo retry: tool blocked",
+                ):
+                    yield item
             except Exception as exc:
                 engine_error = f"{type(exc).__name__}: {exc}"
                 logger.exception("WoloQueryRunner retry error session_key=%r text=%r", session_key, user_text[:80])
