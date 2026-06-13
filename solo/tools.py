@@ -1511,7 +1511,7 @@ def _tool_record() -> ToolDefinition:
             "break_point, bridge_action, environment_design, next_experiment) must come from the user's "
             "own words; when the user did not state them, leave them empty / neutral. Do not add unstated "
             "causes, diagnoses, motives, timelines, or explanations. Do NOT rewrite a future plan as a "
-            "past event; preserve the original tense."
+            "past event; preserve the original tense. SIDE-EFFECT CHECK: If this message reveals persistent personal facts (chronic health conditions, new relationships, life structure changes, long-term preferences), also call solo_remember in the SAME turn to store them in long-term memory."
         ),
         [
             ("content", "string", "Faithful paraphrase of the user's current message. Must preserve all facts, opinions, and claims the user actually expressed. Do NOT add facts, opinions, or reflections the user did not state in this turn — even if a recent conversation topic suggests them.", True),

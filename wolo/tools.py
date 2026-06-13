@@ -1709,7 +1709,7 @@ def _tool_record() -> ToolDefinition:
             "available_cards, strategy, next_move, deadline, validation_signal) must come from the user's "
             "own words; when the user did not state them, leave them empty / neutral. Do not add unstated "
             "causes, diagnoses, motives, timelines, or outcomes. Do NOT rewrite a future plan as a "
-            "completed event; preserve the original tense."
+            "completed event; preserve the original tense. SIDE-EFFECT CHECK: If this message reveals persistent personal facts (chronic health conditions, new relationships, work structure changes, long-term preferences), also call wolo_remember in the SAME turn to store them in long-term memory."
         ),
         [
             ("content", "string", "Faithful paraphrase of the user's current message. Must preserve all facts, opinions, and claims the user actually expressed. Do NOT add facts, opinions, or reflections the user did not state in this turn — even if a recent conversation topic suggests them.", True),
