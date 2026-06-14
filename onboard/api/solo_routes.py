@@ -54,6 +54,14 @@ def entry(entry_id: str, workspace: str | None = None) -> dict[str, Any]:
     return result
 
 
+@router.delete("/entries/{entry_id}")
+def delete_entry(entry_id: str, workspace: str | None = None) -> dict[str, bool]:
+    deleted = _service(workspace).delete_entry(entry_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    return {"deleted": True}
+
+
 @router.get("/records")
 def records(
     workspace: str | None = None,
@@ -80,6 +88,14 @@ def record(record_id: str, workspace: str | None = None) -> dict[str, Any]:
     if result is None:
         raise HTTPException(status_code=404, detail="Record not found")
     return result
+
+
+@router.delete("/records/{record_id}")
+def delete_record(record_id: str, workspace: str | None = None) -> dict[str, bool]:
+    deleted = _service(workspace).delete_record(record_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Record not found")
+    return {"deleted": True}
 
 
 @router.get("/search")

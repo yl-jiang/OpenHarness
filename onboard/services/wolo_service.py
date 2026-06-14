@@ -120,6 +120,9 @@ class WoloService:
         entry = self.store.get_entry(entry_id)
         return to_jsonable(entry) if entry else None
 
+    def delete_entry(self, entry_id: str) -> bool:
+        return self.store.delete_entry(entry_id)
+
     def list_records(
         self,
         *,
@@ -144,6 +147,9 @@ class WoloService:
     def get_record(self, record_id: str) -> dict[str, Any] | None:
         record = self.store.get_record(record_id)
         return to_jsonable(record) if record else None
+
+    def delete_record(self, record_id: str) -> bool:
+        return self.store.delete_record(record_id)
 
     def search(
         self,

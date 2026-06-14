@@ -62,9 +62,14 @@ export const api = {
   stats: (app: AppName) => request<AppStats>(`/api/${app}/stats`),
   entries: (app: AppName, params: Record<string, QueryValue> = {}) =>
     request<PaginatedResponse<Entry>>(`/api/${app}/entries${query(params)}`),
+  entry: (app: AppName, id: string) => request<Entry>(`/api/${app}/entries/${id}`),
+  deleteEntry: (app: AppName, id: string) =>
+    request<{ deleted: boolean }>(`/api/${app}/entries/${id}`, { method: 'DELETE' }),
   records: (app: AppName, params: Record<string, QueryValue> = {}) =>
     request<PaginatedResponse<LogRecord>>(`/api/${app}/records${query(params)}`),
   record: (app: AppName, id: string) => request<LogRecord>(`/api/${app}/records/${id}`),
+  deleteRecord: (app: AppName, id: string) =>
+    request<{ deleted: boolean }>(`/api/${app}/records/${id}`, { method: 'DELETE' }),
   todos: (app: AppName, params: Record<string, QueryValue> = {}) =>
     request<Todo[]>(`/api/${app}/todos${query(params)}`),
   markTodoDone: (app: AppName, id: string) =>

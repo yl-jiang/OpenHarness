@@ -918,6 +918,20 @@ class SoloStore:
             rows = cur.fetchall()
         return [self._row_to_entry(row) for row in rows]
 
+    def delete_entry(self, entry_id: str) -> bool:
+        """Permanently delete an entry and cascade to records, pending_confirmations, and their children."""
+        # First cascade: find all records linked to this entry and delete them (with their children)
+        record_rows = self._db.execute("SELECT id FROM records WHERE entry_id = ?", (entry_id,)).fetchall()
+        for (rid,) in record_rows:
+            for child_table in ("todos", "experiments", "profile_updates"):
+                self._db.execute(f"DELETE FROM {child_table} WHERE record_id = ?", (rid,))
+            self._db.execute("DELETE FROM records WHERE id = ?", (rid,))
+        # Delete pending_confirmations referencing this entry
+        self._db.execute("DELETE FROM pending_confirmations WHERE entry_id = ?", (entry_id,))
+        cur = self._db.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
     def get_entry(self, entry_id: str) -> SoloEntry | None:
         cur = self._db.execute("SELECT * FROM entries WHERE id = ?", (entry_id,))
         row = cur.fetchone()
@@ -1001,7 +1015,10 @@ class SoloStore:
         return True
 
     def delete_record(self, record_id: str) -> bool:
-        """Permanently delete a record by ID."""
+        """Permanently delete a record and its cascaded children (todos, experiments, profile_updates)."""
+        # Cascade: delete children referencing this record
+        for child_table in ("todos", "experiments", "profile_updates"):
+            self._db.execute(f"DELETE FROM {child_table} WHERE record_id = ?", (record_id,))
         cur = self._db.execute("DELETE FROM records WHERE id = ?", (record_id,))
         self._db.commit()
         return cur.rowcount > 0

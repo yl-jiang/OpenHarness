@@ -25,14 +25,18 @@ export function Search({ appName }: { appName: AppName }) {
         {[...(data?.records ?? [])].sort((a, b) => (b.date || b.created_at).localeCompare(a.date || a.created_at)).map((record, index) => (
           <article
             key={record.id}
-            className="p-4 border border-border rounded-lg bg-surface-1 hover:bg-surface-2 hover:border-text-muted/30 transition-all animate-[fade-in_0.3s_ease-out_both]"
+            className="flex flex-col h-[160px] p-4 border border-border rounded-lg bg-surface-1 hover:bg-surface-2 hover:border-text-muted/30 transition-all animate-[fade-in_0.3s_ease-out_both]"
             style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
           >
-            <h3 className="text-sm font-medium text-text m-0 mb-1 line-clamp-1">{record.summary}</h3>
-            <p className="text-[13px] text-text-secondary m-0 line-clamp-2 mb-2">{record.corrected_content}</p>
-            <Link className="text-[12px] text-accent-solo hover:underline no-underline" to={`/records/${record.id}`}>
-              View →
-            </Link>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              <h3 className="text-sm font-medium text-text m-0 mb-1 line-clamp-1">{record.summary}</h3>
+              <p className="text-[13px] text-text-secondary m-0 line-clamp-3">{record.corrected_content}</p>
+            </div>
+            <div className="shrink-0 mt-2">
+              <Link className="text-[12px] text-accent-solo hover:underline no-underline" to={`/records/${record.id}`}>
+                View →
+              </Link>
+            </div>
           </article>
         ))}
       </div>

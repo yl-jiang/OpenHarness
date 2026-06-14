@@ -6,11 +6,12 @@ interface ConfirmDialogProps {
   description?: string;
   confirmLabel?: string;
   danger?: boolean;
+  loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
 
-export function ConfirmDialog({ open, title, description, confirmLabel = 'Confirm', danger, onConfirm, onCancel }: ConfirmDialogProps) {
+export function ConfirmDialog({ open, title, description, confirmLabel = 'Confirm', danger, loading, onConfirm, onCancel }: ConfirmDialogProps) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[90] grid place-items-center bg-black/50" onClick={onCancel}>
@@ -26,19 +27,21 @@ export function ConfirmDialog({ open, title, description, confirmLabel = 'Confir
         <div className="flex items-center justify-end gap-2 mt-4">
           <button
             onClick={onCancel}
-            className="text-[12px] px-3 py-1.5 rounded-md border border-border bg-surface-2 text-text-secondary hover:text-text cursor-pointer transition-colors"
+            disabled={loading}
+            className="text-[12px] px-3 py-1.5 rounded-md border border-border bg-surface-2 text-text-secondary hover:text-text cursor-pointer transition-colors disabled:opacity-50"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className={`text-[12px] px-3 py-1.5 rounded-md border cursor-pointer transition-colors ${
+            disabled={loading}
+            className={`text-[12px] px-3 py-1.5 rounded-md border cursor-pointer transition-colors disabled:opacity-50 ${
               danger
                 ? 'border-danger/40 bg-danger/10 text-danger hover:bg-danger/20'
                 : 'border-border bg-surface-2 text-text-secondary hover:text-text hover:border-text-muted'
             }`}
           >
-            {confirmLabel}
+            {loading ? 'Deleting...' : confirmLabel}
           </button>
         </div>
       </div>
