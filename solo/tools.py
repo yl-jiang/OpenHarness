@@ -293,17 +293,48 @@ class SoloToolRegistry:
             )
             self.store.add_record(record)
             self._created_record_ids.add(record.id)
-            return {
+
+            # Auto-link to project if LLM specified one
+            linked_project_name = _optional_text(arguments, "linked_project")
+            link_info = None
+            if linked_project_name:
+                matched_project = _resolve_project_by_name(self.store, linked_project_name)
+                if matched_project:
+                    link = ProjectLink(
+                        id=uuid4().hex[:12],
+                        project_id=matched_project.id,
+                        entity_type="record",
+                        entity_id=record.id,
+                        source="ai_high_confidence",
+                        confidence="high",
+                        status="active",
+                        created_at=_now(),
+                        updated_at=_now(),
+                    )
+                    try:
+                        self.store.create_project_link(link)
+                        link_info = {"project_id": matched_project.id, "project_title": matched_project.title}
+                    except Exception:
+                        pass  # duplicate link or constraint violation — silently ignore
+
+            message = "收到～已记下这条。"
+            if link_info:
+                message += f" 已关联到项目「{link_info['project_title']}」。"
+
+            result: dict[str, Any] = {
                 "ok": True,
                 "entry_id": entry.id,
                 "record_id": record.id,
-                "message": "收到～已记下这条。",
+                "message": message,
                 "_metadata": {
                     "app": "solo",
                     "domain_event": "record_created",
                     "record_ids": [record.id],
                 },
             }
+            if link_info:
+                result["linked_project"] = link_info
+            return result
 
         # No structured fields provided — entry saved but not yet structured.
         # It will be processed by the next `solo_process` / `process_pending()` call.
@@ -1427,7 +1458,6 @@ class SoloToolRegistry:
             return {"ok": False, "error": "Project not found"}
         return {"ok": True, "project": detail}
 
-
 class _AnyInput(BaseModel):
     """Permissive Pydantic model that accepts any tool arguments as extra fields."""
 
@@ -1526,6 +1556,7 @@ def _tool_record() -> ToolDefinition:
             ("related_people", "string", "Comma-separated people mentioned.", False),
             ("related_places", "string", "Comma-separated places mentioned.", False),
             ("source", "string", "Record source, e.g. 原始/补录.", False),
+            ("linked_project", "string", "Project title or alias this record is related to. Fill this when the record content clearly relates to an ongoing project (e.g. progress update, milestone, activity log). The system will auto-link the record to the matched project.", False),
         ],
     )
 
@@ -2132,7 +2163,6 @@ def _tool_project_detail() -> ToolDefinition:
         ],
     )
 
-
 def _read_heartbeat_tasks(path: Path) -> list[str]:
     """Read task lines from HEARTBEAT.md, ignoring comments and blank lines."""
     content = path.read_text(encoding="utf-8", errors="replace")
@@ -2317,6 +2347,33 @@ def _is_recently_created_record(
         created_dt = created_dt.replace(tzinfo=timezone.utc)
     now_utc = datetime.now(timezone.utc)
     return (now_utc - created_dt).total_seconds() <= window_seconds
+
+
+
+def _resolve_project_by_name(store: SoloStore, name: str) -> Project | None:
+    """Resolve a project title or alias to a Project object.
+
+    Performs case-insensitive exact match against active project titles
+    and all project aliases.  Returns None if no unique match is found.
+    """
+    name_norm = name.strip().lower()
+    if not name_norm:
+        return None
+    active_projects = store.list_projects(status="active")
+    # 1) Exact title match
+    for p in active_projects:
+        if p.title.strip().lower() == name_norm:
+            return p
+    # 2) Alias match across all active projects
+    for p in active_projects:
+        for alias in store.list_project_aliases(p.id):
+            if alias.alias.strip().lower() == name_norm:
+                return p
+    # 3) Substring match on title (fallback — only if exactly one project matches)
+    matches = [p for p in active_projects if name_norm in p.title.strip().lower() or p.title.strip().lower() in name_norm]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def _backfill_hint(store: SoloStore, record_date: object) -> str | None:

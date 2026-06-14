@@ -315,17 +315,48 @@ class WoloToolRegistry:
             self.store.add_record(record)
             persist_work_artifacts(self.store, record, arguments)
             self._created_record_ids.add(record.id)
-            return {
+
+            # Auto-link to project if LLM specified one
+            linked_project_name = _optional_text(arguments, "linked_project")
+            link_info = None
+            if linked_project_name:
+                matched_project = _resolve_project_by_name(self.store, linked_project_name)
+                if matched_project:
+                    link = ProjectLink(
+                        id=uuid4().hex[:12],
+                        project_id=matched_project.id,
+                        entity_type="record",
+                        entity_id=record.id,
+                        source="ai_high_confidence",
+                        confidence="high",
+                        status="active",
+                        created_at=_now(),
+                        updated_at=_now(),
+                    )
+                    try:
+                        self.store.create_project_link(link)
+                        link_info = {"project_id": matched_project.id, "project_title": matched_project.title}
+                    except Exception:
+                        pass
+
+            message = "收到～已记下这条。"
+            if link_info:
+                message += f" 已关联到项目「{link_info['project_title']}」。"
+
+            result: dict[str, Any] = {
                 "ok": True,
                 "entry_id": entry.id,
                 "record_id": record.id,
-                "message": "收到～已记下这条。",
+                "message": message,
                 "_metadata": {
                     "app": "wolo",
                     "domain_event": "record_created",
                     "record_ids": [record.id],
                 },
             }
+            if link_info:
+                result["linked_project"] = link_info
+            return result
 
         # No structured fields provided — entry saved but not yet structured.
         # It will be processed by the next `wolo_process` / `process_pending()` call.
@@ -1622,7 +1653,6 @@ class WoloToolRegistry:
             return {"ok": False, "error": "Project not found"}
         return {"ok": True, "project": detail}
 
-
 class _AnyInput(BaseModel):
     """Permissive Pydantic model that accepts any tool arguments as extra fields."""
 
@@ -1727,6 +1757,7 @@ def _tool_record() -> ToolDefinition:
             ("todos", "array", "Derived todos with title, project, priority, and due_date.", False),
             ("decisions", "array", "Derived decisions with title, rationale, impact, and project.", False),
             ("highlights", "array", "Derived highlights with kind, title, content, project, and tags.", False),
+            ("linked_project", "string", "Project title or alias this record is related to. Fill this when the record content clearly relates to an ongoing project (e.g. progress update, milestone, activity log). The system will auto-link the record to the matched project.", False),
         ],
     )
 
@@ -2460,7 +2491,6 @@ def _tool_project_detail() -> ToolDefinition:
         ],
     )
 
-
 def _read_heartbeat_tasks(path: Path) -> list[str]:
     """Read task lines from HEARTBEAT.md, ignoring comments and blank lines."""
     content = path.read_text(encoding="utf-8", errors="replace")
@@ -2664,6 +2694,25 @@ def _is_recently_created_record(
         created_dt = created_dt.replace(tzinfo=timezone.utc)
     now_utc = datetime.now(timezone.utc)
     return (now_utc - created_dt).total_seconds() <= window_seconds
+
+
+
+def _resolve_project_by_name(store: WoloStore, name: str) -> "Project":
+    name_norm = name.strip().lower()
+    if not name_norm:
+        return None
+    active_projects = store.list_projects(status="active")
+    for p in active_projects:
+        if p.title.strip().lower() == name_norm:
+            return p
+    for p in active_projects:
+        for alias in store.list_project_aliases(p.id):
+            if alias.alias.strip().lower() == name_norm:
+                return p
+    matches = [p for p in active_projects if name_norm in p.title.strip().lower() or p.title.strip().lower() in name_norm]
+    if len(matches) == 1:
+        return matches[0]
+    return None
 
 
 def _backfill_hint(store: WoloStore, record_date: object) -> str | None:
