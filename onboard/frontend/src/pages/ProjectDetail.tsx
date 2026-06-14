@@ -5,7 +5,7 @@ import { api } from "../api/client";
 import { ProjectStatusBadge } from "../components/ProjectStatusBadge";
 import { ProjectCompletionBar } from "../components/ProjectCompletionBar";
 import { ProjectHealthPill } from "../components/ProjectHealthPill";
-import { RightInspector } from "../components/RightInspector";
+
 import { SegmentedControl } from "../components/SegmentedControl";
 import { MilestoneList } from "../components/MilestoneList";
 import { ProjectTimeline } from "../components/ProjectTimeline";
@@ -30,6 +30,7 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
   const [gitRepo, setGitRepo] = useState("");
   const [gitCommits, setGitCommits] = useState<GitCommit[]>([]);
   const [gitLoading, setGitLoading] = useState(false);
+  const [showAnalysis, setShowAnalysis] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -160,9 +161,7 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
   if (!project) return <div className="text-[13px] text-text-muted">Project not found</div>;
 
   return (
-    <div className="flex gap-0 min-h-0">
-      {/* Main column */}
-      <div className="flex-1 min-w-0 space-y-5">
+    <div className="space-y-5 max-w-4xl">
         {/* Sticky header */}
         <div className="sticky top-14 z-[5] bg-bg/90 backdrop-blur-sm pb-3 -mx-1 px-1">
           <Link to="/projects" className="text-[11px] text-text-muted hover:text-text no-underline">
@@ -304,105 +303,146 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
             </div>
           )}
         </section>
-      </div>
 
-      {/* Right Inspector */}
-      <RightInspector title="Project Info">
-        {/* AI Brief & Next Action */}
-        {analysis && (
-          <div className="space-y-2.5 pb-3 border-b border-border">
-            {analysis.summary && (
-              <div>
-                <div className="text-[11px] text-text-muted mb-1">AI Summary</div>
-                <p className="text-[12px] text-text m-0 leading-relaxed">{analysis.summary}</p>
-              </div>
-            )}
-            {analysis.next_action && (
-              <div>
-                <div className="text-[11px] text-text-muted mb-1">Next Action</div>
-                <div className="text-[12px] text-text font-medium">{analysis.next_action}</div>
-              </div>
-            )}
+        {/* Project Info — inline sections */}
+        <section className="border-t border-border pt-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-[13px] font-medium text-text-secondary m-0">Project Info</h2>
+            <button
+              onClick={handleAnalyze}
+              disabled={analyzing}
+              className="px-2.5 py-1 rounded-md bg-surface-3 text-text-secondary text-[11px] cursor-pointer border-0 hover:bg-surface-hover transition-colors disabled:opacity-50"
+            >
+              {analyzing ? "Analyzing..." : analysis ? "Refresh Analysis" : "Analyze State"}
+            </button>
           </div>
-        )}
 
-        {/* Analyze button */}
-        <div className="pb-3 border-b border-border">
-          <button
-            onClick={handleAnalyze}
-            disabled={analyzing}
-            className="w-full px-2.5 py-1.5 rounded-md bg-surface-3 text-text-secondary text-[11px] cursor-pointer border-0 hover:bg-surface-hover transition-colors disabled:opacity-50"
-          >
-            {analyzing ? "Analyzing..." : analysis ? "Refresh Analysis" : "Analyze State"}
-          </button>
-        </div>
-
-        {/* Health Signals */}
-        {analysis && analysis.signals.length > 0 && (
-          <div className="pb-3 border-b border-border">
-            <div className="text-[11px] text-text-muted mb-2">Health Signals</div>
-            <div className="space-y-1.5">
-              {analysis.signals.map((sig, i) => (
-                <div key={i} className="flex items-start gap-1.5 text-[11px]">
-                  <span className={`shrink-0 mt-0.5 w-1.5 h-1.5 rounded-full ${
-                    sig.severity === "critical" ? "bg-danger" :
-                    sig.severity === "warning" ? "bg-warning" : "bg-info"
-                  }`} />
-                  <span className="text-text-secondary">{sig.summary}</span>
+          {/* AI Analysis (collapsible) */}
+          {analysis && (
+            <div className="mb-4">
+              <button
+                onClick={() => setShowAnalysis(!showAnalysis)}
+                className="flex items-center gap-1.5 text-[12px] text-text-secondary cursor-pointer bg-transparent border-0 p-0 hover:text-text transition-colors mb-2"
+              >
+                <span className={`text-[10px] transition-transform duration-200 ${showAnalysis ? "rotate-90" : ""}`}>▶</span>
+                AI Analysis
+              </button>
+              {showAnalysis && (
+                <div className="pl-4 border-l-2 border-accent-solo/20 space-y-2.5">
+                  {analysis.summary && (
+                    <p className="text-[12px] text-text m-0 leading-relaxed">{analysis.summary}</p>
+                  )}
+                  {analysis.next_action && (
+                    <div className="text-[12px]">
+                      <span className="text-text-muted">Next: </span>
+                      <span className="text-accent-solo font-medium">{analysis.next_action}</span>
+                    </div>
+                  )}
+                  {analysis.signals.length > 0 && (
+                    <div className="space-y-1">
+                      {analysis.signals.map((sig, i) => (
+                        <div key={i} className="flex items-start gap-1.5 text-[11px]">
+                          <span className={`shrink-0 mt-1 w-1.5 h-1.5 rounded-full ${
+                            sig.severity === "critical" ? "bg-danger" :
+                            sig.severity === "warning" ? "bg-warning" : "bg-info"
+                          }`} />
+                          <span className="text-text-secondary">{sig.summary}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
-              ))}
+              )}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Stats */}
-        <div className="space-y-3 text-[12px]">
-          <div className="flex justify-between">
-            <span className="text-text-muted">Activity (7d)</span>
-            <span className="tabular-nums">{project.activity_7d}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Activity (30d)</span>
-            <span className="tabular-nums">{project.activity_30d}</span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-text-muted">Priority</span>
-            <span className="capitalize">{project.priority}</span>
-          </div>
-          {project.tags && (
-            <div className="flex justify-between">
-              <span className="text-text-muted">Tags</span>
-              <span className="text-right">{project.tags}</span>
+          {/* Details grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+            <div>
+              <div className="text-[10px] text-text-muted mb-0.5">Activity 7d</div>
+              <div className="text-[14px] font-semibold text-text tabular-nums">{project.activity_7d}</div>
             </div>
-          )}
-          {project.last_activity_at && (
-            <div className="flex justify-between">
-              <span className="text-text-muted">Last activity</span>
-              <span>{new Date(project.last_activity_at).toLocaleDateString()}</span>
+            <div>
+              <div className="text-[10px] text-text-muted mb-0.5">Activity 30d</div>
+              <div className="text-[14px] font-semibold text-text tabular-nums">{project.activity_30d}</div>
             </div>
-          )}
-        </div>
+            <div>
+              <div className="text-[10px] text-text-muted mb-0.5">Priority</div>
+              <div className="text-[12px] capitalize text-text font-medium">{project.priority}</div>
+            </div>
+            {project.last_activity_at && (
+              <div>
+                <div className="text-[10px] text-text-muted mb-0.5">Last activity</div>
+                <div className="text-[12px] text-text-secondary">{new Date(project.last_activity_at).toLocaleDateString()}</div>
+              </div>
+            )}
+          </div>
 
-        {/* Aliases */}
-        <div className="border-t border-border pt-3">
-          <div className="text-[11px] text-text-muted mb-1.5">Aliases</div>
-          {aliases.length > 0 && (
-            <div className="flex flex-wrap gap-1 mb-1.5">
-              {aliases.map((a) => (
-                <span key={a.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface-3 text-[11px] text-text-secondary">
-                  {a.alias}
-                  <button
-                    onClick={async () => {
-                      await api.deleteProjectAlias(appName, a.id);
-                      setAliases((prev) => prev.filter((x) => x.id !== a.id));
-                    }}
-                    className="text-text-muted hover:text-danger cursor-pointer bg-transparent border-0 p-0 text-[10px] leading-none"
-                  >&times;</button>
-                </span>
-              ))}
+          {/* Metadata rows */}
+          <div className="space-y-1.5 text-[12px] mb-4">
+            {project.tags && (
+              <div className="flex justify-between">
+                <span className="text-text-muted">Tags</span>
+                <span className="text-text-secondary">{project.tags}</span>
+              </div>
+            )}
+            {project.start_date && (
+              <div className="flex justify-between">
+                <span className="text-text-muted">Started</span>
+                <span className="text-text-secondary">{project.start_date}</span>
+              </div>
+            )}
+            <div className="flex justify-between">
+              <span className="text-text-muted">Created</span>
+              <span className="text-text-secondary">{new Date(project.created_at).toLocaleDateString()}</span>
+            </div>
+            {project.completed_at && (
+              <div className="flex justify-between">
+                <span className="text-text-muted">Completed</span>
+                <span className="text-text-secondary">{new Date(project.completed_at).toLocaleDateString()}</span>
+              </div>
+            )}
+            {project.stakeholders && (
+              <div className="flex justify-between gap-2">
+                <span className="text-text-muted shrink-0">Stakeholders</span>
+                <span className="text-text-secondary text-right">{project.stakeholders}</span>
+              </div>
+            )}
+            {project.success_criteria && (
+              <div className="flex justify-between gap-2">
+                <span className="text-text-muted shrink-0">Success Criteria</span>
+                <span className="text-text-secondary text-right">{project.success_criteria}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Open Blockers */}
+          {project.open_blocker_count > 0 && (
+            <div className="rounded-md bg-danger/8 border border-danger/20 px-3 py-2 flex items-center justify-between mb-4">
+              <span className="text-[11px] text-danger font-medium">Open Blockers</span>
+              <span className="text-[16px] font-bold text-danger tabular-nums">{project.open_blocker_count}</span>
             </div>
           )}
-          <div className="flex gap-1">
+
+          {/* Aliases */}
+          <div className="mb-4">
+            <div className="text-[11px] text-text-muted mb-1.5">Aliases</div>
+            {aliases.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-1.5">
+                {aliases.map((a) => (
+                  <span key={a.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface-3 text-[11px] text-text-secondary">
+                    {a.alias}
+                    <button
+                      onClick={async () => {
+                        await api.deleteProjectAlias(appName, a.id);
+                        setAliases((prev) => prev.filter((x) => x.id !== a.id));
+                      }}
+                      className="text-text-muted hover:text-danger cursor-pointer bg-transparent border-0 p-0 text-[10px] leading-none"
+                    >&times;</button>
+                  </span>
+                ))}
+              </div>
+            )}
             <input
               type="text"
               placeholder="Add alias..."
@@ -415,95 +455,52 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
                   setNewAlias("");
                 }
               }}
-              className="flex-1 min-w-0 px-2 py-1 rounded bg-surface-2 border border-border text-[11px] text-text placeholder-text-muted"
+              className="w-full max-w-xs px-2 py-1 rounded bg-surface-2 border border-border text-[11px] text-text placeholder-text-muted"
             />
           </div>
-        </div>
 
-        {/* Git Context */}
-        <div className="border-t border-border pt-3">
-          <div className="text-[11px] text-text-muted mb-1.5">Git Activity</div>
-          <div className="flex gap-1 mb-1.5">
-            <input
-              type="text"
-              placeholder="/path/to/repo"
-              value={gitRepo}
-              onChange={(e) => setGitRepo(e.target.value)}
-              className="flex-1 min-w-0 px-2 py-1 rounded bg-surface-2 border border-border text-[11px] text-text placeholder-text-muted"
-            />
-            <button
-              onClick={async () => {
-                if (!gitRepo.trim() || !id) return;
-                setGitLoading(true);
-                try {
-                  const commits = await api.gitContext(appName, id, gitRepo.trim());
-                  setGitCommits(commits);
-                } catch { setGitCommits([]); }
-                setGitLoading(false);
-              }}
-              disabled={gitLoading}
-              className="px-2 py-1 rounded bg-surface-3 text-text-secondary text-[10px] cursor-pointer border-0 disabled:opacity-50"
-            >
-              {gitLoading ? "..." : "Sync"}
-            </button>
-          </div>
-          {gitCommits.length > 0 && (
-            <div className="space-y-1 max-h-40 overflow-y-auto">
-              {gitCommits.map((c, i) => (
-                <div key={i} className="text-[11px] border-b border-border-subtle pb-1 last:border-0">
-                  <div className="text-text truncate" title={c.subject}>{c.subject}</div>
-                  <div className="text-text-muted text-[10px]">{c.hash} · {c.author} · {c.date}</div>
-                </div>
-              ))}
+          {/* Git Activity */}
+          <div>
+            <div className="text-[11px] text-text-muted mb-1.5">Git Activity</div>
+            <div className="flex gap-1 mb-1.5 max-w-md">
+              <input
+                type="text"
+                placeholder="/path/to/repo"
+                value={gitRepo}
+                onChange={(e) => setGitRepo(e.target.value)}
+                className="flex-1 min-w-0 px-2 py-1 rounded bg-surface-2 border border-border text-[11px] text-text placeholder-text-muted"
+              />
+              <button
+                onClick={async () => {
+                  if (!gitRepo.trim() || !id) return;
+                  setGitLoading(true);
+                  try {
+                    const commits = await api.gitContext(appName, id, gitRepo.trim());
+                    setGitCommits(commits);
+                  } catch { setGitCommits([]); }
+                  setGitLoading(false);
+                }}
+                disabled={gitLoading}
+                className="px-2 py-1 rounded bg-surface-3 text-text-secondary text-[10px] cursor-pointer border-0 disabled:opacity-50"
+              >
+                {gitLoading ? "..." : "Sync"}
+              </button>
             </div>
-          )}
-          {gitCommits.length === 0 && gitRepo && !gitLoading && (
-            <div className="text-[10px] text-text-muted">No matching commits found.</div>
-          )}
-        </div>
-
-        {/* Wolo-specific fields */}
-        {project.stakeholders && (
-          <div className="border-t border-border pt-3">
-            <div className="text-[11px] text-text-muted mb-1">Stakeholders</div>
-            <div className="text-[12px] text-text">{project.stakeholders}</div>
+            {gitCommits.length > 0 && (
+              <div className="space-y-1 max-h-40 overflow-y-auto">
+                {gitCommits.map((c, i) => (
+                  <div key={i} className="text-[11px] border-b border-border-subtle pb-1 last:border-0">
+                    <div className="text-text truncate" title={c.subject}>{c.subject}</div>
+                    <div className="text-text-muted text-[10px] mt-0.5">{c.hash} · {c.author} · {c.date}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {gitCommits.length === 0 && gitRepo && !gitLoading && (
+              <div className="text-[10px] text-text-muted">No matching commits found.</div>
+            )}
           </div>
-        )}
-        {project.success_criteria && (
-          <div className="border-t border-border pt-3">
-            <div className="text-[11px] text-text-muted mb-1">Success Criteria</div>
-            <div className="text-[12px] text-text">{project.success_criteria}</div>
-          </div>
-        )}
-
-        {/* Open blockers (wolo) */}
-        {project.open_blocker_count > 0 && (
-          <div className="border-t border-border pt-3">
-            <div className="text-[11px] text-text-muted mb-1">Open Blockers</div>
-            <div className="text-lg font-medium text-danger tabular-nums">{project.open_blocker_count}</div>
-          </div>
-        )}
-
-        {/* Dates */}
-        <div className="border-t border-border pt-3 space-y-2 text-[12px]">
-          {project.start_date && (
-            <div className="flex justify-between">
-              <span className="text-text-muted">Started</span>
-              <span>{project.start_date}</span>
-            </div>
-          )}
-          {project.completed_at && (
-            <div className="flex justify-between">
-              <span className="text-text-muted">Completed</span>
-              <span>{new Date(project.completed_at).toLocaleDateString()}</span>
-            </div>
-          )}
-          <div className="flex justify-between">
-            <span className="text-text-muted">Created</span>
-            <span>{new Date(project.created_at).toLocaleDateString()}</span>
-          </div>
-        </div>
-      </RightInspector>
+        </section>
     </div>
   );
 }
