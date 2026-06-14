@@ -1618,6 +1618,7 @@ class FeishuChannel(BaseChannel):
                 "mentions_bot": mentions_bot,
                 "sender_display_name": sender_display_name,
                 "sender_label": sender_display_name or sender_id,
+                "sent_at": _normalize_feishu_message_time(getattr(message, "create_time", None)),
             }
             if quoted_message:
                 metadata["quoted_message"] = quoted_message

@@ -1027,8 +1027,15 @@ def _build_inbound_user_message(message: InboundMessage) -> ConversationMessage:
     content: list[TextBlock | ImageBlock] = []
     speaker_context = _build_speaker_context(message)
     base = (message.content or "").strip()
+
+    # Inject message timestamp if available (from channel metadata)
+    sent_at = (message.metadata or {}).get("sent_at") or ""
+    time_context = f"[Message sent at: {sent_at}]" if sent_at else ""
+
     if speaker_context:
         content.append(TextBlock(text=speaker_context))
+    if time_context:
+        content.append(TextBlock(text=time_context))
     if base:
         content.append(TextBlock(text=base))
 

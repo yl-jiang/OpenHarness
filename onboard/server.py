@@ -7,6 +7,7 @@ import errno
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import socket
 import subprocess
@@ -36,12 +37,19 @@ class OnboardServerError(RuntimeError):
 
 
 def _build_frontend() -> None:
-    """Run frontend build if node_modules exists (i.e. deps are installed)."""
+    """Run frontend build if dist is missing and npm is available."""
     frontend_dir = Path(__file__).resolve().parent / "frontend"
+    dist_dir = frontend_dir / "dist"
+    # Skip if dist already exists (frontend was pre-built by Makefile or CI)
+    if dist_dir.exists():
+        return
     if not (frontend_dir / "node_modules").exists():
         return
+    npm_path = shutil.which("npm")
+    if not npm_path:
+        return
     subprocess.run(
-        ["npm", "run", "build"],
+        [npm_path, "run", "build"],
         cwd=frontend_dir,
         check=True,
         capture_output=True,
