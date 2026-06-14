@@ -215,7 +215,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
         content: m.content,
         label: m.role === 'user' ? 'you' : 'assistant',
         status: 'complete' as const,
-        timestamp: new Date(),
+        timestamp: new Date(m.timestamp),
       }));
       setMessages(loaded);
       messageCache.set(appName, loaded);
@@ -475,7 +475,13 @@ export function ChatPanel({ appName }: { appName: AppName }) {
                   }`} />
                   {msg.label}
                 </span>
-                <span>{msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                <span>{(() => {
+                  const now = new Date();
+                  const isToday = msg.timestamp.toDateString() === now.toDateString();
+                  return isToday
+                    ? msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                    : msg.timestamp.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                })()}</span>
               </div>
               <div className={`text-[13px] leading-relaxed ${msg.role === 'tool' ? 'text-text-muted whitespace-pre-wrap' : 'text-text-secondary'}`}>
                 {msg.role === 'assistant' ? <MarkdownView content={msg.content} /> : msg.content}

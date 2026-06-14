@@ -40,7 +40,11 @@ function createSocket(app: AppName, sessionKeyOverride?: string): PersistentSock
   };
   ws.onclose = () => {
     entry.connected = false;
-    sockets.delete(app);
+    // Only delete from sockets if this is still the current entry for this app.
+    // A newer socket may have replaced us; don't evict it.
+    if (sockets.get(app) === entry) {
+      sockets.delete(app);
+    }
     for (const listener of entry.listeners) {
       listener({ type: '_disconnected' } as unknown as WsServerMessage);
     }

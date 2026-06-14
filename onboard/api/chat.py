@@ -14,40 +14,12 @@ from fastapi import APIRouter, File, Query, UploadFile, WebSocket, WebSocketDisc
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
 from onboard.services.chat_service import stream_chat
+from onboard.services import chat_storage
 
 router = APIRouter(tags=["chat"])
 
 _UPLOAD_DIR = Path(os.environ.get("ONBOARD_WORKSPACE", "~/.onboard")).expanduser() / "chat-uploads"
 _MAX_UPLOAD_SIZE = 20 * 1024 * 1024  # 20 MB
-
-# Regex to strip the volatile time-context prefix injected by the runner
-_TIME_CONTEXT_RE = re.compile(
-    r"^## Current Local Time\n(?:- [^\n]+\n)+\n.*?\n+---\n+",
-    re.DOTALL,
-)
-
-
-def _strip_time_context(text: str) -> str:
-    """Remove the runner's time-context header from a user message."""
-    return _TIME_CONTEXT_RE.sub("", text, count=1)
-
-
-def _get_workspace(app_name: str) -> Path:
-    if app_name == "solo":
-        from solo.core.workspace import get_workspace_root
-        return get_workspace_root(None)
-    else:
-        from wolo.core.workspace import get_workspace_root
-        return get_workspace_root(None)
-
-
-def _get_session_module(app_name: str):
-    if app_name == "solo":
-        from solo.core import session
-        return session
-    else:
-        from wolo.core import session
-        return session
 
 
 @router.post("/api/chat/upload")
@@ -126,9 +98,7 @@ def list_sessions(
     search: str | None = Query(None),
 ) -> list[dict[str, Any]]:
     """List recent chat sessions (within 30 days, web-originated only)."""
-    session_mod = _get_session_module(app_name)
-    workspace = _get_workspace(app_name)
-    sessions = session_mod.list_conversations(workspace, limit=limit)
+    sessions = chat_storage.list_sessions(app_name, limit=limit, search=search)
 
     # Only show sessions created by the web UI (session_key starts with "web-")
     sessions = [s for s in sessions if s.get("session_key", "").startswith("web-")]
@@ -137,79 +107,40 @@ def list_sessions(
     cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     sessions = [s for s in sessions if (s.get("updated_at") or "") >= cutoff]
 
-    # Search by keyword in first user message (preview)
-    if search:
-        keyword = search.lower()
-        filtered = []
-        for s in sessions:
-            messages, _ = session_mod.load_conversation(workspace, s["session_key"])
-            preview = next((_strip_time_context(m.text)[:100] for m in messages if m.role == "user" and m.text.strip()), "")
-            if keyword in preview.lower():
-                s["preview"] = preview
-                filtered.append(s)
-            else:
-                # Also search assistant responses
-                for m in messages:
-                    if m.text and keyword in m.text.lower():
-                        s["preview"] = preview
-                        filtered.append(s)
-                        break
-        sessions = filtered
-    else:
-        # Add preview (first user message) for display
-        for s in sessions:
-            messages, _ = session_mod.load_conversation(workspace, s["session_key"])
-            s["preview"] = next((_strip_time_context(m.text)[:100] for m in messages if m.role == "user" and m.text.strip()), "")
-
     return sessions
 
 
 @router.get("/api/{app_name}/chat/sessions/{session_key}")
 def get_session(app_name: str, session_key: str) -> dict[str, Any]:
     """Get full message history for a session."""
-    session_mod = _get_session_module(app_name)
-    workspace = _get_workspace(app_name)
-    messages, session_id = session_mod.load_conversation(workspace, session_key)
+    messages = chat_storage.load_session_messages(session_key)
     return {
         "session_key": session_key,
-        "session_id": session_id,
-        "messages": [
-            {"role": m.role, "content": _strip_time_context(m.text) if m.role == "user" else m.text}
-            for m in messages
-            if m.role in ("user", "assistant") and m.text.strip()
-        ],
+        "session_id": None,
+        "messages": messages,
     }
 
 
 @router.delete("/api/{app_name}/chat/sessions/{session_key}")
 def delete_session(app_name: str, session_key: str) -> dict[str, bool]:
     """Delete a chat session."""
-    session_mod = _get_session_module(app_name)
-    workspace = _get_workspace(app_name)
-    conn = session_mod._get_db(workspace)
-    try:
-        cur = conn.execute("DELETE FROM conversations WHERE session_key = ?", (session_key,))
-        conn.commit()
-        return {"deleted": cur.rowcount > 0}
-    finally:
-        conn.close()
+    deleted = chat_storage.delete_session(session_key)
+    return {"deleted": deleted}
 
 
 @router.get("/api/{app_name}/chat/sessions/{session_key}/export/markdown")
 def export_markdown(app_name: str, session_key: str) -> PlainTextResponse:
     """Export a session as formatted Markdown."""
-    session_mod = _get_session_module(app_name)
-    workspace = _get_workspace(app_name)
-    messages, _ = session_mod.load_conversation(workspace, session_key)
+    messages = chat_storage.load_session_messages(session_key)
 
     lines = [f"# Chat Session: {session_key}\n"]
     for m in messages:
-        if not m.text.strip():
+        if not m["content"].strip():
             continue
-        if m.role == "user":
-            lines.append(f"## 🧑 User\n\n{m.text.strip()}\n")
-        elif m.role == "assistant":
-            lines.append(f"## 🤖 Assistant\n\n{m.text.strip()}\n")
+        if m["role"] == "user":
+            lines.append(f"## User\n\n{m['content'].strip()}\n")
+        elif m["role"] == "assistant":
+            lines.append(f"## Assistant\n\n{m['content'].strip()}\n")
 
     content = "\n".join(lines)
     return PlainTextResponse(
@@ -222,22 +153,20 @@ def export_markdown(app_name: str, session_key: str) -> PlainTextResponse:
 @router.get("/api/{app_name}/chat/sessions/{session_key}/export/html")
 def export_html(app_name: str, session_key: str) -> HTMLResponse:
     """Export a session as formatted HTML."""
-    session_mod = _get_session_module(app_name)
-    workspace = _get_workspace(app_name)
-    messages, _ = session_mod.load_conversation(workspace, session_key)
+    messages = chat_storage.load_session_messages(session_key)
 
     msg_blocks: list[str] = []
     for m in messages:
-        if not m.text.strip():
+        if not m["content"].strip():
             continue
-        escaped = m.text.strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        if m.role == "user":
+        escaped = m["content"].strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        if m["role"] == "user":
             msg_blocks.append(
-                f'<div class="msg user"><div class="label">🧑 User</div><div class="content">{escaped}</div></div>'
+                f'<div class="msg user"><div class="label">User</div><div class="content">{escaped}</div></div>'
             )
-        elif m.role == "assistant":
+        elif m["role"] == "assistant":
             msg_blocks.append(
-                f'<div class="msg assistant"><div class="label">🤖 Assistant</div><div class="content">{escaped}</div></div>'
+                f'<div class="msg assistant"><div class="label">Assistant</div><div class="content">{escaped}</div></div>'
             )
 
     html = f"""<!DOCTYPE html>

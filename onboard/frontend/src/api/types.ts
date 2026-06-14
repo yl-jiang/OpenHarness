@@ -219,7 +219,7 @@ export interface ChatSession {
 export interface ChatSessionDetail {
   session_key: string;
   session_id: string | null;
-  messages: { role: string; content: string }[];
+  messages: { role: string; content: string; timestamp: string }[];
 }
 
 export type WsClientMessage = { type: 'message'; content: string; media?: string[] } | { type: 'cancel' };

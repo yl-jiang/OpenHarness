@@ -14,6 +14,8 @@ from wolo.config import load_config as load_wolo_config
 from wolo.core.store import WoloStore
 from wolo.runner import WoloQueryRunner
 
+from onboard.services.chat_storage import save_assistant_message, save_user_message
+
 
 async def stream_chat(
     app_name: str,
@@ -33,6 +35,9 @@ async def stream_chat(
         runner = WoloQueryRunner(store, profile=config.provider_profile)
     else:
         raise ValueError(f"Unsupported app: {app_name}")
+
+    # Store clean user message before the runner injects context
+    await asyncio.to_thread(save_user_message, session_key, app_name, content)
 
     async for event in _stream_runner_events(runner, content, session_key=session_key, media=media):
         yield event
@@ -85,6 +90,9 @@ async def _stream_runner_events(
                 event = _runner_event_to_ws_event(kind, text)
                 if event is not None:
                     await queue.put(event)
+                # Persist the complete assistant reply
+                if kind == "final" and text.strip():
+                    await asyncio.to_thread(save_assistant_message, session_key, text)
         except Exception as exc:
             await queue.put(exc)
         finally:
