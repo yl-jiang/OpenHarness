@@ -15,6 +15,7 @@ from solo.core.attachments import (
     persist_attachment_paths,
     resolve_stored_attachment_path,
 )
+from common.project_ai.matcher import tokenize_enhanced as _tokenize_enhanced
 from solo.core.models import (
     Milestone,
     PendingConfirmation,
@@ -1182,6 +1183,20 @@ class SoloStore:
         )
         self._db.commit()
         return cur.rowcount > 0
+
+    def cancel_todo(self, todo_id: str) -> bool:
+        cur = self._db.execute(
+            "UPDATE todos SET status='cancelled', completed_at=? WHERE id=? AND status NOT IN ('done', 'cancelled')",
+            (_now(), todo_id),
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def delete_todo(self, todo_id: str) -> bool:
+        cur = self._db.execute("DELETE FROM todos WHERE id = ?", (todo_id,))
+        self._db.commit()
+        return cur.rowcount > 0
+
 
     def update_todo(self, todo_id: str, **updates: Any) -> bool:
         """Update an existing todo by ID with new field values."""
@@ -2506,20 +2521,3 @@ class SoloStore:
         ]
 
 
-def _tokenize_enhanced(text: str) -> list[str]:
-    """Tokenize text: Jieba for Chinese, regex for English/numbers."""
-    if not text:
-        return []
-
-    import re
-
-    text = text.lower()
-
-    if not re.search(r"[\u4e00-\u9fff]", text):
-        return re.findall(r"[a-z0-9]{2,}", text)
-
-    import jieba
-
-    tokens = [t.strip() for t in jieba.cut(text) if t.strip()]
-    ascii_tokens = re.findall(r"[a-z0-9]{2,}", text)
-    return list(dict.fromkeys(tokens + ascii_tokens))

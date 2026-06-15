@@ -30,6 +30,7 @@ from openharness.tools.skill_search_tool import SkillSearchTool
 from openharness.tools.skill_write_tool import SkillWriteTool
 from openharness.utils.log import get_logger
 
+from common.constants import EMOTION_MAX_LENGTH, SUMMARY_MAX_LENGTH
 from solo.core.memory import add_memory_entry
 from solo.core.models import ProfileUpdate, Project, ProjectLink, ProjectSuggestion, SoloEntry, SoloRecord, SoloTodo
 from solo.commands import format_solo_llm_usage
@@ -1373,8 +1374,16 @@ class SoloToolRegistry:
     async def _handle_project_scan(self, arguments: dict[str, Any]) -> dict[str, Any]:
         from common.project_ai.discovery import scan_for_projects
 
-        agent = self._agent_factory() if self._agent_factory else None
-        candidates = await scan_for_projects(store=self.store, agent=agent)
+        if not self._agent_factory:
+            return {
+                "ok": False,
+                "error": "AI agent is not available. Please check your model configuration before scanning for projects.",
+            }
+        agent = self._agent_factory()
+        try:
+            candidates = await scan_for_projects(store=self.store, agent=agent)
+        except RuntimeError as e:
+            return {"ok": False, "error": str(e)}
         now = _now()
         created = 0
         for c in candidates:
@@ -1383,6 +1392,12 @@ class SoloToolRegistry:
                 suggestion_type=c.get("suggestion_type", "create_project"),
                 title=c.get("title", ""),
                 rationale=c.get("rationale", ""),
+                proposed_payload_json=json.dumps({
+                    "title": c.get("title", ""),
+                    "summary": c.get("summary", ""),
+                    "keywords": c.get("keywords", []),
+                    "suggested_milestones": c.get("suggested_milestones", []),
+                }, ensure_ascii=False),
                 evidence_json=json.dumps(c.get("evidence", []), ensure_ascii=False),
                 confidence=float(c.get("confidence", 0)),
                 status="pending",
@@ -1546,9 +1561,9 @@ def _tool_record() -> ToolDefinition:
         [
             ("content", "string", "Faithful paraphrase of the user's current message. Must preserve all facts, opinions, and claims the user actually expressed. Do NOT add facts, opinions, or reflections the user did not state in this turn — even if a recent conversation topic suggests them.", True),
             ("corrected_content", "string", "Cleanup of speech-to-text artifacts in `content` ONLY: removing redundancy/filler words, fixing typos, adding punctuation, smoothing broken grammar. Think copy-editor pass, not rewrite. MUST NOT introduce any fact, opinion, or claim that is not already present in `content` — every fact in `corrected_content` must also appear in `content`. NEVER change the event tense (planned→happened / future→past). Example: 'too late last night, will watch today' → keep the future tense, do NOT rewrite as 'watched last night'.", False),
-            ("summary", "string", "One-sentence summary.", False),
+            ("summary", "string", f"One-sentence summary (≤{SUMMARY_MAX_LENGTH} chars).", False),
             ("tags", "string", "Comma-separated tags.", False),
-            ("emotion", "string", "Emotion label: 积极/消极/中性/复杂.", False),
+            ("emotion", "string", f"Short emotion keyword (≤{EMOTION_MAX_LENGTH} chars), e.g. 积极/消极/中性/复杂. Must NOT be a full sentence.", False),
             ("date", "string", "YYYY-MM-DD. Only provide this if the user explicitly mentions a specific date (e.g. '昨天', '5月18日', '上周三'). If no date is mentioned, leave this empty and the system will default to today's local date.", False),
             ("period", "string", "Semantic time period extracted from content (e.g. 凌晨, 上午).", False),
             ("events", "string", "Holidays, anniversaries, or birthdays.", False),

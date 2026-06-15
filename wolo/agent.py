@@ -7,6 +7,7 @@ import json
 from typing import Any
 
 from common.constants import DEFAULT_SAMPLE_TYPE
+from common.record_validator import format_validation_feedback, validate_record_data
 from openharness.api.client import (
     ApiMessageCompleteEvent,
     ApiMessageRequest,
@@ -57,15 +58,46 @@ class OpenHarnessWoloAgent:
         self._max_json_attempts = max(1, max_json_attempts)
         self._retry_delay_seconds = max(0.0, retry_delay_seconds)
 
-    async def process_record(self, raw_content: str, profile_context: str) -> dict[str, Any]:
+    async def process_record(
+        self,
+        raw_content: str,
+        profile_context: str,
+        *,
+        max_validation_retries: int = 3,
+    ) -> dict[str, Any]:
         snippet = raw_content[:120].replace("\n", " ")
         logger.debug("process_record start model=%s content=%r", self._settings.model, snippet)
-        result = await self._complete_json(
-            system_prompt=PROCESS_RECORD_SYSTEM_PROMPT,
-            user_prompt=PROCESS_RECORD_USER_PROMPT.format(profile_context=profile_context, raw_content=raw_content),
-            fallback=_fallback_record(raw_content),
-            operation="process_record",
+
+        base_prompt = PROCESS_RECORD_USER_PROMPT.format(
+            profile_context=profile_context, raw_content=raw_content,
         )
+        user_prompt = base_prompt
+        result: dict[str, Any] = {}
+
+        for attempt in range(1 + max_validation_retries):
+            result = await self._complete_json(
+                system_prompt=PROCESS_RECORD_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                fallback=_fallback_record(raw_content),
+                operation="process_record",
+            )
+
+            items_to_validate = result.get("records") or [result]
+            errors: list[str] = []
+            for item in items_to_validate:
+                if isinstance(item, dict):
+                    errors.extend(validate_record_data(item))
+
+            if not errors or result.get("needs_clarification"):
+                break
+
+            if attempt < max_validation_retries:
+                logger.info(
+                    "process_record validation failed attempt=%d errors=%d",
+                    attempt + 1, len(errors),
+                )
+                user_prompt = base_prompt + "\n\n" + format_validation_feedback(errors)
+
         needs_clarification = bool(result.get("needs_clarification"))
         multi_records = len(result.get("records") or [])
         logger.debug(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from common.constants import REPORT_TYPE_LABELS
+from common.constants import EMOTION_MAX_LENGTH, REPORT_TYPE_LABELS, SUMMARY_MAX_LENGTH
 
 # Shared prompt fragments — referenced by multiple sections to avoid duplication.
 KEYWORD_TRIGGER_WARNING = (
@@ -42,9 +42,9 @@ PROCESS_RECORD_SYSTEM_PROMPT = """你是一位深度理解人性的 AI 个人记
   "date": "YYYY-MM-DD (仅当用户提到非今天的日期时输出)",
   "period": "凌晨/清晨/上午/中午/下午/傍晚/深夜 (仅当用户提到的时间与当前记录时间明显不符时输出)",
   "corrected_content": "修正后语病并补全上下文的原文",
-  "summary": "一句极简的摘要",
+  "summary": "一句极简的摘要（≤{SUMMARY_MAX_LENGTH}字）",
   "tags": "标签1,标签2 (如：工作,家庭,情绪,健康)",
-  "emotion": "积极/消极/中性/复杂",
+  "emotion": "简短情绪关键词（≤{EMOTION_MAX_LENGTH}字，如：积极/消极/中性/复杂，不要写完整句子）",
   "events": "节日信息、纪念日或生日",
   "emotion_reason": "基于心理学视角的简短情绪分析",
   "related_people": "涉及人物",
@@ -89,7 +89,11 @@ PROCESS_RECORD_SYSTEM_PROMPT = """你是一位深度理解人性的 AI 个人记
   ],
   "needs_clarification": false
 }
-"""
+""".replace(
+    "{EMOTION_MAX_LENGTH}", str(EMOTION_MAX_LENGTH)
+).replace(
+    "{SUMMARY_MAX_LENGTH}", str(SUMMARY_MAX_LENGTH)
+)
 
 
 ARTIFACT_EXTRACTION_SYSTEM_PROMPT = """你是一位个人事务与行为实验 artifacts 提取器。输入包含原始文本和已经整理好的个人记录。

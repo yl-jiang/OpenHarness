@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from common.constants import REPORT_TYPE_LABELS
+from common.constants import REPORT_TYPE_LABELS, EMOTION_MAX_LENGTH, SUMMARY_MAX_LENGTH
 
 # Shared prompt fragments — referenced by multiple sections to avoid duplication.
 KEYWORD_TRIGGER_WARNING = (
@@ -43,9 +43,9 @@ PROCESS_RECORD_SYSTEM_PROMPT = """你是一位严谨的 AI 工作日志助手。
   "date": "YYYY-MM-DD (仅当用户提到非今天的日期时输出)",
   "period": "凌晨/清晨/上午/中午/下午/傍晚/深夜 (仅当用户提到的时间与当前记录时间明显不符时输出)",
   "corrected_content": "修正语病但不改变事实的工作原文",
-  "summary": "一句极简的工作摘要，突出交付物/决策/blocker",
+  "summary": "一句极简的工作摘要（≤{SUMMARY_MAX_LENGTH}字），突出交付物/决策/blocker",
   "tags": "标签1,标签2 (如：项目,会议,代码,prompt,tool,bug,review,blocker,决策,交付)",
-  "emotion": "顺利/受阻/中性/高压/完成/风险",
+  "emotion": "简短工作状态关键词（≤{EMOTION_MAX_LENGTH}字，如：顺利/受阻/中性/高压/完成/风险，不要写完整句子）",
   "events": "会议、里程碑、发布、评审、事故或重要工作节点",
   "emotion_reason": "基于工作状态的简短说明，例如为何受阻或为何完成",
   "related_people": "涉及同事、团队、owner 或 stakeholder",
@@ -80,7 +80,11 @@ PROCESS_RECORD_SYSTEM_PROMPT = """你是一位严谨的 AI 工作日志助手。
   ],
   "needs_clarification": false
 }
-"""
+""".replace(
+    "{EMOTION_MAX_LENGTH}", str(EMOTION_MAX_LENGTH)
+).replace(
+    "{SUMMARY_MAX_LENGTH}", str(SUMMARY_MAX_LENGTH)
+)
 
 
 ARTIFACT_EXTRACTION_SYSTEM_PROMPT = """你是一位工作 artifacts 提取器。输入包含原始文本和已经整理好的主工作记录。
