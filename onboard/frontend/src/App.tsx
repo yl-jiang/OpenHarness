@@ -22,6 +22,7 @@ const Todos = lazy(() => import('./pages/Todos').then((m) => ({ default: m.Todos
 const Projects = lazy(() => import("./pages/Projects").then((m) => ({ default: m.Projects })));
 const ProjectDetail = lazy(() => import("./pages/ProjectDetail").then((m) => ({ default: m.ProjectDetail })));
 const ProjectInbox = lazy(() => import("./pages/ProjectInbox").then((m) => ({ default: m.ProjectInbox })));
+const Memory = lazy(() => import("./pages/Memory").then((m) => ({ default: m.Memory })));
 
 function PageLoader() {
   return (
@@ -78,6 +79,7 @@ export function App() {
         { path: 'projects', element: <SuspenseLoader><Projects appName={appName} /></SuspenseLoader> },
         { path: 'projects/inbox', element: <SuspenseLoader><ProjectInbox appName={appName} /></SuspenseLoader> },
         { path: 'projects/:id', element: <SuspenseLoader><ProjectDetail appName={appName} /></SuspenseLoader> },
+        { path: 'memory', element: <SuspenseLoader><Memory appName={appName} /></SuspenseLoader> },
         { path: 'decisions', element: <SuspenseLoader><Decisions /></SuspenseLoader> },
         { path: 'highlights', element: <SuspenseLoader><Highlights /></SuspenseLoader> },
       ],

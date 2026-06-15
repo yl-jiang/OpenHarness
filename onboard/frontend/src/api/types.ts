@@ -410,3 +410,25 @@ export interface GitCommit {
   date: string;
   subject: string;
 }
+
+// ── Memory management types ───────────────────────────────────────
+
+export type MemoryType = "user" | "feedback" | "project" | "reference";
+export type MemoryScope = "private" | "project" | "team";
+
+export interface MemoryItem {
+  id: string;
+  name: string;
+  description: string;
+  type: MemoryType;
+  scope: MemoryScope;
+  category: string;
+  importance: number;
+  source: string;
+  created_at: string;
+  updated_at: string;
+  disabled: boolean;
+  tags: string[];
+  content: string;
+  file_path: string;
+}

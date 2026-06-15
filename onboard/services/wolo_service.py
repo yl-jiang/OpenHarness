@@ -49,7 +49,7 @@ class WoloService:
         records = self.store.list_records()
         todos = self.store.list_todos()
         blockers = self.store.list_highlights(kind="blocker")
-        pending_todos = [todo for todo in todos if todo.status in ("pending", "in_progress")]
+        pending_todos = [todo for todo in todos if todo.status != "done"]
         open_blockers = [item for item in blockers if "resolved" not in item.tags.lower()]
         llm_usage = self.store.llm_usage_summary()
         vision_usage = self.store.vision_usage_summary()
@@ -120,9 +120,6 @@ class WoloService:
         entry = self.store.get_entry(entry_id)
         return to_jsonable(entry) if entry else None
 
-    def delete_entry(self, entry_id: str) -> bool:
-        return self.store.delete_entry(entry_id)
-
     def list_records(
         self,
         *,
@@ -147,9 +144,6 @@ class WoloService:
     def get_record(self, record_id: str) -> dict[str, Any] | None:
         record = self.store.get_record(record_id)
         return to_jsonable(record) if record else None
-
-    def delete_record(self, record_id: str) -> bool:
-        return self.store.delete_record(record_id)
 
     def search(
         self,
@@ -198,12 +192,6 @@ class WoloService:
     def reopen_todo(self, todo_id: str) -> bool:
         return self.store.reopen_todo(todo_id)
 
-    def cancel_todo(self, todo_id: str) -> bool:
-        return self.store.cancel_todo(todo_id)
-
-    def delete_todo(self, todo_id: str) -> bool:
-        return self.store.delete_todo(todo_id)
-
     def list_reports(self, report_type: str | None = None) -> list[dict[str, Any]]:
         reports = self.store.list_reports()
         if report_type:
@@ -251,14 +239,22 @@ class WoloService:
     async def generate_report(
         self, report_type: str, profile: str | None = None, start_date: str | None = None, end_date: str | None = None,
     ) -> dict[str, Any]:
-        agent = self._make_agent(profile=profile)
+        config = load_config(self.workspace)
+        agent = OpenHarnessWoloAgent(
+            profile=profile or config.provider_profile,
+            record_model_call=self.store.record_llm_call,
+        )
         report = await WoloProcessor(self.store, agent).generate_report(
             report_type, start_date=start_date, end_date=end_date,
         )
         return to_jsonable(report)
 
     async def process_pending(self, limit: int = 20) -> dict[str, Any]:
-        agent = self._make_agent()
+        config = load_config(self.workspace)
+        agent = OpenHarnessWoloAgent(
+            profile=config.provider_profile,
+            record_model_call=self.store.record_llm_call,
+        )
         result = await WoloProcessor(self.store, agent).process_pending(limit=limit)
         return to_jsonable(result)
 
@@ -297,10 +293,6 @@ class WoloService:
             to_jsonable(item)
             for item in self.store.list_highlights(kind=kind, project=project, query=query)
         ]
-
-    def resolve_highlight(self, highlight_id: str) -> bool:
-        return self.store.resolve_highlight(highlight_id)
-
 
     def gateway_status(self) -> dict[str, Any]:
         state = gateway_status(workspace=self.workspace)
@@ -654,11 +646,7 @@ class WoloService:
         from uuid import uuid4
         import json
 
-        agent = self._make_agent()
-        try:
-            candidates = await scan_for_projects(store=self.store, agent=agent)
-        except RuntimeError as e:
-            return {"created": 0, "candidates": [], "error": str(e)}
+        candidates = await scan_for_projects(store=self.store, agent=None)
         created = 0
         now = _now()
         for c in candidates:
@@ -670,8 +658,6 @@ class WoloService:
                 proposed_payload_json=json.dumps({
                     "title": c["title"],
                     "description": c.get("rationale", ""),
-                    "summary": c.get("summary", ""),
-                    "keywords": c.get("keywords", []),
                     "suggested_milestones": c.get("suggested_milestones", []),
                 }),
                 evidence_json=json.dumps(c.get("evidence", [])),
@@ -700,18 +686,11 @@ class WoloService:
 
     # --- Project State Analysis ---
 
-    def _make_agent(self, profile=None):
-        config = load_config(self.workspace)
-        return OpenHarnessWoloAgent(
-            profile=profile or config.provider_profile,
-            record_model_call=self.store.record_llm_call,
-        )
-
     async def analyze_project_state(self, project_id: str) -> dict:
         """Analyze a project's state and persist signals."""
         from uuid import uuid4
         result = await analyze_project_state(
-            store=self.store, project_id=project_id, agent=self._make_agent(),
+            store=self.store, project_id=project_id, agent=None,
         )
         # Persist signals
         for sig in result.get("signals", []):
@@ -736,7 +715,7 @@ class WoloService:
         """Generate and persist a daily snapshot."""
         from uuid import uuid4
         data = await generate_daily_snapshot(
-            store=self.store, project_id=project_id, agent=self._make_agent(),
+            store=self.store, project_id=project_id, agent=None,
         )
         if not data:
             return None
@@ -881,7 +860,7 @@ class WoloService:
     async def generate_checkin_questions(self) -> list[dict]:
         """Generate project checkin questions."""
         return await generate_checkin_questions(
-            store=self.store, agent=self._make_agent(),
+            store=self.store, agent=None,
             app_type=self._app_type,
         )
 
@@ -913,3 +892,194 @@ class WoloService:
             if s.id == suggestion_id:
                 return s
         return None
+
+    # ── Memory management ───────────────────────────────────────────
+
+    def list_memories(self) -> list[dict[str, Any]]:
+        """List all memory entries from ~/.wolo/memory/."""
+        from openharness.memory.scan import scan_memory_files
+        from openharness.utils.file_lock import exclusive_file_lock
+        from pathlib import Path
+
+        workspace_path = Path(self.workspace) if self.workspace else None
+        memory_dir = self.store.workspace / "memory" if hasattr(self.store, 'workspace') else None
+        
+        if not memory_dir or not memory_dir.exists():
+            return []
+
+        # Use lock to ensure consistent read while agent might be writing
+        lock_path = memory_dir / ".memory.lock"
+        with exclusive_file_lock(lock_path):
+            memories = []
+            for header in scan_memory_files(
+                workspace_path or memory_dir.parent,
+                max_files=None,
+                include_disabled=True,
+                include_expired=True,
+                memory_dir=memory_dir,
+            ):
+                try:
+                    content = header.path.read_text(encoding="utf-8")
+                    from openharness.memory.schema import split_memory_file
+                    metadata, body, _, _ = split_memory_file(content)
+                    
+                    memories.append({
+                        "id": str(metadata.get("id", "")),
+                        "name": str(metadata.get("name", header.title)),
+                        "description": str(metadata.get("description", "")),
+                        "type": str(metadata.get("type", "user")),
+                        "scope": str(metadata.get("scope", "private")),
+                        "category": str(metadata.get("category", "")),
+                        "importance": int(metadata.get("importance", 1)),
+                        "source": str(metadata.get("source", "manual")),
+                        "created_at": str(metadata.get("created_at", "")),
+                        "updated_at": str(metadata.get("updated_at", "")),
+                        "disabled": bool(metadata.get("disabled", False)),
+                        "tags": list(metadata.get("tags", [])),
+                        "content": body.strip(),
+                        "file_path": str(header.path),
+                    })
+                except Exception:
+                    continue
+
+        # Sort by updated_at descending (outside lock for performance)
+        memories.sort(key=lambda m: m["updated_at"], reverse=True)
+        return memories
+
+    def get_memory(self, memory_id: str) -> dict[str, Any] | None:
+        """Get a specific memory entry by ID."""
+        from openharness.memory.scan import scan_memory_files
+        from openharness.utils.file_lock import exclusive_file_lock
+        from pathlib import Path
+
+        workspace_path = Path(self.workspace) if self.workspace else None
+        memory_dir = self.store.workspace / "memory" if hasattr(self.store, 'workspace') else None
+        
+        if not memory_dir or not memory_dir.exists():
+            return None
+
+        lock_path = memory_dir / ".memory.lock"
+        with exclusive_file_lock(lock_path):
+            for header in scan_memory_files(
+                workspace_path or memory_dir.parent,
+                max_files=None,
+                include_disabled=True,
+                include_expired=True,
+                memory_dir=memory_dir,
+            ):
+                try:
+                    content = header.path.read_text(encoding="utf-8")
+                    from openharness.memory.schema import split_memory_file
+                    metadata, body, _, _ = split_memory_file(content)
+                    
+                    if str(metadata.get("id")) == memory_id:
+                        return {
+                            "id": str(metadata.get("id", "")),
+                            "name": str(metadata.get("name", header.title)),
+                            "description": str(metadata.get("description", "")),
+                            "type": str(metadata.get("type", "user")),
+                            "scope": str(metadata.get("scope", "private")),
+                            "category": str(metadata.get("category", "")),
+                            "importance": int(metadata.get("importance", 1)),
+                            "source": str(metadata.get("source", "manual")),
+                            "created_at": str(metadata.get("created_at", "")),
+                            "updated_at": str(metadata.get("updated_at", "")),
+                            "disabled": bool(metadata.get("disabled", False)),
+                            "tags": list(metadata.get("tags", [])),
+                            "content": body.strip(),
+                            "file_path": str(header.path),
+                        }
+                except Exception:
+                    continue
+
+        return None
+
+    def create_memory(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Create a new memory entry."""
+        from wolo.core.memory import add_memory_entry
+
+        title = data.get("name", "")
+        content = data.get("content", data.get("description", ""))
+        
+        # add_memory_entry already uses exclusive_file_lock internally
+        path = add_memory_entry(self.workspace, title, content)
+        
+        # Read back the created memory (with lock)
+        memories = self.list_memories()
+        for memory in memories:
+            if memory["file_path"] == str(path):
+                return memory
+        
+        raise Exception("Failed to create memory")
+
+    def update_memory(self, memory_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        """Update an existing memory entry."""
+        from openharness.memory.schema import (
+            split_memory_file,
+            render_memory_file,
+            utc_now,
+            format_datetime,
+        )
+        from openharness.utils.file_lock import exclusive_file_lock
+        from openharness.utils.fs import atomic_write_text
+        from pathlib import Path
+
+        # Find the memory file
+        memory = self.get_memory(memory_id)
+        if not memory:
+            return None
+
+        file_path = Path(memory["file_path"])
+        if not file_path.exists():
+            return None
+
+        memory_dir = file_path.parent
+        lock_path = memory_dir / ".memory.lock"
+
+        try:
+            # Lock during read-modify-write to prevent agent conflicts
+            with exclusive_file_lock(lock_path):
+                content = file_path.read_text(encoding="utf-8")
+                metadata, body, _, _ = split_memory_file(content)
+
+                # Update fields
+                if "name" in updates:
+                    metadata["name"] = updates["name"]
+                if "description" in updates:
+                    metadata["description"] = updates["description"]
+                if "type" in updates:
+                    metadata["type"] = updates["type"]
+                if "scope" in updates:
+                    metadata["scope"] = updates["scope"]
+                if "category" in updates:
+                    metadata["category"] = updates["category"]
+                if "importance" in updates:
+                    metadata["importance"] = updates["importance"]
+                if "tags" in updates:
+                    metadata["tags"] = updates["tags"]
+                if "content" in updates:
+                    body = updates["content"].strip() + "\n"
+
+                # Update timestamp
+                metadata["updated_at"] = format_datetime(utc_now())
+
+                # Write back atomically (still within lock)
+                atomic_write_text(file_path, render_memory_file(metadata, body))
+
+            # Return updated memory
+            return self.get_memory(memory_id)
+
+        except Exception as e:
+            raise Exception(f"Failed to update memory: {e}")
+
+    def delete_memory(self, memory_id: str) -> bool:
+        """Soft-delete a memory entry."""
+        from wolo.core.memory import remove_memory_entry
+
+        # Find memory to get its name
+        memory = self.get_memory(memory_id)
+        if not memory:
+            return False
+
+        # remove_memory_entry already uses exclusive_file_lock internally
+        return remove_memory_entry(self.workspace, memory_id)

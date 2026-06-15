@@ -26,6 +26,7 @@ import type {
   TimelineEvent,
   ProjectAlias,
   GitCommit,
+  MemoryItem,
 } from './types';
 
 type QueryValue = string | number | boolean | null | undefined;
@@ -301,4 +302,22 @@ export const api = {
     request<{ id: string; content: string; report_type: string }>(`/api/${app}/projects/${projectId}/review`, { method: "POST" }),
   projectCheckins: (app: AppName, params: Record<string, QueryValue> = {}) =>
     request<ProjectCheckin[]>(`/api/${app}/project-checkins${query(params)}`),
+
+  // ── Memory management ────────────────────────────────────────────
+  memories: (app: AppName) =>
+    request<MemoryItem[]>(`/api/${app}/memory`),
+  memory: (app: AppName, id: string) =>
+    request<MemoryItem>(`/api/${app}/memory/${id}`),
+  createMemory: (app: AppName, data: Omit<MemoryItem, 'id' | 'created_at' | 'updated_at' | 'file_path'>) =>
+    request<MemoryItem>(`/api/${app}/memory`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateMemory: (app: AppName, id: string, data: Partial<Omit<MemoryItem, 'id' | 'created_at' | 'updated_at' | 'file_path'>>) =>
+    request<MemoryItem>(`/api/${app}/memory/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteMemory: (app: AppName, id: string) =>
+    request<{ deleted: boolean }>(`/api/${app}/memory/${id}`, { method: "DELETE" }),
 };

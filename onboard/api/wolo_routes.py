@@ -54,14 +54,6 @@ def entry(entry_id: str, workspace: str | None = None) -> dict[str, Any]:
     return result
 
 
-@router.delete("/entries/{entry_id}")
-def delete_entry(entry_id: str, workspace: str | None = None) -> dict[str, bool]:
-    deleted = _service(workspace).delete_entry(entry_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Entry not found")
-    return {"deleted": True}
-
-
 @router.get("/records")
 def records(
     workspace: str | None = None,
@@ -88,14 +80,6 @@ def record(record_id: str, workspace: str | None = None) -> dict[str, Any]:
     if result is None:
         raise HTTPException(status_code=404, detail="Record not found")
     return result
-
-
-@router.delete("/records/{record_id}")
-def delete_record(record_id: str, workspace: str | None = None) -> dict[str, bool]:
-    deleted = _service(workspace).delete_record(record_id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Record not found")
-    return {"deleted": True}
 
 
 @router.get("/search")
@@ -153,21 +137,6 @@ def todo_reopen(todo_id: str, workspace: str | None = None) -> dict[str, bool]:
     if not _service(workspace).reopen_todo(todo_id):
         raise HTTPException(status_code=404, detail="Todo not found or not in done status")
     return {"ok": True}
-
-
-@router.put("/todos/{todo_id}/cancel")
-def todo_cancel(todo_id: str, workspace: str | None = None) -> dict[str, bool]:
-    if not _service(workspace).cancel_todo(todo_id):
-        raise HTTPException(status_code=404, detail="Todo not found or already done/cancelled")
-    return {"ok": True}
-
-
-@router.delete("/todos/{todo_id}")
-def todo_delete(todo_id: str, workspace: str | None = None) -> dict[str, bool]:
-    if not _service(workspace).delete_todo(todo_id):
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return {"ok": True}
-
 
 
 @router.get("/reports")
@@ -240,14 +209,6 @@ def blockers(
     query: str | None = None,
 ) -> list[dict[str, Any]]:
     return _service(workspace).list_highlights(kind="blocker", project=project, query=query)
-
-
-@router.put("/highlights/{highlight_id}/resolve")
-def highlight_resolve(highlight_id: str, workspace: str | None = None) -> dict[str, bool]:
-    if not _service(workspace).resolve_highlight(highlight_id):
-        raise HTTPException(status_code=404, detail="Highlight not found")
-    return {"ok": True}
-
 
 
 @router.get("/gateway/status")
@@ -648,3 +609,67 @@ def review_project(project_id: str, workspace: str | None = None):
     if not result:
         raise HTTPException(status_code=404, detail="Project not found")
     return result
+
+
+# ── Memory management ───────────────────────────────────────────────
+
+
+class WoloMemoryCreateRequest(BaseModel):
+    name: str
+    description: str = ""
+    type: str = "user"
+    scope: str = "private"
+    category: str = ""
+    importance: int = 1
+    tags: list[str] = []
+    content: str = ""
+
+
+class WoloMemoryUpdateRequest(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    type: str | None = None
+    scope: str | None = None
+    category: str | None = None
+    importance: int | None = None
+    tags: list[str] | None = None
+    content: str | None = None
+
+
+@router.get("/memory")
+def list_memories(workspace: str | None = None) -> list[dict[str, Any]]:
+    return _service(workspace).list_memories()
+
+
+@router.get("/memory/{memory_id}")
+def get_memory(memory_id: str, workspace: str | None = None) -> dict[str, Any]:
+    result = _service(workspace).get_memory(memory_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return result
+
+
+@router.post("/memory")
+async def create_memory(request: WoloMemoryCreateRequest, workspace: str | None = None) -> dict[str, Any]:
+    return _service(workspace).create_memory(request.model_dump())
+
+
+@router.put("/memory/{memory_id}")
+async def update_memory(
+    memory_id: str, request: WoloMemoryUpdateRequest, workspace: str | None = None,
+) -> dict[str, Any]:
+    data = {k: v for k, v in request.model_dump().items() if v is not None}
+    if not data:
+        raise HTTPException(status_code=422, detail="No fields to update")
+    result = _service(workspace).update_memory(memory_id, data)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return result
+
+
+@router.delete("/memory/{memory_id}")
+def delete_memory(memory_id: str, workspace: str | None = None) -> dict[str, bool]:
+    deleted = _service(workspace).delete_memory(memory_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return {"deleted": True}

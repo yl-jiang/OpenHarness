@@ -12,6 +12,7 @@ const commonItems = [
   ['/projects/inbox', '⊡', 'Inbox'],
   ['/reports', '▤', 'Reports'],
   ['/feeds', '◎', 'Feed Digests'],
+  ['/memory', '⬟', 'Memory'],
   ['/search', '⌕', 'Search'],
   ['/chat', '⊙', 'Chat'],
 ] as const;
