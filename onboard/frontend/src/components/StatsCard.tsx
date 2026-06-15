@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 interface StatsCardProps {
+  linkTo?: string;
   label: string;
   value: number | string;
   hint?: string;
@@ -33,13 +35,13 @@ function useCountUp(target: number, duration = 700): number {
   return current;
 }
 
-export function StatsCard({ label, value, hint, icon, accent }: StatsCardProps) {
+export function StatsCard({ label, value, hint, icon, accent, linkTo }: StatsCardProps) {
   const isNumber = typeof value === "number";
   const displayed = useCountUp(isNumber ? (value as number) : 0);
   const colorStyle = accent ? { color: accent } : undefined;
 
-  return (
-    <article className="relative p-4 rounded-lg border border-border bg-surface-1 hover:bg-surface-2 transition-colors group overflow-hidden">
+  const inner = (
+    <article className={`relative p-4 rounded-lg border border-border bg-surface-1 hover:bg-surface-2 transition-colors group overflow-hidden${linkTo ? " cursor-pointer" : ""}`}>
       {icon && (
         <span
           className="absolute top-3 right-3 text-[15px] opacity-30 group-hover:opacity-50 transition-opacity select-none"
@@ -62,4 +64,9 @@ export function StatsCard({ label, value, hint, icon, accent }: StatsCardProps) 
       ) : null}
     </article>
   );
+
+  if (linkTo) {
+    return <Link to={linkTo} className="no-underline block">{inner}</Link>;
+  }
+  return inner;
 }

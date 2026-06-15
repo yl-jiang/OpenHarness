@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 
 import { api } from '../api/client';
 import { DataTable } from '../components/DataTable';
@@ -21,8 +21,18 @@ const kindBadge: Record<string, string> = {
 };
 
 export function Highlights() {
-  const { data, error, loading } = useApi(() => api.highlights(), [], { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS });
+  const { data, error, loading, reload } = useApi(() => api.highlights(), [], { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS });
   const [kindFilter, setKindFilter] = useState<string>('all');
+
+  const handleResolve = useCallback(async (id: string, title: string) => {
+    if (!confirm(`Resolve blocker "${title}"?`)) return;
+    try {
+      await api.resolveHighlight(id);
+      reload();
+    } catch {
+      alert('Failed to resolve highlight');
+    }
+  }, [reload]);
 
   if (loading) {
     return <div className="h-60 rounded-lg bg-gradient-to-r from-surface-1 via-surface-2 to-surface-1 bg-[length:200%_auto] animate-[shimmer_1.5s_linear_infinite]" />;
@@ -56,14 +66,29 @@ export function Highlights() {
       <DataTable
         rows={filtered}
         columns={[
-          { key: 'kind', title: 'Kind', render: (row) => (
-            <span className={`inline-block px-2 py-0.5 text-[11px] font-mono rounded border ${kindBadge[row.kind] ?? kindColors[row.kind] ?? ''}`}>
-              {row.kind}
-            </span>
-          )},
+          { key: 'kind', title: 'Kind', render: (row) => {
+            const isResolved = row.tags?.toLowerCase().includes('resolved');
+            return (
+              <span className={`inline-block px-2 py-0.5 text-[11px] font-mono rounded border ${isResolved ? 'border-success/40 bg-success/5 text-success' : kindBadge[row.kind] ?? kindColors[row.kind] ?? ''}`}>
+                {isResolved ? 'resolved' : row.kind}
+              </span>
+            );
+          }},
           { key: 'title', title: 'Title', sortValue: (row) => row.title, render: (row) => <span className="font-medium text-text">{row.title}</span> },
           { key: 'project', title: 'Project', sortValue: (row) => row.project, render: (row) => <span className="font-mono text-[12px]">{row.project}</span> },
           { key: 'content', title: 'Content', render: (row) => <span className="line-clamp-2">{row.content}</span> },
+          { key: 'actions', title: '', render: (row) => {
+            const isResolved = row.tags?.toLowerCase().includes('resolved');
+            if (row.kind !== 'blocker' || isResolved) return null;
+            return (
+              <button
+                onClick={() => handleResolve(row.id, row.title)}
+                className="text-[11px] px-2 py-1 rounded border border-success/40 bg-success/5 text-success hover:bg-success/10 cursor-pointer transition-colors active:scale-[0.97]"
+              >
+                ✓ Resolve
+              </button>
+            );
+          }},
         ]}
       />
     </div>

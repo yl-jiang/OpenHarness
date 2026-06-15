@@ -11,6 +11,11 @@ import { Link } from "react-router-dom";
 
 type ViewMode = "board" | "list" | "calendar";
 
+// Module-level scan state — survives component unmount/remount
+let _scanPromise: Promise<{ created: number }> | null = null;
+let _scanResult: string | null = null;
+let _scanAppName: AppName | null = null;
+
 function daysSince(iso: string): number | null {
   if (!iso) return null;
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
@@ -47,8 +52,8 @@ export function Projects({ appName }: { appName: AppName }) {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [error, setError] = useState("");
-  const [scanning, setScanning] = useState(false);
-  const [scanResult, setScanResult] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(() => _scanAppName === appName && _scanPromise !== null);
+  const [scanResult, setScanResult] = useState<string | null>(() => _scanAppName === appName ? _scanResult : null);
   const [templates, setTemplates] = useState<ProjectTemplate[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [milestonesByProject, setMilestonesByProject] = useState<Record<string, Milestone[]>>({});
@@ -74,6 +79,29 @@ export function Projects({ appName }: { appName: AppName }) {
   }, [appName]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Re-attach to in-flight scan on mount
+  useEffect(() => {
+    if (_scanPromise && _scanAppName === appName) {
+      setScanning(true);
+      _scanPromise
+        .then((res) => {
+          const msg = res.created > 0
+            ? `Found ${res.created} project candidate${res.created > 1 ? "s" : ""}. Check your Inbox.`
+            : "No new project candidates found.";
+          _scanResult = msg;
+          setScanResult(msg);
+        })
+        .catch(() => {
+          _scanResult = "Scan failed. Try again later.";
+          setScanResult(_scanResult);
+        })
+        .finally(() => {
+          _scanPromise = null;
+          setScanning(false);
+        });
+    }
+  }, [appName]);
 
   // Load templates when create form opens
   useEffect(() => {
@@ -117,16 +145,21 @@ export function Projects({ appName }: { appName: AppName }) {
   const handleScan = async () => {
     setScanning(true);
     setScanResult(null);
+    _scanAppName = appName;
+    _scanResult = null;
+    _scanPromise = api.scanProjects(appName);
     try {
-      const res = await api.scanProjects(appName);
-      setScanResult(
-        res.created > 0
-          ? `Found ${res.created} project candidate${res.created > 1 ? "s" : ""}. Check your Inbox.`
-          : "No new project candidates found."
-      );
+      const res = await _scanPromise;
+      const msg = res.created > 0
+        ? `Found ${res.created} project candidate${res.created > 1 ? "s" : ""}. Check your Inbox.`
+        : "No new project candidates found.";
+      _scanResult = msg;
+      setScanResult(msg);
     } catch {
-      setScanResult("Scan failed. Try again later.");
+      _scanResult = "Scan failed. Try again later.";
+      setScanResult(_scanResult);
     } finally {
+      _scanPromise = null;
       setScanning(false);
     }
   };

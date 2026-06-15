@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { api } from "../api/client";
+import type { Todo } from "../api/types";
 import type { AppName, Project, ProjectBrief as ProjectBriefData } from "../api/types";
 import {
   ActivityHeatmap,
@@ -190,6 +191,60 @@ function SectionLink({ to, children }: { to: string; children: React.ReactNode }
   );
 }
 
+
+
+/* ─── Pending Todos Panel ─────────────────────────────────────── */
+
+function PendingTodosPanel({ app }: { app: AppName }) {
+  const { data, error, loading } = useApi(
+    () => api.todos(app, { status: "pending" }).then((todos) =>
+      todos.filter((t: Todo) => t.status === "pending" || t.status === "in_progress")
+    ),
+    [app],
+    { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS },
+  );
+  const [expanded, setExpanded] = useState(false);
+
+  if (!data || data.length === 0) return null;
+
+  const visible = expanded ? data : data.slice(0, 3);
+
+  return (
+    <div className="rounded-lg border border-warning/20 bg-warning/5 overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center justify-between px-4 py-2.5 text-left hover:bg-warning/10 transition-colors"
+      >
+        <span className="text-[12px] font-medium text-warning">
+          {data.length} pending todo{data.length !== 1 ? "s" : ""}
+        </span>
+        <span className="text-[11px] text-text-muted">
+          {expanded ? "Collapse" : "Show all"}
+        </span>
+      </button>
+      <div className="divide-y divide-border/50">
+        {visible.map((todo: Todo) => (
+          <div key={todo.id} className="flex items-center gap-3 px-4 py-2">
+            <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${todo.status === "in_progress" ? "bg-accent-solo" : "bg-text-muted"}`} />
+            <span className="text-[12px] text-text truncate flex-1">{todo.title}</span>
+            {todo.project && (
+              <span className="text-[10px] text-text-muted shrink-0">{todo.project}</span>
+            )}
+            {todo.priority === "high" && (
+              <span className="text-[10px] text-danger shrink-0">high</span>
+            )}
+          </div>
+        ))}
+      </div>
+      {data.length > 3 && !expanded && (
+        <div className="px-4 py-1.5 text-[11px] text-text-muted">
+          +{data.length - 3} more
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ─── Dashboard ───────────────────────────────────────────────── */
 
 export function Dashboard({ appName }: { appName: AppName }) {
@@ -203,7 +258,7 @@ export function Dashboard({ appName }: { appName: AppName }) {
 
   const focusCards = useMemo(() => {
     if (!data) return [];
-    const items: { label: string; value: number; icon: string; accent?: string }[] = [
+    const items: { label: string; value: number; icon: string; accent?: string; linkTo?: string }[] = [
       { label: "Records", value: data.total_records, icon: "\u25C7" },
       { label: "This Week", value: data.this_week_records, icon: "\u25B3" },
       {
@@ -211,12 +266,13 @@ export function Dashboard({ appName }: { appName: AppName }) {
         value: data.pending_todos,
         icon: "\u2610",
         accent: data.pending_todos > 0 ? "#fbbf24" : undefined,
+        linkTo: data.pending_todos > 0 ? "/todos" : undefined,
       },
       { label: "Model Calls", value: data.llm_total_calls, icon: "\u2299" },
     ];
     if (appName === "wolo") {
       if (data.open_blockers) {
-        items.push({ label: "Blockers", value: data.open_blockers, icon: "\u26A0", accent: "#f87171" });
+        items.push({ label: "Blockers", value: data.open_blockers, icon: "\u26A0", accent: "#f87171", linkTo: "/highlights" });
       }
       items.push({ label: "Decisions", value: data.total_decisions ?? 0, icon: "\u29EB" });
     }
@@ -317,9 +373,15 @@ export function Dashboard({ appName }: { appName: AppName }) {
             value={card.value}
             icon={card.icon}
             accent={card.accent}
+            linkTo={card.linkTo}
           />
         ))}
       </div>
+
+      {/* Zone 2b: Pending Todos */}
+      {data.pending_todos > 0 && (
+        <PendingTodosPanel app={appName} />
+      )}
 
       {/* Zone 3: Projects */}
       <Section

@@ -48,7 +48,7 @@ class SoloService:
         status = self.store.status()
         records = self.store.list_records()
         todos = self.store.list_todos()
-        pending_todos = [todo for todo in todos if todo.status != "done"]
+        pending_todos = [todo for todo in todos if todo.status in ("pending", "in_progress")]
         llm_usage = self.store.llm_usage_summary()
         vision_usage = self.store.vision_usage_summary()
         month_start, month_end = current_month_range()
@@ -193,6 +193,12 @@ class SoloService:
     def reopen_todo(self, todo_id: str) -> bool:
         return self.store.reopen_todo(todo_id)
 
+    def cancel_todo(self, todo_id: str) -> bool:
+        return self.store.cancel_todo(todo_id)
+
+    def delete_todo(self, todo_id: str) -> bool:
+        return self.store.delete_todo(todo_id)
+
     def list_reports(self, report_type: str | None = None) -> list[dict[str, Any]]:
         reports = self.store.list_reports()
         if report_type:
@@ -251,11 +257,7 @@ class SoloService:
         return to_jsonable(report)
 
     async def process_pending(self, limit: int = 20) -> dict[str, Any]:
-        config = load_config(self.workspace)
-        agent = OpenHarnessSoloAgent(
-            profile=config.provider_profile,
-            record_model_call=self.store.record_llm_call,
-        )
+        agent = self._make_agent()
         result = await SoloProcessor(self.store, agent).process_pending(limit=limit)
         return to_jsonable(result)
 
@@ -624,12 +626,11 @@ class SoloService:
         from uuid import uuid4
         import json
 
-        config = load_config(self.workspace)
-        agent = OpenHarnessSoloAgent(
-            profile=config.provider_profile,
-            record_model_call=self.store.record_llm_call,
-        )
-        candidates = await scan_for_projects(store=self.store, agent=agent)
+        agent = self._make_agent()
+        try:
+            candidates = await scan_for_projects(store=self.store, agent=agent)
+        except RuntimeError as e:
+            return {"created": 0, "candidates": [], "error": str(e)}
         created = 0
         now = _now()
         for c in candidates:
@@ -641,6 +642,8 @@ class SoloService:
                 proposed_payload_json=json.dumps({
                     "title": c["title"],
                     "description": c.get("rationale", ""),
+                    "summary": c.get("summary", ""),
+                    "keywords": c.get("keywords", []),
                     "suggested_milestones": c.get("suggested_milestones", []),
                 }),
                 evidence_json=json.dumps(c.get("evidence", [])),
@@ -669,11 +672,18 @@ class SoloService:
 
     # --- Project State Analysis ---
 
+    def _make_agent(self):
+        config = load_config(self.workspace)
+        return OpenHarnessSoloAgent(
+            profile=config.provider_profile,
+            record_model_call=self.store.record_llm_call,
+        )
+
     async def analyze_project_state(self, project_id: str) -> dict:
         """Analyze a project's state and persist signals."""
         from uuid import uuid4
         result = await analyze_project_state(
-            store=self.store, project_id=project_id, agent=None,
+            store=self.store, project_id=project_id, agent=self._make_agent(),
         )
         # Persist signals
         for sig in result.get("signals", []):
@@ -698,7 +708,7 @@ class SoloService:
         """Generate and persist a daily snapshot."""
         from uuid import uuid4
         data = await generate_daily_snapshot(
-            store=self.store, project_id=project_id, agent=None,
+            store=self.store, project_id=project_id, agent=self._make_agent(),
         )
         if not data:
             return None
@@ -842,7 +852,7 @@ class SoloService:
     async def generate_checkin_questions(self) -> list[dict]:
         """Generate project checkin questions."""
         return await generate_checkin_questions(
-            store=self.store, agent=None,
+            store=self.store, agent=self._make_agent(),
             app_type=self._app_type,
         )
 

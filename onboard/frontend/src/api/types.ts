@@ -43,7 +43,7 @@ export interface LogRecord {
   attachments: StoredAttachment[];
 }
 
-export type TodoStatus = 'pending' | 'in_progress' | 'done';
+export type TodoStatus = 'pending' | 'in_progress' | 'done' | 'cancelled';
 export type TodoPriority = 'high' | 'medium' | 'low';
 
 export interface Todo {

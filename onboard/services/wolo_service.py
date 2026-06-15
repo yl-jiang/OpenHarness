@@ -49,7 +49,7 @@ class WoloService:
         records = self.store.list_records()
         todos = self.store.list_todos()
         blockers = self.store.list_highlights(kind="blocker")
-        pending_todos = [todo for todo in todos if todo.status != "done"]
+        pending_todos = [todo for todo in todos if todo.status in ("pending", "in_progress")]
         open_blockers = [item for item in blockers if "resolved" not in item.tags.lower()]
         llm_usage = self.store.llm_usage_summary()
         vision_usage = self.store.vision_usage_summary()
@@ -198,6 +198,12 @@ class WoloService:
     def reopen_todo(self, todo_id: str) -> bool:
         return self.store.reopen_todo(todo_id)
 
+    def cancel_todo(self, todo_id: str) -> bool:
+        return self.store.cancel_todo(todo_id)
+
+    def delete_todo(self, todo_id: str) -> bool:
+        return self.store.delete_todo(todo_id)
+
     def list_reports(self, report_type: str | None = None) -> list[dict[str, Any]]:
         reports = self.store.list_reports()
         if report_type:
@@ -245,22 +251,14 @@ class WoloService:
     async def generate_report(
         self, report_type: str, profile: str | None = None, start_date: str | None = None, end_date: str | None = None,
     ) -> dict[str, Any]:
-        config = load_config(self.workspace)
-        agent = OpenHarnessWoloAgent(
-            profile=profile or config.provider_profile,
-            record_model_call=self.store.record_llm_call,
-        )
+        agent = self._make_agent(profile=profile)
         report = await WoloProcessor(self.store, agent).generate_report(
             report_type, start_date=start_date, end_date=end_date,
         )
         return to_jsonable(report)
 
     async def process_pending(self, limit: int = 20) -> dict[str, Any]:
-        config = load_config(self.workspace)
-        agent = OpenHarnessWoloAgent(
-            profile=config.provider_profile,
-            record_model_call=self.store.record_llm_call,
-        )
+        agent = self._make_agent()
         result = await WoloProcessor(self.store, agent).process_pending(limit=limit)
         return to_jsonable(result)
 
@@ -299,6 +297,10 @@ class WoloService:
             to_jsonable(item)
             for item in self.store.list_highlights(kind=kind, project=project, query=query)
         ]
+
+    def resolve_highlight(self, highlight_id: str) -> bool:
+        return self.store.resolve_highlight(highlight_id)
+
 
     def gateway_status(self) -> dict[str, Any]:
         state = gateway_status(workspace=self.workspace)
@@ -652,12 +654,11 @@ class WoloService:
         from uuid import uuid4
         import json
 
-        config = load_config(self.workspace)
-        agent = OpenHarnessWoloAgent(
-            profile=config.provider_profile,
-            record_model_call=self.store.record_llm_call,
-        )
-        candidates = await scan_for_projects(store=self.store, agent=agent)
+        agent = self._make_agent()
+        try:
+            candidates = await scan_for_projects(store=self.store, agent=agent)
+        except RuntimeError as e:
+            return {"created": 0, "candidates": [], "error": str(e)}
         created = 0
         now = _now()
         for c in candidates:
@@ -669,6 +670,8 @@ class WoloService:
                 proposed_payload_json=json.dumps({
                     "title": c["title"],
                     "description": c.get("rationale", ""),
+                    "summary": c.get("summary", ""),
+                    "keywords": c.get("keywords", []),
                     "suggested_milestones": c.get("suggested_milestones", []),
                 }),
                 evidence_json=json.dumps(c.get("evidence", [])),
@@ -697,11 +700,18 @@ class WoloService:
 
     # --- Project State Analysis ---
 
+    def _make_agent(self, profile=None):
+        config = load_config(self.workspace)
+        return OpenHarnessWoloAgent(
+            profile=profile or config.provider_profile,
+            record_model_call=self.store.record_llm_call,
+        )
+
     async def analyze_project_state(self, project_id: str) -> dict:
         """Analyze a project's state and persist signals."""
         from uuid import uuid4
         result = await analyze_project_state(
-            store=self.store, project_id=project_id, agent=None,
+            store=self.store, project_id=project_id, agent=self._make_agent(),
         )
         # Persist signals
         for sig in result.get("signals", []):
@@ -726,7 +736,7 @@ class WoloService:
         """Generate and persist a daily snapshot."""
         from uuid import uuid4
         data = await generate_daily_snapshot(
-            store=self.store, project_id=project_id, agent=None,
+            store=self.store, project_id=project_id, agent=self._make_agent(),
         )
         if not data:
             return None
@@ -871,7 +881,7 @@ class WoloService:
     async def generate_checkin_questions(self) -> list[dict]:
         """Generate project checkin questions."""
         return await generate_checkin_questions(
-            store=self.store, agent=None,
+            store=self.store, agent=self._make_agent(),
             app_type=self._app_type,
         )
 

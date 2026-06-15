@@ -80,6 +80,10 @@ export const api = {
     request<{ ok: boolean }>(`/api/${app}/todos/${id}/revert`, { method: 'PUT' }),
   reopenTodo: (app: AppName, id: string) =>
     request<{ ok: boolean }>(`/api/${app}/todos/${id}/reopen`, { method: 'PUT' }),
+  cancelTodo: (app: AppName, id: string) =>
+    request<{ ok: boolean }>(`/api/${app}/todos/${id}/cancel`, { method: 'PUT' }),
+  deleteTodo: (app: AppName, id: string) =>
+    request<{ ok: boolean }>(`/api/${app}/todos/${id}`, { method: 'DELETE' }),
   reports: (app: AppName, params: Record<string, QueryValue> = {}) =>
     request<Report[]>(`/api/${app}/reports${query(params)}`),
   report: (app: AppName, id: string) => request<Report>(`/api/${app}/reports/${id}`),
@@ -176,6 +180,8 @@ export const api = {
     request<Decision[]>(`/api/wolo/decisions${query(params)}`),
   highlights: (params: Record<string, QueryValue> = {}) =>
     request<Highlight[]>(`/api/wolo/highlights${query(params)}`),
+  resolveHighlight: (id: string) =>
+    request<{ ok: boolean }>(`/api/wolo/highlights/${id}/resolve`, { method: 'PUT' }),
   search: (app: AppName, params: Record<string, QueryValue>) =>
     request<SearchResult>(`/api/${app}/search${query(params)}`),
 

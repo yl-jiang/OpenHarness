@@ -27,6 +27,7 @@ const columns: { key: TodoStatus; label: string; dot: string }[] = [
   { key: 'pending', label: 'Pending', dot: 'bg-text-muted' },
   { key: 'in_progress', label: 'In Progress', dot: 'bg-warning' },
   { key: 'done', label: 'Done', dot: 'bg-success' },
+  { key: 'cancelled', label: 'Cancelled', dot: 'bg-danger' },
 ];
 
 /** Prefix column IDs so they never collide with todo IDs. */
@@ -54,7 +55,7 @@ function relativeTime(dateStr: string): string {
 }
 
 function isOverdue(todo: Todo): boolean {
-  if (todo.status === 'done' || !todo.due_date) return false;
+  if (todo.status === 'done' || todo.status === 'cancelled' || !todo.due_date) return false;
   const due = new Date(todo.due_date);
   if (Number.isNaN(due.getTime())) return false;
   return due.getTime() < Date.now();
@@ -96,7 +97,7 @@ function SortableCard({
 }: {
   todo: Todo;
   isDragging: boolean;
-  onAction: (todo: Todo, target: TodoStatus) => void;
+  onAction: (todo: Todo, target: TodoStatus | 'delete') => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: todo.id });
   const overdue = isOverdue(todo);
@@ -125,9 +126,16 @@ function SortableCard({
         {todo.status === 'in_progress' ? (
           <button onClick={() => onAction(todo, 'pending')} className={btnBase}>← Pending</button>
         ) : null}
-        {todo.status !== 'done' ? (
+        {todo.status !== 'done' && todo.status !== 'cancelled' ? (
           <button onClick={() => onAction(todo, 'done')} className={btnBase}>✓ Mark done</button>
         ) : null}
+        {todo.status !== 'done' && todo.status !== 'cancelled' ? (
+          <button onClick={() => onAction(todo, 'cancelled')} className={`${btnBase} text-danger hover:text-danger`}>✕ Cancel</button>
+        ) : null}
+        {todo.status === 'cancelled' ? (
+          <button onClick={() => onAction(todo, 'pending')} className={btnBase}>↩ Reopen</button>
+        ) : null}
+        <button onClick={() => onAction(todo, 'delete' as TodoStatus)} className={`${btnBase} text-danger hover:text-danger ml-auto`}>🗑 Delete</button>
       </div>
     </article>
   );
@@ -273,8 +281,27 @@ export function Todos({ appName }: { appName: AppName }) {
 
   // --- Action handler (button clicks) ---
 
-  async function handleAction(todo: Todo, target: TodoStatus) {
+  async function handleAction(todo: Todo, target: TodoStatus | 'delete') {
+    // Confirmation for destructive actions
+    if (target === 'delete') {
+      if (!confirm(`Delete "${todo.title}"? This cannot be undone.`)) return;
+    } else if (target === 'cancelled') {
+      if (!confirm(`Cancel "${todo.title}"?`)) return;
+    }
+
     try {
+      if (target === 'delete') {
+        await api.deleteTodo(appName, todo.id);
+        toast(`"${todo.title}" deleted`, 'success');
+        reload();
+        return;
+      }
+      if (target === 'cancelled') {
+        await api.cancelTodo(appName, todo.id);
+        toast(`"${todo.title}" cancelled`, 'success');
+        reload();
+        return;
+      }
       if (todo.status === 'done' && target !== 'done') {
         await api.reopenTodo(appName, todo.id);
       } else if (target === 'done') {
@@ -327,7 +354,7 @@ export function Todos({ appName }: { appName: AppName }) {
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {columns.map((col) => (
             <section key={col.key} className="space-y-2.5">
               <div className="flex items-center gap-2 mb-3">

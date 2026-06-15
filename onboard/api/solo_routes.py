@@ -155,6 +155,21 @@ def todo_reopen(todo_id: str, workspace: str | None = None) -> dict[str, bool]:
     return {"ok": True}
 
 
+@router.put("/todos/{todo_id}/cancel")
+def todo_cancel(todo_id: str, workspace: str | None = None) -> dict[str, bool]:
+    if not _service(workspace).cancel_todo(todo_id):
+        raise HTTPException(status_code=404, detail="Todo not found or already done/cancelled")
+    return {"ok": True}
+
+
+@router.delete("/todos/{todo_id}")
+def todo_delete(todo_id: str, workspace: str | None = None) -> dict[str, bool]:
+    if not _service(workspace).delete_todo(todo_id):
+        raise HTTPException(status_code=404, detail="Todo not found")
+    return {"ok": True}
+
+
+
 @router.get("/reports")
 def reports(workspace: str | None = None, type: str | None = None) -> list[dict[str, Any]]:  # noqa: A002
     return _service(workspace).list_reports(report_type=type)

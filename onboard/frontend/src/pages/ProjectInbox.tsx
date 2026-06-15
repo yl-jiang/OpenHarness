@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { AppName, ProjectSuggestion } from "../api/types";
@@ -21,13 +21,31 @@ const TYPE_LABELS: Record<string, string> = {
   ask_followup: "跟进问题",
 };
 
+const STATUS_LABELS: Record<string, string> = {
+  pending: "待处理",
+  accepted: "已接受",
+  rejected: "已拒绝",
+  snoozed: "已搁置",
+  expired: "已过期",
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  pending: "text-warning",
+  accepted: "text-success",
+  rejected: "text-danger",
+  snoozed: "text-text-muted",
+  expired: "text-text-muted",
+};
+
+const STATUS_ORDER = ["pending", "accepted", "rejected", "snoozed", "expired"];
+
 const STATUS_OPTIONS = [
   { label: "Pending", value: "pending" },
-  { label: "All", value: "" },
+  { label: "All", value: "all" },
 ];
 
 export function ProjectInbox({ appName }: Props) {
-  const [suggestions, setSuggestions] = useState<ProjectSuggestion[]>([]);
+  const [allSuggestions, setAllSuggestions] = useState<ProjectSuggestion[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("pending");
   const [busy, setBusy] = useState<Record<string, boolean>>({});
@@ -35,16 +53,14 @@ export function ProjectInbox({ appName }: Props) {
   const fetchSuggestions = useCallback(async () => {
     setLoading(true);
     try {
-      const params: Record<string, string | number | boolean | null | undefined> = {};
-      if (statusFilter) params.status = statusFilter;
-      const data = await api.projectSuggestions(appName, params);
-      setSuggestions(data);
+      const data = await api.projectSuggestions(appName, {});
+      setAllSuggestions(data);
     } catch {
-      setSuggestions([]);
+      setAllSuggestions([]);
     } finally {
       setLoading(false);
     }
-  }, [appName, statusFilter]);
+  }, [appName]);
 
   useEffect(() => {
     fetchSuggestions();
@@ -56,7 +72,7 @@ export function ProjectInbox({ appName }: Props) {
       if (action === "accept") await api.acceptProjectSuggestion(appName, id);
       else if (action === "reject") await api.rejectProjectSuggestion(appName, id);
       else await api.snoozeProjectSuggestion(appName, id);
-      setSuggestions((prev) => prev.filter((s) => s.id !== id));
+      setAllSuggestions((prev) => prev.filter((s) => s.id !== id));
     } catch {
       // keep suggestion on failure
     } finally {
@@ -64,15 +80,38 @@ export function ProjectInbox({ appName }: Props) {
     }
   };
 
-  // Group by suggestion_type
-  const grouped = suggestions.reduce<Record<string, ProjectSuggestion[]>>((acc, s) => {
-    const key = s.suggestion_type;
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(s);
-    return acc;
-  }, {});
+  const isAllTab = statusFilter === "all";
 
-  const groupKeys = Object.keys(grouped);
+  const visibleSuggestions = useMemo(() => {
+    if (isAllTab) return allSuggestions;
+    return allSuggestions.filter((s) => s.status === "pending");
+  }, [allSuggestions, isAllTab]);
+
+  // Pending tab: group by type only
+  const byType = useMemo(() => {
+    const g: Record<string, ProjectSuggestion[]> = {};
+    for (const s of visibleSuggestions) {
+      (g[s.suggestion_type] ??= []).push(s);
+    }
+    return g;
+  }, [visibleSuggestions]);
+
+  // All tab: group by status, then by type within each status
+  const byStatusThenType = useMemo(() => {
+    const g: Record<string, Record<string, ProjectSuggestion[]>> = {};
+    for (const s of allSuggestions) {
+      (g[s.status] ??= {});
+      (g[s.status][s.suggestion_type] ??= []).push(s);
+    }
+    return g;
+  }, [allSuggestions]);
+
+  const pendingCount = allSuggestions.filter((s) => s.status === "pending").length;
+
+  const statusOptions = STATUS_OPTIONS.map((o) => {
+    const count = o.value === "all" ? allSuggestions.length : pendingCount;
+    return { label: `${o.label} (${count})`, value: o.value };
+  });
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-6">
@@ -81,11 +120,11 @@ export function ProjectInbox({ appName }: Props) {
         <div>
           <h1 className="text-lg font-medium text-text">AI Suggestions</h1>
           <p className="mt-0.5 text-xs text-text-muted">
-            {suggestions.length} pending suggestion{suggestions.length !== 1 ? "s" : ""}
+            {pendingCount} pending suggestion{pendingCount !== 1 ? "s" : ""}
           </p>
         </div>
         <SegmentedControl
-          options={STATUS_OPTIONS}
+          options={statusOptions}
           value={statusFilter}
           onChange={setStatusFilter}
         />
@@ -94,27 +133,76 @@ export function ProjectInbox({ appName }: Props) {
       {/* Content */}
       {loading ? (
         <div className="py-20 text-center text-sm text-text-muted">Loading...</div>
-      ) : groupKeys.length === 0 ? (
+      ) : visibleSuggestions.length === 0 ? (
         <div className="py-20 text-center text-sm text-text-muted">
-          {statusFilter === "pending"
+          {!isAllTab
             ? "No pending suggestions. Process some records to generate suggestions."
             : "No suggestions found."}
         </div>
+      ) : isAllTab ? (
+        /* All tab: status → type → items */
+        <div className="space-y-8">
+          {STATUS_ORDER.filter((status) => byStatusThenType[status]).map((status) => {
+            const typeGroups = byStatusThenType[status];
+            const typeKeys = Object.keys(typeGroups);
+            const totalCount = typeKeys.reduce((n, k) => n + typeGroups[k].length, 0);
+
+            return (
+              <div key={status}>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className={`text-sm font-semibold ${STATUS_COLORS[status] || "text-text"}`}>
+                    {STATUS_LABELS[status] || status}
+                  </span>
+                  <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">
+                    {totalCount}
+                  </span>
+                </div>
+
+                <div className="space-y-4 pl-1">
+                  {typeKeys.map((type) => (
+                    <section key={type}>
+                      <div className="mb-1.5 flex items-center gap-2 border-t border-border pt-3">
+                        <span className="text-xs font-medium uppercase tracking-wide text-text-secondary">
+                          {TYPE_LABELS[type] || type}
+                        </span>
+                        <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">
+                          {typeGroups[type].length}
+                        </span>
+                      </div>
+                      <div className="space-y-1">
+                        {typeGroups[type].map((s) => (
+                          <SuggestionRow
+                            key={s.id}
+                            suggestion={s}
+                            isBusy={!!busy[s.id]}
+                            onAccept={() => handleAction(s.id, "accept")}
+                            onReject={() => handleAction(s.id, "reject")}
+                            onSnooze={() => handleAction(s.id, "snooze")}
+                          />
+                        ))}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       ) : (
+        /* Pending tab: type → items */
         <div className="space-y-6">
-          {groupKeys.map((type) => (
+          {Object.keys(byType).map((type) => (
             <section key={type}>
               <div className="mb-2 flex items-center gap-2 border-t border-border pt-4">
                 <span className="text-xs font-medium uppercase tracking-wide text-text-secondary">
                   {TYPE_LABELS[type] || type}
                 </span>
                 <span className="rounded-full bg-surface-2 px-1.5 py-0.5 text-[10px] text-text-muted">
-                  {grouped[type].length}
+                  {byType[type].length}
                 </span>
               </div>
-
               <div className="space-y-1">
-                {grouped[type].map((s) => (
+                {byType[type].map((s) => (
                   <SuggestionRow
                     key={s.id}
                     suggestion={s}
@@ -186,30 +274,32 @@ function SuggestionRow({
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex shrink-0 items-center gap-1">
-        <button
-          onClick={onAccept}
-          disabled={isBusy}
-          className="rounded border border-border px-2 py-0.5 text-[11px] text-success transition-colors hover:bg-surface-2 disabled:opacity-50"
-        >
-          Accept
-        </button>
-        <button
-          onClick={onReject}
-          disabled={isBusy}
-          className="rounded border border-border px-2 py-0.5 text-[11px] text-danger transition-colors hover:bg-surface-2 disabled:opacity-50"
-        >
-          Reject
-        </button>
-        <button
-          onClick={onSnooze}
-          disabled={isBusy}
-          className="rounded border border-border px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:bg-surface-2 disabled:opacity-50"
-        >
-          Snooze
-        </button>
-      </div>
+      {/* Actions — only for pending */}
+      {s.status === "pending" && (
+        <div className="flex shrink-0 items-center gap-1">
+          <button
+            onClick={onAccept}
+            disabled={isBusy}
+            className="rounded border border-border px-2 py-0.5 text-[11px] text-success transition-colors hover:bg-surface-2 disabled:opacity-50"
+          >
+            Accept
+          </button>
+          <button
+            onClick={onReject}
+            disabled={isBusy}
+            className="rounded border border-border px-2 py-0.5 text-[11px] text-danger transition-colors hover:bg-surface-2 disabled:opacity-50"
+          >
+            Reject
+          </button>
+          <button
+            onClick={onSnooze}
+            disabled={isBusy}
+            className="rounded border border-border px-2 py-0.5 text-[11px] text-text-muted transition-colors hover:bg-surface-2 disabled:opacity-50"
+          >
+            Snooze
+          </button>
+        </div>
+      )}
     </div>
   );
 }

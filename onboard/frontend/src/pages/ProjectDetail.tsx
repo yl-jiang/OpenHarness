@@ -32,9 +32,9 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
   const [gitLoading, setGitLoading] = useState(false);
   const [showAnalysis, setShowAnalysis] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     if (!id) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const [p, m, l, t, a] = await Promise.all([
         api.project(appName, id),
@@ -51,7 +51,7 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
     } catch (e) {
       setError(String(e));
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [appName, id]);
 
@@ -76,7 +76,7 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
           window.location.href = "/projects";
           return;
       }
-      load();
+      load(true);
     } catch (e) {
       setError(String(e));
     }
@@ -153,7 +153,7 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
     try {
       await api.reorderProjectLinks(appName, project!.id, reordered.map((l) => l.id));
     } catch {
-      load(); // revert on failure
+      load(true); // revert on failure
     }
   };
 
@@ -224,7 +224,7 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
         {/* Milestones */}
         <section>
           <h2 className="text-[13px] font-medium text-text-secondary mb-2">Milestones</h2>
-          <MilestoneList app={appName} projectId={project.id} milestones={milestones} onChange={load} />
+          <MilestoneList app={appName} projectId={project.id} milestones={milestones} onChange={() => load(true)} />
         </section>
 
         {/* Timeline */}
@@ -292,11 +292,11 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
                   <div className="flex gap-2 shrink-0">
                     {l.status === "pending" && (
                       <>
-                        <button onClick={() => { api.acceptProjectLink(appName, l.id).then(load); }} className="text-[11px] text-success cursor-pointer bg-transparent border-0 hover:underline">Accept</button>
-                        <button onClick={() => { api.rejectProjectLink(appName, l.id).then(load); }} className="text-[11px] text-danger cursor-pointer bg-transparent border-0 hover:underline">Reject</button>
+                        <button onClick={() => { api.acceptProjectLink(appName, l.id).then(() => load(true)); }} className="text-[11px] text-success cursor-pointer bg-transparent border-0 hover:underline">Accept</button>
+                        <button onClick={() => { api.rejectProjectLink(appName, l.id).then(() => load(true)); }} className="text-[11px] text-danger cursor-pointer bg-transparent border-0 hover:underline">Reject</button>
                       </>
                     )}
-                    <button onClick={() => { api.deleteProjectLink(appName, l.id).then(load); }} className="text-[11px] text-text-muted hover:text-danger cursor-pointer bg-transparent border-0">Unlink</button>
+                    <button onClick={() => { api.deleteProjectLink(appName, l.id).then(() => load(true)); }} className="text-[11px] text-text-muted hover:text-danger cursor-pointer bg-transparent border-0">Unlink</button>
                   </div>
                 </div>
               ))}
@@ -311,7 +311,11 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
             <button
               onClick={handleAnalyze}
               disabled={analyzing}
-              className="px-2.5 py-1 rounded-md bg-surface-3 text-text-secondary text-[11px] cursor-pointer border-0 hover:bg-surface-hover transition-colors disabled:opacity-50"
+              className={`px-2.5 py-1 rounded-md text-[11px] cursor-pointer transition-colors disabled:opacity-50 font-medium ${
+                appName === 'solo'
+                  ? 'bg-accent-solo/10 border border-accent-solo/30 text-accent-solo hover:bg-accent-solo/20'
+                  : 'bg-accent-wolo/10 border border-accent-wolo/30 text-accent-wolo hover:bg-accent-wolo/20'
+              }`}
             >
               {analyzing ? "Analyzing..." : analysis ? "Refresh Analysis" : "Analyze State"}
             </button>

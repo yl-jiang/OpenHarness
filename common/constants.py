@@ -28,6 +28,11 @@ DEFAULT_EMOTION: str = "中性"
 DEFAULT_EXPERIMENT_STATUS: str = "active"
 DEFAULT_ARTIFACT_SOURCE: str = "derived"
 
+# --- Field length limits ---
+
+EMOTION_MAX_LENGTH: int = 6
+SUMMARY_MAX_LENGTH: int = 300
+
 # --- Gateway / Runner ---
 
 GATEWAY_EXCLUDED_CHANNELS: frozenset[str] = frozenset({"cli", "system", "heartbeat"})

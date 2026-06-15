@@ -30,6 +30,20 @@ const tooltipStyle = {
 
 const tooltipLabelStyle = { color: '#a1a1aa' };
 const tooltipItemStyle = { color: '#e4e4e7' };
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function DataAwareCursor(props: any) {
+  const { points, offset, height } = props;
+  if (!points?.length) return null;
+  const hasData = points.some((p: any) => p.y != null);
+  if (!hasData) return null;
+  const x = points[0]?.x;
+  if (x == null) return null;
+  const top = offset?.top ?? 0;
+  const chartHeight = height ?? 200;
+  return <line x1={x} y1={top} x2={x} y2={top + chartHeight} stroke="#3f3f46" strokeDasharray="3 3" />;
+}
+
 export const tokenPalette = [
   { input: '#60a5fa', output: '#93c5fd' },
   { input: '#f59e0b', output: '#fcd34d' },
@@ -407,6 +421,7 @@ export function ModelTokenUsageChart({
               label={{ value: 'Tokens', angle: -90, position: 'insideLeft', offset: 12, fill: '#63636e', fontSize: 10 }}
             />
             <Tooltip
+              cursor={<DataAwareCursor />}
               content={(props) => (
                 <FilteredTooltip
                   {...props}
@@ -562,6 +577,7 @@ export function ModelCallUsageChart({
               label={{ value: 'Calls', angle: -90, position: 'insideLeft', offset: 12, fill: '#63636e', fontSize: 10 }}
             />
             <Tooltip
+              cursor={<DataAwareCursor />}
               content={(props) => (
                 <FilteredTooltip
                   {...props}
