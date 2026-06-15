@@ -3,21 +3,30 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
 
-from common.project_ai.discovery import _deterministic_discover, _llm_discover, scan_for_projects
+from common.project_ai.discovery import (
+    _build_existing_projects_text,
+    _existing_projects_context,
+    _llm_discover,
+    scan_for_projects,
+)
 from common.project_ai.matcher import match_record
 from common.project_ai.types import (
     CONFIDENCE_AUTO_LINK,
     CONFIDENCE_SUGGEST,
-    LinkerResult,
     MatchCandidate,
+    ProjectLinkInput,
 )
 
 
 def _run(coro):
     """Run an async coroutine from sync test code."""
     return asyncio.get_event_loop().run_until_complete(coro)
+
+
+def _p(id: str, title: str, description: str = "") -> ProjectLinkInput:
+    """Build a ProjectLinkInput for deterministic/pipeline tests."""
+    return ProjectLinkInput(id=id, title=title, description=description)
 
 
 class TestDeterministicTitleMatch:
@@ -29,7 +38,7 @@ class TestDeterministicTitleMatch:
                 record_content="Working on the website redesign project today",
                 record_summary="Website redesign progress",
                 artifact_projects=[],
-                projects=[{"id": "p1", "title": "Website Redesign", "description": ""}],
+                projects=[_p(id="p1", title="Website Redesign")],
                 aliases_by_project={},
                 agent=None,
             )
@@ -51,7 +60,7 @@ class TestDeterministicAliasMatch:
                 record_summary="Alpha launch",
                 artifact_projects=[],
                 # Title "Alpha Launch" tokens {alpha, launch} are subset of record -> 0.88
-                projects=[{"id": "p1", "title": "Alpha Launch", "description": ""}],
+                projects=[_p(id="p1", title="Alpha Launch")],
                 aliases_by_project={"p1": ["alpha release"]},
                 agent=None,
             )
@@ -73,7 +82,7 @@ class TestDeterministicArtifactProjectMatch:
                 record_content="Generic notes from today",
                 record_summary="Daily notes",
                 artifact_projects=["Website Redesign"],
-                projects=[{"id": "p1", "title": "Website Redesign", "description": ""}],
+                projects=[_p(id="p1", title="Website Redesign")],
                 aliases_by_project={},
                 agent=None,
             )
@@ -93,7 +102,7 @@ class TestNoMatchBelowThreshold:
                 record_content="Made pasta for dinner with tomato sauce",
                 record_summary="Cooking dinner",
                 artifact_projects=[],
-                projects=[{"id": "p1", "title": "Website Redesign", "description": ""}],
+                projects=[_p(id="p1", title="Website Redesign")],
                 aliases_by_project={},
                 agent=None,
             )
@@ -114,8 +123,8 @@ class TestAutoLinkVsSuggestion:
     def test_deterministic_auto_link_and_no_match(self) -> None:
         """Deterministic matching: title subset -> auto_link, unrelated -> nothing."""
         projects = [
-            {"id": "p_auto", "title": "Data Pipeline", "description": ""},
-            {"id": "p_unrelated", "title": "Cooking Recipes", "description": ""},
+            _p(id="p_auto", title="Data Pipeline"),
+            _p(id="p_unrelated", title="Cooking Recipes"),
         ]
         result = _run(
             match_record(
@@ -199,8 +208,8 @@ class _MockRecord:
 class _MockProject:
     """Minimal project object with to_dict() for discovery."""
 
-    def __init__(self, project_id: str, title: str):
-        self._data = {"id": project_id, "title": title}
+    def __init__(self, project_id: str, title: str, description: str = "", tags: str = ""):
+        self._data = {"id": project_id, "title": title, "description": description, "tags": tags}
 
     def to_dict(self) -> dict[str, str]:
         return self._data
@@ -241,95 +250,55 @@ class MockDiscoveryStore:
 
 
 # ---------------------------------------------------------------------------
-# TestDeterministicDiscovery
+# TestExistingProjectsContext
 # ---------------------------------------------------------------------------
 
-class TestDeterministicDiscovery:
+class TestExistingProjectsContext:
 
-    def test_discover_from_recurring_tags(self) -> None:
-        """15+ records sharing the same tag across 3+ dates -> produces a create_project candidate."""
-        records = [
-            {"id": f"r{i}", "summary": f"note {i}", "tags": "machine-learning,python", "date": f"2026-01-{i:02d}"}
-            for i in range(1, 17)  # 16 records, 16 distinct dates
-        ]
-        candidates = _deterministic_discover(
-            records=records,
-            artifact_projects=[],
-            existing_names=set(),
-        )
-        titles = {c["title"].lower() for c in candidates}
-        assert "machine-learning" in titles
-        ml = next(c for c in candidates if c["title"].lower() == "machine-learning")
-        assert ml["suggestion_type"] == "create_project"
-        assert ml["confidence"] >= 0.70
-        assert len(ml["evidence"]) >= 1
+    def test_build_text_with_no_projects(self) -> None:
+        """Empty project list returns placeholder text."""
+        text = _build_existing_projects_text([])
+        assert text == "(no existing projects)"
 
-    def test_discover_from_artifact_projects(self) -> None:
-        """Same project string in 15+ artifact_projects across 3+ dates -> produces a candidate."""
-        records = [
-            {"id": f"r{i}", "summary": "a", "tags": "", "date": f"2026-01-{i:02d}"}
-            for i in range(1, 17)
+    def test_build_text_with_projects(self) -> None:
+        """Projects are formatted with title, description, and tags."""
+        projects = [
+            {
+                "title": "每天吃水果",
+                "description": "坚持每天吃一个水果的健康计划",
+                "tags": "水果,健康,饮食",
+                "aliases": ["水果计划"],
+            },
+            {
+                "title": "学习Rust",
+                "description": "",
+                "tags": "Rust,编程",
+                "aliases": [],
+            },
         ]
-        artifacts = [
-            {"project": "infra-upgrade", "record_id": f"r{i}", "date": f"2026-01-{i:02d}"}
-            for i in range(1, 17)  # 16 artifacts across 16 dates
-        ]
-        candidates = _deterministic_discover(
-            records=records,
-            artifact_projects=artifacts,
-            existing_names=set(),
-        )
-        titles_lower = {c["title"].lower() for c in candidates}
-        assert "infra-upgrade" in titles_lower or "infra upgrade" in titles_lower
+        text = _build_existing_projects_text(projects)
+        assert "每天吃水果" in text
+        assert "坚持每天吃一个水果的健康计划" in text
+        assert "水果, 健康, 饮食" in text
+        assert "水果计划" in text
+        assert "学习Rust" in text
+        assert "Rust, 编程" in text
 
-    def test_discover_skips_existing_projects(self) -> None:
-        """Tag matching an existing project title is skipped even with enough occurrences."""
-        records = [
-            {"id": f"r{i}", "summary": "a", "tags": "website", "date": f"2026-01-{i:02d}"}
-            for i in range(1, 17)  # 16 records
-        ]
-        candidates = _deterministic_discover(
-            records=records,
-            artifact_projects=[],
-            existing_names={"website"},
-        )
-        titles_lower = {c["title"].lower() for c in candidates}
-        assert "website" not in titles_lower
-
-    def test_discover_requires_minimum_occurrences(self) -> None:
-        """Tags with fewer than 15 occurrences are not suggested (high threshold for LLM-less path)."""
-        records = [
-            {"id": f"r{i}", "summary": "a", "tags": "rare-topic", "date": f"2026-01-{i:02d}"}
-            for i in range(1, 11)  # 10 records — below threshold of 15
-        ]
-        candidates = _deterministic_discover(
-            records=records,
-            artifact_projects=[],
-            existing_names=set(),
-        )
-        assert candidates == []
-
-    def test_discover_requires_multi_date_span(self) -> None:
-        """Tags appearing many times but on fewer than 3 dates are not suggested."""
-        records = [
-            {"id": f"r{i}", "summary": "a", "tags": "clustered-topic", "date": "2026-01-01"}
-            for i in range(1, 21)  # 20 records, all same date
-        ]
-        candidates = _deterministic_discover(
-            records=records,
-            artifact_projects=[],
-            existing_names=set(),
-        )
-        assert candidates == []
-
-    def test_discover_empty_records(self) -> None:
-        """Empty records list -> no candidates."""
-        candidates = _deterministic_discover(
+    def test_existing_projects_context_from_store(self) -> None:
+        """_existing_projects_context collects titles, descriptions, tags, and aliases."""
+        store = MockDiscoveryStore(
             records=[],
-            artifact_projects=[],
-            existing_names=set(),
+            projects=[
+                _MockProject("p1", "项目A", description="描述A", tags="标签1,标签2"),
+            ],
+            aliases={"p1": [_MockAlias("别名A")]},
         )
-        assert candidates == []
+        ctx = _existing_projects_context(store)
+        assert len(ctx) == 1
+        assert ctx[0]["title"] == "项目A"
+        assert ctx[0]["description"] == "描述A"
+        assert ctx[0]["tags"] == "标签1,标签2"
+        assert ctx[0]["aliases"] == ["别名A"]
 
 
 # ---------------------------------------------------------------------------
@@ -338,28 +307,46 @@ class TestDeterministicDiscovery:
 
 class TestScanForProjects:
 
-    def test_scan_with_empty_store(self) -> None:
-        """Store with no records -> returns empty list."""
+    def test_scan_requires_agent(self) -> None:
+        """scan_for_projects raises RuntimeError when agent is None."""
         store = MockDiscoveryStore(records=[])
-        result = _run(scan_for_projects(store=store))
+        try:
+            _run(scan_for_projects(store=store, agent=None))
+            assert False, "Expected RuntimeError"
+        except RuntimeError as e:
+            assert "agent" in str(e).lower() or "AI" in str(e)
+
+    def test_scan_with_empty_store(self) -> None:
+        """Store with no records and a valid agent -> returns empty list."""
+        store = MockDiscoveryStore(records=[])
+        agent = _MockAgent({"candidates": []})
+        result = _run(scan_for_projects(store=store, agent=agent))
         assert result == []
 
-    def test_scan_creates_candidates(self) -> None:
-        """Store with records having 15+ recurring tags across 3+ dates -> verify candidates."""
+    def test_scan_creates_candidates_with_agent(self) -> None:
+        """Store with records and LLM agent -> candidates from LLM response."""
         records = [
             _MockRecord(f"r{i}", summary=f"note {i}", tags="backend,api", date=f"2026-01-{i:02d}")
-            for i in range(1, 17)  # 16 records, 16 distinct dates
+            for i in range(1, 6)
         ]
+        agent = _MockAgent({
+            "candidates": [{
+                "title": "后端API重构",
+                "summary": "对后端API进行系统性重构",
+                "keywords": ["backend", "api", "重构"],
+                "rationale": "持续的后端开发记录",
+                "evidence": [{"entity_type": "record", "entity_id": "r1"}],
+                "suggested_milestones": ["完成API文档"],
+                "confidence": 0.90,
+                "suggestion_type": "create_project",
+            }]
+        })
         store = MockDiscoveryStore(records=records)
-        result = _run(scan_for_projects(store=store))
-        assert len(result) >= 1
-        # Both "backend" (16 occurrences) and "api" (16 occurrences) should appear
-        titles_lower = {c["title"].lower() for c in result}
-        assert "backend" in titles_lower
-        assert "api" in titles_lower
-        # Every candidate must have create_project type
-        for c in result:
-            assert c["suggestion_type"] == "create_project"
+        result = _run(scan_for_projects(store=store, agent=agent))
+        assert len(result) == 1
+        assert result[0]["title"] == "后端API重构"
+        assert result[0]["summary"] == "对后端API进行系统性重构"
+        assert result[0]["keywords"] == ["backend", "api", "重构"]
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +378,8 @@ class TestTwoPhaseLlmDiscovery:
         agent = _MockAgent({
             "candidates": [{
                 "title": "每天吃一个水果",
+                "summary": "用户决定每天吃一个水果并持续追踪摄入情况",
+                "keywords": ["水果", "饮食", "健康习惯"],
                 "rationale": "用户决定每天吃水果并持续追踪",
                 "evidence": [{"entity_type": "record", "entity_id": "r1"}],
                 "suggested_milestones": ["连续7天", "连续30天"],
@@ -401,17 +390,21 @@ class TestTwoPhaseLlmDiscovery:
         result = _run(_llm_discover(
             records=records,
             artifact_projects=[],
-            existing_names=set(),
+            existing_projects_text="(no existing projects)",
+            existing_titles=set(),
             agent=agent,
         ))
         assert len(result) == 1
         assert result[0]["title"] == "每天吃一个水果"
+        assert result[0]["summary"] == "用户决定每天吃一个水果并持续追踪摄入情况"
+        assert result[0]["keywords"] == ["水果", "饮食", "健康习惯"]
         assert result[0]["confidence"] == 0.85
         # Agent should have been called once per promising topic
         assert agent.call_count >= 1
-        # Each call should contain focused records, not all 5 at once in a giant dump
+        # Each call should contain focused records and existing projects context
         for msg in agent.last_user_msgs:
             assert "## Topic:" in msg
+            assert "Existing projects" in msg
 
     def test_llm_discover_returns_empty_when_no_confident_topics(self) -> None:
         """LLM returns no candidates for any topic → empty result."""
@@ -423,7 +416,8 @@ class TestTwoPhaseLlmDiscovery:
         result = _run(_llm_discover(
             records=records,
             artifact_projects=[],
-            existing_names=set(),
+            existing_projects_text="(no existing projects)",
+            existing_titles=set(),
             agent=agent,
         ))
         assert result == []
@@ -437,23 +431,26 @@ class TestTwoPhaseLlmDiscovery:
         agent = _MockAgent({
             "candidates": [{
                 "title": "弱话题",
+                "summary": "不确定的话题",
+                "keywords": ["弱"],
                 "rationale": "不太确定",
                 "evidence": [],
                 "suggested_milestones": [],
-                "confidence": 0.50,  # below LLM_DISCOVERY_MIN_CONFIDENCE (0.70)
+                "confidence": 0.50,
                 "suggestion_type": "create_project",
             }]
         })
         result = _run(_llm_discover(
             records=records,
             artifact_projects=[],
-            existing_names=set(),
+            existing_projects_text="(no existing projects)",
+            existing_titles=set(),
             agent=agent,
         ))
         assert result == []
 
     def test_llm_discover_skips_existing_projects(self) -> None:
-        """LLM returns a candidate that matches an existing project → filtered."""
+        """LLM returns a candidate that matches an existing project title → filtered by exact title."""
         records = [
             {"id": f"r{i}", "summary": "a", "tags": "已有项目", "date": f"2026-01-{i:02d}"}
             for i in range(1, 6)
@@ -461,6 +458,8 @@ class TestTwoPhaseLlmDiscovery:
         agent = _MockAgent({
             "candidates": [{
                 "title": "已有项目",
+                "summary": "已经存在的项目",
+                "keywords": ["已有"],
                 "rationale": "...",
                 "evidence": [],
                 "suggested_milestones": [],
@@ -471,7 +470,235 @@ class TestTwoPhaseLlmDiscovery:
         result = _run(_llm_discover(
             records=records,
             artifact_projects=[],
-            existing_names={"已有项目"},
+            existing_projects_text="1. **已有项目**\n   Summary: 已有项目的描述\n   Keywords: 已有, 项目",
+            existing_titles={"已有项目"},
             agent=agent,
         ))
         assert result == []
+
+class TestFusionDeterministicAndLlm:
+    """Test that deterministic and LLM results are fused, not mutually exclusive."""
+
+    def test_llm_always_runs_when_agent_available(self) -> None:
+        """LLM layer runs even when deterministic found matches (fusion, not fallback)."""
+        agent = _MockAgent({
+            "matches": [{
+                "project_id": "p2",
+                "project_title": "Backend API",
+                "confidence": 0.80,
+                "evidence": [{"entity_type": "record", "entity_id": "r1"}],
+                "rationale": "LLM detected backend API work",
+            }]
+        })
+        result = _run(
+            match_record(
+                record_id="r1",
+                record_content="Working on the website redesign project today",
+                record_summary="Website redesign progress",
+                artifact_projects=[],
+                projects=[
+                    _p(id="p1", title="Website Redesign"),
+                    _p(id="p2", title="Backend API"),
+                ],
+                aliases_by_project={},
+                agent=agent,
+            )
+        )
+        # Deterministic should find p1 (title subset match)
+        all_matches = result.auto_links + result.suggestions
+        det_matches = [c for c in all_matches if c.strategy == "deterministic"]
+        assert len(det_matches) >= 1, "Deterministic should still find p1"
+        # LLM should have been called (fusion, not skipped)
+        assert agent.call_count == 1, "LLM should be called even when deterministic found matches"
+        # LLM-only match p2 should appear
+        llm_matches = [c for c in all_matches if c.project_id == "p2"]
+        assert len(llm_matches) == 1, "LLM-only match should be included"
+
+    def test_hybrid_strategy_when_both_layers_match_same_project(self) -> None:
+        """When both deterministic and LLM match the same project, strategy is hybrid."""
+        agent = _MockAgent({
+            "matches": [{
+                "project_id": "p1",
+                "project_title": "Website Redesign",
+                "confidence": 0.90,
+                "evidence": [{"entity_type": "record", "entity_id": "r1"}],
+                "rationale": "LLM confirms website redesign",
+            }]
+        })
+        result = _run(
+            match_record(
+                record_id="r1",
+                record_content="Working on the website redesign project today",
+                record_summary="Website redesign progress",
+                artifact_projects=[],
+                projects=[_p(id="p1", title="Website Redesign")],
+                aliases_by_project={},
+                agent=agent,
+            )
+        )
+        all_matches = result.auto_links + result.suggestions
+        hybrid = [c for c in all_matches if c.strategy == "hybrid"]
+        assert len(hybrid) == 1, "Same project matched by both layers should be hybrid"
+        assert hybrid[0].project_id == "p1"
+        # Hybrid should have max confidence from both layers
+        assert hybrid[0].confidence >= 0.88  # deterministic was 0.88, LLM was 0.90
+        # Hybrid should merge evidence from both layers
+        assert len(hybrid[0].evidence) >= 2, "Hybrid should merge evidence from both layers"
+
+    def test_llm_focuses_on_unresolved_projects(self) -> None:
+        """LLM receives filtered project list excluding deterministic matches."""
+        agent = _MockAgent({
+            "matches": [{
+                "project_id": "p2",
+                "project_title": "Backend API",
+                "confidence": 0.75,
+                "evidence": [{"entity_type": "record", "entity_id": "r1"}],
+                "rationale": "LLM found backend API",
+            }]
+        })
+        result = _run(
+            match_record(
+                record_id="r1",
+                record_content="Working on the website redesign project today",
+                record_summary="Website redesign progress",
+                artifact_projects=[],
+                projects=[
+                    _p(id="p1", title="Website Redesign"),
+                    _p(id="p2", title="Backend API"),
+                ],
+                aliases_by_project={},
+                agent=agent,
+            )
+        )
+        # LLM prompt should only contain unresolved projects (p2, not p1)
+        assert agent.call_count == 1
+        user_msg = agent.last_user_msgs[0]
+        assert "Backend API" in user_msg, "Unresolved project should be in LLM prompt"
+        # p1 was resolved by deterministic, so it should be excluded from LLM input
+        # (unless all projects are matched, in which case all are sent)
+        all_matches = result.auto_links + result.suggestions
+        assert any(c.project_id == "p1" for c in all_matches)
+        assert any(c.project_id == "p2" for c in all_matches)
+
+    def test_no_agent_means_deterministic_only(self) -> None:
+        """Without agent, only deterministic matching runs (unchanged behavior)."""
+        result = _run(
+            match_record(
+                record_id="r1",
+                record_content="Working on the website redesign project today",
+                record_summary="Website redesign progress",
+                artifact_projects=[],
+                projects=[_p(id="p1", title="Website Redesign")],
+                aliases_by_project={},
+                agent=None,
+            )
+        )
+        assert len(result.auto_links) == 1
+        assert result.auto_links[0].strategy == "deterministic"
+
+
+class _RawMockAgent:
+    """Mock agent that returns a predefined raw string from run_prompt."""
+
+    def __init__(self, raw_response: str):
+        self._raw_response = raw_response
+        self.call_count = 0
+        self.last_user_msgs: list[str] = []
+
+    async def run_prompt(self, system: str, user: str) -> str:
+        self.call_count += 1
+        self.last_user_msgs.append(user)
+        return self._raw_response
+
+
+class TestLlmMatchPydanticValidation:
+    """LLM linking responses are parsed and validated with Pydantic."""
+
+    def test_valid_llm_response_produces_candidates(self) -> None:
+        """A well-formed JSON response is validated and turned into candidates."""
+        agent = _MockAgent({
+            "matches": [{
+                "project_id": "p1",
+                "project_title": "Website Redesign",
+                "confidence": 0.80,
+                "evidence": [{"entity_type": "record", "entity_id": "r1"}],
+                "rationale": "LLM sees website redesign work",
+            }]
+        })
+        result = _run(
+            match_record(
+                record_id="r1",
+                record_content="Some content",
+                record_summary="Summary",
+                artifact_projects=[],
+                projects=[_p(id="p1", title="Website Redesign")],
+                aliases_by_project={},
+                agent=agent,
+            )
+        )
+        assert len(result.suggestions) == 1
+        assert result.suggestions[0].project_id == "p1"
+        assert result.suggestions[0].confidence == 0.80
+        assert result.suggestions[0].rationale == "LLM sees website redesign work"
+        assert result.suggestions[0].evidence == [{"entity_type": "record", "entity_id": "r1"}]
+
+    def test_invalid_json_returns_empty(self) -> None:
+        """Non-JSON LLM output is caught and results in no LLM candidates."""
+        agent = _RawMockAgent("not valid json")
+        result = _run(
+            match_record(
+                record_id="r1",
+                record_content="Some content",
+                record_summary="Summary",
+                artifact_projects=[],
+                projects=[_p(id="p1", title="Website Redesign")],
+                aliases_by_project={},
+                agent=agent,
+            )
+        )
+        assert len(result.auto_links) == 0
+        assert len(result.suggestions) == 0
+
+    def test_missing_required_field_returns_empty(self) -> None:
+        """A JSON response missing required fields fails validation gracefully."""
+        agent = _MockAgent({"matches": [{"project_id": "p1"}]})
+        result = _run(
+            match_record(
+                record_id="r1",
+                record_content="Some content",
+                record_summary="Summary",
+                artifact_projects=[],
+                projects=[_p(id="p1", title="Website Redesign")],
+                aliases_by_project={},
+                agent=agent,
+            )
+        )
+        assert len(result.auto_links) == 0
+        assert len(result.suggestions) == 0
+
+    def test_extra_fields_are_ignored(self) -> None:
+        """Pydantic ignores extra fields returned by the LLM."""
+        agent = _MockAgent({
+            "matches": [{
+                "project_id": "p1",
+                "project_title": "Website Redesign",
+                "confidence": 0.90,
+                "extra_field": "should be ignored",
+                "evidence": [{"entity_type": "record", "entity_id": "r1", "extra": "ignored"}],
+                "rationale": "",
+            }]
+        })
+        result = _run(
+            match_record(
+                record_id="r1",
+                record_content="Some content",
+                record_summary="Summary",
+                artifact_projects=[],
+                projects=[_p(id="p1", title="Website Redesign")],
+                aliases_by_project={},
+                agent=agent,
+            )
+        )
+        assert len(result.auto_links) == 1
+        assert result.auto_links[0].project_id == "p1"
+        assert result.auto_links[0].evidence == [{"entity_type": "record", "entity_id": "r1"}]

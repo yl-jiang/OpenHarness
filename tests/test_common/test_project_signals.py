@@ -9,8 +9,6 @@ from common.project_ai.signals import (
     _suggest_next_action,
     _deterministic_checkin,
     _deterministic_summary,
-    analyze_project_state,
-    generate_daily_snapshot,
 )
 
 
@@ -169,14 +167,3 @@ class TestDeterministicSummary:
         assert "at risk" in s.lower()
 
 
-class TestProjectReviewPrompt:
-    def test_review_prompt_exists(self) -> None:
-        from common.project_ai.prompts import PROJECT_REVIEW_SYSTEM_PROMPT
-        assert "retrospective" in PROJECT_REVIEW_SYSTEM_PROMPT.lower()
-        assert "JSON" in PROJECT_REVIEW_SYSTEM_PROMPT
-
-    def test_review_prompt_output_format(self) -> None:
-        from common.project_ai.prompts import PROJECT_REVIEW_SYSTEM_PROMPT
-        assert '"review"' in PROJECT_REVIEW_SYSTEM_PROMPT
-        assert '"highlights"' in PROJECT_REVIEW_SYSTEM_PROMPT
-        assert '"sentiment"' in PROJECT_REVIEW_SYSTEM_PROMPT

@@ -1,10 +1,11 @@
 """Project Discovery: identify themes in recent records that could become projects.
 
-Two strategies:
-  1. LLM-based (two-phase RAG): local retrieval of candidate topics by tag
-     frequency and date distribution, then focused LLM evaluation per topic
-     with only the relevant records — not a full context dump.
-  2. Deterministic fallback: count recurring project/category strings from artifacts.
+LLM-based (two-phase RAG): local retrieval of candidate topics by tag frequency
+and date distribution, then focused LLM evaluation per topic with only the
+relevant records — not a full context dump.
+
+The LLM receives rich context about existing projects (title, summary, keywords)
+to make semantic deduplication decisions instead of relying on string similarity.
 
 Output: list of ``create_project`` suggestions ready to be written to the store.
 """
@@ -14,19 +15,37 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections import Counter
 from typing import Any, Protocol
 
-from common.project_ai.types import CONFIDENCE_SUGGEST
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-# Minimum confidence for LLM-discovered project candidates (stricter than the
-# shared CONFIDENCE_SUGGEST used for record-linking).
+# Minimum confidence for LLM-discovered project candidates.
 LLM_DISCOVERY_MIN_CONFIDENCE = 0.85
 
 # How many days of records to scan for discovery
 DISCOVERY_WINDOW_DAYS = 90
+
+
+class _DiscoveryEvidence(BaseModel):
+    entity_type: str
+    entity_id: str
+
+
+class _DiscoveryCandidate(BaseModel):
+    title: str
+    summary: str
+    keywords: list[str] = Field(default_factory=list)
+    rationale: str = ""
+    evidence: list[_DiscoveryEvidence] = Field(default_factory=list)
+    suggested_milestones: list[str] = Field(default_factory=list)
+    confidence: float = Field(..., ge=0.0, le=1.0)
+    suggestion_type: str = "create_project"
+
+
+class _DiscoveryResponse(BaseModel):
+    candidates: list[_DiscoveryCandidate] = Field(default_factory=list)
 
 
 class DiscoveryStore(Protocol):
@@ -43,27 +62,82 @@ class DiscoveryStore(Protocol):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _existing_titles_and_aliases(store: DiscoveryStore) -> set[str]:
-    """Collect all lowercased project titles, aliases, and pending suggestion titles."""
-    names: set[str] = set()
+def _existing_projects_context(store: DiscoveryStore) -> list[dict[str, Any]]:
+    """Collect rich context about existing projects, suggestions, and aliases.
+
+    Returns a list of dicts with title, description (as summary), tags (as keywords),
+    and aliases for each existing project and pending suggestion.
+    """
+    projects: list[dict[str, Any]] = []
+
     for p in store.list_projects():
         d = p.to_dict() if hasattr(p, "to_dict") else p
-        names.add(d.get("title", "").lower().strip())
+        aliases = []
         for a in store.list_project_aliases(d.get("id", "")):
             ad = a.to_dict() if hasattr(a, "to_dict") else a
-            alias = ad.get("alias", "").lower().strip()
+            alias = ad.get("alias", "").strip()
             if alias:
-                names.add(alias)
-    # Also exclude titles that already have a pending suggestion
+                aliases.append(alias)
+        projects.append({
+            "title": d.get("title", ""),
+            "description": d.get("description", ""),
+            "tags": d.get("tags", ""),
+            "aliases": aliases,
+        })
+
     try:
-        for s in store.list_project_suggestions(status="pending"):
+        for s in store.list_project_suggestions():
             sd = s.to_dict() if hasattr(s, "to_dict") else s
-            title = sd.get("title", "").lower().strip()
+            title = sd.get("title", "").strip()
             if title:
-                names.add(title)
+                payload = {}
+                try:
+                    payload = json.loads(sd.get("proposed_payload_json", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                projects.append({
+                    "title": title,
+                    "description": payload.get("description", sd.get("rationale", "")),
+                    "tags": "",
+                    "keywords": payload.get("keywords", []),
+                    "aliases": [],
+                    "is_suggestion": True,
+                })
     except Exception:
         pass
-    return names
+
+    return projects
+
+
+def _build_existing_projects_text(projects: list[dict[str, Any]]) -> str:
+    """Format existing project context for the LLM prompt."""
+    if not projects:
+        return "(no existing projects)"
+
+    lines: list[str] = []
+    for i, p in enumerate(projects, 1):
+        title = p.get("title", "")
+        desc = p.get("description", "")
+        tags = p.get("tags", "")
+        keywords = p.get("keywords", [])
+        aliases = p.get("aliases", [])
+
+        parts = [f"{i}. **{title}**"]
+        if aliases:
+            parts.append(f"   Aliases: {', '.join(aliases)}")
+        if desc:
+            parts.append(f"   Summary: {desc}")
+        keyword_terms = keywords if keywords else (
+            [t.strip() for t in tags.split(",") if t.strip()] if tags else []
+        )
+        if keyword_terms:
+            parts.append(f"   Keywords: {', '.join(keyword_terms)}")
+        if p.get("is_suggestion"):
+            parts.append("   (pending suggestion, not yet accepted)")
+
+        lines.append("\n".join(parts))
+
+    return "\n\n".join(lines)
 
 
 def _recent_record_summaries(store: DiscoveryStore, days: int = DISCOVERY_WINDOW_DAYS) -> list[dict[str, str]]:
@@ -79,80 +153,6 @@ def _recent_record_summaries(store: DiscoveryStore, days: int = DISCOVERY_WINDOW
             "date": d.get("date", ""),
         })
     return result
-
-
-def _deterministic_discover(
-    *,
-    records: list[dict[str, str]],
-    artifact_projects: list[dict[str, str]],
-    existing_names: set[str],
-) -> list[dict[str, Any]]:
-    """Conservative frequency-based discovery without LLM.
-
-    Counts recurring ``project`` strings from artifacts and ``tags`` from records.
-    Uses a high occurrence threshold and requires cross-date evidence to reduce noise.
-    This is a last-resort fallback; the LLM path is the primary discovery mechanism.
-    Returns candidate dicts matching the discovery output schema.
-    """
-    tag_counter: Counter[str] = Counter()
-    tag_records: dict[str, list[str]] = {}  # tag → record ids
-    tag_dates: dict[str, set[str]] = {}  # tag → set of distinct dates
-
-    for rec in records:
-        tags = rec.get("tags", "")
-        rec_date = rec.get("date", "")
-        for t in tags.split(","):
-            t = t.strip().lower()
-            if len(t) >= 2:
-                tag_counter[t] += 1
-                tag_records.setdefault(t, []).append(rec["id"])
-                tag_dates.setdefault(t, set()).add(rec_date)
-
-    proj_counter: Counter[str] = Counter()
-    proj_records: dict[str, list[str]] = {}
-    proj_dates: dict[str, set[str]] = {}
-
-    for ap in artifact_projects:
-        name = ap.get("project", "").strip().lower()
-        if name and len(name) >= 2:
-            proj_counter[name] += 1
-            proj_records.setdefault(name, []).append(ap.get("record_id", ""))
-            proj_dates.setdefault(name, set()).add(ap.get("date", ""))
-
-    candidates: list[dict[str, Any]] = []
-
-    # Merge tag and project string counts
-    all_names = set(tag_counter.keys()) | set(proj_counter.keys())
-    for name in all_names:
-        count = tag_counter.get(name, 0) + proj_counter.get(name, 0)
-        if count < 15:
-            continue  # very high threshold for LLM-less fallback (no semantic filtering)
-        if name in existing_names:
-            continue  # already a known project
-
-        # Require evidence across at least 3 distinct dates
-        dates = tag_dates.get(name, set()) | proj_dates.get(name, set())
-        if len(dates) < 3:
-            continue
-
-        evidence_ids = list(set(tag_records.get(name, []) + proj_records.get(name, [])))
-        confidence = min(0.70 + (count - 15) * 0.01, 0.85)
-
-        candidates.append({
-            "title": name.title(),
-            "rationale": f"'{name}' appears {count} times across {len(dates)} distinct days",
-            "evidence": [
-                {"entity_type": "record", "entity_id": eid}
-                for eid in evidence_ids[:5]
-            ],
-            "suggested_milestones": [],
-            "confidence": round(confidence, 2),
-            "suggestion_type": "create_project",
-        })
-
-    # Sort by confidence descending
-    candidates.sort(key=lambda c: c["confidence"], reverse=True)
-    return candidates[:3]
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +173,8 @@ async def _llm_discover(
     *,
     records: list[dict[str, str]],
     artifact_projects: list[dict[str, str]],
-    existing_names: set[str],
+    existing_projects_text: str,
+    existing_titles: set[str],
     agent: Any,
 ) -> list[dict[str, Any]]:
     """Two-phase project discovery: local retrieval then focused LLM evaluation.
@@ -184,8 +185,6 @@ async def _llm_discover(
     send a focused evaluation prompt — each call processes ~15 records instead
     of 100+.
     """
-    existing_text = ", ".join(sorted(existing_names)) if existing_names else "(none)"
-
     # Phase 1: Local retrieval — identify candidate topics
     topic_records: dict[str, list[dict[str, str]]] = {}
     topic_dates: dict[str, set[str]] = {}
@@ -233,7 +232,7 @@ async def _llm_discover(
             return await _evaluate_topic(
                 topic=topic,
                 topic_records=topic_recs[:15],
-                existing_text=existing_text,
+                existing_projects_text=existing_projects_text,
                 agent=agent,
             )
 
@@ -242,8 +241,8 @@ async def _llm_discover(
         for topic, _ in topics_to_eval
     ])
 
-    # Collect valid candidates, deduplicating by title
-    seen_titles: set[str] = set()
+    # Collect valid candidates; exact-title dedup as safety net (semantic dedup is LLM's job)
+    accepted_titles: list[str] = [t.lower() for t in existing_titles]
     candidates: list[dict[str, Any]] = []
     for result in eval_results:
         if not result:
@@ -251,12 +250,15 @@ async def _llm_discover(
         conf = float(result.get("confidence", 0))
         if conf < LLM_DISCOVERY_MIN_CONFIDENCE:
             continue
-        title_lower = result.get("title", "").lower().strip()
-        if title_lower in existing_names or title_lower in seen_titles:
+        title = result.get("title", "").strip()
+        title_lower = title.lower()
+        if title_lower in accepted_titles:
             continue
-        seen_titles.add(title_lower)
+        accepted_titles.append(title_lower)
         candidates.append({
-            "title": result.get("title", ""),
+            "title": title,
+            "summary": result.get("summary", ""),
+            "keywords": result.get("keywords", []),
             "rationale": result.get("rationale", ""),
             "evidence": result.get("evidence", []),
             "suggested_milestones": result.get("suggested_milestones", []),
@@ -272,7 +274,7 @@ async def _evaluate_topic(
     *,
     topic: str,
     topic_records: list[dict[str, str]],
-    existing_text: str,
+    existing_projects_text: str,
     agent: Any,
 ) -> dict[str, Any] | None:
     """Evaluate a single candidate topic with focused records.
@@ -281,36 +283,45 @@ async def _evaluate_topic(
     instead of the full record set. This is the 'R' in RAG — retrieve
     then generate.
     """
-    from common.project_ai.prompts import PROJECT_DISCOVERY_SYSTEM_PROMPT
+    from common.project_ai.prompts import (
+        EXISTING_PROJECTS_CONTEXT_PROMPT,
+        PROJECT_DISCOVERY_SYSTEM_PROMPT,
+    )
 
     records_text = "\n".join(
         f"- [{r.get('date', '')}] {r.get('summary', '')} (tags: {r.get('tags', '')})"
         for r in topic_records
     )
 
+    existing_block = EXISTING_PROJECTS_CONTEXT_PROMPT.format(
+        existing_projects_context=existing_projects_text,
+    )
+
     user_msg = (
         f"## Topic: \"{topic}\"\n\n"
         f"## Related records ({len(topic_records)} records)\n{records_text}\n\n"
-        f"## Existing projects & aliases\n{existing_text}\n\n"
+        f"{existing_block}\n\n"
         "Determine if the above records reveal a genuine, ongoing project or goal "
         "related to this topic. Apply strict criteria: look for explicit goal "
         "statements, commitments, or sustained tracking behavior across multiple "
         "dates. Returning 0 candidates (empty array) is the correct answer if "
-        "the evidence is weak. Return JSON."
+        "the evidence is weak. "
+        "CRITICAL: Before suggesting any candidate, verify it is NOT the same "
+        "endeavor as any existing project listed above. If there is any overlap "
+        "in meaning or scope, return an empty candidates array. Return JSON."
     )
 
     try:
         raw = await agent.run_prompt(PROJECT_DISCOVERY_SYSTEM_PROMPT, user_msg)
-        data = json.loads(raw)
+        data = _DiscoveryResponse.model_validate_json(raw)
     except Exception:
         logger.warning("LLM topic evaluation failed for '%s'", topic, exc_info=True)
         return None
 
-    evaluated = data.get("candidates", [])
-    if not evaluated:
+    if not data.candidates:
         return None
 
-    return evaluated[0]
+    return data.candidates[0].model_dump()
 
 
 # ---------------------------------------------------------------------------
@@ -329,19 +340,28 @@ async def scan_for_projects(
     ----------
     store : DiscoveryStore
         Must expose list_records, list_projects, list_project_aliases, list_todos.
-    agent : optional
+    agent : required
         Must expose ``async run_prompt(system, user) -> str``.
-        If None, uses deterministic frequency-based discovery.
+        If None, raises RuntimeError — discovery requires LLM capabilities.
     days : int
         How many days of records to scan.
 
     Returns
     -------
     list[dict]
-        Each dict has: title, rationale, evidence, suggested_milestones,
-        confidence, suggestion_type.
+        Each dict has: title, summary, keywords, rationale, evidence,
+        suggested_milestones, confidence, suggestion_type.
     """
-    existing_names = _existing_titles_and_aliases(store)
+    if agent is None:
+        raise RuntimeError(
+            "Project discovery requires an AI agent. "
+            "Please check your model configuration and try again."
+        )
+
+    existing_projects = _existing_projects_context(store)
+    existing_projects_text = _build_existing_projects_text(existing_projects)
+    existing_titles = {p["title"].lower().strip() for p in existing_projects if p.get("title")}
+
     records = _recent_record_summaries(store, days)
 
     if not records:
@@ -363,19 +383,12 @@ async def scan_for_projects(
     except Exception:
         pass
 
-    if agent is not None:
-        candidates = await _llm_discover(
-            records=records,
-            artifact_projects=artifact_projects,
-            existing_names=existing_names,
-            agent=agent,
-        )
-        # No fallback: if LLM found no projects, trust that judgment.
-    else:
-        candidates = _deterministic_discover(
-            records=records,
-            artifact_projects=artifact_projects,
-            existing_names=existing_names,
-        )
+    candidates = await _llm_discover(
+        records=records,
+        artifact_projects=artifact_projects,
+        existing_projects_text=existing_projects_text,
+        existing_titles=existing_titles,
+        agent=agent,
+    )
 
     return candidates

@@ -3,7 +3,6 @@
 Phase 1: PROJECT_LINKING_SYSTEM_PROMPT
 Phase 2: PROJECT_DISCOVERY_SYSTEM_PROMPT
 Phase 3: PROJECT_STATE_SYSTEM_PROMPT, PROJECT_CHECKIN_SYSTEM_PROMPT
-Phase 4: PROJECT_REVIEW_SYSTEM_PROMPT
 """
 
 PROJECT_LINKING_SYSTEM_PROMPT = """\
@@ -76,6 +75,25 @@ or any phrasing that signals commitment to an ongoing activity.
 - 0.85-0.89: Very strong implicit goal intention with clear action language + 5+ tracking records across 3+ days
 - < 0.85: Do NOT include. When in doubt, return empty candidates.
 
+## CRITICAL: Avoid duplicate suggestions using historical project context
+Below you will see a list of **existing projects** (including completed and archived ones) \
+with their title, summary, and keywords. \
+Before suggesting a candidate, carefully compare it against ALL existing projects:
+- If a candidate describes substantially the same endeavor as any existing project \
+(even if the wording differs), do NOT suggest it. This applies regardless of whether \
+the existing project is active, completed, or archived.
+- Compare by **meaning and scope**, not just string similarity. For example, if \
+"H20 LiteLLM 鉴权+限流方案部署上线" already exists, do NOT suggest \
+"H20 GPU 资源管控与监控部署" — they describe the same work even though the titles differ.
+- If two candidate topics would produce similar-looking projects, only keep the \
+one with stronger evidence and higher confidence. Never suggest two projects that a \
+reasonable person would consider the same thing.
+- **ABSOLUTE RULE: If you find yourself thinking "this might be the same as an existing \
+project" or "these are similar but slightly different", you MUST discard the candidate.** \
+When in doubt, do NOT suggest. Never keep a candidate "just in case" or "cautiously as \
+an independent candidate". The bar for uniqueness must be extremely high — only suggest \
+a candidate if you are certain it is a genuinely distinct endeavor from all existing projects.
+
 IMPORTANT: If the topic is a common daily life category (sleep, diet, health, exercise, family, \
 work, commute, weather, mood) and there is NO explicit goal statement like "决定...", \
 "开始...", "坚持...", "挑战...", the confidence MUST be below 0.85. \
@@ -85,6 +103,10 @@ Mere repeated mentions of a topic are NOT evidence of a project.
 - Suggest 0-3 candidates max. Prefer fewer, higher-quality suggestions.
 - Title must reflect the GOAL, not just the topic (e.g., "每天吃一个水果" not "水果"; \
 "完成OpenHarness V2上线" not "开发").
+- Summary must concisely describe what this project is about and why it qualifies \
+as a project (2-3 sentences). Include the goal, scope, and evidence pattern.
+- Keywords are 3-6 short terms that capture the project's core themes, making it \
+easier to detect duplicates with existing projects later.
 - Rationale MUST cite the specific record containing the goal/intention statement.
 - Suggested milestones should be concrete and measurable (2-4 items).
 
@@ -93,6 +115,8 @@ You MUST respond with valid JSON only, no markdown:
   "candidates": [
     {
       "title": "<goal-oriented project title, not a single generic word>",
+      "summary": "<2-3 sentences: what this project is, its goal, and why it qualifies>",
+      "keywords": ["<keyword1>", "<keyword2>", "<keyword3>"],
       "rationale": "<cite the goal statement record and tracking pattern>",
       "evidence": [{"entity_type": "record", "entity_id": "<id>"}],
       "suggested_milestones": ["<milestone 1>", "<milestone 2>"],
@@ -101,6 +125,15 @@ You MUST respond with valid JSON only, no markdown:
     }
   ]
 }
+"""
+
+EXISTING_PROJECTS_CONTEXT_PROMPT = """\
+## Existing projects (check carefully to avoid duplicates)
+{existing_projects_context}
+
+Use the above information — especially summary and keywords — to judge whether a \
+candidate describes the same or substantially overlapping endeavor. If in doubt, \
+do NOT suggest it.
 """
 
 PROJECT_STATE_SYSTEM_PROMPT = """\
@@ -159,28 +192,4 @@ You MUST respond with valid JSON only, no markdown:
 }
 """
 
-PROJECT_REVIEW_SYSTEM_PROMPT = """\
-You are a project retrospective analyst. Given a project's full details, history, \
-linked records, milestones, todos, decisions, and highlights, generate a narrative \
-project review.
 
-Rules:
-- Write in the user's language (detect from the records).
-- Be specific: cite actual milestones, decisions, and blockers by name.
-- For wolo projects: focus on delivery progress, risk evolution, key decisions, \
-stakeholder alignment, and next priorities.
-- For solo projects: focus on behavioral patterns, friction points, what worked \
-(environment design, small steps), emotional trajectory, and personal insights.
-- Structure the review as readable prose, not a bullet list.
-- Include a "What went well" and "What to improve" section.
-- If the project is completed, add a "Lessons learned" section.
-- If the project is still active, add a "Recommended next steps" section.
-- Keep the total review under 500 words.
-
-You MUST respond with valid JSON only, no markdown:
-{
-  "review": "<full narrative review text>",
-  "highlights": ["<3-5 key takeaways as short strings>"],
-  "sentiment": "positive|neutral|mixed|challenging"
-}
-"""

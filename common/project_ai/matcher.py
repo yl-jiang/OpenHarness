@@ -2,7 +2,11 @@
 
 Strategy layers (cheapest first):
   1. Deterministic: exact title / alias / project-string / category overlap.
-  2. LLM fallback: only for entities that deterministic pass couldn't resolve.
+  2. LLM: semantic matching, always runs when agent is available.
+
+Fusion: both layers run independently; results are merged per project_id.
+  - Same project found by both → keep higher confidence, strategy="hybrid".
+  - Found by only one layer → keep as-is with original strategy.
 
 Action boundaries (from design doc §7.2):
   - confidence >= 0.85 → auto-link  (auto_links)
@@ -12,7 +16,6 @@ Action boundaries (from design doc §7.2):
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 from typing import Any, Protocol
@@ -21,7 +24,10 @@ from common.project_ai.types import (
     CONFIDENCE_AUTO_LINK,
     CONFIDENCE_SUGGEST,
     LinkerResult,
+    LlmMatchItem,
+    LlmMatchResponse,
     MatchCandidate,
+    ProjectLinkInput,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,9 +55,21 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text.strip().lower())
 
 
-def _token_set(text: str) -> set[str]:
-    """Split normalised text into tokens, drop very short ones."""
-    return {t for t in _normalize(text).split() if len(t) >= 2}
+def tokenize_enhanced(text: str) -> list[str]:
+    """Tokenize text: Jieba for Chinese, regex for English/numbers."""
+    if not text:
+        return []
+
+    text = text.lower()
+
+    if not re.search(r"[\u4e00-\u9fff]", text):
+        return re.findall(r"[a-z0-9]{2,}", text)
+
+    import jieba
+
+    tokens = [t.strip() for t in jieba.cut(text) if t.strip()]
+    ascii_tokens = re.findall(r"[a-z0-9]{2,}", text)
+    return list(dict.fromkeys(tokens + ascii_tokens))
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -67,7 +85,7 @@ def _deterministic_match(
     record_content: str,
     record_summary: str,
     artifact_projects: list[str],
-    projects: list[dict[str, Any]],
+    projects: list[ProjectLinkInput],
     aliases_by_project: dict[str, list[str]],
 ) -> list[MatchCandidate]:
     """Match record + artifacts against known projects using string overlap.
@@ -75,12 +93,12 @@ def _deterministic_match(
     Returns list of MatchCandidate with confidence set.
     """
     candidates: list[MatchCandidate] = []
-    record_tokens = _token_set(f"{record_content} {record_summary}")
+    record_tokens = set(tokenize_enhanced(f"{record_content} {record_summary}"))
 
     for proj in projects:
-        pid = proj["id"]
-        ptitle = proj.get("title", "")
-        pdesc = proj.get("description", "")
+        pid = proj.id
+        ptitle = proj.title
+        pdesc = proj.description
 
         # Collect all matchable strings for this project
         matchable = [ptitle, pdesc] + aliases_by_project.get(pid, [])
@@ -108,10 +126,9 @@ def _deterministic_match(
 
         # 2) Token overlap between record content and project title/aliases
         for m in matchable:
-            m_tokens = _token_set(m)
+            m_tokens = set(tokenize_enhanced(m))
             score = _jaccard(record_tokens, m_tokens)
-            # Boost if title tokens are fully contained
-            title_tokens = _token_set(ptitle)
+            title_tokens = set(tokenize_enhanced(ptitle))
             if title_tokens and title_tokens.issubset(record_tokens):
                 score = max(score, 0.88)
             if score > best_score:
@@ -136,27 +153,106 @@ def _deterministic_match(
 # LLM-based matching
 # ---------------------------------------------------------------------------
 
+def _validate_llm_matches(
+    matches: list[LlmMatchItem],
+    projects: list[ProjectLinkInput],
+) -> list[MatchCandidate]:
+    """Validate LLM-returned matches against known projects.
+
+    Prevents hallucination by:
+    - Rejecting unknown project_ids
+    - Correcting mismatched project_titles for valid IDs
+    - Replacing unknown evidence entity_types with "record"
+    """
+    valid_project_ids = {p.id for p in projects}
+    project_titles = {p.id: p.title for p in projects}
+    valid_entity_types = {"record", "artifact"}
+
+    candidates: list[MatchCandidate] = []
+    for m in matches:
+        if m.confidence < CONFIDENCE_SUGGEST:
+            continue
+
+        # Reject hallucinated project_id
+        if m.project_id not in valid_project_ids:
+            logger.warning(
+                "LLM returned unknown project_id='%s' (title='%s'), skipping. "
+                "Valid IDs: %s",
+                m.project_id, m.project_title, valid_project_ids,
+            )
+            continue
+
+        # Fix project_title if LLM hallucinated a wrong title for a valid ID
+        expected_title = project_titles.get(m.project_id, "")
+        if expected_title and m.project_title and m.project_title != expected_title:
+            logger.info(
+                "LLM returned mismatched title for project_id='%s': "
+                "got='%s', expected='%s'; using expected title",
+                m.project_id, m.project_title, expected_title,
+            )
+
+        # Validate evidence entity_type against known types
+        for ev in m.evidence:
+            if ev.entity_type not in valid_entity_types:
+                logger.warning(
+                    "LLM returned unknown entity_type='%s' in evidence for "
+                    "project_id='%s', replacing with 'record'",
+                    ev.entity_type, m.project_id,
+                )
+                ev.entity_type = "record"
+
+        candidates.append(MatchCandidate(
+            project_id=m.project_id,
+            project_title=expected_title or m.project_title,
+            confidence=round(m.confidence, 2),
+            strategy="llm",
+            evidence=[e.model_dump() for e in m.evidence],
+            rationale=m.rationale,
+        ))
+    return candidates
+
+
 async def _llm_match(
     *,
     record_content: str,
     record_summary: str,
-    projects: list[dict[str, Any]],
+    projects: list[ProjectLinkInput],
     agent: Any,
+    domain: str = "wolo",
+    exclude_project_ids: set[str] | None = None,
 ) -> list[MatchCandidate]:
     """Use LLM to find project matches for a record.
 
     `agent` must expose `async def run_prompt(system, user) -> str`.
+
+    `exclude_project_ids` are projects already matched by deterministic
+    layer; LLM is asked to focus on the remaining projects but may still
+    return them (they will be merged as hybrid in the caller).
     """
     if not projects:
         return []
 
     from common.project_ai.prompts import PROJECT_LINKING_SYSTEM_PROMPT
 
+    # Filter projects: prefer unresolved ones, but keep all for LLM context
+    target_projects = projects
+    if exclude_project_ids:
+        target_projects = [p for p in projects if p.id not in exclude_project_ids]
+        # If all projects are already matched, still let LLM evaluate all
+        if not target_projects:
+            target_projects = projects
+
     project_list = "\n".join(
-        f"- id={p['id']}, title={p.get('title','')}, description={p.get('description','')}"
-        for p in projects
+        f"- id={p.id}, title={p.title}, description={p.description}"
+        for p in target_projects
     )
+    domain_hints = {
+        "wolo": "Domain: work journal. Records describe work activities, project progress, strategies, deadlines. Projects are work endeavors with stakeholders and milestones. Artifact project fields reference work project names.",
+        "solo": "Domain: personal reflection. Records describe personal experiences, friction signals, awareness moments, behavioral experiments. Projects are personal growth endeavors like habit formation, self-experiments, life improvements. Artifact category fields reference life areas.",
+    }
+    domain_context = domain_hints.get(domain, "")
     user_msg = (
+        f"{domain_context}\n\n"
         f"Record summary: {record_summary}\n\n"
         f"Record content: {record_content[:1000]}\n\n"
         f"Existing projects:\n{project_list}\n\n"
@@ -165,24 +261,12 @@ async def _llm_match(
 
     try:
         raw = await agent.run_prompt(PROJECT_LINKING_SYSTEM_PROMPT, user_msg)
-        data = json.loads(raw)
+        parsed = LlmMatchResponse.model_validate_json(raw)
     except Exception:
         logger.warning("LLM project linking failed", exc_info=True)
         return []
 
-    candidates: list[MatchCandidate] = []
-    for m in data.get("matches", []):
-        conf = float(m.get("confidence", 0))
-        if conf < CONFIDENCE_SUGGEST:
-            continue
-        candidates.append(MatchCandidate(
-            project_id=m.get("project_id", ""),
-            project_title=m.get("project_title", ""),
-            confidence=round(conf, 2),
-            strategy="llm",
-            evidence=m.get("evidence", []),
-            rationale=m.get("rationale", ""),
-        ))
+    candidates = _validate_llm_matches(parsed.matches, projects)
     return candidates
 
 
@@ -196,9 +280,10 @@ async def match_record(
     record_content: str,
     record_summary: str,
     artifact_projects: list[str],
-    projects: list[dict[str, Any]],
+    projects: list[ProjectLinkInput],
     aliases_by_project: dict[str, list[str]],
     agent: Any | None = None,
+    domain: str = "wolo",
 ) -> LinkerResult:
     """Run the full linking pipeline on one record.
 
@@ -210,13 +295,16 @@ async def match_record(
     artifact_projects : list[str]
         Wolo: project strings from todos/decisions/highlights/experiments.
         Solo: category strings from todos.
-    projects : list[dict]
-        Active projects as dicts (need at least id, title, description).
+    projects : list[ProjectLinkInput]
+        Active projects as ProjectLinkInput models.
     aliases_by_project : dict[str, list[str]]
         project_id → list of alias strings.
     agent : optional
         Must expose `async run_prompt(system, user) -> str`.
         If None, only deterministic matching is performed.
+    domain : str
+        "wolo" for work journal or "solo" for personal reflection.
+        Affects LLM prompt context to improve matching accuracy.
 
     Returns
     -------
@@ -234,33 +322,49 @@ async def match_record(
         aliases_by_project=aliases_by_project,
     )
 
-    # Deduplicate by project_id (keep highest confidence)
+
+    # Deduplicate deterministic results by project_id (keep highest confidence)
     best_by_project: dict[str, MatchCandidate] = {}
     for c in det_candidates:
         prev = best_by_project.get(c.project_id)
         if prev is None or c.confidence > prev.confidence:
             best_by_project[c.project_id] = c
 
-    # Fill in record_id on evidence
+    # Fill in record_id on deterministic evidence
     for c in best_by_project.values():
         for ev in c.evidence:
             if not ev.get("entity_id"):
                 ev["entity_id"] = record_id
 
-    # Layer 2: LLM fallback only if deterministic found nothing above threshold
-    if not best_by_project and agent is not None:
+    # Layer 2: LLM always runs when agent is available (fusion, not fallback)
+    if agent is not None:
+        # Pass deterministic matches so LLM can focus on unresolved projects
+        det_project_ids = set(best_by_project.keys())
         llm_candidates = await _llm_match(
             record_content=record_content,
             record_summary=record_summary,
             projects=projects,
             agent=agent,
+            domain=domain,
+            exclude_project_ids=det_project_ids,
         )
         for c in llm_candidates:
             for ev in c.evidence:
                 if not ev.get("entity_id"):
                     ev["entity_id"] = record_id
             prev = best_by_project.get(c.project_id)
-            if prev is None or c.confidence > prev.confidence:
+            if prev is not None:
+                # Both layers matched same project → hybrid with max confidence
+                merged_conf = max(prev.confidence, c.confidence)
+                best_by_project[c.project_id] = MatchCandidate(
+                    project_id=c.project_id,
+                    project_title=c.project_title,
+                    confidence=round(merged_conf, 2),
+                    strategy="hybrid",
+                    evidence=prev.evidence + c.evidence,
+                    rationale=f"[det] {prev.rationale} | [llm] {c.rationale}",
+                )
+            else:
                 best_by_project[c.project_id] = c
 
     # Classify into auto_links vs suggestions vs unmatched

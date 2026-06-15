@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 
 # Suggestion type constants
 SUGGEST_LINK_ENTITY = "link_entity"
@@ -35,6 +37,37 @@ CONFIDENCE_SUGGEST = 0.55     # >= this: create pending suggestion
 # < CONFIDENCE_SUGGEST: discard
 
 
+class ProjectLinkInput(BaseModel):
+    """Minimal project representation used by the linker pipeline."""
+
+    id: str
+    title: str = ""
+    description: str = ""
+
+
+class LlmEvidenceItem(BaseModel):
+    """Evidence item returned by the LLM linker."""
+
+    entity_type: str
+    entity_id: str = ""
+
+
+class LlmMatchItem(BaseModel):
+    """Single project match returned by the LLM linker."""
+
+    project_id: str
+    project_title: str = ""
+    confidence: float
+    rationale: str = ""
+    evidence: list[LlmEvidenceItem] = Field(default_factory=list)
+
+
+class LlmMatchResponse(BaseModel):
+    """Top-level JSON response from the LLM linker."""
+
+    matches: list[LlmMatchItem] = Field(default_factory=list)
+
+
 @dataclass
 class MatchCandidate:
     """A potential match between an entity and a project."""
@@ -42,7 +75,7 @@ class MatchCandidate:
     project_id: str
     project_title: str
     confidence: float
-    strategy: str  # deterministic | llm
+    strategy: str  # deterministic | llm | hybrid
     evidence: list[dict[str, str]] = field(default_factory=list)
     rationale: str = ""
 
