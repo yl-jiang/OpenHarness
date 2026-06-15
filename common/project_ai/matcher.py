@@ -156,25 +156,35 @@ def _deterministic_match(
 def _validate_llm_matches(
     matches: list[LlmMatchItem],
     projects: list[ProjectLinkInput],
-) -> list[MatchCandidate]:
+) -> tuple[list[MatchCandidate], list[str]]:
     """Validate LLM-returned matches against known projects.
 
     Prevents hallucination by:
     - Rejecting unknown project_ids
     - Correcting mismatched project_titles for valid IDs
     - Replacing unknown evidence entity_types with "record"
+
+    Returns (candidates, errors) where errors is a list of human-readable
+    validation problems that can be fed back to the LLM for retry.
     """
     valid_project_ids = {p.id for p in projects}
     project_titles = {p.id: p.title for p in projects}
     valid_entity_types = {"record", "artifact"}
 
     candidates: list[MatchCandidate] = []
+    errors: list[str] = []
+
     for m in matches:
         if m.confidence < CONFIDENCE_SUGGEST:
             continue
 
         # Reject hallucinated project_id
         if m.project_id not in valid_project_ids:
+            err = (
+                f"project_id='{m.project_id}' does not exist. "
+                f"Valid project IDs: {sorted(valid_project_ids)}."
+            )
+            errors.append(err)
             logger.warning(
                 "LLM returned unknown project_id='%s' (title='%s'), skipping. "
                 "Valid IDs: %s",
@@ -185,6 +195,10 @@ def _validate_llm_matches(
         # Fix project_title if LLM hallucinated a wrong title for a valid ID
         expected_title = project_titles.get(m.project_id, "")
         if expected_title and m.project_title and m.project_title != expected_title:
+            errors.append(
+                f"project_id='{m.project_id}' has title='{expected_title}', "
+                f"not '{m.project_title}'."
+            )
             logger.info(
                 "LLM returned mismatched title for project_id='%s': "
                 "got='%s', expected='%s'; using expected title",
@@ -194,6 +208,11 @@ def _validate_llm_matches(
         # Validate evidence entity_type against known types
         for ev in m.evidence:
             if ev.entity_type not in valid_entity_types:
+                errors.append(
+                    f"entity_type='{ev.entity_type}' is invalid for "
+                    f"project_id='{m.project_id}'. "
+                    f"Valid types: {sorted(valid_entity_types)}."
+                )
                 logger.warning(
                     "LLM returned unknown entity_type='%s' in evidence for "
                     "project_id='%s', replacing with 'record'",
@@ -209,7 +228,7 @@ def _validate_llm_matches(
             evidence=[e.model_dump() for e in m.evidence],
             rationale=m.rationale,
         ))
-    return candidates
+    return candidates, errors
 
 
 async def _llm_match(
@@ -259,14 +278,41 @@ async def _llm_match(
         "Return JSON with matches array."
     )
 
-    try:
-        raw = await agent.run_prompt(PROJECT_LINKING_SYSTEM_PROMPT, user_msg)
-        parsed = LlmMatchResponse.model_validate_json(raw)
-    except Exception:
-        logger.warning("LLM project linking failed", exc_info=True)
-        return []
+    max_retries = 3
+    feedback: list[str] = []
+    candidates: list[MatchCandidate] = []
 
-    candidates = _validate_llm_matches(parsed.matches, projects)
+    for attempt in range(1, max_retries + 1):
+        attempt_msg = user_msg
+        if feedback:
+            attempt_msg += (
+                "\n\n---\nPrevious attempt had errors, please fix:\n"
+                + "\n".join(f"- {e}" for e in feedback)
+            )
+
+        try:
+            raw = await agent.run_prompt(PROJECT_LINKING_SYSTEM_PROMPT, attempt_msg)
+            parsed = LlmMatchResponse.model_validate_json(raw)
+        except Exception:
+            logger.warning(
+                "LLM project linking failed (attempt %d/%d)",
+                attempt, max_retries, exc_info=True,
+            )
+            feedback = ["Failed to parse JSON response. Return valid JSON only."]
+            continue
+
+        candidates, errors = _validate_llm_matches(parsed.matches, projects)
+        if not errors:
+            return candidates
+
+        logger.info(
+            "LLM match validation errors (attempt %d/%d): %s",
+            attempt, max_retries, errors,
+        )
+        feedback = errors
+
+    # All retries exhausted; return last valid candidates (with corrections applied)
+    logger.warning("LLM match retries exhausted after %d attempts", max_retries)
     return candidates
 
 
