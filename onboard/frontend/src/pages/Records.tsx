@@ -48,10 +48,19 @@ export function Records({ appName }: { appName: AppName }) {
             className="group flex flex-col h-[200px] p-4 border border-border rounded-lg bg-surface-1 hover:bg-surface-2 hover:border-text-muted/30 transition-all animate-[fade-in_0.3s_ease-out_both]"
             style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
           >
-            {/* Top: date + emotion tag — fixed at top */}
+            {/* Top: date + delete + emotion tag — fixed at top */}
             <div className="flex items-center justify-between mb-2 shrink-0">
               <span className="font-mono text-[11px] text-text-muted">{record.date}</span>
-              <span className="text-[11px] px-1.5 py-0.5 rounded bg-accent-solo-dim text-accent-solo">{record.emotion || 'neutral'}</span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setPendingDelete(record)}
+                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-text-muted hover:text-danger rounded"
+                  title="Delete record"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                </button>
+                <span className="text-[11px] px-1.5 py-0.5 rounded bg-accent-solo-dim text-accent-solo">{record.emotion || 'neutral'}</span>
+              </div>
             </div>
             {/* Middle: title + content — flex-1 fills remaining space, overflow hidden */}
             <div className="flex-1 min-h-0 overflow-hidden mb-3">
@@ -62,25 +71,16 @@ export function Records({ appName }: { appName: AppName }) {
                 {record.corrected_content || record.raw_content}
               </p>
             </div>
-            {/* Bottom: tags + actions — fixed at bottom */}
+            {/* Bottom: tags + expand — fixed at bottom */}
             <div className="flex items-center justify-between shrink-0">
               <div className="flex flex-wrap gap-1">
                 {tags(record.tags).slice(0, 3).map((tag) => (
                   <span key={tag} className="text-[10px] px-1.5 py-0.5 rounded bg-surface-3 text-text-muted">{tag}</span>
                 ))}
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setPendingDelete(record)}
-                  className="opacity-0 group-hover:opacity-100 transition-opacity p-1 text-text-muted hover:text-danger rounded"
-                  title="Delete record"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
-                </button>
-                <Link className="text-[12px] text-text-muted hover:text-accent-solo no-underline transition-colors" to={`/records/${record.id}`}>
-                  →
-                </Link>
-              </div>
+              <Link className="text-[12px] text-text-muted hover:text-accent-solo no-underline transition-colors" to={`/records/${record.id}`}>
+                →
+              </Link>
             </div>
           </article>
         ))}

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { api } from '../api/client';
 import type { AppName, MemoryItem } from '../api/types';
 import { useToast } from './ToastProvider';
@@ -41,13 +41,23 @@ export function MemoryCard({ appName }: MemoryCardProps) {
   }, [open, memories.length, loadMemories]);
 
   const handleDelete = useCallback(async (id: string) => {
-    if (!confirm('Are you sure you want to disable this memory?')) return;
+    if (!confirm('Are you sure you want to delete this memory? This cannot be undone.')) return;
     try {
       await api.deleteMemory(appName, id);
-      toast('Memory disabled', 'success');
+      toast('Memory deleted', 'success');
       await loadMemories();
     } catch (err) {
       toast(`Failed to delete memory: ${err}`, 'error');
+    }
+  }, [appName, loadMemories, toast]);
+
+  const handleToggleDisabled = useCallback(async (memory: MemoryItem) => {
+    try {
+      await api.updateMemory(appName, memory.id, { disabled: !memory.disabled });
+      toast(`Memory ${memory.disabled ? 'enabled' : 'disabled'}`, 'success');
+      await loadMemories();
+    } catch (err) {
+      toast(`Failed to update memory: ${err}`, 'error');
     }
   }, [appName, loadMemories, toast]);
 
@@ -90,6 +100,7 @@ export function MemoryCard({ appName }: MemoryCardProps) {
                   key={memory.id}
                   memory={memory}
                   onDelete={() => handleDelete(memory.id)}
+                  onToggleDisabled={() => handleToggleDisabled(memory)}
                 />
               ))}
             </div>
@@ -100,13 +111,24 @@ export function MemoryCard({ appName }: MemoryCardProps) {
   );
 }
 
-function MemoryRow({ memory, onDelete }: { memory: MemoryItem; onDelete: () => void }) {
+function MemoryRow({ memory, onDelete, onToggleDisabled }: { memory: MemoryItem; onDelete: () => void; onToggleDisabled: () => void }) {
   const [expanded, setExpanded] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
   const typeColor = MEMORY_TYPE_COLORS[memory.type] || MEMORY_TYPE_COLORS.reference;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
 
   return (
     <div
-      className={`p-3 rounded border border-border-subtle bg-surface-2 transition-all ${
+      className={`group p-3 rounded border border-border-subtle bg-surface-2 transition-all ${
         memory.disabled ? 'opacity-50 italic' : ''
       }`}
     >
@@ -150,16 +172,39 @@ function MemoryRow({ memory, onDelete }: { memory: MemoryItem; onDelete: () => v
             )}
           </div>
         </div>
-        {!memory.disabled && (
+        <div ref={menuRef} className="relative">
           <button
             type="button"
-            onClick={onDelete}
-            className="text-[11px] text-text-muted hover:text-danger transition-colors px-2 py-1 rounded hover:bg-danger/10"
-            title="Disable memory"
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); }}
+            className="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 transition-colors opacity-0 group-hover:opacity-100"
+            title="Actions"
           >
-            Disable
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+              <circle cx="8" cy="3" r="1.5" />
+              <circle cx="8" cy="8" r="1.5" />
+              <circle cx="8" cy="13" r="1.5" />
+            </svg>
           </button>
-        )}
+          {menuOpen && (
+            <div className="absolute right-0 top-full mt-1 z-10 min-w-[110px] bg-surface-2 border border-border rounded-md shadow-lg py-1">
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onToggleDisabled(); }}
+                className="w-full text-left px-3 py-1.5 text-sm text-text hover:bg-surface-3 transition-colors"
+              >
+                {memory.disabled ? 'Enable' : 'Disable'}
+              </button>
+              <div className="border-t border-border-subtle my-1" />
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); onDelete(); }}
+                className="w-full text-left px-3 py-1.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

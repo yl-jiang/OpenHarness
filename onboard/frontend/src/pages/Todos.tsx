@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   closestCorners,
   DndContext,
@@ -90,6 +90,97 @@ function CardContent({ todo, overdue }: { todo: Todo; overdue: boolean }) {
   );
 }
 
+function CardActions({
+  todo,
+  onAction,
+}: {
+  todo: Todo;
+  onAction: (todo: Todo, target: TodoStatus | 'delete') => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [menuOpen]);
+
+  const quickAction = (): { label: string; target: TodoStatus } | null => {
+    if (todo.status === 'done' || todo.status === 'cancelled') return { label: '↩', target: 'pending' };
+    return { label: '✓', target: 'done' };
+  };
+
+  const qa = quickAction();
+
+  const menuItems: { label: string; target: TodoStatus | 'delete'; danger?: boolean }[] = [];
+  if (todo.status === 'pending') menuItems.push({ label: '▶ Start', target: 'in_progress' });
+  if (todo.status === 'in_progress') menuItems.push({ label: '← Pending', target: 'pending' });
+  if (todo.status === 'done') menuItems.push({ label: '← Pending', target: 'pending' });
+  if (todo.status === 'cancelled') menuItems.push({ label: '← Pending', target: 'pending' });
+  if (todo.status !== 'done' && todo.status !== 'cancelled') {
+    menuItems.push({ label: '✕ Cancel', target: 'cancelled', danger: true });
+  }
+  menuItems.push({ label: '🗑 Delete', target: 'delete', danger: true });
+
+  return (
+    <div
+      className="flex items-center gap-1 shrink-0"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      {qa && (
+        <button
+          onClick={() => onAction(todo, qa.target)}
+          className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 transition-all text-[13px] leading-none"
+          title={qa.target === 'done' ? 'Mark done' : 'Reopen'}
+        >
+          {qa.label}
+        </button>
+      )}
+      <div ref={menuRef} className="relative">
+        <button
+          type="button"
+          onClick={() => setMenuOpen(!menuOpen)}
+          className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 transition-all"
+          title="More actions"
+        >
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+            <circle cx="8" cy="3" r="1.5" />
+            <circle cx="8" cy="8" r="1.5" />
+            <circle cx="8" cy="13" r="1.5" />
+          </svg>
+        </button>
+        {menuOpen && (
+          <div className="absolute right-0 top-full mt-1 z-20 min-w-[130px] bg-surface-2 border border-border rounded-md shadow-lg py-1">
+            {menuItems.map((item, i) => {
+              const showDivider = item.danger && i > 0 && !menuItems[i - 1].danger;
+              return (
+                <div key={item.target}>
+                  {showDivider && <div className="border-t border-border-subtle my-1" />}
+                  <button
+                    type="button"
+                    onClick={() => { setMenuOpen(false); onAction(todo, item.target); }}
+                    className={`w-full text-left px-3 py-1.5 text-[12px] transition-colors ${
+                      item.danger
+                        ? 'text-red-400 hover:bg-red-500/10'
+                        : 'text-text hover:bg-surface-3'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SortableCard({
   todo,
   isDragging,
@@ -101,41 +192,21 @@ function SortableCard({
 }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: todo.id });
   const overdue = isOverdue(todo);
-  const btnBase = 'text-[11px] px-2 py-1 rounded border border-border bg-transparent text-text-secondary hover:text-text hover:border-text-muted cursor-pointer transition-colors active:scale-[0.97]';
   return (
     <article
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.3 : 1 }}
-      className={`p-3.5 border rounded-md bg-surface-1 hover:bg-surface-2 transition-colors cursor-grab active:cursor-grabbing ${
+      className={`group p-3.5 border rounded-md bg-surface-1 hover:bg-surface-2 transition-colors cursor-grab active:cursor-grabbing ${
         overdue ? 'border-danger/40' : 'border-border'
       }`}
       {...attributes}
       {...listeners}
     >
-      <CardContent todo={todo} overdue={overdue} />
-      <div
-        className="flex items-center gap-1.5 mt-2.5"
-        onPointerDown={(e) => e.stopPropagation()}
-      >
-        {todo.status === 'done' ? (
-          <button onClick={() => onAction(todo, 'pending')} className={btnBase}>↩ Reopen</button>
-        ) : null}
-        {todo.status === 'pending' ? (
-          <button onClick={() => onAction(todo, 'in_progress')} className={btnBase}>▶ Start</button>
-        ) : null}
-        {todo.status === 'in_progress' ? (
-          <button onClick={() => onAction(todo, 'pending')} className={btnBase}>← Pending</button>
-        ) : null}
-        {todo.status !== 'done' && todo.status !== 'cancelled' ? (
-          <button onClick={() => onAction(todo, 'done')} className={btnBase}>✓ Mark done</button>
-        ) : null}
-        {todo.status !== 'done' && todo.status !== 'cancelled' ? (
-          <button onClick={() => onAction(todo, 'cancelled')} className={`${btnBase} text-danger hover:text-danger`}>✕ Cancel</button>
-        ) : null}
-        {todo.status === 'cancelled' ? (
-          <button onClick={() => onAction(todo, 'pending')} className={btnBase}>↩ Reopen</button>
-        ) : null}
-        <button onClick={() => onAction(todo, 'delete' as TodoStatus)} className={`${btnBase} text-danger hover:text-danger ml-auto`}>🗑 Delete</button>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <CardContent todo={todo} overdue={overdue} />
+        </div>
+        <CardActions todo={todo} onAction={onAction} />
       </div>
     </article>
   );

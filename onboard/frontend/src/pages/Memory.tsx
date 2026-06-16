@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
 import type { AppName, MemoryItem, MemoryType } from '../api/types';
@@ -169,6 +169,73 @@ export function Memory({ appName }: { appName: AppName }) {
   );
 }
 
+function ActionMenu({
+  memory,
+  onEdit,
+  onToggleDisabled,
+  onDelete,
+}: {
+  memory: MemoryItem;
+  onEdit: () => void;
+  onToggleDisabled: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(!open); }}
+        className="p-1 rounded text-text-muted hover:text-text hover:bg-surface-3 transition-colors opacity-0 group-hover:opacity-100"
+        title="Actions"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <circle cx="8" cy="3" r="1.5" />
+          <circle cx="8" cy="8" r="1.5" />
+          <circle cx="8" cy="13" r="1.5" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-10 min-w-[120px] bg-surface-2 border border-border rounded-md shadow-lg py-1">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onEdit(); }}
+            className="w-full text-left px-3 py-1.5 text-sm text-text hover:bg-surface-3 transition-colors"
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onToggleDisabled(); }}
+            className="w-full text-left px-3 py-1.5 text-sm text-text hover:bg-surface-3 transition-colors"
+          >
+            {memory.disabled ? 'Enable' : 'Disable'}
+          </button>
+          <div className="border-t border-border-subtle my-1" />
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setOpen(false); onDelete(); }}
+            className="w-full text-left px-3 py-1.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors"
+          >
+            Delete
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MemoryItem({
   appName,
   memory,
@@ -216,7 +283,7 @@ function MemoryItem({
 
   return (
     <div
-      className={`bg-surface-1 border border-border rounded-lg overflow-hidden transition-all ${
+      className={`group bg-surface-1 border border-border rounded-lg overflow-hidden transition-all ${
         memory.disabled ? 'opacity-60' : ''
       }`}
     >
@@ -263,6 +330,14 @@ function MemoryItem({
               )}
             </div>
           </div>
+          {!editing && (
+            <ActionMenu
+              memory={memory}
+              onEdit={handleEdit}
+              onToggleDisabled={() => onToggleDisabled(memory)}
+              onDelete={() => onDelete(memory.id)}
+            />
+          )}
         </div>
       </div>
 
@@ -335,79 +410,10 @@ function MemoryItem({
               </div>
             </div>
           ) : memory.content ? (
-            <>
-              <div className="prose prose-invert prose-sm max-w-none bg-surface-3/50 p-3 rounded max-h-[400px] overflow-y-auto">
-                <ReactMarkdown>{memory.content}</ReactMarkdown>
-              </div>
-              <div className="flex gap-2 mt-3">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleEdit();
-                  }}
-                  className="px-3 py-1.5 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded text-sm transition-colors"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleDisabled(memory);
-                  }}
-                  className={`px-3 py-1.5 rounded text-sm transition-colors ${
-                    memory.disabled
-                      ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                      : 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30'
-                  }`}
-                >
-                  {memory.disabled ? 'Enable' : 'Disable'}
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(memory.id);
-                  }}
-                  className="px-3 py-1.5 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded text-sm transition-colors"
-                >
-                  Delete
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="flex gap-2 mt-3">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleEdit();
-                }}
-                className="px-3 py-1.5 bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 rounded text-sm transition-colors"
-              >
-                Edit
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onToggleDisabled(memory);
-                }}
-                className={`px-3 py-1.5 rounded text-sm transition-colors ${
-                  memory.disabled
-                    ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
-                    : 'bg-orange-500/20 text-orange-400 hover:bg-orange-500/30'
-                }`}
-              >
-                {memory.disabled ? 'Enable' : 'Disable'}
-              </button>
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDelete(memory.id);
-                }}
-                className="px-3 py-1.5 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded text-sm transition-colors"
-              >
-                Delete
-              </button>
+            <div className="prose prose-invert prose-sm max-w-none bg-surface-3/50 p-3 rounded max-h-[400px] overflow-y-auto">
+              <ReactMarkdown>{memory.content}</ReactMarkdown>
             </div>
-          )}
+          ) : null}
         </div>
       )}
     </div>
