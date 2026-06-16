@@ -282,9 +282,19 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
                     <span className="px-1.5 py-0.5 rounded bg-surface-3 text-[10px] text-text-muted shrink-0 uppercase tracking-wide">
                       {l.entity_type}
                     </span>
-                    <span className="text-[12px] text-text truncate" title={l.entity_title || l.entity_id}>
-                      {l.entity_title || <span className="font-mono text-text-muted">{l.entity_id.slice(0, 8)}</span>}
-                    </span>
+                    {l.entity_type === "record" ? (
+                      <Link
+                        to={`/records/${l.entity_id}`}
+                        className="text-[12px] text-accent-solo truncate hover:underline"
+                        title={l.entity_title || l.entity_id}
+                      >
+                        {l.entity_title || <span className="font-mono text-text-muted">{l.entity_id.slice(0, 8)}</span>}
+                      </Link>
+                    ) : (
+                      <span className="text-[12px] text-text truncate" title={l.entity_title || l.entity_id}>
+                        {l.entity_title || <span className="font-mono text-text-muted">{l.entity_id.slice(0, 8)}</span>}
+                      </span>
+                    )}
                     {l.status !== "active" && (
                       <span className="text-[10px] text-text-muted capitalize shrink-0">({l.status})</span>
                     )}
