@@ -34,7 +34,7 @@ from openharness.engine.stream_events import (
 from openharness.output_styles import load_output_styles
 from openharness.tasks import get_task_manager
 from openharness.skills import load_skill_registry
-from openharness.ui.protocol import BackendEvent, FrontendImageAttachment, FrontendRequest, TranscriptItem
+from openharness.ui.protocol import BackendEvent, FrontendImageAttachment, FrontendRequest, TranscriptItem, _format_permission_mode
 from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime, sync_app_state
 from openharness.permissions.approvals import ApprovalRequest
 from openharness.services.session_backend import SessionBackend
@@ -253,6 +253,7 @@ class ReactBackendHost:
                             transcript_line=request.transcript_line,
                             input_mode=request.input_mode,
                             images=request.images,
+                            silent=request.silent,
                         )
                     )
                 finally:
@@ -317,6 +318,7 @@ class ReactBackendHost:
         transcript_line: str | None = None,
         input_mode: str = "chat",
         images: list[FrontendImageAttachment] | None = None,
+        silent: bool = False,
     ) -> bool:
         assert self._bundle is not None
         user_message = _build_user_message_with_images(line, images or [])
@@ -334,17 +336,19 @@ class ReactBackendHost:
             transcript_line=transcript_line or "",
             busy=self._busy,
             input_mode=input_mode,
+            silent=silent,
         )
         turn_checkpoint = self._bundle.engine.capture_turn_checkpoint()
-        await self._emit(
-            BackendEvent(
-                type="transcript_item",
-                item=TranscriptItem(
-                    role="user_shell" if is_shell_line else "user",
-                    text=transcript_line or _format_transcript_line(line, images or []),
-                ),
+        if not silent:
+            await self._emit(
+                BackendEvent(
+                    type="transcript_item",
+                    item=TranscriptItem(
+                        role="user_shell" if is_shell_line else "user",
+                        text=transcript_line or _format_transcript_line(line, images or []),
+                    ),
+                )
             )
-        )
 
         async def _print_system(message: str) -> None:
             await self._emit(
@@ -504,7 +508,7 @@ class ReactBackendHost:
                 if event.tool_name in ("set_permission_mode", "plan_mode"):
                     assert self._bundle is not None
                     new_mode = self._bundle.app_state.get().permission_mode
-                    await self._emit(BackendEvent(type="plan_mode_change", plan_mode=new_mode))
+                    await self._emit(BackendEvent(type="plan_mode_change", plan_mode=_format_permission_mode(new_mode)))
                 return
             if isinstance(event, ErrorEvent):
                 logger.event(
@@ -532,6 +536,7 @@ class ReactBackendHost:
 
         async def _clear_output() -> None:
             await self._emit(BackendEvent(type="clear_transcript"))
+        prev_permission_mode = self._bundle.app_state.get().permission_mode
         try:
             handle_line_kwargs: dict[str, Any] = {
                 "print_system": _print_system,
@@ -563,6 +568,10 @@ class ReactBackendHost:
                 finish_reason="cancelled",
             )
             raise
+        new_permission_mode = self._bundle.app_state.get().permission_mode
+        if new_permission_mode != prev_permission_mode:
+            humanized = _format_permission_mode(new_permission_mode)
+            await self._emit(BackendEvent(type="plan_mode_change", plan_mode=humanized))
         await self._emit(self._status_snapshot())
         await self._emit(BackendEvent.tasks_snapshot(get_task_manager().list_tasks()))
         # Use the finish reason captured by _render_event (defaults to "completed")

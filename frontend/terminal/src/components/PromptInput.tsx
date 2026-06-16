@@ -12,7 +12,7 @@ import {useTheme} from '../theme/ThemeContext.js';
 const noop = (): void => {};
 export const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 const SPINNER_STATIC_FRAME = '⠋';
-const IDLE_SHORTCUTS = '/ commands · @ files · ↑↓ history · shift+enter newline';
+const IDLE_SHORTCUTS = '/ commands · @ files · ↑↓ history · shift+tab mode · shift+enter newline';
 const BUSY_SHORTCUTS = 'esc×2 cancel · ctrl+c stop';
 
 export function clipPromptPreviewLine(line: string, availableWidth: number): string {

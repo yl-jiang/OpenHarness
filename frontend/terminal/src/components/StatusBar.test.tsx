@@ -254,7 +254,7 @@ test('uses symbolic labels instead of textual status prefixes', async () => {
 
 	assert.doesNotMatch(output, /\bmodel:|\bmode:|\bcwd:|\bbranch:|\btokens:|\btasks:|\bmcp:/);
 	assert.match(output, /@ test-model/u);
-	assert.match(output, /⎇  default/u);
+	assert.match(output, /✓ default/u);
 	assert.match(output, />ˍ \/tmp\/demo/u);
 	assert.match(output, / dev/u);
 	assert.match(output, /\$ 1\.2k ↓ 3\.4k ↑/);

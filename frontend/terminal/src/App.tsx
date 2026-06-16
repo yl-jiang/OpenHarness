@@ -91,6 +91,11 @@ const SELECTABLE_COMMANDS = new Set([
 ]);
 const ACTIVE_BACKGROUND_TASK_STATUSES = new Set(['pending', 'running']);
 const DOUBLE_ESCAPE_WINDOW_MS = 500;
+const PERMISSION_MODE_CYCLE: ReadonlyArray<{label: string; value: string}> = [
+	{label: 'Default', value: 'default'},
+	{label: 'Plan Mode', value: 'plan'},
+	{label: 'Auto', value: 'full_auto'},
+];
 
 type SelectModalState = {
 	title: string;
@@ -966,6 +971,20 @@ function AppInner({
 
 	useInput((chunk, key) => {
 		const isPaste = chunk.length > 1 && !key.ctrl && !key.meta;
+
+		// Shift+Tab cycles permission mode: Default → Plan → Auto → Default.
+		// Placed before all other handlers so it works in every input state.
+		if (key.tab && key.shift && !session.modal && !selectModal && !session.busy) {
+			const currentLabel = String(session.status.permission_mode ?? 'Default');
+			const idx = PERMISSION_MODE_CYCLE.findIndex((m) => m.label === currentLabel);
+			const nextIdx = (idx + 1) % PERMISSION_MODE_CYCLE.length;
+			const next = PERMISSION_MODE_CYCLE[nextIdx];
+			if (next) {
+				session.setStatus((s) => ({...s, permission_mode: next.label}));
+				session.sendRequest({type: 'submit_line', line: `/permissions ${next.value}`, silent: true});
+			}
+			return;
+		}
 
 		if (expandedComposer) {
 			if (

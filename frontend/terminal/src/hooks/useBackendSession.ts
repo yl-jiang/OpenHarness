@@ -567,6 +567,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			setModal,
 			setSelectRequest,
 			setBusy,
+			setStatus,
 			sendRequest,
 			notifyCommandOutputStart,
 		}),

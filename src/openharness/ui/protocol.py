@@ -57,6 +57,7 @@ class FrontendRequest(BaseModel):
     answer: str | None = None
     input_mode: Literal["chat", "shell"] = "chat"
     images: list[FrontendImageAttachment] = Field(default_factory=list)
+    silent: bool = False
 
 
 class TranscriptItem(BaseModel):

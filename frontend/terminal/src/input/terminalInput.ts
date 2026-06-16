@@ -64,6 +64,14 @@ const ALT_ENTER_SEQUENCE = '\u001b\r';
 const BRACKETED_PASTE_START = '\u001b[200~';
 const BRACKETED_PASTE_END = '\u001b[201~';
 
+// Shift+Tab (Backtab) sequences from different terminal protocols:
+//   \x1b[Z           : standard CSI Z (xterm, iTerm2, GNOME Terminal, etc.)
+//   \x1b[27;2;9~     : xterm modifyOtherKeys mode 2 (keycode 9 = Tab, modifier 2 = Shift)
+//   \x1b[9;2u        : kitty keyboard protocol (keycode 9, modifier 2)
+// All are normalized to \x1b[Z so Ink parses them as {name:'tab', shift:true}.
+const SHIFT_TAB_SEQUENCES = /^\u001b\[Z|^\u001b\[27;2;9~|^\u001b\[9;2u/;
+const PARTIAL_SHIFT_TAB = /^\u001b\[(?:Z|27;2;9?|9;2?)?$/;
+
 export function chunkTerminalTextForInk(text: string): string[] {
 	if (!text) {
 		return [];
@@ -187,6 +195,19 @@ export function createTerminalInputDecoder(): TerminalInputDecoder {
 					}
 					text += input.slice(nextEscape, nextEscape + 1);
 					cursor = nextEscape + 1;
+					continue;
+				}
+
+				// Shift+Tab: normalize all terminal protocols to \x1b[Z.
+				const shiftTabMatch = SHIFT_TAB_SEQUENCES.exec(remainder);
+				if (shiftTabMatch) {
+					text += '\u001b[Z';
+					cursor = nextEscape + shiftTabMatch[0].length;
+					continue;
+				}
+				if (PARTIAL_SHIFT_TAB.test(remainder)) {
+					pending = remainder;
+					cursor = input.length;
 					continue;
 				}
 

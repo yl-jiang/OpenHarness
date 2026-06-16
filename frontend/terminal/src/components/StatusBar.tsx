@@ -1,4 +1,4 @@
-import React, {useEffect, useState} from 'react';
+import React, {useEffect, useRef, useState} from 'react';
 import {Box, Text} from 'ink';
 
 import {formatDisplayPath} from '../pathDisplay.js';
@@ -33,47 +33,77 @@ type StatusBarProps = {
 	showTaskSegment?: boolean;
 };
 
-function PlanModeIndicator({
+const MODE_CYCLE: ReadonlyArray<{label: string; color: string}> = [
+	{label: 'Default', color: 'green'},
+	{label: 'Plan Mode', color: 'yellow'},
+	{label: 'Auto', color: 'red'},
+];
+const TOAST_DURATION_MS = 1500;
+
+function modeColor(mode: string): string {
+	return MODE_CYCLE.find((m) => m.label === mode)?.color ?? 'gray';
+}
+
+function PermissionModeToast({
 	mode,
 	activeToolName,
 }: {
 	mode: string;
 	activeToolName?: string;
 }): React.JSX.Element | null {
-	const [flash, setFlash] = useState(false);
-	const [prevMode, setPrevMode] = useState(mode);
+	const [showToast, setShowToast] = useState(false);
+	const prevModeRef = useRef(mode);
 
 	useEffect(() => {
-		if (prevMode === 'plan' && mode !== 'plan' && prevMode !== mode) {
-			setFlash(true);
-			const timer = setTimeout(() => setFlash(false), 800);
-			setPrevMode(mode);
+		if (prevModeRef.current !== mode) {
+			prevModeRef.current = mode;
+			setShowToast(true);
+			const timer = setTimeout(() => setShowToast(false), TOAST_DURATION_MS);
 			return () => clearTimeout(timer);
 		}
-		setPrevMode(mode);
 	}, [mode]);
 
-	if (mode !== 'plan' && mode !== 'Plan Mode') {
-		if (flash) {
-			return (
-				<Text color="green" bold>
-					{' PLAN MODE OFF '}
-				</Text>
-			);
-		}
-		return null;
+	if (showToast) {
+		const isPlanBlocked = activeToolName != null && WRITE_TOOLS.has(activeToolName);
+		return (
+			<Box flexDirection="column">
+				<Box>
+					<Text dimColor>{'  \u27F3 '}</Text>
+					{MODE_CYCLE.map((m, i) => {
+						const isActive = m.label === mode;
+						return (
+							<React.Fragment key={m.label}>
+								{i > 0 ? <Text dimColor> · </Text> : null}
+								{isActive ? (
+									<Text color={m.color} bold>{m.label}</Text>
+								) : (
+									<Text dimColor>{m.label}</Text>
+								)}
+							</React.Fragment>
+						);
+					})}
+				</Box>
+				{mode === 'Plan Mode' && isPlanBlocked ? (
+					<Box>
+						<Text color="red">{'    \u26D4 '}{activeToolName} blocked in plan mode</Text>
+					</Box>
+				) : null}
+			</Box>
+		);
 	}
 
-	const isBlockedTool = activeToolName != null && WRITE_TOOLS.has(activeToolName);
+	if (mode === 'Plan Mode') {
+		const isBlockedTool = activeToolName != null && WRITE_TOOLS.has(activeToolName);
+		if (isBlockedTool) {
+			return (
+				<Box>
+					<Text color="red">{'  \u26D4 '}{activeToolName} blocked in plan mode</Text>
+				</Box>
+			);
+		}
+	}
 
-	return (
-		<Text>
-			<Text color="yellow" bold>{' [PLAN MODE] '}</Text>
-			{isBlockedTool ? (
-				<Text color="red">{'\uD83D\uDEAB '}{activeToolName} blocked</Text>
-			) : null}
-		</Text>
-	);
+	return null;
 }
 
 function StatusBarInner({
@@ -106,12 +136,9 @@ function StatusBarInner({
 				<Text dimColor>@ {model}</Text>
 				<Text dimColor>{SEP}</Text>
 				<Text dimColor>$ {formatNum(inputTokens)} {'\u2193'} {formatNum(outputTokens)} {'\u2191'}</Text>
-				{!isPlanMode ? (
-					<>
-						<Text dimColor>{SEP}</Text>
-						<Text dimColor>⎇  {mode}</Text>
-					</>
-				) : null}
+				<Text dimColor>{SEP}</Text>
+				<Text color={modeColor(mode)} bold>{isPlanMode ? '\u270E' : mode === 'Auto' ? '\u26A1' : '\u2713'}</Text>
+				<Text dimColor>{' '}{mode}</Text>
 				<Text dimColor>{SEP}</Text>
 				<Text dimColor>{CWD_MARKER} {cwd}</Text>
 				{gitBranch ? (
@@ -145,7 +172,7 @@ function StatusBarInner({
 					</>
 				) : null}
 			</Text>
-			{isPlanMode ? <PlanModeIndicator mode={mode} activeToolName={activeToolName} /> : null}
+			<PermissionModeToast mode={mode} activeToolName={activeToolName} />
 		</Box>
 	);
 }
