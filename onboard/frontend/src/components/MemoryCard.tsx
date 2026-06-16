@@ -65,7 +65,7 @@ export function MemoryCard({ appName }: MemoryCardProps) {
   const disabledCount = memories.filter((m) => m.disabled).length;
 
   return (
-    <section className="border border-border rounded-lg bg-surface-1 overflow-hidden">
+    <section className="border border-border rounded-lg bg-surface-1">
       <button
         type="button"
         onClick={handleToggle}

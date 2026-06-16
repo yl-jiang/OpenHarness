@@ -283,7 +283,7 @@ function MemoryItem({
 
   return (
     <div
-      className={`group bg-surface-1 border border-border rounded-lg overflow-hidden transition-all ${
+      className={`group bg-surface-1 border border-border rounded-lg transition-all ${
         memory.disabled ? 'opacity-60' : ''
       }`}
     >
