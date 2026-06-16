@@ -807,7 +807,6 @@ class SoloService:
 
         # Save as report
         from uuid import uuid4
-        from datetime import datetime, timezone
         from solo.core.models import SoloReport
         from solo.core.utils import _now
 

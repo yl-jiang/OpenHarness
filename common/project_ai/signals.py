@@ -36,10 +36,6 @@ class StateStore(Protocol):
     def get_recent_checkin_question(self, project_id: str, *, days: int = 7) -> str | None: ...
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
 def _parse_dt(s: str) -> datetime | None:
     if not s:
         return None
