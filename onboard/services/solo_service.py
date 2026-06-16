@@ -1044,13 +1044,11 @@ class SoloService:
             raise Exception(f"Failed to update memory: {e}")
 
     def delete_memory(self, memory_id: str) -> bool:
-        """Soft-delete a memory entry."""
-        from solo.core.memory import remove_memory_entry
+        """Hard-delete a memory entry from disk."""
+        from solo.core.memory import delete_memory_file
 
-        # Find memory to get its name
         memory = self.get_memory(memory_id)
         if not memory:
             return False
 
-        # remove_memory_entry already uses exclusive_file_lock internally
-        return remove_memory_entry(self.workspace, memory_id)
+        return delete_memory_file(self.workspace, memory_id)

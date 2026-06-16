@@ -162,6 +162,39 @@ def remove_memory_entry(workspace: str | Path | None, name: str) -> bool:
     return True
 
 
+def delete_memory_file(workspace: str | Path | None, name: str) -> bool:
+    """Hard-delete a memory file from disk and remove its index entry."""
+    memory_dir = get_memory_dir(workspace)
+    if not memory_dir.exists():
+        return False
+    matches = [
+        header
+        for header in scan_memory_files(
+            _scan_cwd(workspace, memory_dir),
+            max_files=None,
+            include_disabled=True,
+            include_expired=True,
+            memory_dir=memory_dir,
+        )
+        if name in {header.path.stem, header.path.name, header.title, header.id}
+    ]
+    if not matches:
+        return False
+    path = matches[0].path
+    with exclusive_file_lock(memory_dir / ".memory.lock"):
+        path.unlink(missing_ok=True)
+
+        index_path = get_memory_index_path(workspace)
+        if index_path.exists():
+            lines = [
+                line
+                for line in index_path.read_text(encoding="utf-8").splitlines()
+                if path.name not in line
+            ]
+            atomic_write_text(index_path, "\n".join(lines).rstrip() + "\n")
+    return True
+
+
 def load_memory_prompt(workspace: str | Path | None = None, *, max_files: int = 8) -> str | None:
     """Return a prompt section containing personal memory content, or None if empty."""
     memory_dir = get_memory_dir(workspace)
