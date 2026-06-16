@@ -2333,9 +2333,12 @@ def _tool_remember() -> ToolDefinition:
     return _definition(
         "wolo_remember",
         (
-            "Store STABLE, core work facts into the long-term memory directory — information expected to remain valid for 3+ months "
-            "(e.g. project goals, repository ownership, team conventions, toolchains, recurring prompt patterns, reporting cadence). "
-            "These facts serve as foundation context for all future sessions. "
+            "Store STABLE facts into the long-term memory directory — information expected to remain valid for 3+ months. "
+            "Covers TWO categories: "
+            "(1) Work context: project goals, repository ownership, team conventions, toolchains, recurring prompt patterns, reporting cadence. "
+            "(2) Personal facts: the user's own biographical or life information such as join date / tenure, health conditions, "
+            "family situation, long-term preferences, work style, and relationship dynamics. "
+            "Call this tool directly whenever the user states a stable personal fact — even if no wolo_record is needed for the same message. "
             "For transient/evolving info that may change within weeks (sprint focus, temporary blockers), use wolo_profile_update instead."
         ),
         [

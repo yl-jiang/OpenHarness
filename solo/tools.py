@@ -2008,6 +2008,7 @@ def _tool_remember() -> ToolDefinition:
             "Store STABLE, core life facts into the long-term memory directory — information expected to remain valid for years "
             "(e.g. family trees, medical history, career milestones, home location, chronic conditions). "
             "These facts serve as foundation context for all future sessions. "
+            "Call this tool directly whenever the user states a stable personal fact — even if no solo_record is needed for the same message. "
             "For transient/evolving info that may change within months (current habits, temporary preferences), use solo_profile_update instead."
         ),
         [

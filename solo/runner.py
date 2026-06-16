@@ -79,7 +79,11 @@ _FACT_DISCIPLINE_CONTEXT = (
     "context freely. But when you record what the user said (e.g. via solo_record or "
     "solo_import_records), the `content` field must be a faithful paraphrase of what the user "
     "actually stated in this turn — never add facts, opinions, or reflections they did not express, "
-    "even if the surrounding conversation is priming you toward a different topic.\n\n"
+    "even if the surrounding conversation is priming you toward a different topic.\n"
+    "- Entity grounding: 'you' always refers to the user. When the conversation involves both the user and "
+    "third parties (family, friends, colleagues), never attribute a third party's properties "
+    "(age, health, role, plans) to the user, or vice versa. Do not let a recently discussed "
+    "entity's attributes bleed into an unrelated topic about the user.\n\n"
 )
 
 
