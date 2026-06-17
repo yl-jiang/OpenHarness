@@ -24,6 +24,7 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 
 		let statusNode: React.ReactNode = null;
 		let errorLines: string[] | null = null;
+		let outputLines: string[] | null = null;
 		let userAnswer: string | null = null;
 
 		if (resultItem) {
@@ -38,6 +39,8 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 					: lines;
 			} else if (isAskUserTool && resultItem.text.trim()) {
 				userAnswer = resultItem.text.trim();
+			} else if (isUserShellTool && resultItem.text.length > 0) {
+				outputLines = resultItem.text.split('\n');
 			}
 		} else if (!isCodexStyle) {
 			// Tool is still in progress — no result yet
@@ -49,6 +52,7 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 				<ShellToolPanel
 					command={summary}
 					resultItem={resultItem}
+					outputLines={outputLines}
 					errorLines={errorLines}
 				/>
 			);
@@ -189,15 +193,18 @@ export function ToolCallDisplay({item, resultItem, outputStyle, treePos, availab
 function ShellToolPanel({
 	command,
 	resultItem,
+	outputLines,
 	errorLines,
 }: {
 	command: string;
 	resultItem?: TranscriptItem;
+	outputLines: string[] | null;
 	errorLines: string[] | null;
 }): React.JSX.Element {
 	const {theme} = useTheme();
 	const statusColor = resultItem?.is_error ? theme.colors.error : theme.colors.success;
 	const statusSymbol = resultItem ? (resultItem.is_error ? 'x' : '✓') : '⊷';
+	const bodyLines = resultItem?.is_error ? errorLines : outputLines;
 
 	return (
 		<Box marginLeft={2} flexDirection="column">
@@ -212,16 +219,19 @@ function ShellToolPanel({
 					</>
 				) : null}
 			</Text>
-			{errorLines && errorLines.length > 0 ? (
+			{bodyLines && bodyLines.length > 0 ? (
 				<>
 					<Text> </Text>
-					{errorLines.map((line, i) => (
-						<Box key={i} marginLeft={4}>
-							<Text color={theme.colors.error} dimColor>
-								{line || ' '}
-							</Text>
-						</Box>
-					))}
+					{bodyLines.map((line, i) => {
+						const lineColor = resultItem?.is_error ? theme.colors.error : undefined;
+						return (
+							<Box key={i} marginLeft={4}>
+								<Text color={lineColor} dimColor>
+									{line || ' '}
+								</Text>
+							</Box>
+						);
+					})}
 				</>
 			) : null}
 		</Box>
