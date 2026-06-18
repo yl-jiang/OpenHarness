@@ -36,6 +36,7 @@ from wolo.core.memory import add_memory_entry
 from wolo.core.models import (
     ProfileUpdate,
     Project,
+    ProjectAlias,
     ProjectLink,
     ProjectSuggestion,
     WoloDecision,
@@ -212,6 +213,18 @@ class WoloToolRegistry:
             WoloDomainTool(_tool_project_suggestions(), self._handle_project_suggestions),
             WoloDomainTool(_tool_project_review(), self._handle_project_review),
             WoloDomainTool(_tool_project_detail(), self._handle_project_detail),
+            WoloDomainTool(_tool_project_update(), self._handle_project_update),
+            WoloDomainTool(_tool_project_delete(), self._handle_project_delete),
+            WoloDomainTool(_tool_project_complete(), self._handle_project_complete),
+            WoloDomainTool(_tool_project_archive(), self._handle_project_archive),
+            WoloDomainTool(_tool_project_reactivate(), self._handle_project_reactivate),
+            WoloDomainTool(_tool_milestone_create(), self._handle_milestone_create),
+            WoloDomainTool(_tool_milestone_update(), self._handle_milestone_update),
+            WoloDomainTool(_tool_milestone_complete(), self._handle_milestone_complete),
+            WoloDomainTool(_tool_milestone_delete(), self._handle_milestone_delete),
+            WoloDomainTool(_tool_project_link_create(), self._handle_project_link_create),
+            WoloDomainTool(_tool_project_link_delete(), self._handle_project_link_delete),
+            WoloDomainTool(_tool_project_alias_create(), self._handle_project_alias_create),
         ]
 
     def tool_schemas(self) -> list[dict[str, Any]]:
@@ -1668,6 +1681,121 @@ class WoloToolRegistry:
             return {"ok": False, "error": "Project not found"}
         return {"ok": True, "project": detail}
 
+    async def _handle_project_update(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        project_id = _required_text(arguments, "project_id")
+        updates = {}
+        for key in ("title", "description", "priority", "target_date", "tags", "stakeholders", "success_criteria"):
+            val = _optional_text(arguments, key)
+            if val is not None:
+                updates[key] = val
+        if not updates:
+            return {"ok": False, "error": "No fields to update"}
+        ok = self.store.update_project(project_id, **updates)
+        return {"ok": ok, "project_id": project_id, "updated_fields": list(updates.keys())}
+
+    async def _handle_project_delete(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        project_id = _required_text(arguments, "project_id")
+        ok = self.store.delete_project(project_id)
+        return {"ok": ok, "project_id": project_id}
+
+    async def _handle_project_complete(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        project_id = _required_text(arguments, "project_id")
+        ok = self.store.complete_project(project_id)
+        return {"ok": ok, "project_id": project_id}
+
+    async def _handle_project_archive(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        project_id = _required_text(arguments, "project_id")
+        reason = _optional_text(arguments, "reason") or ""
+        ok = self.store.archive_project(project_id, reason=reason)
+        return {"ok": ok, "project_id": project_id}
+
+    async def _handle_project_reactivate(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        project_id = _required_text(arguments, "project_id")
+        ok = self.store.reactivate_project(project_id)
+        return {"ok": ok, "project_id": project_id}
+
+    async def _handle_milestone_create(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        from wolo.core.models import Milestone
+        project_id = _required_text(arguments, "project_id")
+        title = _required_text(arguments, "title")
+        description = _optional_text(arguments, "description") or ""
+        target_date = _optional_text(arguments, "target_date") or ""
+        completed_at = _optional_text(arguments, "completed_at") or ""
+        ms = Milestone(
+            id=str(uuid4()),
+            project_id=project_id,
+            title=title,
+            description=description,
+            target_date=target_date,
+            completed_at=completed_at,
+            status="completed" if completed_at else "pending",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        self.store.create_milestone(ms)
+        return {"ok": True, "milestone": ms.to_dict()}
+
+    async def _handle_milestone_update(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        milestone_id = _required_text(arguments, "milestone_id")
+        updates = {}
+        for key in ("title", "description", "target_date", "completed_at"):
+            val = _optional_text(arguments, key)
+            if val is not None:
+                updates[key] = val
+        if not updates:
+            return {"ok": False, "error": "No fields to update"}
+        ok = self.store.update_milestone(milestone_id, **updates)
+        return {"ok": ok, "milestone_id": milestone_id, "updated_fields": list(updates.keys())}
+
+    async def _handle_milestone_complete(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        milestone_id = _required_text(arguments, "milestone_id")
+        completed_at = _optional_text(arguments, "completed_at")
+        if completed_at:
+            ok = self.store.update_milestone(milestone_id, status="completed", completed_at=completed_at)
+        else:
+            ok = self.store.complete_milestone(milestone_id)
+        return {"ok": ok, "milestone_id": milestone_id}
+
+    async def _handle_milestone_delete(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        milestone_id = _required_text(arguments, "milestone_id")
+        ok = self.store.delete_milestone(milestone_id)
+        return {"ok": ok, "milestone_id": milestone_id}
+
+    async def _handle_project_link_create(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        project_id = _required_text(arguments, "project_id")
+        entity_type = _required_text(arguments, "entity_type")
+        entity_id = _required_text(arguments, "entity_id")
+        source = _optional_text(arguments, "source") or "user"
+        link = ProjectLink(
+            id=str(uuid4()),
+            project_id=project_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            source=source,
+            status="active",
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        self.store.create_project_link(link)
+        return {"ok": True, "link": link.to_dict()}
+
+    async def _handle_project_link_delete(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        link_id = _required_text(arguments, "link_id")
+        ok = self.store.delete_project_link(link_id)
+        return {"ok": ok, "link_id": link_id}
+
+    async def _handle_project_alias_create(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        project_id = _required_text(arguments, "project_id")
+        alias = _required_text(arguments, "alias")
+        source = _optional_text(arguments, "source") or "user"
+        pa = ProjectAlias(
+            id=str(uuid4()),
+            project_id=project_id,
+            alias=alias,
+            source=source,
+            created_at=datetime.now(timezone.utc).isoformat(),
+        )
+        self.store.create_project_alias(pa)
+        return {"ok": True, "alias": pa.to_dict()}
+
 class _AnyInput(BaseModel):
     """Permissive Pydantic model that accepts any tool arguments as extra fields."""
 
@@ -2506,6 +2634,148 @@ def _tool_project_detail() -> ToolDefinition:
         ),
         [
             ("project_id", "string", "Project ID.", True),
+        ],
+    )
+
+
+def _tool_project_update() -> ToolDefinition:
+    return _definition(
+        "wolo_project_update",
+        "Update project fields (title, description, priority, target_date, tags, stakeholders, success_criteria).",
+        [
+            ("project_id", "string", "Project ID.", True),
+            ("title", "string", "New title.", False),
+            ("description", "string", "New description.", False),
+            ("priority", "string", "New priority (high/medium/low).", False),
+            ("target_date", "string", "New target date (YYYY-MM-DD).", False),
+            ("tags", "string", "Comma-separated tags.", False),
+            ("stakeholders", "string", "Comma-separated stakeholders.", False),
+            ("success_criteria", "string", "Success criteria.", False),
+        ],
+    )
+
+
+def _tool_project_delete() -> ToolDefinition:
+    return _definition(
+        "wolo_project_delete",
+        "Delete a project and all its associated data (milestones, links, aliases). Use for removing duplicate or erroneous projects.",
+        [
+            ("project_id", "string", "Project ID to delete.", True),
+        ],
+    )
+
+
+def _tool_project_complete() -> ToolDefinition:
+    return _definition(
+        "wolo_project_complete",
+        "Mark a project as completed.",
+        [
+            ("project_id", "string", "Project ID.", True),
+        ],
+    )
+
+
+def _tool_project_archive() -> ToolDefinition:
+    return _definition(
+        "wolo_project_archive",
+        "Archive a project (soft delete, can be reactivated later).",
+        [
+            ("project_id", "string", "Project ID.", True),
+            ("reason", "string", "Reason for archiving.", False),
+        ],
+    )
+
+
+def _tool_project_reactivate() -> ToolDefinition:
+    return _definition(
+        "wolo_project_reactivate",
+        "Reactivate an archived project.",
+        [
+            ("project_id", "string", "Project ID.", True),
+        ],
+    )
+
+
+def _tool_milestone_create() -> ToolDefinition:
+    return _definition(
+        "wolo_milestone_create",
+        "Create a new milestone for a project. Supports completed_at for backfilling already-completed milestones.",
+        [
+            ("project_id", "string", "Project ID.", True),
+            ("title", "string", "Milestone title.", True),
+            ("description", "string", "Milestone description.", False),
+            ("target_date", "string", "Target date (YYYY-MM-DD).", False),
+            ("completed_at", "string", "Completion date for backfill (YYYY-MM-DD). If set, milestone is created as completed.", False),
+        ],
+    )
+
+
+def _tool_milestone_update() -> ToolDefinition:
+    return _definition(
+        "wolo_milestone_update",
+        "Update milestone fields. Use completed_at to set the real completion date.",
+        [
+            ("milestone_id", "string", "Milestone ID.", True),
+            ("title", "string", "New title.", False),
+            ("description", "string", "New description.", False),
+            ("target_date", "string", "New target date (YYYY-MM-DD).", False),
+            ("completed_at", "string", "Real completion date (YYYY-MM-DD).", False),
+        ],
+    )
+
+
+def _tool_milestone_complete() -> ToolDefinition:
+    return _definition(
+        "wolo_milestone_complete",
+        "Mark a milestone as completed. Supports completed_at parameter to set the real completion date instead of now.",
+        [
+            ("milestone_id", "string", "Milestone ID.", True),
+            ("completed_at", "string", "Real completion date (YYYY-MM-DD). If omitted, uses current time.", False),
+        ],
+    )
+
+
+def _tool_milestone_delete() -> ToolDefinition:
+    return _definition(
+        "wolo_milestone_delete",
+        "Delete a milestone.",
+        [
+            ("milestone_id", "string", "Milestone ID to delete.", True),
+        ],
+    )
+
+
+def _tool_project_link_create() -> ToolDefinition:
+    return _definition(
+        "wolo_project_link_create",
+        "Link a record, todo, decision, highlight, or experiment to a project.",
+        [
+            ("project_id", "string", "Project ID.", True),
+            ("entity_type", "string", "Entity type (record, todo, decision, highlight, experiment).", True),
+            ("entity_id", "string", "Entity ID.", True),
+            ("source", "string", "Source of the link (user, ai_high_confidence, ai_candidate, migration).", False),
+        ],
+    )
+
+
+def _tool_project_link_delete() -> ToolDefinition:
+    return _definition(
+        "wolo_project_link_delete",
+        "Remove a project link.",
+        [
+            ("link_id", "string", "Link ID to delete.", True),
+        ],
+    )
+
+
+def _tool_project_alias_create() -> ToolDefinition:
+    return _definition(
+        "wolo_project_alias_create",
+        "Add an alias to a project for easier identification.",
+        [
+            ("project_id", "string", "Project ID.", True),
+            ("alias", "string", "Alias name.", True),
+            ("source", "string", "Source of the alias (user, migration, ai).", False),
         ],
     )
 

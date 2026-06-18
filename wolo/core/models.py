@@ -478,6 +478,7 @@ class Milestone:
     completed_at: str = ""
     created_at: str = ""
     updated_at: str = ""
+    sort_order: int = 0
 
     @classmethod
     def from_json(cls, line: str) -> "Milestone":
@@ -488,7 +489,7 @@ class Milestone:
             "id": self.id, "project_id": self.project_id, "title": self.title,
             "description": self.description, "status": self.status,
             "target_date": self.target_date, "completed_at": self.completed_at,
-            "created_at": self.created_at, "updated_at": self.updated_at,
+            "created_at": self.created_at, "updated_at": self.updated_at, "sort_order": self.sort_order,
         }
 
     def to_json(self) -> str:
