@@ -33,6 +33,18 @@ const LIVE_FOLLOW_RENDER_GROUP_LIMIT = 48;
 const TURN_DIVIDER = '╌'.repeat(18);
 const USER_SHELL_ORIGIN = 'user_shell';
 
+const SLASH_COMMAND_RE = /^\/([a-zA-Z][\w:-]*)/;
+
+export function splitSlashCommand(text: string): {command: string; rest: string} | null {
+	const firstLineEnd = text.indexOf('\n');
+	const firstLine = firstLineEnd >= 0 ? text.slice(0, firstLineEnd) : text;
+	const match = SLASH_COMMAND_RE.exec(firstLine);
+	if (!match) return null;
+	const command = match[0];
+	const rest = firstLine.slice(command.length) + (firstLineEnd >= 0 ? text.slice(firstLineEnd) : '');
+	return {command, rest};
+}
+
 function isUserShellToolItem(item: TranscriptItem | undefined): boolean {
 	return item?.tool_input?.origin === USER_SHELL_ORIGIN;
 }
@@ -694,6 +706,7 @@ function MessageRow({
 		}
 
 		case 'user': {
+			const slashParts = splitSlashCommand(item.text);
 			const isMultiline = item.text.includes('\n');
 			if (isCodexStyle) {
 				if (!isMultiline) {
@@ -701,16 +714,36 @@ function MessageRow({
 						<Box marginTop={0}>
 							<Text>
 								<Text dimColor>{'> '}</Text>
-								<Text>{item.text}</Text>
+								{slashParts ? (
+									<>
+										<Text color={theme.colors.accent} dimColor>{slashParts.command}</Text>
+										<Text>{slashParts.rest}</Text>
+									</>
+								) : (
+									<Text>{item.text}</Text>
+								)}
 							</Text>
 						</Box>
 					);
 				}
+				const lines = item.text.split('\n');
+				const firstLine = lines[0] ?? '';
 				return (
 					<Box marginTop={0} flexDirection="column">
-						{item.text.split('\n').map((line, i) => (
+						<Text>
+							<Text dimColor>{'> '}</Text>
+							{slashParts ? (
+								<>
+									<Text color={theme.colors.accent} dimColor>{slashParts.command}</Text>
+									<Text>{slashParts.rest}</Text>
+								</>
+							) : (
+								<Text>{firstLine}</Text>
+							)}
+						</Text>
+						{lines.slice(1).map((line, i) => (
 							<Text key={i}>
-								<Text dimColor>{i === 0 ? '> ' : '  '}</Text>
+								<Text dimColor>{'  '}</Text>
 								<Text>{line}</Text>
 							</Text>
 						))}
@@ -723,7 +756,14 @@ function MessageRow({
 						<Text>
 							<Text color={theme.colors.secondary} bold>you</Text>
 							<Text dimColor> · </Text>
-							<Text>{item.text}</Text>
+							{slashParts ? (
+								<>
+									<Text color={theme.colors.accent} dimColor>{slashParts.command}</Text>
+									<Text>{slashParts.rest}</Text>
+								</>
+							) : (
+								<Text>{item.text}</Text>
+							)}
 						</Text>
 					</Box>
 				);
@@ -741,7 +781,14 @@ function MessageRow({
 						{firstLine.length > 0 ? (
 							<>
 								<Text dimColor> · </Text>
-								<Text>{truncateWithEllipsis(firstLine, headerWidth)}</Text>
+								{slashParts ? (
+									<>
+										<Text color={theme.colors.accent} dimColor>{slashParts.command}</Text>
+										<Text>{truncateWithEllipsis(slashParts.rest, Math.max(1, headerWidth - stringWidth(slashParts.command)))}</Text>
+									</>
+								) : (
+									<Text>{truncateWithEllipsis(firstLine, headerWidth)}</Text>
+								)}
 							</>
 						) : null}
 					</Text>

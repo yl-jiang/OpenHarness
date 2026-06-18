@@ -6,7 +6,7 @@ import {render as renderInk} from 'ink';
 
 import type {TranscriptItem} from '../types.js';
 import {ThemeProvider} from '../theme/ThemeContext.js';
-import {ConversationView, type ConversationViewHandle} from './ConversationView.js';
+import {ConversationView, type ConversationViewHandle, splitSlashCommand} from './ConversationView.js';
 
 const stripAnsi = (value: string): string => value.replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '');
 const nextLoopTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
@@ -439,4 +439,52 @@ test('keeps multiline pasted user turns readable without wrapping away the role 
 	assert.match(frame, /you · lsjfld/);
 	assert.match(frame, /future = self\._question_requests\[request\.request_id\].+\.\.\./);
 	assert.doesNotMatch(frame, /\n  self\._question_requests:/);
+});
+
+test('splitSlashCommand extracts the leading command token from single-line text', () => {
+	assert.deepEqual(splitSlashCommand('/commit fix the bug'), {command: '/commit', rest: ' fix the bug'});
+	assert.deepEqual(splitSlashCommand('/plan on'), {command: '/plan', rest: ' on'});
+	assert.deepEqual(splitSlashCommand('/my-command arg'), {command: '/my-command', rest: ' arg'});
+});
+
+test('splitSlashCommand matches the full skill:namespaced form', () => {
+	assert.deepEqual(splitSlashCommand('/skill:review load this'), {command: '/skill:review', rest: ' load this'});
+	assert.deepEqual(splitSlashCommand('/skill:codebase-anatomy inspect'), {command: '/skill:codebase-anatomy', rest: ' inspect'});
+	assert.deepEqual(splitSlashCommand('/pr-merge review this'), {command: '/pr-merge', rest: ' review this'});
+});
+
+test('splitSlashCommand returns null for non-command text', () => {
+	assert.equal(splitSlashCommand('hello world'), null);
+	assert.equal(splitSlashCommand('/123notvalid'), null);
+	assert.equal(splitSlashCommand('/'), null);
+	assert.equal(splitSlashCommand(''), null);
+});
+
+test('splitSlashCommand handles commands with no arguments', () => {
+	assert.deepEqual(splitSlashCommand('/clear'), {command: '/clear', rest: ''});
+});
+
+test('splitSlashCommand splits multiline text keeping the rest intact', () => {
+	const result = splitSlashCommand('/commit first line\nsecond line\nthird line');
+	assert.deepEqual(result, {command: '/commit', rest: ' first line\nsecond line\nthird line'});
+});
+
+test('renders slash command text with command token and query both visible', async () => {
+	const output = await renderConversation(
+		[{role: 'user', text: '/commit fix the bug'}],
+	);
+
+	assert.match(output, /you · \/commit/);
+	assert.match(output, /fix the bug/);
+});
+
+test('renders multiline slash commands with all lines visible', async () => {
+	const output = await renderConversation(
+		[{role: 'user', text: '/commit first line\nsecond line\nthird line'}],
+	);
+
+	assert.match(output, /you · \/commit/);
+	assert.match(output, /first line/);
+	assert.match(output, /second line/);
+	assert.match(output, /third line/);
 });

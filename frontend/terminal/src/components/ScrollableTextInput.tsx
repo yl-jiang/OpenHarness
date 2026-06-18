@@ -13,7 +13,7 @@ import stringWidth from 'string-width';
 import {applyVimNormalMode, nextWordBoundary, prevWordBoundary, toChars, type VimInputMode} from '../input/vim.js';
 
 /** Regex to detect /commands and @file references for syntax highlighting. */
-const HIGHLIGHT_REGEX = /^\/[a-zA-Z0-9_-]+|(?<![\\])@[^\s]+/g;
+const HIGHLIGHT_REGEX = /^\/[a-zA-Z0-9_:-]+|(?<![\\])@[^\s]+/g;
 
 export interface ScrollableTextInputProps {
 	value: string;
