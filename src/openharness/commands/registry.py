@@ -456,22 +456,30 @@ def create_default_command_registry(
         return CommandResult(message="\n".join(lines))
 
     async def _export_handler(_: str, context: CommandContext) -> CommandResult:
+        settings = load_settings()
+        model = context.app_state.get().model if context.app_state is not None else settings.model
         path = context.session_backend.export_markdown(
             cwd=context.cwd,
             messages=context.engine.export_messages,
             usage=context.engine.total_usage,
             session_id=context.session_id,
             output_dir=context.cwd,
+            profile=settings.active_profile,
+            model=model,
         )
         return CommandResult(message=f"Exported transcript to {path}")
 
     async def _share_handler(_: str, context: CommandContext) -> CommandResult:
+        settings = load_settings()
+        model = context.app_state.get().model if context.app_state is not None else settings.model
         path = context.session_backend.export_markdown(
             cwd=context.cwd,
             messages=context.engine.export_messages,
             usage=context.engine.total_usage,
             session_id=context.session_id,
             output_dir=context.cwd,
+            profile=settings.active_profile,
+            model=model,
         )
         return CommandResult(message=f"Created shareable transcript snapshot at {path}")
 
@@ -507,11 +515,13 @@ def create_default_command_registry(
             safe_name = "".join(character for character in tokens[1] if character.isalnum() or character in {"-", "_"})
             if not safe_name:
                 return CommandResult(message="Usage: /session tag NAME")
+            settings = load_settings()
+            model = context.app_state.get().model if context.app_state is not None else settings.model
             snapshot_path = context.session_backend.save_snapshot(
                 cwd=context.cwd,
-                model=context.app_state.get().model if context.app_state is not None else load_settings().model,
+                model=model,
                 system_prompt=build_runtime_system_prompt(
-                    load_settings(),
+                    settings,
                     cwd=context.cwd,
                     include_project_memory=context.include_project_memory,
                 ),
@@ -524,6 +534,8 @@ def create_default_command_registry(
                 usage=context.engine.total_usage,
                 session_id=context.session_id,
                 output_dir=session_dir,
+                profile=settings.active_profile,
+                model=model,
             )
             tagged_json = session_dir / f"{safe_name}.json"
             tagged_md = session_dir / f"{safe_name}.md"

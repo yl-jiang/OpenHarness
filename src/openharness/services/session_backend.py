@@ -47,6 +47,8 @@ class SessionBackend(Protocol):
         usage: UsageSnapshot | None = None,
         session_id: str | None = None,
         output_dir: str | Path | None = None,
+        profile: str | None = None,
+        model: str | None = None,
     ) -> Path:
         """Export the current transcript as markdown."""
 
@@ -96,6 +98,8 @@ class OpenHarnessSessionBackend:
         usage: UsageSnapshot | None = None,
         session_id: str | None = None,
         output_dir: str | Path | None = None,
+        profile: str | None = None,
+        model: str | None = None,
     ) -> Path:
         return session_storage.export_session_markdown(
             cwd=cwd,
@@ -103,6 +107,8 @@ class OpenHarnessSessionBackend:
             usage=usage,
             session_id=session_id,
             output_dir=output_dir,
+            profile=profile,
+            model=model,
         )
 
 

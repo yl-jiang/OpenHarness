@@ -313,6 +313,8 @@ def _render_session_export_markdown(
     session_id: str,
     exported_at: datetime,
     app_name: str,
+    profile: str | None = None,
+    model: str | None = None,
 ) -> str:
     token_count = usage.total_tokens if usage is not None else 0
     tool_count = sum(len(message.tool_uses) for message in messages)
@@ -323,6 +325,8 @@ def _render_session_export_markdown(
         f"session_id: {session_id}",
         f"exported_at: {exported_at.isoformat(timespec='seconds')}",
         f"work_dir: {Path(cwd).resolve()}",
+        f"profile: {profile or '(unknown)'}",
+        f"model: {model or '(unknown)'}",
         f"message_count: {len(messages)}",
         f"token_count: {token_count}",
         "---",
@@ -371,6 +375,8 @@ def export_session_markdown(
     session_id: str | None = None,
     output_dir: str | Path | None = None,
     app_name: str = "OpenHarness",
+    profile: str | None = None,
+    model: str | None = None,
 ) -> Path:
     """Export the session transcript as Markdown."""
     resolved_session_id = session_id or uuid4().hex[:12]
@@ -391,6 +397,8 @@ def export_session_markdown(
             session_id=resolved_session_id,
             exported_at=exported_at,
             app_name=app_name,
+            profile=profile,
+            model=model,
         ),
     )
     return path
