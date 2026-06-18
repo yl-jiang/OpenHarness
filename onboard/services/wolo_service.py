@@ -479,6 +479,9 @@ class WoloService:
         links = self.store.list_project_links(project_id=project_id)
         result = []
         for lnk in links:
+            if not self.store.entity_exists(lnk.entity_type, lnk.entity_id):
+                self.store.delete_project_link(lnk.id)
+                continue
             d = lnk.to_dict()
             d["entity_title"] = self.store.resolve_entity_summary(lnk.entity_type, lnk.entity_id)
             result.append(d)

@@ -1063,6 +1063,7 @@ class WoloStore:
         # Cascade: delete children referencing this record
         for child_table in ("todos", "experiments", "profile_updates", "decisions", "highlights"):
             self._db.execute(f"DELETE FROM {child_table} WHERE record_id = ?", (record_id,))
+        self._db.execute("DELETE FROM project_links WHERE entity_type = 'record' AND entity_id = ?", (record_id,))
         cur = self._db.execute("DELETE FROM records WHERE id = ?", (record_id,))
         self._db.commit()
         return cur.rowcount > 0
@@ -1568,6 +1569,20 @@ class WoloStore:
             return ""
         row = cur.fetchone()
         return row[0] if row else ""
+
+    def entity_exists(self, entity_type: str, entity_id: str) -> bool:
+        """Check whether a linked entity still exists in its table."""
+        if entity_type == "record":
+            cur = self._db.execute("SELECT 1 FROM records WHERE id = ?", (entity_id,))
+        elif entity_type in ("todo", "decision", "experiment"):
+            cur = self._db.execute(
+                f"SELECT 1 FROM {entity_type}s WHERE id = ?", (entity_id,)
+            )
+        elif entity_type == "highlight":
+            cur = self._db.execute("SELECT 1 FROM highlights WHERE id = ?", (entity_id,))
+        else:
+            return False
+        return cur.fetchone() is not None
 
     # --- ProjectSuggestion CRUD ---
 
