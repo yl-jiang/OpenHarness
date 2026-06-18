@@ -192,6 +192,12 @@ class WoloService:
     def reopen_todo(self, todo_id: str) -> bool:
         return self.store.reopen_todo(todo_id)
 
+    def cancel_todo(self, todo_id: str) -> bool:
+        return self.store.cancel_todo(todo_id)
+
+    def delete_todo(self, todo_id: str) -> bool:
+        return self.store.delete_todo(todo_id)
+
     def list_reports(self, report_type: str | None = None) -> list[dict[str, Any]]:
         reports = self.store.list_reports()
         if report_type:
@@ -384,7 +390,7 @@ class WoloService:
         return self.store.delete_project(project_id)
 
     def get_project_timeline(self, project_id, limit=50):
-        """Aggregate milestones, signals, snapshots into a unified timeline."""
+        """Aggregate milestones, signals, snapshots, and linked records into a unified timeline."""
         events = []
 
         # Milestones
@@ -401,6 +407,19 @@ class WoloService:
                     "type": "milestone_target",
                     "title": f"Target: {m.title}",
                     "detail": "",
+                })
+
+        # Linked records
+        for lnk in self.store.list_project_links(project_id=project_id, entity_type="record"):
+            if lnk.status != "active":
+                continue
+            rec = self.store.get_record(lnk.entity_id)
+            if rec:
+                events.append({
+                    "date": rec.date or rec.created_at,
+                    "type": "record",
+                    "title": rec.summary or rec.corrected_content[:80],
+                    "detail": rec.tags,
                 })
 
         # Signals (recent, high-severity)
@@ -474,6 +493,10 @@ class WoloService:
 
     def delete_milestone(self, milestone_id):
         return self.store.delete_milestone(milestone_id)
+
+    def reorder_milestones(self, project_id, milestone_ids):
+        self.store.reorder_milestones(project_id, milestone_ids)
+        return {"ok": True}
 
     def list_project_links(self, project_id):
         links = self.store.list_project_links(project_id=project_id)
@@ -838,7 +861,6 @@ class WoloService:
 
         # Save as report
         from uuid import uuid4
-        from datetime import datetime, timezone
         from wolo.core.models import WoloReport
         from wolo.core.utils import _now
 

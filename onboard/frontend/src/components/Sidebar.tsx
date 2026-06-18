@@ -87,22 +87,25 @@ export function Sidebar({ appName, onAppChange, gatewayStatus }: SidebarProps) {
       </nav>
 
       {/* Footer */}
-      <div className="px-5 py-4 border-t border-border flex items-center justify-between">
-        <StatusBadge status={gatewayStatus} />
-        <div className="flex items-center gap-2">
-          <NavLink
-            to="/settings"
-            className={({ isActive }) =>
-              `p-1.5 rounded-md transition-colors ${isActive ? `${accent}` : 'text-text-muted hover:text-text'}`
-            }
-            title="Settings"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/>
-              <circle cx="12" cy="12" r="3"/>
-            </svg>
-          </NavLink>
-          <span className="text-[11px] font-mono text-text-muted">v0.1</span>
+      <div className="px-5 py-4 border-t border-border space-y-2">
+        <div className="text-[12px] text-text-secondary italic tracking-wider text-center">Dirty in, Tidy out</div>
+        <div className="flex items-center justify-between">
+          <StatusBadge status={gatewayStatus} />
+          <div className="flex items-center gap-2">
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                `p-1.5 rounded-md transition-colors ${isActive ? `${accent}` : 'text-text-muted hover:text-text'}`
+              }
+              title="Settings"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12.22 2h-.44a2 2 0 00-2 2v.18a2 2 0 01-1 1.73l-.43.25a2 2 0 01-2 0l-.15-.08a2 2 0 00-2.73.73l-.22.38a2 2 0 00.73 2.73l.15.1a2 2 0 011 1.72v.51a2 2 0 01-1 1.74l-.15.09a2 2 0 00-.73 2.73l.22.38a2 2 0 002.73.73l.15-.08a2 2 0 012 0l.43.25a2 2 0 011 1.73V20a2 2 0 002 2h.44a2 2 0 002-2v-.18a2 2 0 011-1.73l.43-.25a2 2 0 012 0l.15.08a2 2 0 002.73-.73l.22-.39a2 2 0 00-.73-2.73l-.15-.08a2 2 0 01-1-1.74v-.5a2 2 0 011-1.74l.15-.09a2 2 0 00.73-2.73l-.22-.38a2 2 0 00-2.73-.73l-.15.08a2 2 0 01-2 0l-.43-.25a2 2 0 01-1-1.73V4a2 2 0 00-2-2z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+            </NavLink>
+            <span className="text-[11px] font-mono text-text-muted">v0.1</span>
+          </div>
         </div>
       </div>
     </aside>

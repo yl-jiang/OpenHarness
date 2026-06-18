@@ -241,6 +241,8 @@ export const api = {
     request<{ ok: boolean }>(`/api/${app}/milestones/${milestoneId}/complete`, { method: "PUT" }),
   deleteMilestone: (app: AppName, milestoneId: string) =>
     request<{ deleted: boolean }>(`/api/${app}/milestones/${milestoneId}`, { method: "DELETE" }),
+  reorderMilestones: (app: AppName, projectId: string, milestoneIds: string[]) =>
+    request<{ ok: boolean }>(`/api/${app}/projects/${projectId}/milestones/reorder`, { method: "PUT", body: JSON.stringify({ milestone_ids: milestoneIds }) }),
   projectLinks: (app: AppName, projectId: string) =>
     request<ProjectLink[]>(`/api/${app}/projects/${projectId}/links`),
   createProjectLink: (app: AppName, projectId: string, data: Record<string, unknown>) =>

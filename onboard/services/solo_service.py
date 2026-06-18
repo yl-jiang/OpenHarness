@@ -187,6 +187,12 @@ class SoloService:
     def reopen_todo(self, todo_id: str) -> bool:
         return self.store.reopen_todo(todo_id)
 
+    def cancel_todo(self, todo_id: str) -> bool:
+        return self.store.cancel_todo(todo_id)
+
+    def delete_todo(self, todo_id: str) -> bool:
+        return self.store.delete_todo(todo_id)
+
     def list_reports(self, report_type: str | None = None) -> list[dict[str, Any]]:
         reports = self.store.list_reports()
         if report_type:
@@ -373,6 +379,19 @@ class SoloService:
                     "detail": "",
                 })
 
+        # Linked records (work entries tied to this project)
+        for lk in self.store.list_project_links(project_id, entity_type="record"):
+            if lk.status != "active":
+                continue
+            record = self.store.get_record(lk.entity_id)
+            if record:
+                events.append({
+                    "date": record.date or record.created_at,
+                    "type": "record",
+                    "title": record.summary or record.raw_content[:80],
+                    "detail": record.tags,
+                })
+
         # Signals (recent, high-severity)
         for s in self.store.list_project_signals(project_id, limit=20):
             events.append({
@@ -444,6 +463,10 @@ class SoloService:
 
     def delete_milestone(self, milestone_id):
         return self.store.delete_milestone(milestone_id)
+
+    def reorder_milestones(self, project_id, milestone_ids):
+        self.store.reorder_milestones(project_id, milestone_ids)
+        return {"ok": True}
 
     def list_project_links(self, project_id):
         links = self.store.list_project_links(project_id=project_id)

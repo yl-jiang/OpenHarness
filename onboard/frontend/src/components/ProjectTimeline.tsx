@@ -13,6 +13,8 @@ const TYPE_BADGE: Record<string, { label: string; color: string }> = {
   signal_stale: { label: "Stale", color: "var(--color-warning)" },
   signal_momentum: { label: "Momentum", color: "var(--color-success)" },
   signal_decision: { label: "Decision", color: "var(--color-info)" },
+  record: { label: "Record", color: "var(--color-info)" },
+  signal_milestone_evidence: { label: "Milestone", color: "var(--color-success)" },
 };
 
 function badge(event: TimelineEvent) {

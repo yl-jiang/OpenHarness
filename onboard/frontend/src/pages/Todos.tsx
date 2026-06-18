@@ -246,6 +246,7 @@ export function Todos({ appName }: { appName: AppName }) {
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [localItems, setLocalItems] = useState<Todo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [showCancelled, setShowCancelled] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -414,9 +415,51 @@ export function Todos({ appName }: { appName: AppName }) {
             <option value="medium">Medium</option>
             <option value="low">Low</option>
           </select>
+          {columnItems.cancelled.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowCancelled(!showCancelled)}
+              className={`text-[12px] px-2 py-1 rounded-md border cursor-pointer transition-colors ${
+                showCancelled
+                  ? 'border-danger/40 bg-danger/10 text-danger'
+                  : 'border-border bg-surface-2 text-text-muted hover:text-text-secondary'
+              }`}
+            >
+              ✕ {columnItems.cancelled.length} cancelled
+            </button>
+          )}
           <span className="text-[11px] font-mono text-text-muted">{data.length} total</span>
         </div>
       </div>
+
+      {showCancelled && columnItems.cancelled.length > 0 && (
+        <div className="flex flex-wrap gap-2 px-1">
+          {columnItems.cancelled.map((todo) => (
+            <div
+              key={todo.id}
+              className="group flex items-center gap-2 px-3 py-1.5 rounded-md bg-surface-1 border border-border text-[12px] text-text-muted line-through"
+            >
+              <span className="truncate max-w-[200px]">{todo.title}</span>
+              <button
+                type="button"
+                onClick={() => handleAction(todo, 'pending')}
+                className="opacity-0 group-hover:opacity-100 text-[11px] text-text-muted hover:text-text no-underline bg-transparent border-0 cursor-pointer p-0 leading-none"
+                title="Reopen"
+              >
+                ↩
+              </button>
+              <button
+                type="button"
+                onClick={() => handleAction(todo, 'delete')}
+                className="opacity-0 group-hover:opacity-100 text-[11px] text-text-muted hover:text-danger no-underline bg-transparent border-0 cursor-pointer p-0 leading-none"
+                title="Delete"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <DndContext
         sensors={sensors}
@@ -425,8 +468,8 @@ export function Todos({ appName }: { appName: AppName }) {
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {columns.map((col) => (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {columns.filter((c) => c.key !== 'cancelled').map((col) => (
             <section key={col.key} className="space-y-2.5">
               <div className="flex items-center gap-2 mb-3">
                 <span className={`w-2 h-2 rounded-full ${col.dot}`} />
