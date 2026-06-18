@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any, Protocol
-from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
