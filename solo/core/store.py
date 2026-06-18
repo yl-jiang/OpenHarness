@@ -194,6 +194,7 @@ CREATE TABLE IF NOT EXISTS milestones (
     status TEXT NOT NULL DEFAULT 'pending',
     target_date TEXT NOT NULL DEFAULT '',
     completed_at TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -450,6 +451,7 @@ class SoloStore:
                 status TEXT NOT NULL DEFAULT 'pending',
                 target_date TEXT NOT NULL DEFAULT '',
                 completed_at TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT '',
                 updated_at TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
@@ -477,6 +479,11 @@ class SoloStore:
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_links_status ON project_links(status)")
         try:
             self._conn.execute("ALTER TABLE project_links ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+            self._conn.commit()
+        except Exception:
+            pass
+        try:
+            self._conn.execute("ALTER TABLE milestones ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
             self._conn.commit()
         except Exception:
             pass
@@ -744,11 +751,11 @@ class SoloStore:
     def _milestone_to_row(m: Milestone):
         cols = (
             "id", "project_id", "title", "description", "status",
-            "target_date", "completed_at", "created_at", "updated_at",
+            "target_date", "completed_at", "sort_order", "created_at", "updated_at",
         )
         vals = (
             m.id, m.project_id, m.title, m.description, m.status,
-            m.target_date, m.completed_at, m.created_at, m.updated_at,
+            m.target_date, m.completed_at, m.sort_order, m.created_at, m.updated_at,
         )
         return cols, vals
 
@@ -1803,7 +1810,7 @@ class SoloStore:
         return Milestone(
             id=row[0], project_id=row[1], title=row[2], description=row[3],
             status=row[4], target_date=row[5], completed_at=row[6],
-            created_at=row[7], updated_at=row[8],
+            sort_order=row[7], created_at=row[8], updated_at=row[9],
         )
 
     @staticmethod
@@ -1985,7 +1992,7 @@ class SoloStore:
     def update_milestone(self, milestone_id: str, **fields: Any) -> bool:
         allowed = {
             "title", "description", "status", "target_date",
-            "completed_at", "updated_at",
+            "completed_at", "sort_order", "updated_at",
         }
         sets = []
         params: list[Any] = []
@@ -2018,9 +2025,17 @@ class SoloStore:
         self._db.commit()
         return cur.rowcount > 0
 
+    def reorder_milestones(self, project_id: str, milestone_ids: list[str]) -> None:
+        for idx, milestone_id in enumerate(milestone_ids):
+            self._db.execute(
+                "UPDATE milestones SET sort_order = ? WHERE project_id = ? AND id = ?",
+                (idx, project_id, milestone_id),
+            )
+        self._db.commit()
+
     def list_milestones(self, project_id: str) -> list[Milestone]:
         cur = self._db.execute(
-            "SELECT * FROM milestones WHERE project_id = ? ORDER BY rowid",
+            "SELECT id, project_id, title, description, status, target_date, completed_at, sort_order, created_at, updated_at FROM milestones WHERE project_id = ? ORDER BY sort_order, rowid",
             (project_id,),
         )
         return [self._row_to_milestone(row) for row in cur.fetchall()]
