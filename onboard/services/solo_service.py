@@ -380,7 +380,7 @@ class SoloService:
                 })
 
         # Linked records (work entries tied to this project)
-        for lk in self.store.list_project_links(project_id, entity_type="record"):
+        for lk in self.store.list_project_links(project_id=project_id, entity_type="record"):
             if lk.status != "active":
                 continue
             record = self.store.get_record(lk.entity_id)
