@@ -43,12 +43,10 @@ function SortableMilestoneItem({
     listeners,
     setNodeRef,
     transform,
-    transition,
-  } = useSortable({ id: milestone.id });
+  } = useSortable({ id: milestone.id, animateLayoutChanges: () => false });
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
-    transition,
     /* Placeholder: dimmed empty slot while dragging this item away */
     opacity: isDragging ? 0.3 : 1,
   };
@@ -259,7 +257,7 @@ export function MilestoneList({ app, projectId, milestones, onChange }: Props) {
           ))}
         </SortableContext>
 
-        <DragOverlay dropAnimation={{ duration: 200, easing: "ease" }}>
+        <DragOverlay dropAnimation={null}>
           {activeMilestone ? (
             <MilestoneOverlayCard milestone={activeMilestone} />
           ) : null}
