@@ -348,6 +348,65 @@ class SoloExperiment:
 
 
 @dataclass(frozen=True)
+class SoloHealthRecord:
+    """One structured health record."""
+
+    id: str
+    record_id: str = ""
+    date: str = ""
+    subject: str = "self"
+    category: str = ""
+    item: str = ""
+    description: str = ""
+    body_part: str = ""
+    severity: str = ""
+    status: str = "active"
+    medication_name: str = ""
+    dosage: str = ""
+    frequency: str = ""
+    duration: str = ""
+    exercise_type: str = ""
+    exercise_duration_min: int = 0
+    exercise_intensity: str = ""
+    sleep_hours: float = 0
+    sleep_quality: str = ""
+    mood: str = ""
+    stress_level: str = ""
+    metrics_json: str = "{}"
+    tags: str = ""
+    source: str = "agent"
+    linked_memory_id: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "SoloHealthRecord":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "record_id": self.record_id, "date": self.date,
+            "subject": self.subject,
+            "category": self.category, "item": self.item,
+            "description": self.description, "body_part": self.body_part,
+            "severity": self.severity, "status": self.status,
+            "medication_name": self.medication_name, "dosage": self.dosage,
+            "frequency": self.frequency, "duration": self.duration,
+            "exercise_type": self.exercise_type,
+            "exercise_duration_min": self.exercise_duration_min,
+            "exercise_intensity": self.exercise_intensity,
+            "sleep_hours": self.sleep_hours, "sleep_quality": self.sleep_quality,
+            "mood": self.mood, "stress_level": self.stress_level,
+            "metrics_json": self.metrics_json, "tags": self.tags,
+            "source": self.source, "linked_memory_id": self.linked_memory_id,
+            "created_at": self.created_at, "updated_at": self.updated_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
 class ProcessResult:
     """Summary of one solo processing run."""
 

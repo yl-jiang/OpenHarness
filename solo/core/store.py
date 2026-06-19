@@ -30,6 +30,7 @@ from solo.core.models import (
     SoloConfig,
     SoloEntry,
     SoloExperiment,
+    SoloHealthRecord,
     SoloRecord,
     SoloReport,
     SoloTodo,
@@ -38,7 +39,7 @@ from solo.core.workspace import get_attachments_dir, get_data_dir, initialize_wo
 from solo.core.utils import _now
 
 DB_FILENAME = "store.db"
-_SCHEMA_VERSION = 6
+_SCHEMA_VERSION = 7
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS entries (
@@ -564,6 +565,44 @@ class SoloStore:
         )
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_checkins_project_id ON project_checkins(project_id)")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_project_checkins_status ON project_checkins(status)")
+
+        # Migration v7: health_records table
+        self._conn.executescript(
+            """CREATE TABLE IF NOT EXISTS health_records (
+                id TEXT PRIMARY KEY,
+                record_id TEXT NOT NULL DEFAULT '',
+                date TEXT NOT NULL,
+                subject TEXT NOT NULL DEFAULT 'self',
+                category TEXT NOT NULL,
+                item TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '',
+                body_part TEXT NOT NULL DEFAULT '',
+                severity TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
+                medication_name TEXT NOT NULL DEFAULT '',
+                dosage TEXT NOT NULL DEFAULT '',
+                frequency TEXT NOT NULL DEFAULT '',
+                duration TEXT NOT NULL DEFAULT '',
+                exercise_type TEXT NOT NULL DEFAULT '',
+                exercise_duration_min INTEGER NOT NULL DEFAULT 0,
+                exercise_intensity TEXT NOT NULL DEFAULT '',
+                sleep_hours REAL NOT NULL DEFAULT 0,
+                sleep_quality TEXT NOT NULL DEFAULT '',
+                mood TEXT NOT NULL DEFAULT '',
+                stress_level TEXT NOT NULL DEFAULT '',
+                metrics_json TEXT NOT NULL DEFAULT '{}',
+                tags TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'agent',
+                linked_memory_id TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_health_records_date ON health_records(date);
+            CREATE INDEX IF NOT EXISTS idx_health_records_subject ON health_records(subject);
+            CREATE INDEX IF NOT EXISTS idx_health_records_category ON health_records(category);
+            CREATE INDEX IF NOT EXISTS idx_health_records_status ON health_records(status);
+            CREATE INDEX IF NOT EXISTS idx_health_records_record_id ON health_records(record_id);"""
+        )
 
         try:
             self._conn.execute(
@@ -1159,6 +1198,100 @@ class SoloStore:
             cur = self._db.execute(f"SELECT * FROM experiments{where} ORDER BY rowid", params)
             rows = cur.fetchall()
         return [self._row_to_experiment(row) for row in rows]
+
+    # ── Health records ──────────────────────────────────────────
+
+    _HEALTH_RECORD_COLUMNS = [
+        "id", "record_id", "date", "subject", "category", "item", "description",
+        "body_part", "severity", "status", "medication_name", "dosage",
+        "frequency", "duration", "exercise_type", "exercise_duration_min",
+        "exercise_intensity", "sleep_hours", "sleep_quality", "mood",
+        "stress_level", "metrics_json", "tags", "source", "linked_memory_id",
+        "created_at", "updated_at",
+    ]
+
+    def _health_record_to_row(self, record: SoloHealthRecord) -> tuple[list[str], list[Any]]:
+        cols = list(self._HEALTH_RECORD_COLUMNS)
+        vals = [getattr(record, c) for c in cols]
+        return cols, vals
+
+    def _row_to_health_record(row: tuple) -> SoloHealthRecord:
+        return SoloHealthRecord(
+            id=row[0], record_id=row[1], date=row[2], subject=row[3],
+            category=row[4], item=row[5], description=row[6], body_part=row[7],
+            severity=row[8], status=row[9], medication_name=row[10],
+            dosage=row[11], frequency=row[12], duration=row[13],
+            exercise_type=row[14], exercise_duration_min=row[15],
+            exercise_intensity=row[16], sleep_hours=row[17],
+            sleep_quality=row[18], mood=row[19], stress_level=row[20],
+            metrics_json=row[21], tags=row[22], source=row[23],
+            linked_memory_id=row[24], created_at=row[25], updated_at=row[26],
+        )
+
+    def add_health_record(self, record: SoloHealthRecord) -> None:
+        cols, vals = self._health_record_to_row(record)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO health_records ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
+
+    def list_health_records(
+        self, *, category: str | None = None, status: str | None = None,
+        date_from: str | None = None, date_to: str | None = None,
+        limit: int | None = None,
+    ) -> list[SoloHealthRecord]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if category:
+            clauses.append("category = ?"); params.append(category)
+        if status:
+            clauses.append("status = ?"); params.append(status)
+        if date_from:
+            clauses.append("date >= ?"); params.append(date_from)
+        if date_to:
+            clauses.append("date <= ?"); params.append(date_to)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        order = "ORDER BY date DESC, created_at DESC"
+        if limit is not None:
+            cur = self._db.execute(
+                f"SELECT * FROM health_records{where} {order} LIMIT ?",
+                params + [limit],
+            )
+        else:
+            cur = self._db.execute(
+                f"SELECT * FROM health_records{where} {order}", params
+            )
+        return [self._row_to_health_record(r) for r in cur.fetchall()]
+
+    def get_health_record(self, record_id: str) -> SoloHealthRecord | None:
+        cur = self._db.execute("SELECT * FROM health_records WHERE id = ?", (record_id,))
+        row = cur.fetchone()
+        return self._row_to_health_record(row) if row else None
+
+    def update_health_record(self, record_id: str, **fields: Any) -> bool:
+        allowed = set(self._HEALTH_RECORD_COLUMNS) - {"id"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return False
+        sets = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [record_id]
+        cursor = self._db.execute(
+            f"UPDATE health_records SET {sets} WHERE id = ?", values
+        )
+        self._db.commit()
+        return cursor.rowcount > 0
+
+    def delete_health_record(self, record_id: str) -> bool:
+        cursor = self._db.execute("DELETE FROM health_records WHERE id = ?", (record_id,))
+        self._db.commit()
+        return cursor.rowcount > 0
+
+    def health_record_categories(self) -> dict[str, int]:
+        rows = self._db.execute(
+            "SELECT category, COUNT(*) FROM health_records GROUP BY category"
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
 
     def start_todo(self, todo_id: str) -> bool:
         cur = self._db.execute(
