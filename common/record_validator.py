@@ -40,7 +40,7 @@ RULES: list[Rule] = [
         "summary_max_length",
         "summary",
         SUMMARY_MAX_LENGTH,
-        f"summary 必须是一句极简摘要（≤{SUMMARY_MAX_LENGTH}字）",
+        f"summary 必须是一句简洁摘要（≤{SUMMARY_MAX_LENGTH}字），保持语义完整",
     ),
 ]
 
@@ -57,6 +57,16 @@ def validate_record_data(data: dict[str, Any]) -> list[str]:
                 f"[{rule.field}] 当前值「{value}」共 {len(value)} 字，"
                 f"超出上限 {rule.max_length} 字。{rule.description}"
             )
+
+    summary = str(data.get("summary") or "")
+    raw = str(data.get("corrected_content") or data.get("raw_content") or "")
+    if summary and raw and len(raw) > 30 and len(summary) < len(raw) / 3:
+        errors.append(
+            f"[summary] 摘要「{summary}」仅 {len(summary)} 字，"
+            f"原文 {len(raw)} 字，压缩过度导致语义丢失。"
+            f"请保留关键细节，保持语法通顺"
+        )
+
     return errors
 
 
