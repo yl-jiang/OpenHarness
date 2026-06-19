@@ -38,6 +38,7 @@ from wolo.core.models import (
     Project,
     ProjectAlias,
     ProjectLink,
+    ProjectSnapshot,
     ProjectSuggestion,
     WoloDecision,
     WoloEntry,
@@ -225,6 +226,8 @@ class WoloToolRegistry:
             WoloDomainTool(_tool_project_link_create(), self._handle_project_link_create),
             WoloDomainTool(_tool_project_link_delete(), self._handle_project_link_delete),
             WoloDomainTool(_tool_project_alias_create(), self._handle_project_alias_create),
+            WoloDomainTool(_tool_project_link_backfill(), self._handle_project_link_backfill),
+            WoloDomainTool(_tool_project_snapshot_create(), self._handle_project_snapshot_create),
         ]
 
     def tool_schemas(self) -> list[dict[str, Any]]:
@@ -1796,6 +1799,125 @@ class WoloToolRegistry:
         self.store.create_project_alias(pa)
         return {"ok": True, "alias": pa.to_dict()}
 
+    async def _handle_project_link_backfill(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        project_id = _required_text(arguments, "project_id")
+        project = self.store.get_project(project_id)
+        if project is None:
+            return {"ok": False, "error": "Project not found"}
+
+        search_keywords = _optional_text(arguments, "search_keywords") or ""
+        if search_keywords:
+            query = search_keywords
+        else:
+            aliases = self.store.list_project_aliases(project_id)
+            terms = [project.title] + [a.alias for a in aliases]
+            query = " ".join(terms)
+
+        existing_links = self.store.list_project_links(project_id=project_id, entity_type="record")
+        linked_ids = {lnk.entity_id for lnk in existing_links}
+
+        records = self.store.search_records(query=query, limit=200)
+
+        now = _now()
+        new_links: list[dict] = []
+        for r in records:
+            if r.id in linked_ids:
+                continue
+            link_id = str(uuid4())
+            link = ProjectLink(
+                id=link_id,
+                project_id=project_id,
+                entity_type="record",
+                entity_id=r.id,
+                source="ai_high_confidence",
+                confidence="",
+                status="active",
+                sort_order=len(linked_ids) + len(new_links),
+                created_at=now,
+                updated_at=now,
+            )
+            self.store.create_project_link(link)
+            new_links.append({"id": r.id, "date": r.date, "summary": r.summary})
+            linked_ids.add(r.id)
+
+        return {
+            "ok": True,
+            "project_id": project_id,
+            "newly_linked_count": len(new_links),
+            "newly_linked": new_links,
+            "total_linked": len(linked_ids),
+        }
+
+    async def _handle_project_snapshot_create(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        project_id = _required_text(arguments, "project_id")
+        summary = _optional_text(arguments, "summary") or ""
+        next_action = _optional_text(arguments, "next_action") or ""
+        health = _optional_text(arguments, "health") or ""
+
+        project = self.store.get_project(project_id)
+        if project is None:
+            return {"ok": False, "error": "Project not found"}
+
+        milestones = self.store.list_milestones(project_id)
+        total = len(milestones)
+        done = sum(1 for m in milestones if m.status == "completed")
+        completion_pct = int(done / total * 100) if total > 0 else None
+
+        links = self.store.list_project_links(project_id=project_id, status="active")
+        now = datetime.now(timezone.utc)
+        cutoff_7d = (now - timedelta(days=7)).isoformat()
+        activity_7d = sum(1 for lnk in links if lnk.created_at and lnk.created_at >= cutoff_7d)
+
+        open_blocker_count = 0
+        for lnk in links:
+            if lnk.entity_type == "highlight":
+                cur = self.store._db.execute("SELECT kind FROM highlights WHERE id = ?", (lnk.entity_id,))
+                hrow = cur.fetchone()
+                if hrow and hrow[0] == "blocker":
+                    open_blocker_count += 1
+
+        if not health:
+            health = "normal"
+            if open_blocker_count > 0:
+                health = "at_risk"
+            elif project.target_date:
+                try:
+                    target = datetime.fromisoformat(project.target_date).date()
+                    if target < now.date():
+                        health = "at_risk"
+                    elif target <= now.date() + timedelta(days=7) and (completion_pct is None or completion_pct < 80):
+                        health = "attention"
+                except ValueError:
+                    pass
+            if health == "normal" and activity_7d == 0 and links:
+                health = "attention"
+
+        if not next_action:
+            pending = [m for m in milestones if m.status == "pending"]
+            next_action = f"完成里程碑: {pending[0].title}" if pending else "项目已完成或无待办里程碑"
+
+        if not summary:
+            linked_record_count = sum(1 for lnk in links if lnk.entity_type == "record")
+            summary = (
+                f"{linked_record_count}条记录已关联，{done}/{total}里程碑已完成。"
+                f"近7天活跃度{activity_7d}，{open_blocker_count}个未解决blocker。"
+            )
+
+        snapshot = ProjectSnapshot(
+            id=str(uuid4()),
+            project_id=project_id,
+            snapshot_date=now.strftime("%Y-%m-%d"),
+            summary=summary,
+            health=health,
+            completion_pct=completion_pct,
+            activity_7d=activity_7d,
+            open_blocker_count=open_blocker_count,
+            next_action=next_action,
+            created_at=now.isoformat(),
+        )
+        self.store.create_project_snapshot(snapshot)
+        return {"ok": True, "snapshot": snapshot.to_dict()}
+
 class _AnyInput(BaseModel):
     """Permissive Pydantic model that accepts any tool arguments as extra fields."""
 
@@ -1887,7 +2009,7 @@ def _tool_record() -> ToolDefinition:
         [
             ("content", "string", "Faithful paraphrase of the user's current message. Must preserve all facts, opinions, and claims the user actually expressed. Do NOT add facts, opinions, or reflections the user did not state in this turn — even if a recent conversation topic suggests them.", True),
             ("corrected_content", "string", "Cleanup of speech-to-text artifacts in `content` ONLY: removing redundancy/filler words, fixing typos, adding punctuation, smoothing broken grammar. Think copy-editor pass, not rewrite. MUST NOT introduce any fact, opinion, or claim that is not already present in `content` — every fact in `corrected_content` must also appear in `content`. NEVER change the event tense (planned→done / future→past). Example: 'too late today, will push to production tomorrow' → keep the future tense, do NOT rewrite as 'pushed to production today'.", False),
-            ("summary", "string", f"One-sentence work summary (≤{SUMMARY_MAX_LENGTH} chars) with outcome, decision, blocker, or next action.", False),
+            ("summary", "string", f"One-sentence work summary (≤{SUMMARY_MAX_LENGTH} chars) with outcome, decision, blocker, or next action. Keep semantics complete — do not over-compress.", False),
             ("tags", "string", "Comma-separated project/work tags, e.g. project, meeting, code, prompt, tool, bug, review, blocker, decision.", False),
             ("emotion", "string", f"Short work status keyword (≤{EMOTION_MAX_LENGTH} chars), e.g. 顺利/受阻/中性/高压/完成/风险. Must NOT be a full sentence.", False),
             ("date", "string", "YYYY-MM-DD. Only provide this if the user explicitly mentions a specific date (e.g. '昨天', '5月18日', '上周三'). If no date is mentioned, leave this empty and the system will default to today's local date.", False),
@@ -2778,6 +2900,40 @@ def _tool_project_alias_create() -> ToolDefinition:
             ("source", "string", "Source of the alias (user, migration, ai).", False),
         ],
     )
+
+
+def _tool_project_link_backfill() -> ToolDefinition:
+    return _definition(
+        "wolo_project_link_backfill",
+        (
+            "Bulk-link historical work records to a project. Searches all records for matches "
+            "against project title, aliases, and optional keywords, then creates links "
+            "for any unlinked matches. Use when organizing a project that has existing "
+            "records not yet associated with it."
+        ),
+        [
+            ("project_id", "string", "Project ID to backfill links for.", True),
+            ("search_keywords", "string", "Optional extra search keywords to find related records. If omitted, uses project title and aliases.", False),
+        ],
+    )
+
+
+def _tool_project_snapshot_create() -> ToolDefinition:
+    return _definition(
+        "wolo_project_snapshot_create",
+        (
+            "Create a project snapshot capturing current progress, health, and next action. "
+            "Auto-computes completion percentage, 7-day activity, blocker count, and health status if not provided. "
+            "Use during project organization or periodic review."
+        ),
+        [
+            ("project_id", "string", "Project ID.", True),
+            ("summary", "string", "Snapshot summary text. Auto-generated if omitted.", False),
+            ("health", "string", "Project health: 'normal', 'attention', or 'at_risk'. Auto-computed if omitted.", False),
+            ("next_action", "string", "Recommended next action. Auto-derived from pending milestones if omitted.", False),
+        ],
+    )
+
 
 def _read_heartbeat_tasks(path: Path) -> list[str]:
     """Read task lines from HEARTBEAT.md, ignoring comments and blank lines."""
