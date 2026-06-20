@@ -247,6 +247,36 @@ def _build_pending_todos_context(store: WoloStore) -> str:
     return "\n".join(lines)
 
 
+_ACTIVE_PROJECTS_HEADER = (
+    "## Active Projects",
+    "",
+    "The following projects are currently active. "
+    "When a record clearly relates to one of these projects (progress, activity, milestone), "
+    "fill the `linked_project` field with the project title or alias in your record call.",
+    "",
+)
+
+
+def _build_active_projects_context(store: WoloStore) -> str:
+    try:
+        projects = store.list_projects(status="active", limit=20)
+    except Exception:
+        return ""
+    if not projects:
+        return ""
+    lines = list(_ACTIVE_PROJECTS_HEADER)
+    for p in projects:
+        try:
+            aliases = store.list_project_aliases(p.id)
+            alias_part = f" (别名: {', '.join(a.alias for a in aliases)})" if aliases else ""
+        except Exception:
+            alias_part = ""
+        target = f" [目标: {p.target_date}]" if p.target_date else ""
+        lines.append(f"- {p.title}{alias_part}{target}")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _split_quoted_reply(user_text: str) -> tuple[str | None, str]:
     if not user_text.startswith(_QUOTED_MESSAGE_PREFIX):
         return None, user_text
@@ -527,6 +557,7 @@ class WoloQueryRunner:
         # remains static and can be fully KV-Cache shared across turns.
         search_text, prepared_user_text = _prepare_user_turn_text(user_text, source_context)
         prefix = _build_pending_todos_context(self._store)
+        prefix += _build_active_projects_context(self._store)
         if include_time_context:
             prefix += build_time_context()
         if include_similar_context:
