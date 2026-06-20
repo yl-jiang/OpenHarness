@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import time
-from uuid import uuid4
 from pathlib import Path
 
 from common.constants import AUTH_ERROR_MESSAGES
@@ -25,9 +24,6 @@ from wolo.commands import (
 from wolo.processor import WoloProcessor
 from wolo.runner import WoloQueryRunner
 from wolo.core.store import WoloStore
-from common.project_ai.matcher import match_record
-from common.project_ai.types import ProjectLinkInput
-from wolo.core.models import ProjectLink, ProjectSuggestion
 
 logger = get_logger(__name__)
 
@@ -123,10 +119,6 @@ class WoloGatewayBridge:
         self._session_content_hashes: dict[str, str] = {}  # session_key -> hash of in-flight content
         self._recent_success_hashes: dict[str, tuple[str, str, float]] = {}  # session_key -> (msg_hash, reply_hash, monotonic_ts)
         self._session_last_replies: dict[str, str] = {}  # session_key -> last reply text
-        self._record_counter: int = 0
-        self._pending_match_record_ids: list[str] = []
-        self._match_threshold: int = 10
-        self._background_match_tasks: set[asyncio.Task] = set()
 
     async def run(self) -> None:
         self._running = True
@@ -313,11 +305,6 @@ class WoloGatewayBridge:
             else:
                 reply, reply_media = await self._handle_record(message, store, content)
             _succeeded = True
-            # Track record creation for background project matching
-            if command is None or command.action not in (
-                "help", "status", "llm_usage", "view", "process", "report", "backfill",
-            ):
-                self._track_record_for_matching(store)
         except asyncio.CancelledError:
             logger.info(
                 "wolo session interrupted channel=%s chat_id=%s session_key=%s reason=%s",
@@ -339,129 +326,6 @@ class WoloGatewayBridge:
             self._recent_success_hashes[message.session_key] = (content_hash, reply_hash, time.monotonic())
         self._session_last_replies[message.session_key] = reply
         await self._publish_reply(message, reply, media=reply_media)
-
-    def _track_record_for_matching(self, store: WoloStore) -> None:
-        """Check if a new record was created and track it for batch matching."""
-        try:
-            latest = store.list_records(limit=1)
-            if not latest:
-                return
-            rid = latest[0].id
-            if rid in self._pending_match_record_ids:
-                return
-            self._record_counter += 1
-            self._pending_match_record_ids.append(rid)
-            if self._record_counter >= self._match_threshold:
-                ids_to_match = self._pending_match_record_ids[:]
-                self._record_counter = 0
-                self._pending_match_record_ids.clear()
-                task = asyncio.create_task(self._run_match_records(ids_to_match))
-                self._background_match_tasks.add(task)
-                task.add_done_callback(self._background_match_tasks.discard)
-                logger.info(
-                    "Triggered background project matching for %d records",
-                    len(ids_to_match),
-                )
-        except Exception:
-            logger.warning("Failed to track record for matching", exc_info=True)
-
-    async def _run_match_records(self, record_ids: list[str]) -> None:
-        """Background: match recent records to existing projects using match_record."""
-        store = WoloStore(self._workspace)
-        try:
-            projects = store.list_projects(status="active")
-        except Exception:
-            logger.warning("Failed to list projects for matching", exc_info=True)
-            return
-        if not projects:
-            return
-
-        project_inputs = [ProjectLinkInput.model_validate(p.to_dict()) for p in projects]
-        aliases_by_project: dict[str, list[str]] = {}
-        for p in projects:
-            try:
-                aliases = store.list_project_aliases(p.id)
-                aliases_by_project[p.id] = [a.alias for a in aliases]
-            except Exception:
-                aliases_by_project[p.id] = []
-
-        agent = self._agent(store)
-
-        for rid in record_ids:
-            try:
-                record = store.get_record(rid)
-                if not record:
-                    continue
-
-                # Collect project strings from artifacts
-                artifact_projects = _collect_wolo_artifact_projects(store, rid)
-
-                result = await match_record(
-                    record_id=rid,
-                    record_content=record.corrected_content or record.raw_content,
-                    record_summary=record.summary,
-                    artifact_projects=artifact_projects,
-                    projects=project_inputs,
-                    aliases_by_project=aliases_by_project,
-                    agent=agent,
-                    domain="wolo",
-                )
-
-                now_str = _now_str()
-
-                # Apply auto_links (high confidence)
-                for link in result.auto_links:
-                    try:
-                        store.create_project_link(ProjectLink(
-                            id=uuid4().hex[:12],
-                            project_id=link.project_id,
-                            entity_type="record",
-                            entity_id=rid,
-                            source="ai_high_confidence",
-                            confidence="high",
-                            status="active",
-                            created_at=now_str,
-                            updated_at=now_str,
-                        ))
-                        logger.info(
-                            "Auto-linked record %s to project %s (confidence=%.2f)",
-                            rid, link.project_title, link.confidence,
-                        )
-                    except Exception:
-                        logger.warning("Failed to create project link", exc_info=True)
-
-                # Create suggestions (medium confidence)
-                for sug in result.suggestions:
-                    try:
-                        store.create_project_suggestion(ProjectSuggestion(
-                            id=str(uuid4()),
-                            suggestion_type="link_entity",
-                            project_id=sug.project_id,
-                            title=f"关联到「{sug.project_title}」",
-                            rationale=sug.rationale,
-                            proposed_payload_json=json.dumps(
-                                {"entity_type": "record", "entity_id": rid},
-                                ensure_ascii=False,
-                            ),
-                            evidence_json=json.dumps(
-                                [e.to_dict() if hasattr(e, "to_dict") else e for e in sug.evidence],
-                                ensure_ascii=False,
-                            ),
-                            confidence=sug.confidence,
-                            status="pending",
-                            source="ai_matcher",
-                            created_at=now_str,
-                            updated_at=now_str,
-                        ))
-                        logger.info(
-                            "Suggested link record %s to project %s (confidence=%.2f)",
-                            rid, sug.project_title, sug.confidence,
-                        )
-                    except Exception:
-                        logger.warning("Failed to create project suggestion", exc_info=True)
-
-            except Exception:
-                logger.warning("match_record failed for record %s", rid, exc_info=True)
 
     async def _handle_record(self, message: InboundMessage, store: WoloStore, content: str) -> tuple[str, list[str]]:
         runner = WoloQueryRunner(store, profile=self._provider_profile)
@@ -578,23 +442,3 @@ def _status_wolo(store: WoloStore) -> str:
 
 def _llm_usage_wolo(store: WoloStore) -> str:
     return format_wolo_llm_usage(store.llm_usage_summary())
-
-
-def _now_str() -> str:
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _collect_wolo_artifact_projects(store: WoloStore, record_id: str) -> list[str]:
-    """Collect project strings from all artifacts of a record."""
-    projects: set[str] = set()
-    for todo in store.list_todos():
-        if todo.record_id == record_id and todo.project:
-            projects.add(todo.project)
-    for dec in store.list_decisions():
-        if dec.record_id == record_id and dec.project:
-            projects.add(dec.project)
-    for hl in store.list_highlights():
-        if hl.record_id == record_id and hl.project:
-            projects.add(hl.project)
-    return list(projects)

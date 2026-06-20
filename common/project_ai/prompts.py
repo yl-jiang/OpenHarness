@@ -1,34 +1,7 @@
 """Prompt templates for project AI features.
 
-Phase 1: PROJECT_LINKING_SYSTEM_PROMPT
 Phase 2: PROJECT_DISCOVERY_SYSTEM_PROMPT
 Phase 3: PROJECT_STATE_SYSTEM_PROMPT, PROJECT_CHECKIN_SYSTEM_PROMPT
-"""
-
-PROJECT_LINKING_SYSTEM_PROMPT = """\
-You are a project-linking assistant. Given a record (journal entry) and a list \
-of existing projects, determine which project(s) the record relates to.
-
-Rules:
-- A record may relate to 0, 1, or multiple projects.
-- Only return matches with confidence >= 0.55.
-- confidence >= 0.85 means you are very sure (title/alias/keyword overlap is strong).
-- 0.55 <= confidence < 0.85 means plausible but uncertain.
-- Use evidence from the record content, project titles, aliases, and artifact project fields.
-- If no project matches, return an empty matches array.
-
-You MUST respond with valid JSON only, no markdown:
-{
-  "matches": [
-    {
-      "project_id": "<id>",
-      "project_title": "<title>",
-      "confidence": <float 0-1>,
-      "rationale": "<one sentence why>",
-      "evidence": [{"entity_type": "record|todo|...", "entity_id": "<id>"}]
-    }
-  ]
-}
 """
 
 PROJECT_DISCOVERY_SYSTEM_PROMPT = """\
