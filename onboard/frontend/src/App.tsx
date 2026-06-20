@@ -1,28 +1,45 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
-import { createBrowserRouter, RouterProvider } from 'react-router-dom';
+import { createBrowserRouter, RouterProvider, useRouteError } from 'react-router-dom';
 
 import { api } from './api/client';
 import type { AppName } from './api/types';
 import { Layout } from './components/Layout';
 import { Dashboard } from './pages/Dashboard';
 
+const retried = new Set<string>();
+
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  factory: () => Promise<{ default: T }>,
+) {
+  return lazy(() =>
+    factory().catch((err: Error) => {
+      const msg = err?.message ?? '';
+      if (msg.includes('Failed to fetch dynamically imported module') && !retried.has(msg)) {
+        retried.add(msg);
+        window.location.reload();
+      }
+      throw err;
+    }),
+  );
+}
+
 // Lazy-loaded pages for code splitting
-const Chat = lazy(() => import('./pages/Chat').then((m) => ({ default: m.Chat })));
-const Decisions = lazy(() => import('./pages/Decisions').then((m) => ({ default: m.Decisions })));
-const Entries = lazy(() => import('./pages/Entries').then((m) => ({ default: m.Entries })));
-const FeedDigests = lazy(() => import('./pages/FeedDigests').then((m) => ({ default: m.FeedDigests })));
-const Highlights = lazy(() => import('./pages/Highlights').then((m) => ({ default: m.Highlights })));
-const RecordDetail = lazy(() => import('./pages/RecordDetail').then((m) => ({ default: m.RecordDetail })));
-const Records = lazy(() => import('./pages/Records').then((m) => ({ default: m.Records })));
-const Reports = lazy(() => import('./pages/Reports').then((m) => ({ default: m.Reports })));
-const ReportView = lazy(() => import('./pages/ReportView').then((m) => ({ default: m.ReportView })));
-const Search = lazy(() => import('./pages/Search').then((m) => ({ default: m.Search })));
-const Settings = lazy(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
-const Todos = lazy(() => import('./pages/Todos').then((m) => ({ default: m.Todos })));
-const Projects = lazy(() => import("./pages/Projects").then((m) => ({ default: m.Projects })));
-const ProjectDetail = lazy(() => import("./pages/ProjectDetail").then((m) => ({ default: m.ProjectDetail })));
-const ProjectInbox = lazy(() => import("./pages/ProjectInbox").then((m) => ({ default: m.ProjectInbox })));
-const Memory = lazy(() => import("./pages/Memory").then((m) => ({ default: m.Memory })));
+const Chat = lazyWithRetry(() => import('./pages/Chat').then((m) => ({ default: m.Chat })));
+const Decisions = lazyWithRetry(() => import('./pages/Decisions').then((m) => ({ default: m.Decisions })));
+const Entries = lazyWithRetry(() => import('./pages/Entries').then((m) => ({ default: m.Entries })));
+const FeedDigests = lazyWithRetry(() => import('./pages/FeedDigests').then((m) => ({ default: m.FeedDigests })));
+const Highlights = lazyWithRetry(() => import('./pages/Highlights').then((m) => ({ default: m.Highlights })));
+const RecordDetail = lazyWithRetry(() => import('./pages/RecordDetail').then((m) => ({ default: m.RecordDetail })));
+const Records = lazyWithRetry(() => import('./pages/Records').then((m) => ({ default: m.Records })));
+const Reports = lazyWithRetry(() => import('./pages/Reports').then((m) => ({ default: m.Reports })));
+const ReportView = lazyWithRetry(() => import('./pages/ReportView').then((m) => ({ default: m.ReportView })));
+const Search = lazyWithRetry(() => import('./pages/Search').then((m) => ({ default: m.Search })));
+const Settings = lazyWithRetry(() => import('./pages/Settings').then((m) => ({ default: m.Settings })));
+const Todos = lazyWithRetry(() => import('./pages/Todos').then((m) => ({ default: m.Todos })));
+const Projects = lazyWithRetry(() => import("./pages/Projects").then((m) => ({ default: m.Projects })));
+const ProjectDetail = lazyWithRetry(() => import("./pages/ProjectDetail").then((m) => ({ default: m.ProjectDetail })));
+const ProjectInbox = lazyWithRetry(() => import("./pages/ProjectInbox").then((m) => ({ default: m.ProjectInbox })));
+const Memory = lazyWithRetry(() => import("./pages/Memory").then((m) => ({ default: m.Memory })));
 
 function PageLoader() {
   return (
@@ -32,6 +49,24 @@ function PageLoader() {
 
 function Loader({ appName }: { appName: AppName }) {
   return <Suspense fallback={<PageLoader />}><Dashboard appName={appName} /></Suspense>;
+}
+
+function ErrorFallback() {
+  const error = useRouteError() as Error;
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-base">
+      <div className="flex flex-col items-center gap-4 text-center">
+        <p className="text-lg font-semibold text-primary">Something went wrong</p>
+        <p className="text-sm text-secondary max-w-md">{error?.message ?? 'An unexpected error occurred.'}</p>
+        <button
+          className="rounded-md bg-accent px-4 py-2 text-sm text-white hover:opacity-90"
+          onClick={() => window.location.reload()}
+        >
+          Reload page
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function initialApp(): AppName {
@@ -63,6 +98,7 @@ export function App() {
   const router = useMemo(() => createBrowserRouter([
     {
       element: <Layout appName={appName} onAppChange={setAppName} gatewayStatus={gatewayStatus} />,
+      errorElement: <ErrorFallback />,
       children: [
         { index: true, element: <Loader appName={appName} /> },
         { path: 'entries', element: <SuspenseLoader><Entries appName={appName} /></SuspenseLoader> },

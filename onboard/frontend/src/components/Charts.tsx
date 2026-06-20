@@ -315,7 +315,7 @@ export function TagBarChart({ data }: { data: TagPoint[] }) {
   );
 
   return (
-    <div className="overflow-y-auto pr-1" style={{ maxHeight: 380 }}>
+    <div className="scrollbar-hover overflow-y-auto pr-1" style={{ maxHeight: 380 }}>
       <ResponsiveContainer width="100%" height={Math.max(chartH, 120)}>
         <BarChart
           data={sorted}

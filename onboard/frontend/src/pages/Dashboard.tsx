@@ -404,7 +404,7 @@ export function Dashboard({ appName }: { appName: AppName }) {
           <h3 className="text-[13px] font-medium text-text-secondary m-0 mb-3 shrink-0">Emotions</h3>
           <EmotionPieChart data={data.emotion_distribution} />
         </div>
-        <div className="p-4 rounded-lg border border-border bg-surface-1">
+        <div className="group p-4 rounded-lg border border-border bg-surface-1">
           <h3 className="text-[13px] font-medium text-text-secondary m-0 mb-3">Top Tags</h3>
           <TagBarChart data={data.top_tags} />
         </div>

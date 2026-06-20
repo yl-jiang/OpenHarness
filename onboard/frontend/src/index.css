@@ -51,6 +51,11 @@ body {
 ::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
 
+.scrollbar-hover::-webkit-scrollbar-thumb { background: transparent; }
+.scrollbar-hover::-webkit-scrollbar-thumb:hover { background: transparent; }
+.group:hover > .scrollbar-hover::-webkit-scrollbar-thumb { background: var(--color-border); }
+.group:hover > .scrollbar-hover::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+
 /* === Markdown rendered content === */
 .prose-dark {
   line-height: 1.75;
