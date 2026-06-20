@@ -64,7 +64,7 @@ export function Layout({ appName, gatewayStatus, onAppChange }: LayoutProps) {
             <h1 className="text-base font-medium text-text m-0">Onboard</h1>
             <span className="text-[11px] font-mono uppercase tracking-wider text-text-muted">{appName}</span>
           </div>
-          <SearchBar onSearch={(value) => navigate(`/search?q=${encodeURIComponent(value)}`)} globalShortcut />
+          <SearchBar key={location.pathname} onSearch={(value) => navigate(`/search?q=${encodeURIComponent(value)}`)} globalShortcut />
           <StatusBadge status={gatewayStatus} />
         </header>
         <section id="main-content" className={`flex-1 w-full content-area ${isFullBleed ? '' : isDashboard ? 'px-4 sm:px-8 py-6' : 'max-w-[1320px] mx-auto px-4 sm:px-8 py-6'}`}>
