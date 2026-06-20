@@ -1,6 +1,8 @@
 # /goal 实施计划
 
 > 基于 `docs/goal-design.md`，分阶段交付 goal 驱动执行框架。
+>
+> **本计划的所有 API 假设已对照 OpenHarness 源码验证**：`engine/query_engine.py`、`engine/turn_stages.py`、`engine/types.py`、`engine/query.py`、`tools/base.py`、`commands/core.py`、`commands/registry.py`、`commands/skills.py`、`services/session_backend.py`、`permissions/checker.py`、`permissions/modes.py`、`ui/runtime.py`、`frontend/terminal/src/`。
 
 ---
 
@@ -29,21 +31,37 @@ src/openharness/goal/
 #### `goal/state.py`
 
 ```python
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import Literal
+
+@dataclass
+class GoalBudgetLimits:
+    turn_budget: int | None = None
+    token_budget: int | None = None
+    wall_clock_budget_ms: int | None = None
+
 @dataclass
 class GoalState:
+    goal_id: str
     objective: str
     completion_criterion: str | None = None
-    status: str = "active"          # "active" | "paused" | "blocked" | "completed" | "cancelled"
-    reason: str | None = None
-    last_actor: str | None = None   # 新增：记录最近一次状态变更的发起方
-    created_at: float = 0.0         # time.monotonic()
+    # 仅 3 个 durable 状态。complete 是瞬态（mark_complete 后立即清除，不落盘）；
+    # cancel 是删除动作，不是状态。绝不出现 "completed" / "cancelled" 这两个值。
+    status: Literal["active", "paused", "blocked"] = "active"
+    last_actor: str | None = None   # "user" | "model" | "runtime" | "system"
     turns_used: int = 0
     tokens_used: int = 0
     wall_clock_ms: int = 0
-    budget_limits: GoalBudgetLimits | None = None
+    wall_clock_resumed_at: float | None = None   # epoch ms
+    budget_limits: GoalBudgetLimits = field(default_factory=GoalBudgetLimits)
+    terminal_reason: str | None = None
 
 class GoalMode:
-    """单目标生命周期管理器。"""
+    """单目标生命周期管理器。状态序列化到传入的 tool_metadata["goal_state"]。"""
+
+    STATE_KEY = "goal_state"      # 不带 _ 前缀！见设计 §8.1
+    MODE_KEY = "goal_mode"        # 运行时实例引用的 key
 
     def __init__(self, tool_metadata: dict[str, object]) -> None:
         self._metadata = tool_metadata
@@ -72,28 +90,45 @@ class GoalMode:
 
     # --- Budget ---
     def set_budget_limits(self, limits: GoalBudgetLimits) -> GoalSnapshot: ...
+
+    # --- Session 恢复 ---
+    def normalize_after_replay(self) -> None: ...
+
+    # --- Persistence ---
+    def _persist(self) -> None:
+        """序列化 self._state 到 self._metadata[self.STATE_KEY]；None 时删除 key。"""
+        if self._state is None:
+            self._metadata.pop(self.STATE_KEY, None)
+        else:
+            self._metadata[self.STATE_KEY] = self._serialize(self._state)
+
+    def _restore_from_metadata(self) -> GoalState | None: ...
 ```
 
-**持久化方式**：每次状态变更后调用 `_persist()`，将 `GoalState` 序列化到 `tool_metadata["_goal_state"]`。
+**持久化方式**：每次状态变更后调用 `_persist()`，把 `GoalState` 序列化到 `tool_metadata["goal_state"]`。
 
-> **同步 vs 异步方法的设计权衡**：kimi-code 使用 async 方法是因为需要做 append-only record logging 和 event emitting（可能涉及异步 I/O）。OpenHarness 使用 `tool_metadata` 内存字典存储，所以同步方法可行。代价是放弃了 kimi-code 的 record replay 能力——状态只能从最后一次 `tool_metadata` 快照恢复，而非从完整操作日志重建。
+> **同步方法的设计权衡**：kimi-code 用 async 方法是因为要做 append-only record logging 和 event emitting（异步 I/O）。OpenHarness 用 `tool_metadata` 内存字典，同步方法可行。代价是放弃 record replay 能力——状态只能从最后一次 `tool_metadata` 快照恢复。
+
+> **⚠️ status 取值红线**：`GoalState.status` 永远只有 `"active" | "paused" | "blocked"`。`mark_complete` 内部临时置 `complete` 后**立即清除记录**（`_state = None` + `_persist()`），`complete` 绝不落盘。`cancel_goal` 直接 `_state = None`。前版计划把 `"completed"`/`"cancelled"` 写进 status 注释，已删除。
 
 #### `goal/injection.py`
 
 ```python
 def escape_untrusted_text(text: str) -> str:
-    """XML-escape objective/completion_criterion to prevent breaking out of <untrusted_objective> tags."""
+    """与 kimi-code escapeUntrustedText 一致。"""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 def build_goal_reminder(snapshot: GoalSnapshot) -> str | None:
-    """根据 goal 状态生成注入文本。active 返回完整提醒，paused/blocked 返回轻量提示。
-    对 objective 和 completion_criterion 使用 escape_untrusted_text() 进行转义。"""
+    """根据 goal 状态生成注入文本。
+    - active: 完整提醒（含 budget guidance）
+    - paused: 轻量提示（含 completion_criterion）
+    - blocked: 轻量提示（含 completion_criterion —— 与 kimi-code buildBlockedNote 一致）
+    对 objective 和 completion_criterion 用 escape_untrusted_text() 转义。"""
 
 def build_completion_summary_prompt(snapshot: GoalSnapshot) -> str:
     """目标完成后，注入让模型生成最终摘要的提示。"""
 
 def build_blocked_reason_prompt(snapshot: GoalSnapshot) -> str:
-
     """目标受阻后，注入让模型解释阻塞原因的提示。"""
 
 GOAL_CANCELLED_REMINDER = (
@@ -103,20 +138,20 @@ GOAL_CANCELLED_REMINDER = (
 )
 ```
 
+> **不实现 `<system-reminder>` 标签包裹**：见设计 §5.4——OpenHarness 无 system-reminder 机制，注入纯文本。如目标模型验证后确认识别该标签，再在 `build_goal_reminder` 末尾按需包裹，但**不写入计划为既定行为**。
+
 #### `goal/budget.py`
 
 ```python
 def normalize_budget_input(value: float, unit: str) -> tuple[int | float, str]:
-    """标准化 budget 输入值。
-    - turns/tokens: max(1, round(value))
-    - 时间单位: 原值保留（后续由 budget_limits_from_input 做范围校验）
-    """
+    """- turns/tokens: max(1, round(value))
+       - 时间单位: 原值保留（由 budget_limits_from_input 做范围校验）"""
 
 def budget_limits_from_input(value: float, unit: str) -> GoalBudgetLimits | None:
-    """从工具参数构造 GoalBudgetLimits，包含合理性校验。
-    - 时间 budget 必须 >= 1 秒 且 <= 24 小时，否则拒绝并返回 None
+    """从工具参数构造 GoalBudgetLimits，含合理性校验。
+    - 时间 budget 必须 >= 1 秒 且 <= 24 小时，否则返回 None
     - turns/tokens budget 做 max(1, round(value)) 标准化
-    返回 None 时，调用方应报错 "Goal budget not set: {value} {unit} is not a reasonable goal budget."
+    返回 None 时，调用方报错 "Goal budget not set: {value} {unit} is not a reasonable goal budget."
     """
 ```
 
@@ -130,9 +165,9 @@ src/openharness/tools/
 └── set_goal_budget_tool.py
 ```
 
-每个工具继承 `BaseTool`。**GoalMode 作为 QueryEngine 的一等属性**（而非藏在 generic metadata dict 中），工具通过 QueryEngine 引用或 `tool_metadata` 中专用的 `"goal_mode"` key 访问 GoalMode 实例。
+每个工具继承 `BaseTool`（`tools/base.py:41`）。**工具经 `ToolExecutionContext.metadata["goal_mode"]` 访问 GoalMode 实例**——这是 OpenHarness 无状态工具架构下的唯一可行路径（见设计 §4）。
 
-> **设计理由**：GoalMode 是一个跨切面关注点，多个组件（QueryEngine、命令处理器、工具）都需要访问它。将它作为 QueryEngine 的一等属性而非埋在 generic `metadata` dict 中，使得依赖关系显式化、访问路径清晰，并避免与其它 metadata key 冲突。
+> **为什么不用 `context.engine.goal_mode`**：`ToolExecutionContext`（`tools/base.py:22-29`）只有 `cwd/metadata/hook_executor/approval_coordinator/spawn_lock`，**没有 `engine` 字段**。`query.py:836-848` 构造 context 时把 `tool_metadata` 展开进 `metadata`，所以 GoalMode 实例放进 `tool_metadata["goal_mode"]` 后，工具能经 `context.metadata["goal_mode"]` 拿到。
 
 #### `create_goal_tool.py`
 
@@ -146,7 +181,9 @@ class CreateGoalTool(BaseTool):
         replace: bool = False
 
     async def execute(self, arguments: InputModel, context: ToolExecutionContext) -> ToolResult:
-        goal_mode: GoalMode = context.engine.goal_mode   # 通过 QueryEngine 一等属性访问
+        goal_mode = context.metadata.get("goal_mode")
+        if goal_mode is None:
+            return ToolResult(is_error=True, output="Goal mode is not available.")
         snapshot = goal_mode.create_goal(
             arguments.objective,
             completion_criterion=arguments.completion_criterion,
@@ -154,295 +191,308 @@ class CreateGoalTool(BaseTool):
         )
         return ToolResult(output=json.dumps({"goal": snapshot.to_dict()}, indent=2))
 
-    def to_api_schema(self) -> dict:
-        return {
-            "name": "create_goal",
-            "description": (
-                "Create a durable, structured goal that the runtime will pursue across "
-                "multiple turns. Call only when the user explicitly asks to start a goal "
-                "or work autonomously toward an outcome. Do NOT create a goal for greetings, "
-                "ordinary questions, or vague requests."
-            ),
-            "parameters": { ... },
-        }
+    def to_api_schema(self) -> dict: ...   # 手写 LLM-friendly schema（见 base.py:67 注释）
 ```
 
-#### `update_goal_tool.py`
+#### `update_goal_tool.py` —— 停止信号走 ToolResult.metadata
 
 ```python
 class UpdateGoalTool(BaseTool):
     name = "update_goal"
 
     class InputModel(BaseModel):
-        status: Literal["active", "paused", "completed", "blocked"]
+        status: Literal["active", "complete", "paused", "blocked"]   # complete 无 d
         reason: str | None = None
 
     async def execute(self, arguments: InputModel, context: ToolExecutionContext) -> ToolResult:
-        goal_mode: GoalMode = context.engine.goal_mode
+        goal_mode = context.metadata.get("goal_mode")
+        if goal_mode is None:
+            return ToolResult(is_error=True, output="No current goal.")
 
-        if arguments.status == "completed":
-            snapshot = goal_mode.mark_complete(reason=arguments.reason)
-            # 结束当前 turn 和 batch + 注入 completion summary prompt
-            reminder = build_completion_summary_prompt(snapshot)
-            context.engine.inject_user_message(reminder)
-            return ToolResult(
-                output=json.dumps({"goal": snapshot.to_dict()}, indent=2),
-                stop_turn=True,
-                stop_batch=True,
-            )
+        # complete / blocked / paused 需要停止当前 turn；active 继续。
+        # 停止信号不通过新增 ToolResult 字段传递，而是塞进 metadata dict
+        # （ToolResult.metadata 已用于 noop/doom-loop 等元数据，见 query.py:685）。
+        # turn loop 在 post_tool_stage 检查 metadata["goal_stop_turn"]。
+        stop_meta = {"goal_stop_turn": True}
+
+        if arguments.status == "complete":
+            snapshot = goal_mode.mark_complete(reason=arguments.reason, actor="model")
+            # mark_complete 已 emit completion 事件并清除记录；
+            # 注入摘要提示让模型写最终回复
+            if snapshot is not None:
+                context.metadata["__pending_injection__"] = build_completion_summary_prompt(snapshot)
+            return ToolResult(output="Goal marked complete.", metadata=stop_meta)
 
         if arguments.status == "blocked":
-            snapshot = goal_mode.mark_blocked(reason=arguments.reason)
-            # 结束当前 turn 和 batch + 注入 blocked reason prompt
-            reminder = build_blocked_reason_prompt(snapshot)
-            context.engine.inject_user_message(reminder)
-            return ToolResult(
-                output=json.dumps({"goal": snapshot.to_dict()}, indent=2),
-                stop_turn=True,
-                stop_batch=True,
-            )
+            snapshot = goal_mode.mark_blocked(reason=arguments.reason, actor="model")
+            if snapshot is not None:
+                context.metadata["__pending_injection__"] = build_blocked_reason_prompt(snapshot)
+            return ToolResult(output="Goal marked blocked.", metadata=stop_meta)
 
         if arguments.status == "paused":
-            snapshot = goal_mode.pause_goal(reason=arguments.reason)
-            return ToolResult(
-                output=json.dumps({"goal": snapshot.to_dict()}, indent=2),
-                stop_turn=True,
-                stop_batch=True,
-            )
+            goal_mode.pause_goal(reason=arguments.reason, actor="model")
+            return ToolResult(output="Goal paused.", metadata=stop_meta)
 
-        # active → 无 stop flag
-        snapshot = goal_mode.get_active_goal()
-        return ToolResult(output=json.dumps({"goal": snapshot.to_dict()}, indent=2))
+        # active → resume，无停止信号
+        goal_mode.resume_goal(actor="model")
+        return ToolResult(output="Goal resumed.")
 ```
 
-> **ToolResult 扩展**：为支持 goal 工具控制 tool loop 行为，在 `ToolResult` 中新增 `stop_turn` 和 `stop_batch` 字段。engine 的 tool loop（`run_query` / `query.py`）需要在每次工具执行后检查这些 flag，并在 `stop_turn=True` 或 `stop_batch=True` 时终止当前 tool loop。
+> **关于 `__pending_injection__`**：completion/blocked 摘要提示需要在 tool result 之后注入成一条 user message（让模型基于它写最终回复）。但工具内直接调 `engine.inject_user_message` 拿不到 engine。方案：把待注入文本暂存进 `context.metadata`（这是 tool_metadata 的展开），由 `_drive_goal` 循环或 `post_tool_stage` 在 turn 结束后取出并注入。详见 Phase 2.2。
+>
+> **替代方案（更简洁，推荐）**：不暂存，而是让 `_drive_goal` 在每轮结束检测到 status 变为 `complete`/`blocked` 时，自己调 `build_completion_summary_prompt`/`build_blocked_reason_prompt` 注入。这样工具只负责改状态 + 返回 stop 信号，注入逻辑集中在 driver。Phase 2 采用此方案。
 
-#### `ToolResult` 新增字段
-
-```python
-@dataclass(frozen=True)
-class ToolResult:
-    output: str
-    is_error: bool = False
-    metadata: dict[str, Any] = field(default_factory=dict)
-    stop_turn: bool = False       # 新增：结束当前 turn（不再运行 tool loop 的后续 step）
-    stop_batch: bool = False      # 新增：当前 batch 后不再执行更多 tool call
-```
-
-#### `set_goal_budget_tool.py`
+#### `get_goal_tool.py` / `set_goal_budget_tool.py`
 
 ```python
+class GetGoalTool(BaseTool):
+    name = "get_goal"
+    class InputModel(BaseModel):
+        pass
+    async def execute(self, arguments, context: ToolExecutionContext) -> ToolResult:
+        goal_mode = context.metadata.get("goal_mode")
+        snapshot = goal_mode.get_goal() if goal_mode else None
+        return ToolResult(output=json.dumps({"goal": snapshot.to_dict() if snapshot else None}, indent=2))
+
 class SetGoalBudgetTool(BaseTool):
     name = "set_goal_budget"
-
     class InputModel(BaseModel):
-        value: float          # 正数
-        unit: Literal["turns", "tokens", "milliseconds", "seconds", "minutes", "hours"]
-
-    async def execute(self, arguments: InputModel, context: ToolExecutionContext) -> ToolResult:
-        goal_mode: GoalMode = context.engine.goal_mode
-
+        value: float
+        unit: Literal["turns", "tokens", "seconds", "minutes", "hours"]
+    async def execute(self, arguments, context: ToolExecutionContext) -> ToolResult:
+        goal_mode = context.metadata.get("goal_mode")
+        if goal_mode is None or goal_mode.get_goal() is None:
+            return ToolResult(is_error=True, output="No current goal.")
         limits = budget_limits_from_input(arguments.value, arguments.unit)
         if limits is None:
-            return ToolResult(
-                is_error=True,
-                output=f"Goal budget not set: {arguments.value} {arguments.unit} is not a reasonable goal budget.",
-            )
-
+            return ToolResult(is_error=True,
+                output=f"Goal budget not set: {arguments.value} {arguments.unit} is not a reasonable goal budget.")
         snapshot = goal_mode.set_budget_limits(limits)
         return ToolResult(output=json.dumps({"goal": snapshot.to_dict()}, indent=2))
 ```
 
-### 1.4 测试
+### 1.4 ⚠️ 不新增 `ToolResult.stop_turn` / `stop_batch` 字段
+
+> **前版计划要给 `ToolResult` 加 `stop_turn`/`stop_batch` 字段——本计划撤销这个改动**。理由：
+>
+> 1. `ToolResult` 是 `@dataclass(frozen=True)`（`tools/base.py:33`），所有工具共用。为 goal 一个特性给它加两个语义模糊的字段，污染面太大。
+> 2. OpenHarness 的 tool loop 不是「逐个执行可中断」的简单循环，而是 `turn_stages.py` 的 8-stage 流水线，且 `tool_execution_stage`（`turn_stages.py:594-656`）用 `asyncio.gather` **并行执行同一批所有 tool_call**。所谓 `stop_batch`（停止同批剩余工具）在这种并行模型里没有自然的落点——除非把并行改串行，那是大重构。
+> 3. 现有 `ToolResult.metadata` dict 已经是传递元数据的标准通道（`query.py:685` 的 noop 标记 `result_metadata={"noop": True}` 就是先例）。
+>
+> **改用**：`ToolResult.metadata["goal_stop_turn"] = True`。`post_tool_stage`（`turn_stages.py:663`）读 tool result 的 `result_metadata`（即 `raw_result.metadata`，见 `query.py:883-884` 透传），发现该标志则 `state.action = TurnAction.STOP`。这是最小改动。
+
+### 1.5 测试
 
 ```
 tests/
-├── test_goal_state.py        # GoalMode 状态机单元测试
+├── test_goal_state.py
 │   - test_create_goal
 │   - test_create_goal_replaces_existing
 │   - test_create_goal_empty_objective_raises
 │   - test_pause_resume_cycle
-│   - test_cancel_clears_state
-│   - test_mark_complete_clears_state
+│   - test_cancel_clears_state (status 永不为 "cancelled"，记录直接删除)
+│   - test_mark_complete_clears_state (status 永不为 "completed"，记录直接删除)
 │   - test_mark_blocked_stays_resumable
 │   - test_budget_over_budget
-│   - test_normalize_after_replay
-│   - test_persist_and_restore
+│   - test_normalize_after_replay (active → paused)
+│   - test_persist_and_restore (用 "goal_state" key，非 "_goal_state")
 │
-├── test_goal_injection.py    # Reminder 生成测试
-│   - test_active_reminder_format
-│   - test_paused_note_format
-│   - test_blocked_note_format
+├── test_goal_injection.py
+│   - test_active_reminder_format (含 budget guidance，used/total 阈值)
+│   - test_paused_note_format (含 completion_criterion)
+│   - test_blocked_note_format (含 completion_criterion —— 与 kimi-code 一致)
 │   - test_untrusted_objective_escaping
+│   - test_usage_fraction_uses_used_over_total  # 验证 used/budget，不是 remaining/budget
 │
-├── test_goal_tools.py        # 工具执行测试
+├── test_goal_tools.py
 │   - test_create_goal_tool
-│   - test_update_goal_tool_complete       # 验证 stop_turn=True, stop_batch=True
-│   - test_update_goal_tool_blocked        # 验证 stop_turn=True, stop_batch=True
-│   - test_update_goal_tool_paused         # 验证 stop_turn=True, stop_batch=True
-│   - test_update_goal_tool_active         # 验证无 stop flag
-│   - test_get_goal_tool
+│   - test_update_goal_tool_complete_sets_goal_stop_turn
+│   - test_update_goal_tool_blocked_sets_goal_stop_turn
+│   - test_update_goal_tool_paused_sets_goal_stop_turn
+│   - test_update_goal_tool_active_no_stop_meta
+│   - test_get_goal_tool (无 goal 返回 {goal: null})
 │   - test_set_goal_budget_tool_time_reasonable
-│   - test_set_goal_budget_tool_time_unreasonable     # e.g. 0.5 seconds or 100000 hours
-│   - test_set_goal_budget_tool_turns_normalized      # e.g. 0.3 turns → normalized to 1
-
-├── test_goal_budget.py       # Budget 辅助函数测试
+│   - test_set_goal_budget_tool_time_unreasonable
+│   - test_set_goal_budget_tool_turns_normalized
+│   - test_tools_access_goal_mode_via_context_metadata  # 关键：验证 context.metadata["goal_mode"]
+│
+├── test_goal_budget.py
 │   - test_normalize_budget_input_turns
 │   - test_normalize_budget_input_tokens
 │   - test_budget_limits_from_input_time_valid
 │   - test_budget_limits_from_input_time_out_of_range
 ```
 
-### 1.5 验证标准
+### 1.6 验证标准
 
 - [ ] `uv run pytest -q tests/test_goal_state.py` 全部通过
 - [ ] `uv run pytest -q tests/test_goal_tools.py` 全部通过
 - [ ] `uv run pytest -q tests/test_goal_budget.py` 全部通过
-- [ ] `uv run ruff check src/openharness/goal src/openharness/tools/create_goal_tool.py ...` 无报错
+- [ ] `uv run ruff check src/openharness/goal src/openharness/tools/*goal*.py` 无报错
+- [ ] 确认 `GoalState.status` 取值仅 `active/paused/blocked`（grep 不应出现 completed/cancelled 作为 status）
 
 ---
 
-## Phase 2：QueryEngine 集成 — drive_goal 循环
+## Phase 2：QueryEngine 集成 — _drive_goal 循环
 
 **目标**：`/goal` 命令创建目标后，QueryEngine 自动驱动多轮执行。
 
-### 2.1 GoalMode 访问模式
+### 2.1 GoalMode 注入
 
-GoalMode 作为 QueryEngine 的一等属性：
+GoalMode 实例放进 `tool_metadata`，在 `cli.py` 初始化 QueryEngine 时创建并注入：
 
 ```python
-class QueryEngine:
-    def __init__(self, ..., goal_mode: GoalMode | None = None):
-        ...
-        self._goal_mode = goal_mode  # 一等属性，而非 metadata dict 中的值
-
-    @property
-    def goal_mode(self) -> GoalMode | None:
-        return self._goal_mode
+# cli.py（或 QueryEngine 构造处）
+tool_metadata = {...}
+goal_mode = GoalMode(tool_metadata)
+tool_metadata[GoalMode.MODE_KEY] = goal_mode   # "goal_mode" —— 运行时引用
+engine = QueryEngine(..., tool_metadata=tool_metadata)
 ```
 
-工具访问 GoalMode 的两种方式：
-1. **推荐：通过 QueryEngine 一等属性** — `context.engine.goal_mode`
-2. **备选：通过 tool_metadata 专用 key** — `tool_metadata["goal_mode"]` 持有 GoalMode 实例引用
-
-推荐方式 1，因为它使依赖关系显式化且避免 metadata key 冲突。两种方式在功能上等效（都引用同一个 GoalMode 实例）。
+> **不在 `QueryEngine.__init__` 加 `goal_mode` 参数**：前版计划加了一等属性 `self._goal_mode`，但工具拿不到 engine，这个属性对工具无用。统一走 `tool_metadata["goal_mode"]`，driver 和工具都从同一处取。
 
 ### 2.2 修改文件
 
-#### `engine/query_engine.py`
+#### `engine/types.py` —— 新增 GOAL_STATE 枚举（关键）
 
 ```python
-class QueryEngine:
-    def __init__(self, ..., goal_mode: GoalMode | None = None):
-        ...
-        self._goal_mode = goal_mode  # 一等属性
+class ToolMetadataKey(str, Enum):
+    ...
+    GOAL_STATE = "goal_state"     # 新增，不带 _ 前缀
 
-    @property
-    def goal_mode(self) -> GoalMode | None:
-        return self._goal_mode
-
-    async def submit_message(self, prompt: str) -> AsyncIterator[StreamEvent]:
-        ...
-        # 新增：如果 goal 是 active，路由到 drive_goal
-        goal = self._goal_mode.get_goal() if self._goal_mode else None
-        if goal is not None and goal.status == "active":
-            async for event in self._drive_goal(prompt):
-                yield event
-            return
-        # 否则走原有逻辑
-        async for event in self._stream_query_with_guards(...):
-            yield event
-
-    async def _drive_goal(self, first_input: str) -> AsyncIterator[StreamEvent]:
-        """多轮目标驱动循环。
-
-        首轮：goal reminder 通过 inject_user_message 单独注入（在用户原始消息之前），
-        然后 submit_message 处理用户原始 prompt。
-        续轮：goal reminder + continuation prompt 合并为单个 user message 提交，
-        确保提醒和续行指令作为一个连贯的 turn 一起到达模型。
-        """
-        turn_input = first_input
-        is_first_turn = True
-
-        while True:
-            goal = self._goal_mode.get_goal()
-            if goal and goal.status == "active" and goal.budget.over_budget:
-                self._goal_mode.mark_blocked(reason="A configured budget was reached")
-                yield GoalUpdatedEvent(
-                    snapshot=self._goal_mode.get_goal(),
-                    change=GoalChange(kind="lifecycle", status="blocked", reason="budget reached"),
-                )
-                return
-
-            self._goal_mode.increment_turn()
-
-            if is_first_turn:
-                # 首轮：goal reminder 单独注入（作为独立的 user message 添加到会话历史），
-                # 然后 submit_message 处理用户的原始 prompt。
-                reminder = build_goal_reminder(self._goal_mode.get_goal())
-                if reminder:
-                    self.inject_user_message(reminder)
-                async for event in self._stream_query_with_guards(turn_input):
-                    yield event
-                    if isinstance(event, AssistantTurnComplete) and self._goal_mode:
-                        total_tokens = event.usage.input_tokens + event.usage.output_tokens
-                        self._goal_mode.record_token_usage(total_tokens)
-                is_first_turn = False
-            else:
-                # 续轮：goal reminder + continuation prompt 合并为单个 user message。
-                # 确保提醒和续行指令一起到达模型，作为一个连贯的 turn。
-                reminder = build_goal_reminder(self._goal_mode.get_goal())
-                combined_input = f"{reminder}\n\n{GOAL_CONTINUATION_PROMPT}" if reminder else GOAL_CONTINUATION_PROMPT
-                async for event in self._stream_query_with_guards(combined_input):
-                    yield event
-                    if isinstance(event, AssistantTurnComplete) and self._goal_mode:
-                        total_tokens = event.usage.input_tokens + event.usage.output_tokens
-                        self._goal_mode.record_token_usage(total_tokens)
-
-            # 检查结果
-            if self._turn_was_cancelled:
-                self._goal_mode.pause_goal(reason="Paused after interruption", actor="runtime")
-                yield GoalUpdatedEvent(
-                    snapshot=self._goal_mode.get_goal(),
-                    change=GoalChange(kind="lifecycle", status="paused", reason="interrupted", actor="runtime"),
-                )
-                return
-            if self._turn_failed:
-                self._goal_mode.pause_goal(reason=self._failure_reason, actor="runtime")
-                yield GoalUpdatedEvent(
-                    snapshot=self._goal_mode.get_goal(),
-                    change=GoalChange(kind="lifecycle", status="paused", reason=self._failure_reason, actor="runtime"),
-                )
-                return
-
-            goal = self._goal_mode.get_goal()
-            if goal is None or goal.status != "active":
-                return  # 模型通过 UpdateGoalTool 决定停止
-
-            if goal.budget.over_budget:
-                self._goal_mode.mark_blocked(reason="A configured budget was reached")
-                yield GoalUpdatedEvent(
-                    snapshot=self._goal_mode.get_goal(),
-                    change=GoalChange(kind="lifecycle", status="blocked", reason="budget reached"),
-                )
-                return
-
-            turn_input = None  # 续轮不再需要外部 input
+    @classmethod
+    def all_persisted_keys(cls) -> tuple["ToolMetadataKey", ...]:
+        return (
+            ...,
+            cls.GOAL_STATE,       # 加入持久化白名单
+        )
+    # ⚠️ 不要加进 turn_checkpoint_keys() —— goal 状态是跨 turn 的，不应随单 turn 取消回滚
 ```
 
-#### `engine/stream_events.py`
+> 这是前版完全遗漏的改动。没有它，`_goal_state`/`goal_state` 既不会持久化（不在白名单），`_goal_state` 还会被回滚（在 turn_checkpoint_keys，因 `_` 前缀）。必须用无下划线的 `GOAL_STATE` + 加进 `all_persisted_keys` + 不加进 `turn_checkpoint_keys`。
 
-替换 `GoalStatusEvent` 为统一的 `GoalUpdatedEvent`（匹配 kimi-code 模式）：
+#### `services/session_backend.py` + `services/session_storage.py` —— 扩展快照存储 tool_metadata
+
+当前 `save_snapshot`（`session_backend.py:72-81`）只存 `model/system_prompt/messages/usage`。新增 `tool_metadata` 参数，序列化 `ToolMetadataKey.all_persisted_keys()` 对应子集：
+
+```python
+def save_snapshot(self, *, cwd, model, system_prompt, messages, usage,
+                  tool_metadata: dict | None = None) -> Path:
+    ...
+    if tool_metadata:
+        persisted = {
+            key.value: tool_metadata[key.value]
+            for key in ToolMetadataKey.all_persisted_keys()
+            if key.value in tool_metadata
+        }
+        snapshot["tool_metadata"] = persisted
+
+def load_by_id(...) / load_latest(...):
+    ...  # 恢复时把 snapshot["tool_metadata"] 回填
+```
+
+> 前版文件变更清单漏了这两个文件，必须补上。
+
+#### `engine/query_engine.py` —— submit_message 分支路由到 _drive_goal
+
+`_drive_goal` 作为 `submit_message` 的内部分支，复用其 hook 执行与 memory 收尾逻辑（`query_engine.py:678-718`）：
+
+```python
+async def submit_message(self, prompt: str | ConversationMessage) -> AsyncIterator[StreamEvent]:
+    # ... 现有的 append user message、hook、构造 context 逻辑 ...
+    goal_mode = self._tool_metadata.get("goal_mode")
+    goal = goal_mode.get_goal() if goal_mode else None
+
+    if goal is not None and goal.status == "active":
+        # 路由到 goal 驱动循环（复用同一 QueryContext）
+        async for event in self._drive_goal(context=context, query_messages=query_messages,
+                                            first_input=user_message.text):
+            yield event
+    else:
+        async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):
+            yield event
+    # ... finally 的 memory 收尾（_update_session_memory / _schedule_extract_memories）保持不变 ...
+
+async def _drive_goal(self, *, context, query_messages, first_input: str) -> AsyncIterator[StreamEvent]:
+    """多轮目标驱动循环。见设计 §5.2。"""
+    goal_mode = self._tool_metadata["goal_mode"]
+    is_first_turn = True
+
+    while True:
+        # 1. 预算前置检查
+        goal = goal_mode.get_goal()
+        if goal and goal.status == "active" and goal.budget.over_budget:
+            goal_mode.mark_blocked(reason="A configured budget was reached", actor="runtime")
+            yield GoalUpdatedEvent(snapshot=goal_mode.get_goal(),
+                                   change=GoalChange(kind="lifecycle", status="blocked",
+                                                     reason="budget reached", actor="runtime"))
+            return
+
+        # 2. 计入统计
+        goal_mode.increment_turn()
+
+        # 3. 注入 reminder + continuation（首轮分开，续轮合并）
+        if is_first_turn:
+            reminder = build_goal_reminder(goal_mode.get_goal())
+            if reminder:
+                self.inject_user_message(reminder)   # 合并到尾部 user msg
+            # first_input 已在 submit_message 开头 append，这里不再重复
+        else:
+            reminder = build_goal_reminder(goal_mode.get_goal())
+            combined = f"{reminder}\n\n{GOAL_CONTINUATION_PROMPT}" if reminder else GOAL_CONTINUATION_PROMPT
+            query_messages.append(ConversationMessage.from_user_text(combined))
+            self._messages.append(ConversationMessage.from_user_text(combined))
+
+        # 4. 运行一轮（拦截 AssistantTurnComplete 统计 token）
+        local_messages = list(query_messages)
+        async for event in self._stream_query_with_guards(context=context, query_messages=local_messages):
+            yield event
+            if isinstance(event, AssistantTurnComplete):
+                goal_mode.record_token_usage(event.usage.total_tokens)
+        query_messages = local_messages
+        is_first_turn = False
+
+        # 5. 中断检测 —— 捕获 CancelledError（Ctrl+C 由 runtime.py 传导）
+        #    注意：_stream_query_with_guards 的 auto-continue guard 不暴露中断标志，
+        #    需在 try/except asyncio.CancelledError 中包裹上面的 async for。
+        # 6. 检查 status 变化（UpdateGoal 工具改的）
+        goal = goal_mode.get_goal()
+        if goal is None:
+            return  # complete（已清除）或 cancel
+        if goal.status == "complete":
+            # 注入摘要提示，让模型写最终回复（这一轮不进 drive_goal 循环）
+            self.inject_user_message(build_completion_summary_prompt(goal))
+            # 跑最后一轮让模型写摘要，然后 clear
+            async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):
+                yield event
+            goal_mode._clear_internal()
+            yield GoalUpdatedEvent(snapshot=None, change=None)
+            return
+        if goal.status != "active":
+            return  # paused / blocked，模型决定停止
+
+        # 7. 预算后置检查
+        if goal.budget.over_budget:
+            goal_mode.mark_blocked(reason="A configured budget was reached", actor="runtime")
+            yield GoalUpdatedEvent(snapshot=goal_mode.get_goal(),
+                                   change=GoalChange(kind="lifecycle", status="blocked",
+                                                     reason="budget reached", actor="runtime"))
+            return
+```
+
+> **token 统计**：从 `AssistantTurnComplete.usage`（`stream_events.py:52-56`）取，`event.usage.total_tokens`。前版写 `input_tokens + output_tokens` 也可，但 `total_tokens` 更直接。
+
+#### `engine/stream_events.py` —— 新增 GoalUpdatedEvent
 
 ```python
 @dataclass(frozen=True)
 class GoalUpdatedEvent(StreamEvent):
-    snapshot: GoalSnapshot | None   # 当前 goal 状态（null when cleared）
-    change: GoalChange | None       # 变更描述
+    snapshot: GoalSnapshot | None
+    change: GoalChange | None
 
 @dataclass(frozen=True)
 class GoalChange:
-    kind: Literal["lifecycle", "completion", "created"]
+    kind: Literal["lifecycle", "completion"]   # 不含 "created" —— 与 kimi-code 对齐
     status: str | None = None
     reason: str | None = None
     actor: str | None = None
@@ -453,79 +503,81 @@ class GoalChangeStats:
     turns_used: int
     tokens_used: int
     wall_clock_ms: int
+
+# 更新 StreamEvent 联合类型，加入 GoalUpdatedEvent
+StreamEvent = (
+    AssistantTextDelta | ReasoningDelta | AssistantTurnComplete
+    | ToolExecutionStarted | ToolExecutionCompleted | ErrorEvent
+    | StatusEvent | CompactProgressEvent | StreamFinished
+    | GoalUpdatedEvent
+)
 ```
 
-> **设计理由**：用单一 `GoalUpdatedEvent` 替代原先 6-kind 的 `GoalStatusEvent`。TUI 只需监听一种事件类型，通过 `change.kind` 和 `change.status` 区分具体行为，更统一、更易处理。
-
-### 2.3 工具注册
-
-**始终注册 goal 工具**（而非仅在 goal_mode 存在时注册）。工具自行处理无 goal 的情况：
+#### `engine/turn_stages.py` —— post_tool_stage 读取 goal_stop_turn
 
 ```python
-# 在 build_tool_registry() 中——无条件注册
+async def post_tool_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, UsageSnapshot | None]]:
+    ...  # 现有逻辑 ...
+
+    # 新增：检查 goal 工具的停止信号
+    for result in state.tool_results:
+        meta = getattr(result, "result_metadata", None) or {}
+        if isinstance(meta, dict) and meta.get("goal_stop_turn"):
+            state.action = TurnAction.STOP
+            return
+```
+
+> 注意 `tool_results` 是 `ToolResultBlock` 列表，其 `result_metadata`（`turn_stages.py:571,619,653` 透传自 `raw_result.metadata`）携带了 `goal_stop_turn`。检查位置在 `post_tool_stage`（结果 append 之后、下一轮之前）最干净。
+
+#### `engine/query.py` —— goal_gate（可选，仿 done_gate）
+
+若要强制 `UpdateGoal` 单独调用（避免与其它工具混用造成语义混乱），可仿 `done_gate_stage`（`turn_stages.py:544`）加一个 `goal_gate_stage`，把混用的 `UpdateGoal` 拒绝为 error。**第一版可不做**，先依赖 post_tool_stage 的 STOP 信号 + driver 的 status 检查。
+
+### 2.3 工具注册 —— 始终注册
+
+```python
+# build_tool_registry() 无条件注册
 registry.register(CreateGoalTool())
 registry.register(UpdateGoalTool())
 registry.register(GetGoalTool())
 registry.register(SetGoalBudgetTool())
 ```
 
-各工具在无 goal 时的行为：
-- **GetGoalTool**：返回 `{goal: null}`
-- **CreateGoalTool**：创建新 goal（无 goal 时正常工作；已有 goal 时需 `replace=True`）
-- **UpdateGoalTool**：返回错误 `"No current goal"`
-- **SetGoalBudgetTool**：返回错误 `"No current goal"`
+> 工具自行处理无 goal 情况（见设计 §10.2）。始终注册避免「工具时而可用时而不可用」导致的模型困惑。
 
-> **设计理由**：始终注册使得模型在用户请求时始终可以调用 CreateGoal，即使 GoalMode 未预先初始化。这避免了"工具时而可用时而不可用"导致的模型困惑。
-
-### 2.4 Token 统计集成
-
-从 `AssistantTurnComplete` 事件中提取 token usage（而非 usage callback）：
-
-```python
-# 在 _drive_goal 循环中——每次 yield 事件时检查
-async for event in self._stream_query_with_guards(...):
-    yield event
-    if isinstance(event, AssistantTurnComplete) and self._goal_mode:
-        total_tokens = event.usage.input_tokens + event.usage.output_tokens
-        self._goal_mode.record_token_usage(total_tokens)
-```
-
-> **设计理由**：OpenHarness 的 `_stream_query_with_guards` 没有直接的 usage callback。usage 数据来自 `AssistantTurnComplete.usage` 事件。在 drive_goal 循环中拦截这些事件是自然的 token 统计点。
-
-### 2.5 测试
+### 2.4 测试
 
 ```
 tests/test_goal_driver.py
   - test_drive_goal_single_turn_complete
   - test_drive_goal_multi_turn_iteration
   - test_drive_goal_budget_exhaustion
-  - test_drive_goal_user_interrupt
-  - test_drive_goal_api_error_pauses
+  - test_drive_goal_user_interrupt_pauses   # 捕获 CancelledError → pause_goal
   - test_drive_goal_continuation_prompt_injected
-  - test_drive_goal_reminder_injection_first_turn_separate
+  - test_drive_goal_reminder_injection_first_turn
   - test_drive_goal_reminder_injection_continuation_combined
   - test_drive_goal_token_stats_from_assistant_turn_complete
+  - test_goal_state_persists_across_turn_rollback  # 关键：验证 goal_state 不被 turn 取消清除
 ```
 
-### 2.6 验证标准
+### 2.5 验证标准
 
 - [ ] `uv run pytest -q tests/test_goal_driver.py` 全部通过
 - [ ] 手动测试：`/goal` 创建目标 → 模型自主执行多轮 → 完成/受阻
-- [ ] 预算限制生效：设置 turn_budget=2 → 2 轮后自动 blocked
-- [ ] UpdateGoalTool complete/blocked/paused 正确设置 stop_turn + stop_batch
-- [ ] Tool loop 在 stop_turn=True 时终止
+- [ ] 预算限制生效：turn_budget=2 → 2 轮后自动 blocked
+- [ ] UpdateGoalTool complete/blocked/paused 在 post_tool_stage 正确置 TurnAction.STOP
+- [ ] **goal_state 跨 turn 取消不丢失**（用无 `_` 前缀 key + 不在 turn_checkpoint_keys）
+- [ ] **goal_state 跨 session 持久化**（save_snapshot 存 tool_metadata，load 回填）
 
 ---
 
-## Phase 3：Slash 命令与 TUI 雇用
+## Phase 3：Slash 命令与 TUI 集成
 
 **目标**：`/goal` 命令完整可用，TUI 显示目标状态面板。
 
 ### 3.1 新增/修改文件
 
-#### `commands/registry.py`
-
-新增 `/goal` 命令注册（含边界检查）：
+#### `commands/registry.py` —— 新增 /goal 命令
 
 ```python
 GOAL_ALREADY_EXISTS_MSG = (
@@ -535,7 +587,7 @@ GOAL_ALREADY_EXISTS_MSG = (
 
 async def _goal_handler(args: str, context: CommandContext) -> CommandResult:
     parsed = parse_goal_command(args)
-    goal_mode = context.engine.goal_mode   # 通过 QueryEngine 一等属性访问
+    goal_mode = context.engine.tool_metadata.get("goal_mode")   # 经 tool_metadata 取
 
     if parsed["kind"] == "status":
         snapshot = goal_mode.get_goal() if goal_mode else None
@@ -544,233 +596,191 @@ async def _goal_handler(args: str, context: CommandContext) -> CommandResult:
         return CommandResult(message=format_goal_status(snapshot))
 
     if parsed["kind"] == "pause":
-        snapshot = goal_mode.pause_goal()
+        goal_mode.pause_goal()
         return CommandResult(message="Goal paused. Use `/goal resume` to continue.")
 
     if parsed["kind"] == "resume":
         # 边界检查
-        if not context.engine.model_is_configured():
-            return CommandResult(message="LLM not set. Configure a model before resuming a goal.")
         snapshot = goal_mode.get_goal()
         if snapshot is None:
             return CommandResult(message="No goal to resume.")
         if snapshot.status not in ("paused", "blocked"):
-            return CommandResult(message=f"Goal is {snapshot.status} and cannot be resumed. Use `/goal status` to inspect it.")
+            return CommandResult(message=f"Goal is {snapshot.status} and cannot be resumed.")
 
-        # 权限模式检查（详见设计文档 10.7.5）
-        permission_mode = context.app_state.permission_mode
-        if permission_mode == PermissionMode.PLAN:
-            return CommandResult(
-                message="Plan mode blocks all mutating tools. Switch to Auto or Default before resuming a goal."
-            )
-        if permission_mode == PermissionMode.DEFAULT:
-            # 返回特殊 CommandResult，由 TUI 层弹出 GoalStartPermissionPrompt 对话框
-            return CommandResult(
-                message="",
-                goal_action="permission_prompt_resume",
-            )
+        # 权限检查（设计 §10.7.5）
+        permission_mode = context.app_state.get().permission_mode if context.app_state else "default"
+        if permission_mode == PermissionMode.PLAN.value:
+            return CommandResult(message="Plan mode blocks all mutating tools. Switch to Auto or Default before resuming a goal.")
+        if permission_mode == PermissionMode.DEFAULT.value:
+            return CommandResult(message="", goal_action="permission_prompt_resume")
 
-        # FULL_AUTO → 直接恢复
         goal_mode.resume_goal()
-        return CommandResult(
-            message="Resuming goal...",
-            submit_prompt="Resume the active goal.",
-        )
+        return CommandResult(message="Resuming goal...", submit_prompt="Resume the active goal.")
 
     if parsed["kind"] == "cancel":
         goal_mode.cancel_goal()
-        # 注入 cancelled reminder，让模型知道目标已取消，忽略之前的 active-goal reminders
         context.engine.inject_user_message(GOAL_CANCELLED_REMINDER)
         return CommandResult(message="Goal cancelled.")
 
     if parsed["kind"] == "create":
-        # 边界检查
-        if not context.engine.model_is_configured():
-            return CommandResult(message="LLM not set. Configure a model before starting a goal.")
         snapshot = goal_mode.get_goal() if goal_mode else None
         if snapshot is not None and snapshot.status == "active" and not parsed["replace"]:
             return CommandResult(message=GOAL_ALREADY_EXISTS_MSG)
 
-        # 权限模式检查（详见设计文档 10.7）
-        permission_mode = context.app_state.permission_mode
-        if permission_mode == PermissionMode.PLAN:
-            return CommandResult(
-                message="Plan mode blocks all mutating tools. Switch to Auto or Default before starting a goal."
-            )
-        if permission_mode == PermissionMode.DEFAULT:
-            # 返回特殊 CommandResult，由 TUI 层弹出 GoalStartPermissionPrompt 对话框
-            # 用户在对话框中选择"切换到 Auto 并启动"/"保持 Default 启动"/"取消"
-            return CommandResult(
-                message="",
-                goal_action="permission_prompt_create",
-                goal_objective=parsed["objective"],
-                goal_replace=parsed["replace"],
-            )
+        # 权限检查（设计 §10.7）
+        permission_mode = context.app_state.get().permission_mode if context.app_state else "default"
+        if permission_mode == PermissionMode.PLAN.value:
+            return CommandResult(message="Plan mode blocks all mutating tools. Switch to Auto or Default before starting a goal.")
+        if permission_mode == PermissionMode.DEFAULT.value:
+            return CommandResult(message="", goal_action="permission_prompt_create",
+                                 goal_objective=parsed["objective"], goal_replace=parsed["replace"])
 
-        # FULL_AUTO → 直接创建
         goal_mode.create_goal(parsed["objective"], replace=parsed["replace"])
-        return CommandResult(
-            message=f"Goal set: {parsed['objective']}",
-            submit_prompt=parsed["objective"],
-        )
+        return CommandResult(message=f"Goal set: {parsed['objective']}", submit_prompt=parsed["objective"])
 
 registry.register(SlashCommand(
-    "goal",
-    "Set, manage, and track autonomous goals",
-    _goal_handler,
+    "goal", "Set, manage, and track autonomous goals", _goal_handler,
     subcommands=["status", "pause", "resume", "cancel", "replace"],
 ))
 ```
 
-#### `CommandResult` 扩展
+> **`goal_mode` 取法**：经 `context.engine.tool_metadata.get("goal_mode")`（QueryEngine 有 `tool_metadata` property，`query_engine.py:210`），不假设 engine 有 `goal_mode` 属性。
 
-为支持权限对话框的数据传递，`CommandResult` 新增以下可选字段：
+#### `commands/core.py` —— CommandResult 扩展字段
 
 ```python
 @dataclass
 class CommandResult:
-    message: str
+    message: str | None = None
+    should_exit: bool = False
+    clear_screen: bool = False
+    replay_messages: list | None = None
+    continue_pending: bool = False
+    continue_turns: int | None = None
+    refresh_runtime: bool = False
     submit_prompt: str | None = None
-    # ... 现有字段 ...
-    goal_action: str | None = None          # 新增："permission_prompt_create" | "permission_prompt_resume"
-    goal_objective: str | None = None       # 新增：create 时的目标文本
-    goal_replace: bool = False              # 新增：create 时是否替换现有目标
+    submit_model: str | None = None
+    # 新增
+    goal_action: str | None = None          # "permission_prompt_create" | "permission_prompt_resume"
+    goal_objective: str | None = None
+    goal_replace: bool = False
 ```
 
-TUI 层收到 `goal_action` 非空的 `CommandResult` 时，弹出 `GoalStartPermissionPrompt` 对话框，而非直接提交 prompt。
+#### `ui/runtime.py` —— 新增 goal_action 分支（前版遗漏）
 
-### 3.2 TUI 组件
-
-> **前端文件路径说明**：前端组件位于 `_frontend/src/components/` 子包内（随 openharness 包安装）。开发时修改本地源码后需要重新构建并安装包才能生效。
-
-#### `_frontend/src/components/GoalPanel.tsx`
-
-```tsx
-// 渲染目标状态面板（类似 TodoPanel）
-// - 目标名称 + 状态标签 (active/paused/blocked)
-// - 进度条：turns/tokens/time vs budget
-// - 操作按钮：pause / resume / cancel
-```
-
-#### `_frontend/src/components/StatusBar.tsx`
-
-修改：在 StatusBar 中显示当前 goal 简要状态（active 时显示 turns 进度）。
-
-#### `GoalStartPermissionPrompt` 权限选择对话框
-
-当 `CommandResult.goal_action` 非空时，TUI 弹出权限选择对话框。这是 OpenHarness 版本的 kimi-code `GoalStartPermissionPrompt`，适配 React/Ink TUI 框架。
-
-```tsx
-// _frontend/src/components/GoalStartPermissionPrompt.tsx
-
-interface GoalStartPermissionPromptProps {
-    action: "permission_prompt_create" | "permission_prompt_resume";
-    objective?: string;       // create 时的目标文本
-    replace?: boolean;        // create 时是否替换现有目标
-    onSelect: (choice: "switch_auto" | "keep_default" | "cancel") => void;
-}
-
-// 渲染一个模态对话框，包含：
-// - 标题：根据 action 显示 "Start Goal" 或 "Resume Goal"
-// - 3 个选项按钮（纵向排列）：
-//   1. "Switch to Auto and {action}" （推荐，高亮）
-//   2. "Keep Default and {action}" （附带警告文字）
-//   3. "Cancel"
-// - 警告文字（仅在选项 2 下方显示）：
-//   "Default mode asks you before OpenHarness runs commands, edits files,
-//    or takes other risky actions.
-//    Default mode is not suitable for unattended goal work — the goal will
-//    frequently pause and wait for your approval.
-//    Consider switching to Auto mode for a smoother goal experience."
-```
-
-**选项处理逻辑：**
+`runtime.py:931-1000` 现有流程在 `submit_prompt is None and not continue_pending` 时只 `sync_app_state` 返回（line 993-998）。需加 `goal_action` 分支弹模态框：
 
 ```python
-# 在 TUI 的 CommandResult 处理层
-def _handle_goal_permission_choice(choice: str, result: CommandResult):
-    if choice == "switch_auto":
-        # 复用 /permissions full_auto 的切换逻辑
-        _switch_to_full_auto(context)
-        # 然后执行原始 goal 操作
-        if result.goal_action == "permission_prompt_create":
-            goal_mode.create_goal(result.goal_objective, replace=result.goal_replace)
-            # submit_prompt = result.goal_objective → 进入 drive_goal
-        elif result.goal_action == "permission_prompt_resume":
-            goal_mode.resume_goal()
-            # submit_prompt = "Resume the active goal." → 进入 drive_goal
+if result is not None:
+    ...
+    if result.goal_action is not None:
+        # 弹 GoalStartPermissionPrompt 模态框（经 ModalHost）
+        choice = await _show_goal_permission_prompt(bundle, result)
+        if choice == "switch_auto":
+            _switch_to_full_auto(context)
+            if result.goal_action == "permission_prompt_create":
+                goal_mode.create_goal(result.goal_objective, replace=result.goal_replace)
+                # 触发 submit_prompt 进入 drive_goal
+                ... 走 submit_prompt 流程 ...
+            else:
+                goal_mode.resume_goal()
+                ... submit_prompt="Resume the active goal." ...
+        elif choice == "keep_default":
+            ... 不切权限，直接创建/恢复 ...
+        # cancel → 不操作
+        ...
+```
 
-    elif choice == "keep_default":
-        # 保持 DEFAULT 模式，直接执行 goal 操作（带警告）
-        if result.goal_action == "permission_prompt_create":
-            goal_mode.create_goal(result.goal_objective, replace=result.goal_replace)
-        elif result.goal_action == "permission_prompt_resume":
-            goal_mode.resume_goal()
+> **`_switch_to_full_auto` 复用现有命令逻辑**（设计 §10.7.3），不手写 `PermissionChecker(mode=...)`：
 
-    elif choice == "cancel":
-        # 不做任何操作，恢复输入框内容
-        pass
-
-def _switch_to_full_auto(context: CommandContext):
-    """复用 /permissions full_auto 命令的实现逻辑。"""
+```python
+def _switch_to_full_auto(context: CommandContext) -> None:
+    from openharness.commands.skills import build_permission_checker as _build_permission_checker
     settings = load_settings()
     settings.permission.mode = PermissionMode.FULL_AUTO
     save_settings(settings)
-    context.engine.set_permission_checker(
-        PermissionChecker(mode=PermissionMode.FULL_AUTO)
-    )
+    context.engine.set_permission_checker(_build_permission_checker(settings, context))
     _sync_full_auto_tools(context, is_full_auto=True)
-    context.app_state.permission_mode = PermissionMode.FULL_AUTO
+    if context.app_state is not None:
+        context.app_state.set(permission_mode=PermissionMode.FULL_AUTO.value)
 ```
+
+### 3.2 前端组件（frontend/terminal/src/components/）
+
+> **路径修正**：前端在 `frontend/terminal/src/components/`（**不是** `_frontend/src/components/`）。参照现有 `StatusBar.tsx`、`TodoPanel.tsx`、`ModalHost.tsx`、`SelectModal.tsx`。
+
+#### `GoalPanel.tsx`（参照 TodoPanel.tsx）
+
+```tsx
+// 渲染目标状态面板
+// - 目标名称 + 状态标签 (active/paused/blocked)
+// - 进度：turns/tokens/time vs budget
+// - 操作按钮：pause / resume / cancel
+```
+
+#### `GoalStartPermissionPrompt.tsx`（参照 SelectModal.tsx 的模态模式）
+
+```tsx
+interface Props {
+    action: "permission_prompt_create" | "permission_prompt_resume";
+    objective?: string;
+    replace?: boolean;
+    onSelect: (choice: "switch_auto" | "keep_default" | "cancel") => void;
+}
+// 3 选项：Switch to Auto and {start|resume}（推荐）/ Keep Default（带警告）/ Cancel
+```
+
+#### `StatusBar.tsx` 修改
+
+显示当前 goal 简要状态（active 时显示 turns 进度）。
+
+#### 协议层 `ui/protocol.py` + 前端事件类型
+
+`GoalUpdatedEvent` 需在前后端协议层注册，前端才能接收渲染。
 
 #### 事件处理
 
-TUI 监听 `GoalUpdatedEvent`（取代原先的 `GoalStatusEvent`），通过 `change.kind` 和 `change.status` 更新面板：
-
 | `change.kind` | `change.status` | 行为 |
 |---|---|---|
-| `created` | `active` | 显示面板 |
-| `lifecycle` | `active` | 更新进度 |
-| `lifecycle` | `paused` | 更新状态标签为 paused |
-| `lifecycle` | `blocked` | 更新状态标签为 blocked |
-| `completion` | `completed` | 显示完成摘要 → 淡出面板 |
-| `lifecycle` | `cancelled` | 隐藏面板 |
+| `lifecycle` | `active` (含 created) | 显示面板 |
+| `lifecycle` | `paused` | 状态标签 → paused |
+| `lifecycle` | `blocked` | 状态标签 → blocked |
+| `completion` | `complete` | 显示完成摘要 → 淡出面板 |
+| `snapshot=None` | — | 隐藏面板 |
 
-### 3.3 权限测试
+### 3.3 测试
 
 ```
 tests/test_goal_permission.py
-  - test_goal_create_full_auto_no_prompt           # FULL_AUTO 模式直接创建，不弹对话框
-  - test_goal_create_default_returns_prompt_action # DEFAULT 模式返回 goal_action="permission_prompt_create"
-  - test_goal_create_plan_rejected                 # PLAN 模式直接拒绝
-  - test_goal_resume_full_auto_no_prompt           # FULL_AUTO 模式直接恢复
-  - test_goal_resume_default_returns_prompt_action  # DEFAULT 模式返回 goal_action="permission_prompt_resume"
-  - test_goal_resume_plan_rejected                  # PLAN 模式直接拒绝
-  - test_switch_to_full_auto                         # 验证 _switch_to_full_auto 正确调用 _sync_full_auto_tools 和 set_permission_checker
-  - test_permission_choice_switch_auto               # 选择"切换到 Auto"后 goal 正常创建
-  - test_permission_choice_keep_default              # 选择"保持 Default"后 goal 在 DEFAULT 模式创建
-  - test_permission_choice_cancel                    # 选择"取消"后不创建 goal
+  - test_goal_create_full_auto_no_prompt
+  - test_goal_create_default_returns_goal_action
+  - test_goal_create_plan_rejected
+  - test_goal_resume_full_auto_no_prompt
+  - test_goal_resume_default_returns_goal_action
+  - test_goal_resume_plan_rejected
+  - test_switch_to_full_auto_uses_build_permission_checker  # 验证不手写 PermissionChecker(mode=)
+  - test_permission_choice_switch_auto
+  - test_permission_choice_keep_default
+  - test_permission_choice_cancel
 ```
 
 ### 3.4 验证标准
 
 - [ ] `/goal Ship feature X` → 模型开始自主执行
-- [ ] `/goal pause` → 执行中断，状态变为 paused
-- [ ] `/goal resume` → 恢复执行（边界检查：未配置 LLM 时报错，无 goal 时报错，不可恢复状态时报错）
-- [ ] `/goal cancel` → 清除目标 + 注入 cancelled reminder
-- [ ] `/goal status` → 显示 turns/tokens/time 统计
-- [ ] `/goal` 在已有 active goal 时报错提示使用 `/goal replace`
-- [ ] GoalPanel 在 TUI 中正确渲染
+- [ ] `/goal pause` → 状态变 paused
+- [ ] `/goal resume` → 恢复（边界检查：无 goal / 不可恢复状态时报错）
+- [ ] `/goal cancel` → 清除 + 注入 cancelled reminder
+- [ ] `/goal status` → 显示 turns/tokens/time
+- [ ] `/goal` 在已有 active goal 时提示用 `/goal replace`
+- [ ] GoalPanel 在 TUI 正确渲染
 - [ ] StatusBar 显示 goal 进度
-- [ ] `uv run pytest -q tests/test_goal_permission.py` 全部通过
-- [ ] `FULL_AUTO` 模式下 `/goal` 直接创建/恢复，无对话框
-- [ ] `DEFAULT` 模式下 `/goal` 弹出 `GoalStartPermissionPrompt` 对话框
-- [ ] 对话框选择"切换到 Auto"后权限模式变为 `FULL_AUTO`，goal 正常启动
-- [ ] 对话框选择"保持 Default"后 goal 在 `DEFAULT` 模式下启动（工具需确认）
-- [ ] 对话框选择"取消"后不创建 goal，输入框恢复
-- [ ] `PLAN` 模式下 `/goal` 直接拒绝，提示切换权限模式
-- [ ] `/goal resume` 在 `DEFAULT`/`PLAN` 模式下执行同样的权限检查
-- [ ] Goal 完成后权限模式不自动恢复
+- [ ] `FULL_AUTO` 直接创建/恢复，无对话框
+- [ ] `DEFAULT` 弹 `GoalStartPermissionPrompt`
+- [ ] 选"切换 Auto"→ 权限变 FULL_AUTO，goal 启动
+- [ ] 选"保持 Default"→ goal 在 DEFAULT 启动（工具需确认）
+- [ ] 选"取消"→ 不创建
+- [ ] `PLAN` 直接拒绝
+- [ ] Goal 完成后权限不自动恢复
 
 ---
 
@@ -780,21 +790,22 @@ tests/test_goal_permission.py
 
 | 任务 | 优先级 | 说明 |
 |------|--------|------|
-| Session 恢复 | P0 | `normalize_after_replay` 在 `/resume` 时降级 active → paused |
+| Session 恢复降级 | P0 | `normalize_after_replay` 在 `/resume` 时 active → paused |
 | Context overflow 处理 | P0 | goal turn 中 overflow 不改变 goal 状态，compact 后继续 |
+| 中断检测 (CancelledError) | P0 | `_drive_goal` 捕获 Ctrl+C → `pause_goal(actor="runtime")` |
 | 并发安全 | P1 | goal 执行中用户输入新消息 → steer buffer 或拒绝 |
 | Max turns 交互 | P1 | goal 的 turn 计数独立于 engine 的 max_turns |
 | Hook 集成 | P1 | GoalCreated/GoalCompleted/GoalBlocked hook events |
 | 错误分类 | P2 | API 错误按类型生成不同 pause reason |
-| Tool loop stop flag 处理 | P0 | engine tool loop 检查 ToolResult.stop_turn / stop_batch 并终止循环 |
 | Cancel reminder 注入 | P0 | `/goal cancel` 后注入 GOAL_CANCELLED_REMINDER |
+| goal_stop_turn 在 post_tool_stage 生效 | P0 | 验证 UpdateGoal 后 tool loop 正确终止 |
 
 ### 4.2 验证标准
 
 - [ ] 进程重启后 `/goal resume` 恢复正常
 - [ ] Context overflow 后 goal 继续执行
 - [ ] Hook 能阻止 goal continuation
-- [ ] ToolResult.stop_turn 正确终止 tool loop
+- [ ] Ctrl+C 中断后 goal 变 paused（goal_state 未丢失）
 - [ ] `/goal cancel` 后模型不再响应已取消 goal 的 reminders
 
 ---
@@ -818,24 +829,33 @@ tests/test_goal_tools.py
 tests/test_goal_budget.py
 tests/test_goal_driver.py
 tests/test_goal_permission.py
-_frontend/src/components/GoalPanel.tsx
-_frontend/src/components/GoalStartPermissionPrompt.tsx
+frontend/terminal/src/components/GoalPanel.tsx
+frontend/terminal/src/components/GoalStartPermissionPrompt.tsx
 ```
 
 ### 修改文件
 
 ```
-src/openharness/engine/query_engine.py     # 新增 goal_mode 一等属性 + drive_goal 方法 + token 统计
-src/openharness/engine/stream_events.py     # GoalUpdatedEvent/GoalChange/GoalChangeStats 替代 GoalStatusEvent
-src/openharness/engine/tool_result.py       # ToolResult 新增 stop_turn / stop_batch 字段
-src/openharness/engine/query.py             # tool loop 检查 stop_turn / stop_batch flag
-src/openharness/engine/command_result.py    # CommandResult 新增 goal_action / goal_objective / goal_replace 字段
-src/openharness/commands/registry.py        # 新增 /goal 命令 + 边界检查 + 权限模式检查
-src/openharness/cli.py                      # 初始化 GoalMode
-src/openharness/ui/permission_dialog.py     # 新增 _switch_to_full_auto() + _handle_goal_permission_choice()
-_frontend/src/components/StatusBar.tsx      # 显示 goal 状态
-_frontend/src/App.tsx                       # 处理 GoalUpdatedEvent + CommandResult.goal_action 路由
+src/openharness/engine/types.py             # ⚠️ 新增 GOAL_STATE 枚举 + 加入 all_persisted_keys（前版遗漏）
+src/openharness/services/session_backend.py # ⚠️ save_snapshot/load 增加 tool_metadata 存取（前版遗漏）
+src/openharness/services/session_storage.py # ⚠️ 配合 tool_metadata 持久化（前版遗漏）
+src/openharness/engine/query_engine.py      # submit_message 分支路由 _drive_goal + token 统计
+src/openharness/engine/stream_events.py     # GoalUpdatedEvent/GoalChange/GoalChangeStats + 更新 StreamEvent 联合
+src/openharness/engine/turn_stages.py       # post_tool_stage 检查 goal_stop_turn → TurnAction.STOP
+src/openharness/commands/core.py            # CommandResult 新增 goal_action/goal_objective/goal_replace
+src/openharness/commands/registry.py        # /goal 命令 + 边界检查 + 权限检查
+src/openharness/cli.py                      # 初始化 GoalMode 注入 tool_metadata["goal_mode"]
+src/openharness/ui/runtime.py               # ⚠️ goal_action 分支 + _switch_to_full_auto（前版遗漏）
+src/openharness/ui/protocol.py              # ⚠️ 注册 GoalUpdatedEvent 协议（前版遗漏）
+frontend/terminal/src/components/StatusBar.tsx  # 显示 goal 状态
+frontend/terminal/src/App.tsx (或同等入口)   # 处理 GoalUpdatedEvent + goal_action 路由
 ```
+
+> **⚠️ 标记的 5 项是前版计划遗漏或写错的**，必须包含。
+
+> **明确 NOT 修改**：
+> - `tools/base.py` 的 `ToolResult` —— **不加** stop_turn/stop_batch 字段（用 metadata 传递，见 Phase 1.4）
+> - `engine/query.py` 的 tool loop —— 停止逻辑落在 `turn_stages.py`，不重构并行执行
 
 ---
 
@@ -855,11 +875,12 @@ _frontend/src/App.tsx                       # 处理 GoalUpdatedEvent + CommandR
 
 | 风险 | 缓解 |
 |------|------|
-| 模型不遵守 UpdateGoal 协议 | Continuation prompt 中强化指导；driver 硬预算兜底；UpdateGoalTool 的 stop_turn/stop_batch 强制终止 tool loop |
+| 模型不遵守 UpdateGoal 协议 | Continuation prompt 强化指导；driver 硬预算兜底；UpdateGoal 的 goal_stop_turn 在 post_tool_stage 强制 STOP |
 | Goal turn 中 context overflow | 复用现有 auto-compact 机制，不改变 goal 状态 |
-| 无限循环 | 默认 turn_budget=50 硬上限；连续 silent stop 检测 |
-| 用户中断后状态不一致 | `pause_goal(actor="runtime")` 确保中断后状态为 paused |
-| TUI 渲染阻塞 | GoalPanel 作为独立组件，不阻塞主对话流 |
-| 工具始终注册导致模型误用 | CreateGoalTool description 明确限制使用场景；无 goal 时其它工具返回错误 |
-| Goal reminder 注入时机错误 | 首轮单独注入、续轮合并注入，确保提醒和续行指令到达时机正确 |
-| 权限切换后用户困惑 | GoalStartPermissionPrompt 对话框明确告知切换行为；goal 完成后不自动恢复权限，避免突然弹出确认提示；用户可随时 `/permissions default` 手动切回 |
+| 无限循环 | 默认 turn_budget 硬上限（或 engine max_turns）；连续 silent stop 检测（复用 `_stream_query_with_guards` 现有逻辑） |
+| 用户中断后状态不一致 | 捕获 CancelledError → `pause_goal(actor="runtime")`；goal_state 用无 `_` key 不被 turn 回滚 |
+| TUI 渲染阻塞 | GoalPanel 独立组件，不阻塞主对话流 |
+| 工具始终注册导致误用 | CreateGoalTool description 限制场景；无 goal 时其它工具返回错误 |
+| Reminder 注入合并问题 | reminder + continuation prompt 合为一条字符串注入（inject_user_message 会合并连续 user msg） |
+| completion 摘要的 provider prefill 限制 | 摘要作为 user message 注入在 tool result 之后，确保 provider 请求以 user message 结尾（kimi-code 用 system-reminder 正是为规避此点；OpenHarness 需验证） |
+| 权限切换后用户困惑 | 对话框明确告知切换行为；goal 完成后不自动恢复；可 `/permissions default` 手动切回 |
