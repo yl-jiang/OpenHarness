@@ -416,7 +416,7 @@ def _tool_health_record() -> ToolDefinition:
              "JSON string for extra metrics (e.g. '{\"weight_kg\": 72.5, \"steps\": 8000}').",
              False),
             ("tags", "string", "Comma-separated tags.", False),
-            # record_id 不暴露给 LLM，由编排层 best-effort 回填（设计 §2.6）
+            # record_id 不暴露给 LLM，由编排层 post_turn_backfill() 强制回填（设计 §2.6）
         ],
     )
 ```
@@ -446,7 +446,7 @@ async def _handle_health_record(self, arguments: dict[str, Any]) -> dict[str, An
     subject_raw = str(arguments.get("subject") or "self").strip()
     record = SoloHealthRecord(
         id=uuid4().hex[:12],
-        record_id=str(arguments.get("record_id") or ""),  # 通常为空，由编排层回填
+        record_id="",  # 由编排层 post_turn_backfill() 回填，见设计 §2.6
         date=str(arguments.get("date") or local_today),
         subject=subject_raw or "self",
         category=category,
@@ -474,6 +474,8 @@ async def _handle_health_record(self, arguments: dict[str, Any]) -> dict[str, An
         updated_at=_now(),
     )
     self.store.add_health_record(record)
+    # 记录 pending health id，供编排层 post_turn_backfill() 回填 record_id（设计 §2.6）
+    self._pending_health_ids.append(record.id)
     # 返回格式与 _handle_remember 等对齐：ok + message（不返回 id）
     return {"ok": True, "message": f"健康记录已入库：{category}/{item} ({record.date})"}
 ```
@@ -490,7 +492,50 @@ async def _handle_health_record(self, arguments: dict[str, Any]) -> dict[str, An
 SoloDomainTool(_tool_health_record(), self._handle_health_record),
 ```
 
-#### 3.4 导入更新
+#### 3.4 编排层轮后回填 `post_turn_backfill()`
+
+**文件**: `solo/tools.py`
+
+在 `SoloToolRegistry.__init__()` 中新增成员：
+
+```python
+self._pending_health_ids: list[str] = []  # 本轮创建的 health_record id，待回填 record_id
+```
+
+在 `SoloToolRegistry` 类中新增方法：
+
+```python
+def post_turn_backfill(self) -> None:
+    """本轮所有工具执行完毕后调用。
+    将本轮 solo_record 创建的 record_id 回填到同轮创建的 health_record 中。
+    详见设计文档 §2.6。
+    """
+    if not self._pending_health_ids or not self._created_record_ids:
+        self._pending_health_ids.clear()
+        return
+
+    # 取本轮最新创建的 record_id（solo_record 每次只创建一条）
+    record_id = list(self._created_record_ids)[-1]
+
+    for health_id in self._pending_health_ids:
+        self.store.update_health_record(health_id, record_id=record_id)
+
+    self._pending_health_ids.clear()
+```
+
+**文件**: `solo/runner.py`
+
+在 `_process_stream` 中，当检测到一轮所有工具执行完毕后，调用回填：
+
+```python
+# 在 stream processing loop 中：
+# 当一轮工具执行全部完成后（AgentTurnComplete 之前，或新一轮 AssistantMessage 之前）
+registry.post_turn_backfill()
+```
+
+> **挂载时机**：在 runner 处理 `ToolExecutionCompleted` 事件流时，需要跟踪当前轮次的工具调用数量。当所有工具的 `ToolExecutionCompleted` 都已到达（可通过 `state.tool_calls` 的数量判断），在继续下一个 turn stage 之前调用 `post_turn_backfill()`。具体实现方式取决于 runner 的事件处理循环结构，实施时参考 `turn_stages.py` 的 `tool_execution_stage` 与 `post_tool_stage` 之间的衔接点。
+
+#### 3.5 导入更新
 
 **文件**: `solo/tools.py`
 
@@ -1334,6 +1379,11 @@ cd onboard/frontend && npx tsc --noEmit
 - `_handle_health_record` 拒绝 vague 名（`other`/`misc`）→ `{"ok": False, "error": ...}`
 - `_handle_health_record` 拒绝非 alpha / 含数字 / 大写 / 超长类别
 - `_handle_health_record` 非法 `metrics_json` 不崩（存入后 `r.metrics` 返回 `{}`）
+- `_handle_health_record` 执行后 `self._pending_health_ids` 包含新创建的 health_record id
+- `post_turn_backfill()` 正确回填：先调用 `_handle_record`（模拟 solo_record），再调用 `_handle_health_record`（模拟 solo_health_record），执行 `post_turn_backfill()` 后 health_record 的 `record_id` 等于 record 的 id
+- `post_turn_backfill()` 多条回填：同轮创建 2 条 health_record，回填后两条都关联到同一个 record_id
+- `post_turn_backfill()` 无 health_record 时不报错（`_pending_health_ids` 为空直接返回）
+- `post_turn_backfill()` 无 record 时不报错（`_created_record_ids` 为空直接返回）
 - `_handle_health_summary` **subject 过滤**：传入 `subject="图图"` 只聚合图图的记录
 - `_handle_health_summary` 空结果返回 `total: 0`
 - `_handle_health_summary` by_category/by_subject 计数正确
@@ -1387,6 +1437,7 @@ uv run pytest -q tests/test_solo/
 - [ ] `health_record_subjects()` 返回主体计数
 - [ ] `solo_health_record` 工具可被 agent 调用（含 subject 参数）
 - [ ] Agent 能正确识别 subject（自己 vs 家庭成员如"图图"、"明月"），含隐含信息提取
+- [ ] **`post_turn_backfill()` 正确回填 record_id**：同轮 solo_record + solo_health_record 后，health_record.record_id 等于 record.id
 - [ ] `solo_health_summary` 工具支持 subject 过滤并返回正确数据
 - [ ] 提示词优化后 agent 能检测健康信息并正确设置 subject
 - [ ] Health API 所有端点返回正确，**所有读取端点支持 subject 过滤**
@@ -1466,7 +1517,7 @@ uv run pytest -q tests/test_solo/
 | 风险 | 影响 | 缓解 |
 |------|------|------|
 | subject 过滤未下推 SQL | 多主体统计在数据量大时性能差 | Store 层 `list_health_records` 强制支持 subject 参数，Phase 2 测试覆盖 |
-| record_id 关联回填失败 | health_record 无法强关联到 record | 降级为 date+subject 软关联，不阻塞主流程（设计 §2.6） |
+| record_id 回填时序 | health_record 创建时 record_id 尚未就绪 | 编排层 `post_turn_backfill()` 在并发执行完毕后统一回填；UI 手动录入走顺序路径直接填入 |
 | LLM 把稳定事实误判为事件 | 重复记录（鼻炎既进 memory 又进 health_records） | prompt 明确区分长效事实 vs 事件，Phase 5 集成测试覆盖 |
 | wolo 模式泄露 health 数据 | 隐私问题 | 命名空间隔离 + 前端条件渲染（设计 §5.5），Phase 10 验证 |
 | 自定义 category 在前端渲染异常 | 图表/图标缺失 | icon_map fallback 到 `♡`，颜色用默认（设计 §7.3） |
