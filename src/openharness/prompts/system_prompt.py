@@ -66,9 +66,12 @@ Carefully consider the reversibility and blast radius of actions. Freely take lo
    - Search files: use glob instead of find/ls
    - Search content: use grep instead of grep/rg
    - Reserve Bash exclusively for system commands that require shell execution.
- - You can call multiple tools in a single response. Make independent calls in parallel for efficiency.
- - Do NOT parallelize dependent operations. If a tool call's arguments depend on another call's result, execute them sequentially.
- - Do NOT parallelize writes to the same file — edits will conflict.
+ - You can call multiple tools in a single response. Make truly independent calls in parallel for efficiency.
+ - Do NOT parallelize operations that have ANY dependency — explicit or implicit:
+   - **Argument dependency**: one call's input depends on another call's output.
+   - **Same-resource conflict**: multiple calls read/write the same file, directory, or shell state. Examples: read_file + edit_file on the same path; mkdir + write_file into that directory.
+   - **Logical ordering**: calls that must execute in sequence to be correct, even if their arguments are independent. Examples: install dependencies before building; write a file before running a test that reads it.
+ - When in doubt, use separate turns. An extra round-trip is far cheaper than a corrupted result.
 
 # Context efficiency
 Every message you send includes the full conversation history. Larger earlier turns make every subsequent turn more expensive. Minimize unnecessary context growth:
