@@ -41,6 +41,7 @@ const ProjectDetail = lazyWithRetry(() => import("./pages/ProjectDetail").then((
 const ProjectInbox = lazyWithRetry(() => import("./pages/ProjectInbox").then((m) => ({ default: m.ProjectInbox })));
 const Memory = lazyWithRetry(() => import("./pages/Memory").then((m) => ({ default: m.Memory })));
 const Health = lazyWithRetry(() => import("./pages/Health").then((m) => ({ default: m.Health })));
+const Finance = lazyWithRetry(() => import("./pages/Finance").then((m) => ({ default: m.Finance })));
 
 function PageLoader() {
   return (
@@ -106,6 +107,7 @@ export function App() {
         { path: 'records', element: <SuspenseLoader><Records appName={appName} /></SuspenseLoader> },
         { path: 'records/:id', element: <SuspenseLoader><RecordDetail appName={appName} /></SuspenseLoader> },
         { path: 'health', element: <SuspenseLoader><Health /></SuspenseLoader> },
+        { path: 'finance', element: <SuspenseLoader><Finance /></SuspenseLoader> },
         { path: 'todos', element: <SuspenseLoader><Todos appName={appName} /></SuspenseLoader> },
         { path: 'reports', element: <SuspenseLoader><Reports appName={appName} /></SuspenseLoader> },
         { path: 'reports/:id', element: <SuspenseLoader><ReportView appName={appName} /></SuspenseLoader> },

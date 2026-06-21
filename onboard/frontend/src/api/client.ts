@@ -29,6 +29,13 @@ import type {
   ProjectAlias,
   GitCommit,
   MemoryItem,
+  FinanceOverview,
+  FinanceDailyItem,
+  FinanceInvestTrendItem,
+  FinanceTrendItem,
+  FinanceBudgetWithUtilization,
+  SoloFinanceTransaction,
+  SoloFinanceBudget,
 } from './types';
 
 type QueryValue = string | number | boolean | null | undefined;
@@ -338,5 +345,41 @@ export const api = {
     timeline: (subject?: string, params: Record<string, QueryValue> = {}) =>
       request<{ items: HealthTimelineItem[]; total: number; limit: number; offset: number }>(
         `/api/solo/health/timeline${query({ ...(subject ? { subject } : {}), ...params })}`),
+  },
+
+  // ── Finance (solo-only) ──────────────────────────────────────
+  finance: {
+    overview: () =>
+      request<FinanceOverview>(`/api/solo/finance/overview`),
+    transactions: (params: Record<string, QueryValue> = {}) =>
+      request<{ items: SoloFinanceTransaction[]; total: number; limit: number; offset: number }>(
+        `/api/solo/finance/transactions${query(params)}`),
+    transactionsSummary: (type?: string, days: number = 30) =>
+      request<{ by_category: { category: string; amount: number }[]; total: number; count: number }>(
+        `/api/solo/finance/transactions/summary${query({ ...(type ? { type } : {}), days })}`),
+    transactionsTrend: (days: number = 180) =>
+      request<{ trend: FinanceTrendItem[] }>(
+        `/api/solo/finance/transactions/trend${query({ days })}`),
+    transactionsDaily: (month?: string) =>
+      request<{ items: FinanceDailyItem[]; month: string }>(
+        `/api/solo/finance/transactions/daily${query({ ...(month ? { month } : {}) })}`),
+    investTrend: (days: number = 180) =>
+      request<{ trend: FinanceInvestTrendItem[] }>(
+        `/api/solo/finance/invest/trend${query({ days })}`),
+    budgets: (active: boolean = true) =>
+      request<{ items: FinanceBudgetWithUtilization[]; period_start: string }>(
+        `/api/solo/finance/budgets${query({ active })}`),
+    deleteTransaction: (id: string) =>
+      request<{ ok: boolean }>(`/api/solo/finance/transactions/${id}`, { method: 'DELETE' }),
+    updateTransaction: (id: string, updates: Partial<SoloFinanceTransaction>) =>
+      request<{ ok: boolean }>(`/api/solo/finance/transactions/${id}`, {
+        method: 'PATCH', body: JSON.stringify(updates),
+      }),
+    deleteBudget: (id: string) =>
+      request<{ ok: boolean }>(`/api/solo/finance/budgets/${id}`, { method: 'DELETE' }),
+    updateBudget: (id: string, updates: Partial<SoloFinanceBudget>) =>
+      request<{ ok: boolean }>(`/api/solo/finance/budgets/${id}`, {
+        method: 'PATCH', body: JSON.stringify(updates),
+      }),
   },
 };

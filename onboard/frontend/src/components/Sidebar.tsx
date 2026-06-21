@@ -4,6 +4,7 @@ import type { AppName } from '../api/types';
 import { StatusBadge } from './StatusBadge';
 
 const SOLO_HEALTH_ITEM = ['/health', '♡', 'Health'] as const;
+const SOLO_FINANCE_ITEM = ['/finance', '💰', 'Finance'] as const;
 
 const commonItems = [
   ['/', '◇', 'Dashboard'],
@@ -24,7 +25,7 @@ const woloItems = [
   ['/highlights', '◉', 'Highlights'],
 ] as const;
 
-// Health appears after Todos (index 3) in solo mode only
+// Health appears after Todos (index 3), Finance after Health, in solo mode only
 const SOLO_HEALTH_INSERT_INDEX = 4;
 
 interface SidebarProps {
@@ -34,9 +35,15 @@ interface SidebarProps {
 }
 
 export function Sidebar({ appName, onAppChange, gatewayStatus }: SidebarProps) {
+  const soloItems = [
+    ...commonItems.slice(0, SOLO_HEALTH_INSERT_INDEX),
+    SOLO_HEALTH_ITEM,
+    SOLO_FINANCE_ITEM,
+    ...commonItems.slice(SOLO_HEALTH_INSERT_INDEX),
+  ];
   const items = appName === 'wolo'
     ? [...commonItems, ...woloItems]
-    : [...commonItems.slice(0, SOLO_HEALTH_INSERT_INDEX), SOLO_HEALTH_ITEM, ...commonItems.slice(SOLO_HEALTH_INSERT_INDEX)];
+    : soloItems;
   const accent = appName === 'solo' ? 'text-accent-solo' : 'text-accent-wolo';
 
   return (

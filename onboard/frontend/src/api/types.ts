@@ -506,3 +506,72 @@ export interface HealthTimelineItem {
   status: string;
   id: string;
 }
+
+// ── Finance ────────────────────────────────────────────────
+
+export type FinanceTxnType = 'expense' | 'income' | 'transfer' | 'invest_gain' | 'invest_loss';
+
+export interface SoloFinanceTransaction {
+  id: string;
+  record_id: string;
+  date: string;
+  type: FinanceTxnType;
+  category: string;
+  amount: number;
+  currency: string;
+  account: string;
+  counterparty: string;
+  description: string;
+  tags: string;
+  source: string;
+  metrics_json: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SoloFinanceBudget {
+  id: string;
+  period: string;
+  category: string;
+  amount: number;
+  currency: string;
+  name: string;
+  active: number;
+  note: string;
+  spent?: number;
+  utilization?: number;
+}
+
+export interface FinanceOverview {
+  month_expense: number;
+  month_income: number;
+  month_net: number;
+  invest_net: number;
+  prev_expense: number;
+  prev_income: number;
+  prev_net: number;
+  prev_invest_net: number;
+  by_category: { category: string; amount: number }[];
+}
+
+export interface FinanceDailyItem {
+  date: string;
+  amount: number;
+}
+
+export interface FinanceInvestTrendItem {
+  month: string;
+  net: number;
+}
+
+export interface FinanceTrendItem {
+  month: string;
+  income: number;
+  expense: number;
+  net: number;
+}
+
+export interface FinanceBudgetWithUtilization extends SoloFinanceBudget {
+  spent: number;
+  utilization: number;
+}
