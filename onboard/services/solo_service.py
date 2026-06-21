@@ -1074,3 +1074,318 @@ class SoloService:
             return False
 
         return delete_memory_file(self.workspace, memory_id)
+
+    # ── Health records ──────────────────────────────────────────
+
+    def health_subjects(self) -> dict[str, int]:
+        """All subjects with counts, for the SubjectFilter component."""
+        return self.store.health_record_subjects()
+
+    def health_overview(self, subject: str | None = None) -> dict[str, Any]:
+        from datetime import datetime, timedelta
+
+        by_subject = self.store.health_record_subjects()
+        categories = self.store.health_record_categories()
+        total = sum(categories.values())
+
+        cutoff_7d = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+        recent = self.store.list_health_records(subject=subject, date_from=cutoff_7d)
+        cutoff_30d = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+
+        active_meds = len(self.store.list_health_records(
+            subject=subject, category="medication", status="active"))
+        active_symptoms = len(self.store.list_health_records(
+            subject=subject, category="symptom", status="active"))
+
+        sleep_records = self.store.list_health_records(
+            subject=subject, category="sleep", date_from=cutoff_30d)
+        avg_sleep = (
+            sum(r.sleep_hours for r in sleep_records) / len(sleep_records)
+            if sleep_records else 0
+        )
+
+        fitness_7d = len([r for r in recent if r.category == "fitness"])
+
+        return {
+            "total_records": total,
+            "by_category": categories,
+            "by_subject": dict(by_subject),
+            "subject_filter": subject,
+            "recent_7d_count": len(recent),
+            "active_medications": active_meds,
+            "active_symptoms": active_symptoms,
+            "avg_sleep_hours_30d": round(avg_sleep, 1),
+            "fitness_count_7d": fitness_7d,
+        }
+
+    def list_health_records(
+        self, *, subject=None, category=None, status=None,
+        date_from=None, date_to=None, limit=20, offset=0,
+    ) -> dict[str, Any]:
+        records = self.store.list_health_records(
+            subject=subject, category=category, status=status,
+            date_from=date_from, date_to=date_to,
+        )
+        total = len(records)
+        page = records[offset:offset + limit]
+        return {
+            "items": [r.to_dict() for r in page],
+            "total": total, "limit": limit, "offset": offset,
+        }
+
+    def health_fitness_trend(self, subject: str | None = None, days: int = 30, date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
+        from datetime import datetime, timedelta
+        cutoff = date_from or (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        records = self.store.list_health_records(
+            subject=subject, category="fitness", date_from=cutoff, date_to=date_to)
+        by_date: dict[str, list] = {}
+        for r in records:
+            by_date.setdefault(r.date, []).append(r)
+
+        if date_from and date_to:
+            daily = []
+            current = datetime.strptime(date_from, "%Y-%m-%d")
+            end = datetime.strptime(date_to, "%Y-%m-%d")
+            while current <= end:
+                ds = current.strftime("%Y-%m-%d")
+                recs = by_date.get(ds, [])
+                total_min = sum(r.exercise_duration_min for r in recs)
+                daily.append({
+                    "date": ds, "session_count": len(recs),
+                    "total_minutes": total_min,
+                    "types": list({r.exercise_type for r in recs if r.exercise_type}),
+                })
+                current += timedelta(days=1)
+        else:
+            daily = []
+            for d, recs in sorted(by_date.items()):
+                total_min = sum(r.exercise_duration_min for r in recs)
+                daily.append({
+                    "date": d, "session_count": len(recs),
+                    "total_minutes": total_min,
+                    "types": list({r.exercise_type for r in recs if r.exercise_type}),
+                })
+        return {"daily": daily, "total_sessions": len(records)}
+
+    def health_sleep_trend(self, subject: str | None = None, days: int = 30, date_from: str | None = None, date_to: str | None = None) -> dict[str, Any]:
+        from datetime import datetime, timedelta
+        cutoff = date_from or (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        records = self.store.list_health_records(
+            subject=subject, category="sleep", date_from=cutoff, date_to=date_to)
+        # Only include records with actual sleep hours
+        records = [r for r in records if r.sleep_hours > 0]
+
+        # For each date, pick the best record (prefer manual > agent > extraction, highest hours)
+        by_date: dict[str, Any] = {}
+        priority = {"manual": 3, "agent": 2, "extraction": 1}
+        for r in records:
+            existing = by_date.get(r.date)
+            if existing is None:
+                by_date[r.date] = r
+            else:
+                ep = priority.get(existing.source, 0)
+                np_ = priority.get(r.source, 0)
+                if np_ > ep or (np_ == ep and r.sleep_hours > existing.sleep_hours):
+                    by_date[r.date] = r
+
+        if date_from and date_to:
+            daily = []
+            current = datetime.strptime(date_from, "%Y-%m-%d")
+            end = datetime.strptime(date_to, "%Y-%m-%d")
+            while current <= end:
+                ds = current.strftime("%Y-%m-%d")
+                r = by_date.get(ds)
+                daily.append({
+                    "date": ds,
+                    "hours": r.sleep_hours if r else None,
+                    "quality": r.sleep_quality if r else None,
+                })
+                current += timedelta(days=1)
+        else:
+            daily = [{"date": d, "hours": r.sleep_hours, "quality": r.sleep_quality}
+                     for d, r in sorted(by_date.items())]
+
+        valid = [r for r in by_date.values()]
+        avg = sum(r.sleep_hours for r in valid) / len(valid) if valid else 0
+        return {"daily": daily, "avg_hours": round(avg, 1), "total_nights": len(valid)}
+
+    def health_symptom_ranking(self, subject: str | None = None, days: int = 90) -> dict[str, Any]:
+        from collections import Counter
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        records = self.store.list_health_records(
+            subject=subject, category="symptom", date_from=cutoff)
+        by_item = Counter(r.item for r in records)
+        by_body_part = Counter(r.body_part for r in records if r.body_part)
+        by_severity = Counter(r.severity for r in records if r.severity)
+        return {
+            "by_item": [{"item": k, "count": v} for k, v in by_item.most_common(20)],
+            "by_body_part": [{"body_part": k, "count": v} for k, v in by_body_part.most_common(15)],
+            "by_severity": dict(by_severity), "total": len(records),
+        }
+
+    def health_medications(self, subject: str | None = None, days: int = 90) -> dict[str, Any]:
+        from collections import Counter
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        records = self.store.list_health_records(
+            subject=subject, category="medication", date_from=cutoff)
+        active = self.store.list_health_records(
+            subject=subject, category="medication", status="active")
+        by_name = Counter(r.medication_name or r.item for r in records)
+        return {
+            "active": [r.to_dict() for r in active],
+            "usage": [{"name": k, "count": v} for k, v in by_name.most_common(20)],
+            "total": len(records),
+        }
+
+    def health_mental_trend(self, subject: str | None = None, days: int = 30) -> dict[str, Any]:
+        from collections import Counter
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        records = self.store.list_health_records(
+            subject=subject, category="mental", date_from=cutoff)
+        daily = [{"date": r.date, "mood": r.mood, "stress": r.stress_level, "description": r.description} for r in records]
+        mood_dist = Counter(r.mood for r in records if r.mood)
+        stress_dist = Counter(r.stress_level for r in records if r.stress_level)
+        return {
+            "daily": daily, "mood_distribution": dict(mood_dist),
+            "stress_distribution": dict(stress_dist), "total": len(records),
+        }
+
+    def health_vitals(self, subject: str | None = None, days: int = 90) -> dict[str, Any]:
+        from datetime import datetime, timedelta
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        records = self.store.list_health_records(
+            subject=subject, category="vital", date_from=cutoff)
+        daily = [{"date": r.date, "metrics": r.metrics, "item": r.item} for r in records]
+        return {"daily": daily, "total": len(records)}
+
+    def health_vital_trends(self, subject: str | None = None, month: str | None = None) -> dict[str, Any]:
+        """Return daily min/max heart rate and blood oxygen for a given month."""
+        from datetime import datetime, timedelta
+
+        now = datetime.now()
+        if month:
+            start = datetime.strptime(month + "-01", "%Y-%m-%d")
+        else:
+            start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        if start.month == 12:
+            end = start.replace(year=start.year + 1, month=1) - timedelta(days=1)
+        else:
+            end = start.replace(month=start.month + 1) - timedelta(days=1)
+        end_str = end.strftime("%Y-%m-%d")
+        start_str = start.strftime("%Y-%m-%d")
+
+        records = self.store.list_health_records(
+            subject=subject, category="vital", date_from=start_str, date_to=end_str,
+        )
+
+        # Aggregate metrics by date
+        by_date: dict[str, dict[str, list[float]]] = {}
+        for r in records:
+            m = r.metrics
+            d = by_date.setdefault(r.date, {"hr": [], "spo2_min": [], "spo2_max": [], "hrv": []})
+            for key in ("heart_rate_min", "heart_rate_max", "heart_rate_avg"):
+                if key in m:
+                    d["hr"].append(float(m[key]))
+            if "spo2_min" in m:
+                d["spo2_min"].append(float(m["spo2_min"]))
+            if "spo2_max" in m:
+                d["spo2_max"].append(float(m["spo2_max"]))
+            for key in ("hrv_min", "hrv_max", "hrv_avg"):
+                if key in m:
+                    d["hrv"].append(float(m[key]))
+
+        # Build complete date range
+        today_str = now.strftime("%Y-%m-%d")
+        rows: list[dict[str, Any]] = []
+        current = start
+        while current <= end:
+            ds = current.strftime("%Y-%m-%d")
+            agg = by_date.get(ds, {})
+            hr_vals = agg.get("hr", [])
+            spo2_min_vals = agg.get("spo2_min", [])
+            spo2_max_vals = agg.get("spo2_max", [])
+            hrv_vals = agg.get("hrv", [])
+            is_future = ds > today_str
+            rows.append({
+                "date": ds,
+                "hr_min": round(min(hr_vals)) if hr_vals and not is_future else None,
+                "hr_max": round(max(hr_vals)) if hr_vals and not is_future else None,
+                "spo2_min": round(min(spo2_min_vals), 1) if spo2_min_vals and not is_future else None,
+                "spo2_max": round(max(spo2_max_vals), 1) if spo2_max_vals and not is_future else None,
+                "hrv_min": round(min(hrv_vals), 1) if hrv_vals and not is_future else None,
+                "hrv_max": round(max(hrv_vals), 1) if hrv_vals and not is_future else None,
+            })
+            current += timedelta(days=1)
+
+        return {
+            "start_date": start_str,
+            "end_date": end_str,
+            "daily": rows,
+        }
+
+    def health_timeline(self, subject: str | None = None, limit: int = 30, offset: int = 0) -> dict[str, Any]:
+        records = self.store.list_health_records(subject=subject)
+        total = len(records)
+        page = records[offset:offset + limit]
+        icon_map = {
+            "medical": "🏥", "symptom": "🤧", "medication": "💊",
+            "fitness": "🏃", "sleep": "😴", "nutrition": "🥗",
+            "mental": "🧠", "vital": "📊",
+        }
+        items = [{
+            "date": r.date, "category": r.category,
+            "icon": icon_map.get(r.category, "♡"),
+            "subject": r.subject,
+            "item": r.item, "description": r.description,
+            "severity": r.severity, "status": r.status, "id": r.id,
+        } for r in page]
+        return {"items": items, "total": total, "limit": limit, "offset": offset}
+
+    def delete_health_record(self, record_id: str) -> bool:
+        return self.store.delete_health_record(record_id)
+
+    def update_health_record(self, record_id: str, updates: dict[str, Any]) -> bool:
+        # PATCH cannot change subject (use delete+create instead)
+        safe = {k: v for k, v in updates.items() if k != "subject"}
+        return self.store.update_health_record(record_id, **safe)
+
+    def import_apple_health(self, file_bytes: bytes, filename: str) -> dict[str, Any]:
+        """Parse Apple Health export and import aggregated daily records."""
+        from solo.core.apple_health import AppleHealthImporter
+        from solo.core.models import SoloHealthRecord
+
+        importer = AppleHealthImporter()
+        try:
+            parsed = importer.parse(file_bytes, filename)
+        except FileNotFoundError as e:
+            return {"ok": False, "error": str(e)}
+
+        if not parsed.daily and not parsed.workouts:
+            return {"ok": False, "error": "No health data found in export"}
+
+        existing_dates = {
+            r.date for r in self.store.list_health_records(subject="self")
+            if r.source == "import" and "apple_health" in (r.tags or "")
+        }
+
+        record_dicts, result = importer.build_records(parsed, existing_dates)
+        for rd in record_dicts:
+            self.store.add_health_record(SoloHealthRecord(**rd))
+
+        return {
+            "ok": result.ok,
+            "error": result.error,
+            "parsed_records": result.parsed_records,
+            "dates_total": result.dates_total,
+            "dates_new": result.dates_new,
+            "inserted": result.inserted,
+            "skipped": result.skipped,
+            "date_range": result.date_range,
+            "message": result.message,
+            "by_type": result.by_type,
+        }
+

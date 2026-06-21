@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from onboard.api import chat, lifecycle, solo_routes, stats, wolo_routes
+from onboard.api import health as health_api
 from onboard.auth import TokenGateMiddleware, auth_routes, get_token
 from openharness.utils.log import configure_logging
 
@@ -64,6 +65,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_routes())
 
     app.include_router(solo_routes.router)
+    app.include_router(health_api.router)
     app.include_router(wolo_routes.router)
     app.include_router(chat.router)
     app.include_router(lifecycle.router)
