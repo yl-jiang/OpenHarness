@@ -483,10 +483,6 @@ class WoloService:
         self.store.create_milestone(milestone)
         return milestone.to_dict()
 
-    def update_milestone(self, milestone_id, data):
-        self.store.update_milestone(milestone_id, **data)
-        return True
-
     def complete_milestone(self, milestone_id):
         self.store.complete_milestone(milestone_id)
         return True

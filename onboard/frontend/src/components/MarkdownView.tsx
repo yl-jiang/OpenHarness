@@ -1,5 +1,6 @@
 import { useMemo, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
 
@@ -34,7 +35,7 @@ export function MarkdownView({ content, headingIds }: MarkdownViewProps) {
 
   return (
     <div className="prose-dark">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
         {content || '_No content._'}
       </ReactMarkdown>
     </div>

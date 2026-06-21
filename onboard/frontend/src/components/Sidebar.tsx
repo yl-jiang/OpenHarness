@@ -80,14 +80,23 @@ export function Sidebar({ appName, onAppChange, gatewayStatus }: SidebarProps) {
               }`
             }
           >
-            <span className="text-sm w-5 text-center opacity-70">{icon}</span>
+            <span className="w-5 flex items-center justify-center opacity-70">
+              {to === '/search' ? (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="M21 21l-4.35-4.35" />
+                </svg>
+              ) : (
+                <span className="text-sm text-center">{icon}</span>
+              )}
+            </span>
             {label}
           </NavLink>
         ))}
       </nav>
 
       {/* Footer */}
-      <div className="px-5 py-4 border-t border-border space-y-2">
+      <div className="px-5 pt-3 pb-4 border-t border-border min-h-24 flex flex-col justify-end gap-2">
         <div className="text-[12px] text-text-secondary italic tracking-wider text-center">Dirty in, Tidy out</div>
         <div className="flex items-center justify-between">
           <StatusBadge status={gatewayStatus} />

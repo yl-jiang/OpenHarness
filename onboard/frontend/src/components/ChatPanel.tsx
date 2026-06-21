@@ -1,10 +1,11 @@
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { api } from '../api/client';
 import type { AppName, ChatSession } from '../api/types';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { EmptyState } from './EmptyState';
 import { MarkdownView } from './MarkdownView';
+import { useToast } from './ToastProvider';
 
 interface ChatMessage {
   id: string;
@@ -36,6 +37,42 @@ function formatSessionTime(dateStr: string): string {
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
   if (diff < 604_800_000) return `${Math.floor(diff / 86_400_000)}d ago`;
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function CopyButton({ content }: { content: string }): React.ReactElement {
+  const [copied, setCopied] = useState(false);
+  const { toast } = useToast();
+
+  async function handleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast('Copy failed', 'error');
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      aria-label={copied ? 'Copied' : 'Copy message'}
+      title={copied ? 'Copied!' : 'Copy'}
+      className={`p-0.5 rounded transition-all ${
+        copied
+          ? 'text-success'
+          : 'text-text-muted/60 hover:text-text-secondary'
+      }`}
+    >
+      {copied ? (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+      ) : (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+      )}
+    </button>
+  );
 }
 
 export function ChatPanel({ appName }: { appName: AppName }) {
@@ -475,15 +512,24 @@ export function ChatPanel({ appName }: { appName: AppName }) {
                   }`} />
                   {msg.label}
                 </span>
-                <span>{(() => {
-                  const now = new Date();
-                  const isToday = msg.timestamp.toDateString() === now.toDateString();
-                  return isToday
-                    ? msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                    : msg.timestamp.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                })()}</span>
+                <span className="flex items-center gap-2">
+                  <CopyButton content={msg.content} />
+                  <span>{(() => {
+                    const now = new Date();
+                    const isToday = msg.timestamp.toDateString() === now.toDateString();
+                    return isToday
+                      ? msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                      : msg.timestamp.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                  })()}</span>
+                </span>
               </div>
-              <div className={`text-[13px] leading-relaxed ${msg.role === 'tool' ? 'text-text-muted whitespace-pre-wrap' : 'text-text-secondary'}`}>
+              <div className={`text-[13px] leading-relaxed ${
+                msg.role === 'tool'
+                  ? 'text-text-muted whitespace-pre-wrap'
+                  : msg.role === 'user'
+                  ? 'text-text-secondary whitespace-pre-wrap break-words'
+                  : 'text-text-secondary'
+              }`}>
                 {msg.role === 'assistant' ? <MarkdownView content={msg.content} /> : msg.content}
               </div>
               {msg.media && msg.media.length > 0 && (
@@ -523,7 +569,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
 
         {/* Input */}
         <form
-          className={`border-t border-border px-5 py-3 ${dragOver ? 'bg-accent-solo-dim/20 border-accent-solo/40' : ''}`}
+          className={`border-t border-border px-5 pt-3 pb-3 min-h-24 flex flex-col justify-end ${dragOver ? 'bg-accent-solo-dim/20 border-accent-solo/40' : ''}`}
           onSubmit={submit}
           aria-label="Chat composer"
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -553,7 +599,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
               ))}
             </div>
           )}
-          <div className="flex items-end gap-2">
+          <div className="flex items-center gap-1.5">
             <input
               ref={fileInputRef}
               type="file"
@@ -564,7 +610,7 @@ export function ChatPanel({ appName }: { appName: AppName }) {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="shrink-0 p-2 text-text-muted hover:text-text transition-colors rounded"
+              className="shrink-0 w-9 h-9 flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-2 transition-colors rounded-md"
               title="Attach file"
               aria-label="Attach file"
             >
@@ -575,29 +621,30 @@ export function ChatPanel({ appName }: { appName: AppName }) {
               value={input}
               onChange={(event) => setInput(event.target.value)}
               onPaste={handlePaste}
-              placeholder={socket.connected ? `Message ${displayName}...` : 'Connecting...'}
+              placeholder={
+                socket.connected
+                  ? `Message ${displayName}...  ·  Enter to send  ·  Shift+Enter for new line  ·  Paste or drop files`
+                  : 'Connecting...'
+              }
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault();
                   submit(event);
                 }
               }}
-              className="flex-1 min-h-[44px] max-h-[160px] px-3 py-2.5 text-[13px] bg-transparent border-none text-text placeholder:text-text-muted outline-none resize-none"
+              className="flex-1 max-h-[160px] px-3 py-2 text-[13px] leading-[1.25rem] bg-transparent border-none text-text placeholder:text-text-muted outline-none focus:outline-none focus-visible:outline-none resize-none"
               rows={1}
               aria-label="Chat message"
             />
             <button
               type="submit"
               disabled={!canSend}
-              className="shrink-0 p-2 text-text-muted hover:text-text disabled:opacity-30 disabled:hover:text-text-muted transition-colors rounded"
+              className="shrink-0 w-9 h-9 flex items-center justify-center text-text-muted hover:text-text hover:bg-surface-2 disabled:opacity-30 disabled:hover:text-text-muted disabled:hover:bg-transparent transition-colors rounded-md"
               title="Send"
               aria-label="Send message"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
             </button>
-          </div>
-          <div className="mt-1.5">
-            <span className="text-[10px] text-text-muted/60">Enter to send · Shift+Enter for new line · Paste or drop files</span>
           </div>
         </form>
       </div>

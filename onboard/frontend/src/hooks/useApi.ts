@@ -11,13 +11,15 @@ interface ApiState<T> {
 
 interface ApiOptions {
   refreshIntervalMs?: number;
+  /** When explicitly `false`, skip the loader entirely (no request, no loading state). */
+  enabled?: boolean;
 }
 
 export function useApi<T>(loader: () => Promise<T>, deps: unknown[], options: ApiOptions = {}): ApiState<T> {
-  const { refreshIntervalMs } = options;
+  const { refreshIntervalMs, enabled = true } = options;
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [version, setVersion] = useState(0);
   const hasData = useRef(false);
 
@@ -25,10 +27,14 @@ export function useApi<T>(loader: () => Promise<T>, deps: unknown[], options: Ap
     hasData.current = false;
     setData(null);
     setError(null);
-    setLoading(true);
-  }, deps);
+    setLoading(enabled);
+  }, [enabled, ...deps]);
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(!hasData.current);
     setError(null);
@@ -52,7 +58,8 @@ export function useApi<T>(loader: () => Promise<T>, deps: unknown[], options: Ap
     return () => {
       cancelled = true;
     };
-  }, [...deps, version]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, ...deps, version]);
 
   useEffect(() => {
     if (!refreshIntervalMs) {

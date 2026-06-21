@@ -165,18 +165,3 @@ def delete_session(session_key: str) -> bool:
         return cur.rowcount > 0
     finally:
         conn.close()
-
-
-def get_session_info(session_key: str) -> dict[str, Any] | None:
-    conn = _get_conn()
-    try:
-        cur = conn.execute(
-            "SELECT session_key, created_at, updated_at FROM chat_sessions WHERE session_key = ?",
-            (session_key,),
-        )
-        row = cur.fetchone()
-        if not row:
-            return None
-        return {"session_key": row[0], "created_at": row[1], "updated_at": row[2]}
-    finally:
-        conn.close()
