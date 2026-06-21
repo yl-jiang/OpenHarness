@@ -3,24 +3,29 @@ import { NavLink } from 'react-router-dom';
 import type { AppName } from '../api/types';
 import { StatusBadge } from './StatusBadge';
 
+const SOLO_HEALTH_ITEM = ['/health', '♡', 'Health'] as const;
+
 const commonItems = [
   ['/', '◇', 'Dashboard'],
-  ['/entries', '⊞', 'Entries'],
-  ['/records', '◈', 'Records'],
-  ['/todos', '☐', 'Todos'],
   ['/projects', '▦', 'Projects'],
   ['/projects/inbox', '⊡', 'Inbox'],
+  ['/todos', '☐', 'Todos'],
+  ['/records', '◈', 'Records'],
   ['/reports', '▤', 'Reports'],
   ['/feeds', '◎', 'Feed Digests'],
   ['/memory', '⬟', 'Memory'],
   ['/search', '⌕', 'Search'],
   ['/chat', '⊙', 'Chat'],
+  ['/entries', '⊞', 'Entries'],
 ] as const;
 
 const woloItems = [
-  ['/decisions', '⧫', 'Decisions'],
+  ['/decisions', '⚖', 'Decisions'],
   ['/highlights', '◉', 'Highlights'],
 ] as const;
+
+// Health appears after Todos (index 3) in solo mode only
+const SOLO_HEALTH_INSERT_INDEX = 4;
 
 interface SidebarProps {
   appName: AppName;
@@ -29,7 +34,9 @@ interface SidebarProps {
 }
 
 export function Sidebar({ appName, onAppChange, gatewayStatus }: SidebarProps) {
-  const items = appName === 'wolo' ? [...commonItems, ...woloItems] : commonItems;
+  const items = appName === 'wolo'
+    ? [...commonItems, ...woloItems]
+    : [...commonItems.slice(0, SOLO_HEALTH_INSERT_INDEX), SOLO_HEALTH_ITEM, ...commonItems.slice(SOLO_HEALTH_INSERT_INDEX)];
   const accent = appName === 'solo' ? 'text-accent-solo' : 'text-accent-wolo';
 
   return (

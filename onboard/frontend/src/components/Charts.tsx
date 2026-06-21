@@ -150,61 +150,6 @@ function useOneShotLineAnimation(duration = 900): boolean {
   return isAnimationActive;
 }
 
-export function DailyLineChart({ data }: { data: CountPoint[] }) {
-  const isAnimationActive = useOneShotLineAnimation();
-
-  const tickStep = data.length > 20 ? Math.ceil(data.length / 6) : data.length > 10 ? 3 : 1;
-  const ticks = data
-    .filter((_, i) => i === 0 || i === data.length - 1 || i % tickStep === 0)
-    .map((d) => d.date);
-
-  return (
-    <ResponsiveContainer width="100%" height={200}>
-      <AreaChart data={data} margin={{ top: 4, right: 12, bottom: 0, left: -8 }}>
-        <defs>
-          <linearGradient id="dailyAreaGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#d4a574" stopOpacity={0.25} />
-            <stop offset="95%" stopColor="#d4a574" stopOpacity={0.02} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid stroke="#1f1f24" strokeDasharray="2 4" />
-        <XAxis
-          dataKey="date"
-          stroke="#63636e"
-          tick={{ fontSize: 10, fill: '#a1a1aa' }}
-          ticks={ticks}
-          tickFormatter={(v: string) => {
-            const d = new Date(v + 'T00:00:00');
-            return Number.isNaN(d.getTime()) ? v : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-          }}
-          tickLine={{ stroke: '#2e2e33' }}
-        />
-        <YAxis
-          stroke="#63636e"
-          tick={{ fontSize: 10, fill: '#a1a1aa' }}
-          allowDecimals={false}
-          width={32}
-          tickLine={{ stroke: '#2e2e33' }}
-          axisLine={{ stroke: '#2e2e33' }}
-        />
-        <Tooltip contentStyle={tooltipStyle} labelStyle={tooltipLabelStyle} itemStyle={tooltipItemStyle} />
-        <Area
-          type="monotone"
-          dataKey="count"
-          stroke="#d4a574"
-          strokeWidth={2}
-          fill="url(#dailyAreaGrad)"
-          dot={{ r: 2, fill: '#d4a574', strokeWidth: 0 }}
-          activeDot={{ r: 4, fill: '#d4a574', stroke: '#1c1c21', strokeWidth: 2 }}
-          isAnimationActive={isAnimationActive}
-          animationDuration={900}
-          animationEasing="ease-out"
-        />
-      </AreaChart>
-    </ResponsiveContainer>
-  );
-}
-
 export function EmotionPieChart({ data }: { data: EmotionPoint[] }) {
   if (!data.length) {
     return <div className="text-[12px] text-text-muted py-4 text-center">No data yet</div>;
@@ -235,45 +180,6 @@ export function EmotionPieChart({ data }: { data: EmotionPoint[] }) {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-export function EmotionBarList({ data }: { data: EmotionPoint[] }) {
-  if (!data.length) {
-    return <div className="text-[12px] text-text-muted py-4 text-center">No data yet</div>;
-  }
-
-  const sorted = [...data].sort((a, b) => b.count - a.count);
-  const total = sorted.reduce((s, d) => s + d.count, 0);
-  const maxCount = sorted[0]?.count ?? 1;
-
-  return (
-    <div className="space-y-2">
-      {sorted.map((item, i) => {
-        const pct = total > 0 ? (item.count / total) * 100 : 0;
-        const barWidth = maxCount > 0 ? (item.count / maxCount) * 100 : 0;
-        const opacity = Math.max(0.3, 1 - i * 0.12);
-        return (
-          <div key={item.emotion} className="flex items-center gap-3">
-            <span className="text-[12px] text-text w-16 flex-shrink-0 truncate">{item.emotion}</span>
-            <div className="flex-1 h-[6px] rounded-full bg-surface-2 overflow-hidden">
-              <div
-                className="h-full rounded-full"
-                style={{
-                  width: `${barWidth}%`,
-                  backgroundColor: 'var(--color-accent-solo)',
-                  opacity,
-                  minWidth: item.count > 0 ? 3 : 0,
-                }}
-              />
-            </div>
-            <span className="text-[11px] font-mono text-text-muted w-12 text-right tabular-nums flex-shrink-0">
-              {item.count} <span className="text-text-muted/60">{pct.toFixed(0)}%</span>
-            </span>
-          </div>
-        );
-      })}
     </div>
   );
 }

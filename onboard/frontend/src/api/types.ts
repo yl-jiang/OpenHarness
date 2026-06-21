@@ -433,3 +433,76 @@ export interface MemoryItem {
   content: string;
   file_path: string;
 }
+
+// ── Health ─────────────────────────────────────────────────
+
+export type HealthCategory = 'medical' | 'symptom' | 'medication' | 'fitness' | 'sleep' | 'nutrition' | 'mental' | 'vital';
+export type HealthSeverity = 'mild' | 'moderate' | 'severe' | '';
+export type HealthStatus = 'active' | 'resolved' | 'chronic' | 'recurring';
+
+export interface SoloHealthRecord {
+  id: string;
+  record_id: string;
+  date: string;
+  subject: string;
+  category: HealthCategory | string;
+  item: string;
+  description: string;
+  body_part: string;
+  severity: HealthSeverity;
+  status: HealthStatus;
+  medication_name: string;
+  dosage: string;
+  frequency: string;
+  duration: string;
+  exercise_type: string;
+  exercise_duration_min: number;
+  exercise_intensity: string;
+  sleep_hours: number;
+  sleep_quality: string;
+  mood: string;
+  stress_level: string;
+  metrics_json: string;
+  tags: string;
+  source: string;
+  linked_memory_id: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface HealthOverview {
+  total_records: number;
+  by_category: Record<string, number>;
+  by_subject: Record<string, number>;
+  subject_filter: string | null;
+  recent_7d_count: number;
+  active_medications: number;
+  active_symptoms: number;
+  avg_sleep_hours_30d: number;
+  fitness_count_7d: number;
+}
+
+export interface FitnessDay {
+  date: string;
+  session_count: number;
+  total_minutes: number;
+  types: string[];
+}
+
+export interface SleepDay {
+  date: string;
+  hours: number;
+  quality: string;
+}
+
+export interface HealthTimelineItem {
+  date: string;
+  category: string;
+  icon: string;
+  subject: string;
+  item: string;
+  description: string;
+  severity: string;
+  status: string;
+  id: string;
+}

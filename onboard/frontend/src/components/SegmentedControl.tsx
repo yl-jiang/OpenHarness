@@ -1,4 +1,4 @@
-export interface SegmentedOption {
+interface SegmentedOption {
   label: string;
   value: string;
 }

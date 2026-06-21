@@ -6,21 +6,23 @@ import type {
   Decision,
   Entry,
   FeedDigest,
+  FitnessDay,
   GatewayStatus,
+  HealthOverview,
+  HealthTimelineItem,
   Highlight,
   LogRecord,
   PaginatedResponse,
   Report,
   SearchResult,
+  SleepDay,
+  SoloHealthRecord,
   Todo,
   Project,
   Milestone,
   ProjectLink,
   ProjectSuggestion,
   ProjectBrief,
-  ProjectSignal,
-  ProjectSnapshot,
-  ProjectCheckin,
   ProjectAnalysis,
   ProjectTemplate,
   TimelineEvent,
@@ -96,11 +98,6 @@ export const api = {
     request<FeedDigest>(`/api/${app}/feed-digests/${id}`),
   deleteFeedDigest: (app: AppName, id: string) =>
     request<{ deleted: boolean }>(`/api/${app}/feed-digests/${id}`, { method: 'DELETE' }),
-  runFeedDigest: (app: AppName, preset?: string) =>
-    request<FeedDigest>(`/api/${app}/feed-digests/run`, {
-      method: 'POST',
-      body: JSON.stringify({ preset: preset ?? null }),
-    }),
   runFeedDigestStream: async (
     app: AppName,
     preset: string | undefined,
@@ -195,8 +192,6 @@ export const api = {
     request<{ deleted: boolean }>(`/api/${app}/chat/sessions/${sessionKey}`, { method: 'DELETE' }),
   exportChatMarkdown: (app: AppName, sessionKey: string) =>
     `/api/${app}/chat/sessions/${sessionKey}/export/markdown`,
-  exportChatHtml: (app: AppName, sessionKey: string) =>
-    `/api/${app}/chat/sessions/${sessionKey}/export/html`,
 
   // Chat file upload
   uploadChatFile: async (file: File): Promise<{ path: string; disk_path: string }> => {
@@ -290,20 +285,10 @@ export const api = {
   // ── Project State Analysis ──────────────────────────────────────
   projectTimeline: (app: AppName, projectId: string, limit: number = 50) =>
     request<TimelineEvent[]>(`/api/${app}/projects/${projectId}/timeline${query({ limit })}`),
-  projectSignals: (app: AppName, projectId: string, limit: number = 50) =>
-    request<ProjectSignal[]>(`/api/${app}/projects/${projectId}/signals${query({ limit })}`),
-  projectSnapshots: (app: AppName, projectId: string, limit: number = 30) =>
-    request<ProjectSnapshot[]>(`/api/${app}/projects/${projectId}/snapshots${query({ limit })}`),
   analyzeProjectState: (app: AppName, projectId: string) =>
     request<ProjectAnalysis>(`/api/${app}/projects/${projectId}/analyze`, { method: "POST" }),
-  generateProjectSnapshot: (app: AppName, projectId: string) =>
-    request<ProjectSnapshot>(`/api/${app}/projects/${projectId}/snapshot`, { method: "POST" }),
-  generateStatusUpdate: (app: AppName, projectId: string) =>
-    request<{ text: string }>(`/api/${app}/projects/${projectId}/status-update`, { method: "POST" }),
   reviewProject: (app: AppName, projectId: string) =>
     request<{ id: string; content: string; report_type: string }>(`/api/${app}/projects/${projectId}/review`, { method: "POST" }),
-  projectCheckins: (app: AppName, params: Record<string, QueryValue> = {}) =>
-    request<ProjectCheckin[]>(`/api/${app}/project-checkins${query(params)}`),
 
   // ── Memory management ────────────────────────────────────────────
   memories: (app: AppName) =>
@@ -322,4 +307,36 @@ export const api = {
     }),
   deleteMemory: (app: AppName, id: string) =>
     request<{ deleted: boolean }>(`/api/${app}/memory/${id}`, { method: "DELETE" }),
+
+  // ── Health (solo-only) ─────────────────────────────────────────────
+  health: {
+    subjects: () =>
+      request<{ subjects: Record<string, number> }>(`/api/solo/health/subjects`),
+    overview: (subject?: string) =>
+      request<HealthOverview>(`/api/solo/health/overview${query(subject ? { subject } : {})}`),
+    fitness: (subject?: string, days: number = 30, month?: string) =>
+      request<{ daily: FitnessDay[]; total_sessions: number }>(
+        `/api/solo/health/fitness${query({ ...(subject ? { subject } : {}), ...(month ? { month } : { days }) })}`),
+    sleep: (subject?: string, days: number = 30, month?: string) =>
+      request<{ daily: SleepDay[]; avg_hours: number; total_nights: number }>(
+        `/api/solo/health/sleep${query({ ...(subject ? { subject } : {}), ...(month ? { month } : { days }) })}`),
+    symptoms: (subject?: string, days: number = 90) =>
+      request<{ by_item: { item: string; count: number }[]; by_body_part: { body_part: string; count: number }[]; by_severity: Record<string, number>; total: number }>(
+        `/api/solo/health/symptoms${query({ ...(subject ? { subject } : {}), days })}`),
+    medications: (subject?: string, days: number = 90) =>
+      request<{ active: SoloHealthRecord[]; usage: { name: string; count: number }[]; total: number }>(
+        `/api/solo/health/medications${query({ ...(subject ? { subject } : {}), days })}`),
+    mental: (subject?: string, days: number = 30) =>
+      request<{ daily: { date: string; mood: string; stress: string; description: string }[]; mood_distribution: Record<string, number>; stress_distribution: Record<string, number>; total: number }>(
+        `/api/solo/health/mental${query({ ...(subject ? { subject } : {}), days })}`),
+    vitals: (subject?: string, days: number = 90) =>
+      request<{ daily: { date: string; metrics: Record<string, number>; item: string }[]; total: number }>(
+        `/api/solo/health/vitals${query({ ...(subject ? { subject } : {}), days })}`),
+    vitalTrends: (subject?: string, month?: string) =>
+      request<{ start_date: string; end_date: string; daily: { date: string; hr_min: number | null; hr_max: number | null; spo2_min: number | null; spo2_max: number | null }[] }>(
+        `/api/solo/health/vital-trends${query({ ...(subject ? { subject } : {}), ...(month ? { month } : {}) })}`),
+    timeline: (subject?: string, params: Record<string, QueryValue> = {}) =>
+      request<{ items: HealthTimelineItem[]; total: number; limit: number; offset: number }>(
+        `/api/solo/health/timeline${query({ ...(subject ? { subject } : {}), ...params })}`),
+  },
 };
