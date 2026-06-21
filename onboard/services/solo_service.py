@@ -1397,3 +1397,187 @@ class SoloService:
             "by_type": result.by_type,
         }
 
+    # ── Finance ─────────────────────────────────────────────────
+
+    def finance_overview(self) -> dict[str, Any]:
+        """Monthly overview: expense/income/net/invest + previous month for comparison."""
+        from collections import defaultdict
+        from datetime import datetime
+
+        now = datetime.now()
+        month_start = now.strftime("%Y-%m-01")
+
+        # Previous month boundaries
+        if now.month == 1:
+            prev_start = f"{now.year - 1}-12-01"
+            prev_end = f"{now.year}-01-01"
+        else:
+            prev_start = f"{now.year}-{now.month - 1:02d}-01"
+            prev_end = month_start
+
+        cur_txns = self.store.list_finance_transactions(date_from=month_start)
+        prev_txns = self.store.list_finance_transactions(date_from=prev_start, date_to=prev_end)
+
+        def _aggregate(txns):
+            exp = sum(t.amount for t in txns if t.type == "expense" and t.currency == "CNY")
+            inc = sum(t.amount for t in txns if t.type == "income" and t.currency == "CNY")
+            inv = (sum(t.amount for t in txns if t.type == "invest_gain" and t.currency == "CNY")
+                   - sum(t.amount for t in txns if t.type == "invest_loss" and t.currency == "CNY"))
+            return exp, inc, inv
+
+        cur_exp, cur_inc, cur_inv = _aggregate(cur_txns)
+        prev_exp, prev_inc, prev_inv = _aggregate(prev_txns)
+
+        by_category: dict[str, float] = defaultdict(float)
+        for t in cur_txns:
+            if t.type == "expense" and t.currency == "CNY":
+                by_category[t.category] += t.amount
+
+        return {
+            "month_expense": round(cur_exp, 2),
+            "month_income": round(cur_inc, 2),
+            "month_net": round(cur_inc - cur_exp, 2),
+            "invest_net": round(cur_inv, 2),
+            "prev_expense": round(prev_exp, 2),
+            "prev_income": round(prev_inc, 2),
+            "prev_net": round(prev_inc - prev_exp, 2),
+            "prev_invest_net": round(prev_inv, 2),
+            "by_category": [{"category": k, "amount": round(v, 2)}
+                            for k, v in sorted(by_category.items(), key=lambda x: -x[1])],
+        }
+
+    def list_finance_transactions(
+        self, *, type: str | None = None, category: str | None = None,
+        account: str | None = None, date_from: str | None = None,
+        date_to: str | None = None, limit: int = 20, offset: int = 0,
+    ) -> dict[str, Any]:
+        records = self.store.list_finance_transactions(
+            type=type, category=category, account=account,
+            date_from=date_from, date_to=date_to,
+        )
+        total = len(records)
+        page = records[offset:offset + limit]
+        return {"items": [r.to_dict() for r in page], "total": total, "limit": limit, "offset": offset}
+
+    def finance_transactions_summary(self, type: str | None = None, days: int = 30) -> dict[str, Any]:
+        """Aggregate by category for ranking/donut charts."""
+        from collections import defaultdict
+        from datetime import datetime, timedelta
+
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        records = self.store.list_finance_transactions(type=type, date_from=cutoff)
+        by_cat: dict[str, float] = defaultdict(float)
+        for r in records:
+            if r.currency == "CNY":
+                by_cat[r.category] += r.amount
+        return {
+            "by_category": [{"category": k, "amount": round(v, 2)}
+                            for k, v in sorted(by_cat.items(), key=lambda x: -x[1])],
+            "total": round(sum(by_cat.values()), 2),
+            "count": len(records),
+        }
+
+    def finance_transactions_trend(self, days: int = 180) -> dict[str, Any]:
+        """Monthly income/expense/net series for ComposedChart."""
+        from collections import defaultdict
+        from datetime import datetime, timedelta
+
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        records = self.store.list_finance_transactions(date_from=cutoff)
+        by_month: dict[str, dict] = defaultdict(lambda: {"income": 0.0, "expense": 0.0})
+        for r in records:
+            if r.currency != "CNY":
+                continue
+            m = r.date[:7]
+            if r.type == "income":
+                by_month[m]["income"] += r.amount
+            elif r.type == "expense":
+                by_month[m]["expense"] += r.amount
+        trend = [{"month": m, "income": round(v["income"], 2), "expense": round(v["expense"], 2),
+                  "net": round(v["income"] - v["expense"], 2)}
+                 for m, v in sorted(by_month.items())]
+        return {"trend": trend}
+
+    def finance_transactions_daily(self, month: str | None = None) -> dict[str, Any]:
+        """Daily expense totals for spending heatmap calendar."""
+        from collections import defaultdict
+        from datetime import datetime, timedelta
+
+        if month:
+            y, m = int(month.split("-")[0]), int(month.split("-")[1])
+            date_from = f"{y}-{m:02d}-01"
+            if m == 12:
+                date_to = (datetime(y + 1, 1, 1) - timedelta(days=1)).strftime("%Y-%m-%d")
+            else:
+                date_to = (datetime(y, m + 1, 1) - timedelta(days=1)).strftime("%Y-%m-%d")
+        else:
+            now = datetime.now()
+            date_from = now.strftime("%Y-%m-01")
+            date_to = now.strftime("%Y-%m-%d")
+        records = self.store.list_finance_transactions(type="expense", date_from=date_from, date_to=date_to)
+        daily: dict[str, float] = defaultdict(float)
+        for r in records:
+            if r.currency == "CNY":
+                daily[r.date] += r.amount
+        items = [{"date": d, "amount": round(v, 2)} for d, v in sorted(daily.items())]
+        return {"items": items, "month": month or datetime.now().strftime("%Y-%m")}
+
+    def finance_invest_trend(self, days: int = 180) -> dict[str, Any]:
+        """Monthly invest gain/loss net series for AreaChart."""
+        from collections import defaultdict
+        from datetime import datetime, timedelta
+
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        records = self.store.list_finance_transactions(date_from=cutoff)
+        by_month: dict[str, dict] = defaultdict(lambda: {"gain": 0.0, "loss": 0.0})
+        for r in records:
+            if r.currency != "CNY":
+                continue
+            m = r.date[:7]
+            if r.type == "invest_gain":
+                by_month[m]["gain"] += r.amount
+            elif r.type == "invest_loss":
+                by_month[m]["loss"] += r.amount
+        trend = [{"month": m, "net": round(v["gain"] - v["loss"], 2)}
+                 for m, v in sorted(by_month.items())]
+        return {"trend": trend}
+
+    def finance_budgets(self, active: bool = True) -> dict[str, Any]:
+        """Budget list with current period utilization."""
+        from datetime import datetime
+
+        budgets = self.store.list_finance_budgets(active=active if active else None)
+        period_start = datetime.now().strftime("%Y-%m-01")
+        items = []
+        for b in budgets:
+            spent = sum(
+                t.amount for t in self.store.list_finance_transactions(
+                    type="expense", category=(b.category or None), date_from=period_start,
+                )
+                if t.currency == "CNY"
+            )
+            items.append({
+                "id": b.id, "period": b.period, "category": b.category,
+                "amount": b.amount, "currency": b.currency, "name": b.name,
+                "active": b.active, "note": b.note,
+                "spent": round(spent, 2),
+                "utilization": round(spent / b.amount, 3) if b.amount else 0,
+            })
+        return {"items": items, "period_start": period_start}
+
+    def delete_finance_transaction(self, txn_id: str) -> bool:
+        return self.store.delete_finance_transaction(txn_id)
+
+    def update_finance_transaction(self, txn_id: str, updates: dict[str, Any]) -> bool:
+        forbidden = {"type", "amount", "id"}
+        safe = {k: v for k, v in updates.items() if k not in forbidden}
+        return self.store.update_finance_transaction(txn_id, **safe)
+
+    def delete_finance_budget(self, b_id: str) -> bool:
+        return self.store.delete_finance_budget(b_id)
+
+    def update_finance_budget(self, b_id: str, updates: dict[str, Any]) -> bool:
+        forbidden = {"category", "period", "id"}
+        safe = {k: v for k, v in updates.items() if k not in forbidden}
+        return self.store.update_finance_budget(b_id, **safe)
+
