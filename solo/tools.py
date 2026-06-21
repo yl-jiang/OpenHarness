@@ -40,6 +40,8 @@ from solo.core.models import (
     ProjectSnapshot,
     ProjectSuggestion,
     SoloEntry,
+    SoloFinanceBudget,
+    SoloFinanceTransaction,
     SoloHealthRecord,
     SoloRecord,
     SoloTodo,
@@ -139,6 +141,7 @@ class SoloToolRegistry:
         self._background_tasks: set[Any] = set()
         self._created_record_ids: set[str] = set()
         self._pending_health_ids: list[str] = []
+        self._pending_finance_ids: list[str] = []
 
     def _processor(self) -> SoloProcessor:
         if self.processor is None:
@@ -161,20 +164,25 @@ class SoloToolRegistry:
             pass
 
     def post_turn_backfill(self) -> None:
-        """Backfill record_id into health records created in the same turn.
+        """Backfill record_id into health/finance records created in the same turn.
 
-        solo_record and solo_health_record run concurrently via asyncio.gather(),
-        so health records are created without a record_id. After all tools in the
+        solo_record and domain tools run concurrently via asyncio.gather(),
+        so domain records are created without a record_id. After all tools in the
         turn complete, this method links them to the most recent record.
         """
-        if not self._pending_health_ids or not self._created_record_ids:
+        if not self._created_record_ids:
             self._pending_health_ids.clear()
+            self._pending_finance_ids.clear()
             return
 
         record_id = list(self._created_record_ids)[-1]
         for health_id in self._pending_health_ids:
             self.store.update_health_record(health_id, record_id=record_id)
         self._pending_health_ids.clear()
+
+        for fid in self._pending_finance_ids:
+            self.store.update_finance_transaction(fid, record_id=record_id)
+        self._pending_finance_ids.clear()
 
     def tools(self) -> list[SoloDomainTool]:
         return [
@@ -212,6 +220,9 @@ class SoloToolRegistry:
             SoloDomainTool(_tool_remember(), self._handle_remember),
             SoloDomainTool(_tool_health_record(), self._handle_health_record),
             SoloDomainTool(_tool_health_summary(), self._handle_health_summary),
+            SoloDomainTool(_tool_finance_transaction(), self._handle_finance_transaction),
+            SoloDomainTool(_tool_finance_budget(), self._handle_finance_budget),
+            SoloDomainTool(_tool_finance_summary(), self._handle_finance_summary),
             SoloDomainTool(_tool_suggest_reflection(), self._handle_suggest_reflection),
             SoloDomainTool(_tool_sync_context(), self._handle_sync_context),
             SoloDomainTool(_tool_visualize(), self._handle_visualize),
@@ -1145,6 +1156,134 @@ class SoloToolRegistry:
             "recent_records": recent,
         }
 
+    # ── Finance category validation ─────────────────────────────
+
+    _EXPENSE_CATEGORIES = frozenset({
+        "dining", "groceries", "transport", "shopping", "housing",
+        "health", "education", "entertainment", "family", "social",
+    })
+    _INCOME_CATEGORIES = frozenset({
+        "salary", "bonus", "refund", "gift", "other_income",
+    })
+    _INVEST_CATEGORIES = frozenset({
+        "stocks", "fund", "bond", "crypto", "gold", "savings", "insurance",
+    })
+    _FINANCE_VAGUE_NAMES = frozenset({
+        "other", "misc", "general", "unknown", "custom", "test",
+    })
+    _FINANCE_TYPES = frozenset({
+        "expense", "income", "transfer", "invest_gain", "invest_loss",
+    })
+
+    def _is_valid_finance_category(self, txn_type: str, category: str) -> bool:
+        """Validate category: preferred set passes; new categories must meet constraints."""
+        preferred = self._EXPENSE_CATEGORIES | self._INCOME_CATEGORIES | self._INVEST_CATEGORIES
+        if category in preferred:
+            return True
+        if category in self._FINANCE_VAGUE_NAMES:
+            return False
+        return category.isalpha() and category.islower() and len(category) <= 20
+
+    # ── Finance transaction handler ─────────────────────────────
+
+    async def _handle_finance_transaction(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        txn_type = _required_text(arguments, "type")
+        category = _required_text(arguments, "category")
+        amount = float(arguments.get("amount") or 0)
+        if amount <= 0:
+            return {"ok": False, "error": f"amount must be positive, got {amount}"}
+        if txn_type not in self._FINANCE_TYPES:
+            return {"ok": False, "error": f"Invalid type '{txn_type}'."}
+        if not self._is_valid_finance_category(txn_type, category):
+            return {"ok": False, "error": f"Invalid category '{category}' for type '{txn_type}'."}
+
+        local_today = _now()[:10]
+        txn = SoloFinanceTransaction(
+            id=uuid4().hex[:12],
+            record_id=str(arguments.get("record_id") or ""),
+            date=str(arguments.get("date") or local_today),
+            type=txn_type,
+            category=category,
+            amount=amount,
+            currency=str(arguments.get("currency") or "CNY").upper(),
+            account=str(arguments.get("account") or ""),
+            counterparty=str(arguments.get("counterparty") or ""),
+            description=str(arguments.get("description") or ""),
+            tags=str(arguments.get("tags") or ""),
+            source="agent",
+            metrics_json=str(arguments.get("metrics_json") or "{}"),
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        self.store.add_finance_transaction(txn)
+        self._pending_finance_ids.append(txn.id)
+        return {"ok": True, "message": f"财务记录已入库：{txn_type}/{category} {amount} {txn.currency} ({txn.date})"}
+
+    # ── Finance budget handler ──────────────────────────────────
+
+    async def _handle_finance_budget(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        period = str(arguments.get("period") or "monthly").lower()
+        category = str(arguments.get("category") or "").strip()
+        amount = float(arguments.get("amount") or 0)
+        if amount <= 0:
+            return {"ok": False, "error": f"amount must be positive, got {amount}"}
+        if period not in {"monthly", "weekly", "yearly"}:
+            return {"ok": False, "error": f"Invalid period '{period}'."}
+
+        existing = self.store.find_budget(period, category)
+        if existing:
+            self.store.update_finance_budget(
+                existing.id, amount=amount,
+                currency=str(arguments.get("currency") or existing.currency).upper(),
+                name=str(arguments.get("name") or existing.name),
+                note=str(arguments.get("note") or existing.note),
+                updated_at=_now(),
+            )
+            return {"ok": True, "message": f"预算已更新：{period}/{category or '全部'} {amount}"}
+        b = SoloFinanceBudget(
+            id=uuid4().hex[:12], period=period, category=category, amount=amount,
+            currency=str(arguments.get("currency") or "CNY").upper(),
+            name=str(arguments.get("name") or ""), active=1,
+            created_at=_now(), updated_at=_now(),
+            note=str(arguments.get("note") or ""),
+        )
+        self.store.add_finance_budget(b)
+        return {"ok": True, "message": f"预算已设置：{period}/{category or '全部'} {amount}"}
+
+    # ── Finance summary handler ─────────────────────────────────
+
+    async def _handle_finance_summary(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        from collections import Counter
+
+        txn_type = str(arguments.get("type") or "").strip() or None
+        category = str(arguments.get("category") or "").strip() or None
+        account = str(arguments.get("account") or "").strip() or None
+        days = int(arguments.get("days") or 30)
+        date_from = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+        records = self.store.list_finance_transactions(
+            type=txn_type, category=category, account=account, date_from=date_from,
+        )
+        if not records:
+            return {"ok": True, "total": 0,
+                    "message": f"过去 {days} 天没有相关财务记录。"}
+
+        expense = sum(r.amount for r in records if r.type == "expense" and r.currency == "CNY")
+        income = sum(r.amount for r in records if r.type == "income" and r.currency == "CNY")
+        invest_net = (sum(r.amount for r in records if r.type == "invest_gain" and r.currency == "CNY")
+                      - sum(r.amount for r in records if r.type == "invest_loss" and r.currency == "CNY"))
+        by_category = Counter(r.category for r in records)
+
+        return {
+            "ok": True, "total": len(records), "days": days,
+            "type_filter": txn_type, "category_filter": category,
+            "account_filter": account,
+            "expense_cny": round(expense, 2), "income_cny": round(income, 2),
+            "invest_net_cny": round(invest_net, 2),
+            "by_category": dict(by_category),
+            "recent_records": [r.to_dict() for r in records[:10]],
+        }
+
     async def _handle_suggest_reflection(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Generate reflection questions based on recent records."""
         records = self.store.list_records(limit=20)
@@ -1909,7 +2048,7 @@ def _tool_record() -> ToolDefinition:
             "break_point, bridge_action, environment_design, next_experiment) must come from the user's "
             "own words; when the user did not state them, leave them empty / neutral. Do not add unstated "
             "causes, diagnoses, motives, timelines, or explanations. Do NOT rewrite a future plan as a "
-            "past event; preserve the original tense. SIDE-EFFECT CHECK: If this message reveals persistent personal facts (chronic health conditions, new relationships, life structure changes, long-term preferences), also call solo_remember in the SAME turn to store them in long-term memory. If this message contains health-related events (symptoms, medication, exercise, sleep, mood changes, medical visits, vital signs), also call solo_health_record in the SAME turn — once per distinct health event. Health info may be mentioned INCIDENTALLY as a side note (e.g. '小红没去游乐场，因为她去体检了' → extract 小红's medical visit). Set the subject parameter correctly — default is 'self'; use the family member's name if the event is about them."
+            "past event; preserve the original tense. SIDE-EFFECT CHECK: If this message reveals persistent personal facts (chronic health conditions, new relationships, life structure changes, long-term preferences), also call solo_remember in the SAME turn to store them in long-term memory. If this message contains health-related events (symptoms, medication, exercise, sleep, mood changes, medical visits, vital signs), also call solo_health_record in the SAME turn — once per distinct health event. Health info may be mentioned INCIDENTALLY as a side note (e.g. '小红没去游乐场，因为她去体检了' → extract 小红's medical visit). Set the subject parameter correctly — default is 'self'; use the family member's name if the event is about them. If this message contains money flows (spending, income, transfers, or an investment GAIN/LOSS RESULT with specific amounts), also call solo_finance_transaction in the SAME turn — once per distinct transaction. Extract ONLY the EXACT amount the user stated; do NOT estimate or split. For investment, record only the gain/loss result (e.g. '基金赚了300'), NOT buy/sell actions. If the user sets a spending budget, call solo_finance_budget."
         ),
         [
             ("content", "string", "Faithful paraphrase of the user's current message. Must preserve all facts, opinions, and claims the user actually expressed. Do NOT add facts, opinions, or reflections the user did not state in this turn — even if a recent conversation topic suggests them.", True),
@@ -2450,6 +2589,104 @@ def _tool_health_summary() -> ToolDefinition:
              False),
             ("days", "integer", "Look back N days (default 30).", False),
             ("status", "string", "Filter by status: active, resolved, chronic, recurring.", False),
+        ],
+    )
+
+
+def _tool_finance_transaction() -> ToolDefinition:
+    return _definition(
+        "solo_finance_transaction",
+        (
+            "Record a STRUCTURED finance transaction into the dedicated finance database. "
+            "Call this whenever the user's message contains a money flow: spending, income, "
+            "transfer, or an investment gain/loss RESULT. Extract the EXACT amount the user "
+            "stated — do NOT estimate, infer, or split amounts the user did not specify. "
+            "IMPORTANT: Finance info may appear INCIDENTALLY in a daily record "
+            "(e.g. '和朋友吃饭花了120' → record expense 120). Scan the ENTIRE message. "
+            "Call this in the SAME TURN as solo_record when the message contains both daily events "
+            "AND money flows. You may call MULTIPLE TIMES per turn for distinct transactions. "
+            "For investment, only record the GAIN or LOSS result (e.g. '基金赚了300' → invest_gain 300), "
+            "NOT buy/sell actions. For STABLE financial facts (monthly salary, mortgage rate), "
+            "use solo_remember instead."
+        ),
+        [
+            ("type", "string",
+             "Transaction type. MUST be one of: "
+             "expense (dining, transport, shopping, housing, etc.), "
+             "income (salary, bonus, refund, gift received), "
+             "transfer (moving money between own accounts), "
+             "invest_gain (realized/unrealized investment profit, interest, dividend received), "
+             "invest_loss (realized/unrealized investment loss).",
+             True),
+            ("category", "string",
+             "Category. For expense PREFER: dining, groceries, transport, shopping, housing, "
+             "health, education, entertainment, family, social. "
+             "For income PREFER: salary, bonus, refund, gift, other_income. "
+             "For invest_gain/loss PREFER: stocks, fund, bond, crypto, gold, savings, insurance. "
+             "If none fit, use a single lowercase English word. No vague names like 'other'/'misc'.",
+             True),
+            ("amount", "number",
+             "Exact amount in the original currency (positive number). Extract ONLY what the user "
+             "stated. Do not split or estimate. e.g. 'AA花了120' → 120 (per person), not 240. "
+             "For invest_loss, store the POSITIVE loss amount (e.g. '亏了500' → 500).",
+             True),
+            ("currency", "string",
+             "ISO currency code (CNY, USD, HKD, EUR, ...). Default CNY. Not converted, just labeled.",
+             False),
+            ("date", "string", "YYYY-MM-DD. Defaults to today.", False),
+            ("account", "string",
+             "Optional note: payment method / account (支付宝, 微信, 招行卡, ...). Searchable but not separately aggregated.",
+             False),
+            ("counterparty", "string",
+             "Counterparty person/company (e.g. 同事老王, 房东). Optional.",
+             False),
+            ("description", "string",
+             "Detailed description. Put investment target info (e.g. '茅台') here.",
+             False),
+            ("tags", "string", "Comma-separated tags.", False),
+        ],
+    )
+
+
+def _tool_finance_budget() -> ToolDefinition:
+    return _definition(
+        "solo_finance_budget",
+        (
+            "Set or update a recurring spending budget. Use when the user sets a spending limit, "
+            "e.g. '餐饮预算每月2000', '这个月尽量控制在5000以内'. "
+            "If a budget for the same period+category already exists, update its amount rather than "
+            "creating a duplicate. category='' means a total budget across all categories."
+        ),
+        [
+            ("period", "string",
+             "Budget period: monthly, weekly, yearly. Default monthly.", False),
+            ("category", "string",
+             "Spending category this budget limits (dining, transport, ...). "
+             "Leave empty for a total budget across all categories.", False),
+            ("amount", "number",
+             "Budget amount (in the user's main currency, default CNY).", True),
+            ("currency", "string", "ISO currency code. Default CNY.", False),
+            ("name", "string", "Budget name (optional).", False),
+            ("note", "string", "Note.", False),
+        ],
+    )
+
+
+def _tool_finance_summary() -> ToolDefinition:
+    return _definition(
+        "solo_finance_summary",
+        (
+            "Query structured finance transactions for a time range. "
+            "Use when the user asks about spending, income, or investment gains/losses history. "
+            "Returns aggregated statistics and recent transactions."
+        ),
+        [
+            ("type", "string",
+             "Filter by transaction type: expense, income, transfer, invest_gain, invest_loss.",
+             False),
+            ("category", "string", "Filter by category.", False),
+            ("account", "string", "Filter by account note.", False),
+            ("days", "integer", "Look back N days (default 30).", False),
         ],
     )
 

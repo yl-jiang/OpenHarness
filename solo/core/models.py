@@ -418,6 +418,87 @@ class SoloHealthRecord:
 
 
 @dataclass(frozen=True)
+class SoloFinanceTransaction:
+    """One structured finance transaction (expense/income/transfer/invest gain-loss)."""
+
+    id: str
+    record_id: str = ""
+    date: str = ""
+    type: str = ""
+    category: str = ""
+    amount: float = 0.0
+    currency: str = "CNY"
+    account: str = ""
+    counterparty: str = ""
+    description: str = ""
+    tags: str = ""
+    source: str = "agent"
+    metrics_json: str = "{}"
+    created_at: str = ""
+    updated_at: str = ""
+
+    @property
+    def metrics(self) -> dict[str, Any]:
+        """Parse metrics_json safely. Returns {} on failure."""
+        if not self.metrics_json:
+            return {}
+        try:
+            result = json.loads(self.metrics_json)
+            return result if isinstance(result, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    @classmethod
+    def from_json(cls, line: str) -> "SoloFinanceTransaction":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "record_id": self.record_id, "date": self.date,
+            "type": self.type, "category": self.category, "amount": self.amount,
+            "currency": self.currency, "account": self.account,
+            "counterparty": self.counterparty, "description": self.description,
+            "tags": self.tags, "source": self.source,
+            "metrics_json": self.metrics_json,
+            "created_at": self.created_at, "updated_at": self.updated_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
+class SoloFinanceBudget:
+    """A recurring spending budget."""
+
+    id: str
+    period: str = "monthly"
+    category: str = ""
+    amount: float = 0.0
+    currency: str = "CNY"
+    name: str = ""
+    active: int = 1
+    note: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+
+    @classmethod
+    def from_json(cls, line: str) -> "SoloFinanceBudget":
+        return cls(**json.loads(line))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id, "period": self.period, "category": self.category,
+            "amount": self.amount, "currency": self.currency, "name": self.name,
+            "active": self.active, "note": self.note,
+            "created_at": self.created_at, "updated_at": self.updated_at,
+        }
+
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+
+@dataclass(frozen=True)
 class ProcessResult:
     """Summary of one solo processing run."""
 

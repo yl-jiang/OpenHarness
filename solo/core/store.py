@@ -29,6 +29,8 @@ from solo.core.models import (
     ProjectSuggestion,
     SoloEntry,
     SoloExperiment,
+    SoloFinanceBudget,
+    SoloFinanceTransaction,
     SoloHealthRecord,
     SoloRecord,
     SoloReport,
@@ -38,7 +40,7 @@ from solo.core.workspace import get_attachments_dir, get_data_dir, initialize_wo
 from solo.core.utils import _now
 
 DB_FILENAME = "store.db"
-_SCHEMA_VERSION = 7
+_SCHEMA_VERSION = 8
 
 _SCHEMA_SQL = """\
 CREATE TABLE IF NOT EXISTS entries (
@@ -601,6 +603,46 @@ class SoloStore:
             CREATE INDEX IF NOT EXISTS idx_health_records_category ON health_records(category);
             CREATE INDEX IF NOT EXISTS idx_health_records_status ON health_records(status);
             CREATE INDEX IF NOT EXISTS idx_health_records_record_id ON health_records(record_id);"""
+        )
+
+        # Migration v8: finance tables (idempotent CREATE TABLE IF NOT EXISTS)
+        self._conn.executescript(
+            """CREATE TABLE IF NOT EXISTS finance_transactions (
+                id TEXT PRIMARY KEY,
+                record_id TEXT NOT NULL DEFAULT '',
+                date TEXT NOT NULL,
+                type TEXT NOT NULL,
+                category TEXT NOT NULL,
+                amount REAL NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'CNY',
+                account TEXT NOT NULL DEFAULT '',
+                counterparty TEXT NOT NULL DEFAULT '',
+                description TEXT NOT NULL DEFAULT '',
+                tags TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'agent',
+                metrics_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_finance_txn_date ON finance_transactions(date);
+            CREATE INDEX IF NOT EXISTS idx_finance_txn_type ON finance_transactions(type);
+            CREATE INDEX IF NOT EXISTS idx_finance_txn_category ON finance_transactions(category);
+            CREATE INDEX IF NOT EXISTS idx_finance_txn_record_id ON finance_transactions(record_id);
+            CREATE TABLE IF NOT EXISTS finance_budgets (
+                id TEXT PRIMARY KEY,
+                period TEXT NOT NULL DEFAULT 'monthly',
+                category TEXT NOT NULL DEFAULT '',
+                amount REAL NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'CNY',
+                name TEXT NOT NULL DEFAULT '',
+                active INTEGER NOT NULL DEFAULT 1,
+                note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_finance_budget_period ON finance_budgets(period);
+            CREATE INDEX IF NOT EXISTS idx_finance_budget_category ON finance_budgets(category);
+            CREATE INDEX IF NOT EXISTS idx_finance_budget_active ON finance_budgets(active);"""
         )
 
         try:
@@ -1282,6 +1324,179 @@ class SoloStore:
             "SELECT subject, COUNT(*) FROM health_records GROUP BY subject"
         ).fetchall()
         return {row[0]: row[1] for row in rows}
+
+    # ── Finance transactions ────────────────────────────────────
+
+    _FINANCE_TXN_COLUMNS = [
+        "id", "record_id", "date", "type", "category", "amount", "currency",
+        "account", "counterparty", "description", "tags", "source",
+        "metrics_json", "created_at", "updated_at",
+    ]
+
+    def _finance_txn_to_row(self, txn: SoloFinanceTransaction) -> tuple[list[str], list[Any]]:
+        cols = list(self._FINANCE_TXN_COLUMNS)
+        vals = [getattr(txn, c) for c in cols]
+        return cols, vals
+
+    @staticmethod
+    def _row_to_finance_txn(row: tuple) -> SoloFinanceTransaction:
+        return SoloFinanceTransaction(
+            id=row[0], record_id=row[1], date=row[2], type=row[3],
+            category=row[4], amount=row[5], currency=row[6], account=row[7],
+            counterparty=row[8], description=row[9], tags=row[10],
+            source=row[11], metrics_json=row[12],
+            created_at=row[13], updated_at=row[14],
+        )
+
+    def add_finance_transaction(self, txn: SoloFinanceTransaction) -> None:
+        cols, vals = self._finance_txn_to_row(txn)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO finance_transactions ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
+
+    def list_finance_transactions(
+        self, *, type: str | None = None, category: str | None = None,
+        account: str | None = None, date_from: str | None = None,
+        date_to: str | None = None, limit: int | None = None,
+    ) -> list[SoloFinanceTransaction]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if type:
+            clauses.append("type = ?")
+            params.append(type)
+        if category:
+            clauses.append("category = ?")
+            params.append(category)
+        if account:
+            clauses.append("account = ?")
+            params.append(account)
+        if date_from:
+            clauses.append("date >= ?")
+            params.append(date_from)
+        if date_to:
+            clauses.append("date <= ?")
+            params.append(date_to)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        order = "ORDER BY date DESC, created_at DESC"
+        if limit is not None:
+            cur = self._db.execute(
+                f"SELECT * FROM finance_transactions{where} {order} LIMIT ?",
+                params + [limit],
+            )
+        else:
+            cur = self._db.execute(
+                f"SELECT * FROM finance_transactions{where} {order}", params
+            )
+        return [self._row_to_finance_txn(r) for r in cur.fetchall()]
+
+    def get_finance_transaction(self, txn_id: str) -> SoloFinanceTransaction | None:
+        cur = self._db.execute("SELECT * FROM finance_transactions WHERE id = ?", (txn_id,))
+        row = cur.fetchone()
+        return self._row_to_finance_txn(row) if row else None
+
+    def update_finance_transaction(self, txn_id: str, **fields: Any) -> bool:
+        allowed = set(self._FINANCE_TXN_COLUMNS) - {"id"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return False
+        sets = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [txn_id]
+        cursor = self._db.execute(
+            f"UPDATE finance_transactions SET {sets} WHERE id = ?", values
+        )
+        self._db.commit()
+        return cursor.rowcount > 0
+
+    def delete_finance_transaction(self, txn_id: str) -> bool:
+        cursor = self._db.execute("DELETE FROM finance_transactions WHERE id = ?", (txn_id,))
+        self._db.commit()
+        return cursor.rowcount > 0
+
+    def finance_transaction_categories(self) -> dict[str, int]:
+        rows = self._db.execute(
+            "SELECT category, COUNT(*) FROM finance_transactions GROUP BY category"
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    # ── Finance budgets ─────────────────────────────────────────
+
+    _FINANCE_BUDGET_COLUMNS = [
+        "id", "period", "category", "amount", "currency", "name",
+        "active", "note", "created_at", "updated_at",
+    ]
+
+    def _finance_budget_to_row(self, b: SoloFinanceBudget) -> tuple[list[str], list[Any]]:
+        cols = list(self._FINANCE_BUDGET_COLUMNS)
+        vals = [getattr(b, c) for c in cols]
+        return cols, vals
+
+    @staticmethod
+    def _row_to_finance_budget(row: tuple) -> SoloFinanceBudget:
+        return SoloFinanceBudget(
+            id=row[0], period=row[1], category=row[2], amount=row[3],
+            currency=row[4], name=row[5], active=row[6], note=row[7],
+            created_at=row[8], updated_at=row[9],
+        )
+
+    def add_finance_budget(self, b: SoloFinanceBudget) -> None:
+        cols, vals = self._finance_budget_to_row(b)
+        placeholders = ", ".join("?" * len(vals))
+        self._db.execute(
+            f"INSERT INTO finance_budgets ({', '.join(cols)}) VALUES ({placeholders})", vals
+        )
+        self._db.commit()
+
+    def list_finance_budgets(
+        self, *, active: bool | None = None, category: str | None = None,
+    ) -> list[SoloFinanceBudget]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if active is not None:
+            clauses.append("active = ?")
+            params.append(1 if active else 0)
+        if category:
+            clauses.append("category = ?")
+            params.append(category)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        cur = self._db.execute(
+            f"SELECT * FROM finance_budgets{where} ORDER BY created_at DESC", params
+        )
+        return [self._row_to_finance_budget(r) for r in cur.fetchall()]
+
+    def get_finance_budget(self, b_id: str) -> SoloFinanceBudget | None:
+        cur = self._db.execute("SELECT * FROM finance_budgets WHERE id = ?", (b_id,))
+        row = cur.fetchone()
+        return self._row_to_finance_budget(row) if row else None
+
+    def update_finance_budget(self, b_id: str, **fields: Any) -> bool:
+        allowed = set(self._FINANCE_BUDGET_COLUMNS) - {"id"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return False
+        sets = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [b_id]
+        cursor = self._db.execute(
+            f"UPDATE finance_budgets SET {sets} WHERE id = ?", values
+        )
+        self._db.commit()
+        return cursor.rowcount > 0
+
+    def delete_finance_budget(self, b_id: str) -> bool:
+        cursor = self._db.execute("DELETE FROM finance_budgets WHERE id = ?", (b_id,))
+        self._db.commit()
+        return cursor.rowcount > 0
+
+    def find_budget(self, period: str, category: str) -> SoloFinanceBudget | None:
+        """Find existing budget by (period, category) for upsert."""
+        cur = self._db.execute(
+            "SELECT * FROM finance_budgets WHERE period = ? AND category = ? "
+            "ORDER BY created_at DESC LIMIT 1",
+            [period, category],
+        )
+        rows = cur.fetchall()
+        return self._row_to_finance_budget(rows[0]) if rows else None
 
     def start_todo(self, todo_id: str) -> bool:
         cur = self._db.execute(
