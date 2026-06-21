@@ -1190,6 +1190,7 @@ class SoloStore:
         vals = [getattr(record, c) for c in cols]
         return cols, vals
 
+    @staticmethod
     def _row_to_health_record(row: tuple) -> SoloHealthRecord:
         return SoloHealthRecord(
             id=row[0], record_id=row[1], date=row[2], subject=row[3],
@@ -1212,20 +1213,27 @@ class SoloStore:
         self._db.commit()
 
     def list_health_records(
-        self, *, category: str | None = None, status: str | None = None,
-        date_from: str | None = None, date_to: str | None = None,
-        limit: int | None = None,
+        self, *, subject: str | None = None, category: str | None = None,
+        status: str | None = None, date_from: str | None = None,
+        date_to: str | None = None, limit: int | None = None,
     ) -> list[SoloHealthRecord]:
         clauses: list[str] = []
         params: list[Any] = []
+        if subject:
+            clauses.append("subject = ?")
+            params.append(subject)
         if category:
-            clauses.append("category = ?"); params.append(category)
+            clauses.append("category = ?")
+            params.append(category)
         if status:
-            clauses.append("status = ?"); params.append(status)
+            clauses.append("status = ?")
+            params.append(status)
         if date_from:
-            clauses.append("date >= ?"); params.append(date_from)
+            clauses.append("date >= ?")
+            params.append(date_from)
         if date_to:
-            clauses.append("date <= ?"); params.append(date_to)
+            clauses.append("date <= ?")
+            params.append(date_to)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         order = "ORDER BY date DESC, created_at DESC"
         if limit is not None:
@@ -1244,13 +1252,13 @@ class SoloStore:
         row = cur.fetchone()
         return self._row_to_health_record(row) if row else None
 
-    def update_health_record(self, record_id: str, **fields: Any) -> bool:
+    def update_health_record(self, health_id: str, **fields: Any) -> bool:
         allowed = set(self._HEALTH_RECORD_COLUMNS) - {"id"}
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
             return False
         sets = ", ".join(f"{k} = ?" for k in updates)
-        values = list(updates.values()) + [record_id]
+        values = list(updates.values()) + [health_id]
         cursor = self._db.execute(
             f"UPDATE health_records SET {sets} WHERE id = ?", values
         )
@@ -1265,6 +1273,13 @@ class SoloStore:
     def health_record_categories(self) -> dict[str, int]:
         rows = self._db.execute(
             "SELECT category, COUNT(*) FROM health_records GROUP BY category"
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    def health_record_subjects(self) -> dict[str, int]:
+        """Return {subject: count}, e.g. {'self': 31, '小明': 13, '小红': 2}."""
+        rows = self._db.execute(
+            "SELECT subject, COUNT(*) FROM health_records GROUP BY subject"
         ).fetchall()
         return {row[0]: row[1] for row in rows}
 

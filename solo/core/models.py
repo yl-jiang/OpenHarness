@@ -379,6 +379,17 @@ class SoloHealthRecord:
     created_at: str = ""
     updated_at: str = ""
 
+    @property
+    def metrics(self) -> dict[str, Any]:
+        """Parse metrics_json safely. Returns {} on failure."""
+        if not self.metrics_json:
+            return {}
+        try:
+            result = json.loads(self.metrics_json)
+            return result if isinstance(result, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
     @classmethod
     def from_json(cls, line: str) -> "SoloHealthRecord":
         return cls(**json.loads(line))

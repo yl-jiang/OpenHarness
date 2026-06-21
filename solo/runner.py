@@ -652,6 +652,9 @@ class SoloQueryRunner:
                 engine_error = f"{type(exc).__name__}: {exc}"
                 logger.exception("SoloQueryRunner retry error session_key=%r text=%r", session_key, user_text[:80])
 
+        if allow_tools:
+            registry.post_turn_backfill()
+
         if session_key and persist_session:
             save_conversation(workspace, session_key, engine.messages, session_id=session_id)
 

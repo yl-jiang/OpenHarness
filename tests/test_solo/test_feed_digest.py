@@ -215,6 +215,9 @@ async def test_solo_runner_passes_progress_callback_to_tool_registry(tmp_path, m
             captured["source_context"] = source_context
             captured["progress_callback"] = progress_callback
 
+        def post_turn_backfill(self):
+            pass
+
     class _FakeEngine:
         def __init__(self, **kwargs):
             self.messages = []

@@ -40,6 +40,7 @@ from solo.core.models import (
     ProjectSnapshot,
     ProjectSuggestion,
     SoloEntry,
+    SoloHealthRecord,
     SoloRecord,
     SoloTodo,
 )
@@ -137,6 +138,7 @@ class SoloToolRegistry:
         self._progress_callback = progress_callback
         self._background_tasks: set[Any] = set()
         self._created_record_ids: set[str] = set()
+        self._pending_health_ids: list[str] = []
 
     def _processor(self) -> SoloProcessor:
         if self.processor is None:
@@ -157,6 +159,22 @@ class SoloToolRegistry:
                 await coro
         except Exception:
             pass
+
+    def post_turn_backfill(self) -> None:
+        """Backfill record_id into health records created in the same turn.
+
+        solo_record and solo_health_record run concurrently via asyncio.gather(),
+        so health records are created without a record_id. After all tools in the
+        turn complete, this method links them to the most recent record.
+        """
+        if not self._pending_health_ids or not self._created_record_ids:
+            self._pending_health_ids.clear()
+            return
+
+        record_id = list(self._created_record_ids)[-1]
+        for health_id in self._pending_health_ids:
+            self.store.update_health_record(health_id, record_id=record_id)
+        self._pending_health_ids.clear()
 
     def tools(self) -> list[SoloDomainTool]:
         return [
@@ -192,6 +210,8 @@ class SoloToolRegistry:
             SoloDomainTool(_tool_get_now(), self._handle_get_now),
             SoloDomainTool(_tool_profile_update(), self._handle_profile_update),
             SoloDomainTool(_tool_remember(), self._handle_remember),
+            SoloDomainTool(_tool_health_record(), self._handle_health_record),
+            SoloDomainTool(_tool_health_summary(), self._handle_health_summary),
             SoloDomainTool(_tool_suggest_reflection(), self._handle_suggest_reflection),
             SoloDomainTool(_tool_sync_context(), self._handle_sync_context),
             SoloDomainTool(_tool_visualize(), self._handle_visualize),
@@ -1040,6 +1060,91 @@ class SoloToolRegistry:
         path = add_memory_entry(self.store.workspace, title, content)
         return {"ok": True, "message": f"已写入 memory：{path.name}"}
 
+    _HEALTH_STANDARD_CATEGORIES = frozenset({
+        "medical", "symptom", "medication", "fitness",
+        "sleep", "nutrition", "mental", "vital",
+    })
+    _HEALTH_VAGUE_NAMES = frozenset({
+        "other", "misc", "general", "unknown", "custom", "test",
+    })
+
+    async def _handle_health_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        category = _required_text(arguments, "category")
+        item = _required_text(arguments, "item")
+
+        if category not in self._HEALTH_STANDARD_CATEGORIES:
+            if not category.isalpha() or not category.islower() or len(category) > 20:
+                return {"ok": False, "error": f"Invalid category '{category}'. Use a standard category or a single lowercase English word."}
+            if category in self._HEALTH_VAGUE_NAMES:
+                return {"ok": False, "error": f"Category '{category}' is too vague. Use a descriptive name."}
+
+        local_today = _now()[:10]
+        subject_raw = str(arguments.get("subject") or "self").strip()
+        record = SoloHealthRecord(
+            id=uuid4().hex[:12],
+            record_id="",
+            date=str(arguments.get("date") or local_today),
+            subject=subject_raw or "self",
+            category=category,
+            item=item,
+            description=str(arguments.get("description") or ""),
+            body_part=str(arguments.get("body_part") or ""),
+            severity=str(arguments.get("severity") or ""),
+            status=str(arguments.get("status") or "active"),
+            medication_name=str(arguments.get("medication_name") or ""),
+            dosage=str(arguments.get("dosage") or ""),
+            frequency=str(arguments.get("frequency") or ""),
+            duration=str(arguments.get("duration") or ""),
+            exercise_type=str(arguments.get("exercise_type") or ""),
+            exercise_duration_min=int(arguments.get("exercise_duration_min") or 0),
+            exercise_intensity=str(arguments.get("exercise_intensity") or ""),
+            sleep_hours=float(arguments.get("sleep_hours") or 0),
+            sleep_quality=str(arguments.get("sleep_quality") or ""),
+            mood=str(arguments.get("mood") or ""),
+            stress_level=str(arguments.get("stress_level") or ""),
+            metrics_json=str(arguments.get("metrics_json") or "{}"),
+            tags=str(arguments.get("tags") or ""),
+            source="agent",
+            linked_memory_id=str(arguments.get("linked_memory_id") or ""),
+            created_at=_now(),
+            updated_at=_now(),
+        )
+        self.store.add_health_record(record)
+        self._pending_health_ids.append(record.id)
+        return {"ok": True, "message": f"健康记录已入库：{category}/{item} ({record.date})"}
+
+    async def _handle_health_summary(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        subject = str(arguments.get("subject") or "").strip() or None
+        category = str(arguments.get("category") or "").strip() or None
+        days = int(arguments.get("days") or 30)
+        status = str(arguments.get("status") or "").strip() or None
+        date_from = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+        records = self.store.list_health_records(
+            subject=subject, category=category, status=status, date_from=date_from,
+        )
+
+        if not records:
+            subj_desc = f" ({subject})" if subject else ""
+            return {
+                "ok": True, "total": 0,
+                "message": f"过去 {days} 天{subj_desc}没有{' (' + category + ')' if category else ''}健康记录。",
+            }
+
+        from collections import Counter
+        cat_counts = Counter(r.category for r in records)
+        subj_counts = Counter(r.subject for r in records)
+        items_summary = Counter(r.item for r in records).most_common(10)
+        recent = [r.to_dict() for r in records[:10]]
+
+        return {
+            "ok": True, "total": len(records), "days": days,
+            "subject_filter": subject, "category_filter": category,
+            "by_category": dict(cat_counts), "by_subject": dict(subj_counts),
+            "top_items": [{"item": i, "count": c} for i, c in items_summary],
+            "recent_records": recent,
+        }
+
     async def _handle_suggest_reflection(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Generate reflection questions based on recent records."""
         records = self.store.list_records(limit=20)
@@ -1804,7 +1909,7 @@ def _tool_record() -> ToolDefinition:
             "break_point, bridge_action, environment_design, next_experiment) must come from the user's "
             "own words; when the user did not state them, leave them empty / neutral. Do not add unstated "
             "causes, diagnoses, motives, timelines, or explanations. Do NOT rewrite a future plan as a "
-            "past event; preserve the original tense. SIDE-EFFECT CHECK: If this message reveals persistent personal facts (chronic health conditions, new relationships, life structure changes, long-term preferences), also call solo_remember in the SAME turn to store them in long-term memory."
+            "past event; preserve the original tense. SIDE-EFFECT CHECK: If this message reveals persistent personal facts (chronic health conditions, new relationships, life structure changes, long-term preferences), also call solo_remember in the SAME turn to store them in long-term memory. If this message contains health-related events (symptoms, medication, exercise, sleep, mood changes, medical visits, vital signs), also call solo_health_record in the SAME turn — once per distinct health event. Health info may be mentioned INCIDENTALLY as a side note (e.g. '小红没去游乐场，因为她去体检了' → extract 小红's medical visit). Set the subject parameter correctly — default is 'self'; use the family member's name if the event is about them."
         ),
         [
             ("content", "string", "Faithful paraphrase of the user's current message. Must preserve all facts, opinions, and claims the user actually expressed. Do NOT add facts, opinions, or reflections the user did not state in this turn — even if a recent conversation topic suggests them.", True),
@@ -2262,6 +2367,89 @@ def _tool_remember() -> ToolDefinition:
         [
             ("title", "string", "A short English title for this memory entry (used as filename, ASCII only, e.g. 'family_members', 'medical_history').", True),
             ("content", "string", "The markdown content to store. Be factual and concise.", True),
+        ],
+    )
+
+
+def _tool_health_record() -> ToolDefinition:
+    return _definition(
+        "solo_health_record",
+        (
+            "Record a STRUCTURED health-related event into the dedicated health database. "
+            "Call this tool whenever the user's message contains information about: "
+            "physical symptoms, medical visits, medications, exercise/fitness activities, "
+            "sleep patterns, nutrition/diet, mental health/mood changes, or vital signs. "
+            "IMPORTANT: Health info may be mentioned INCIDENTALLY as a side note in a daily record "
+            "(e.g. '小红没去游乐场，因为她去体检了' → extract 小红's medical visit). "
+            "Scan the ENTIRE message for health signals, not just the main topic. "
+            "Call this in the SAME TURN as solo_record when the user's message "
+            "contains both daily events AND health information. "
+            "You may call this tool MULTIPLE TIMES per turn if the message contains "
+            "different types of health events (e.g. exercise + medication). "
+            "For STABLE health facts (chronic conditions, allergies), use solo_remember instead."
+        ),
+        [
+            ("category", "string",
+             "Health category. PREFERRED: Use one of these standard categories if applicable: "
+             "medical (doctor visits, checkups, surgery), "
+             "symptom (headache, allergy, pain, fatigue), "
+             "medication (drugs, prescriptions, supplements), "
+             "fitness (running, swimming, gym, yoga), "
+             "sleep (sleep duration, quality, insomnia), "
+             "nutrition (diet habits, supplements, fasting), "
+             "mental (mood, stress, anxiety, meditation), "
+             "vital (weight, heart rate, blood pressure, temperature). "
+             "If NONE of the above fit, you may create a new category using a single lowercase English word "
+             "(e.g. 'dental', 'dermatology'). Do NOT use vague names like 'other' or 'misc'.",
+             True),
+            ("item", "string", "Primary item name (e.g. '跑步', '布洛芬', '头疼', '年度体检').", True),
+            ("date", "string", "Date in YYYY-MM-DD format. Defaults to today.", False),
+            ("subject", "string",
+             "Who this health record is about: 'self' (the user), or a family member name (e.g. '小明', '小红'). "
+             "Default: 'self'. Set this when the health event is about a family member, especially children.",
+             False),
+            ("description", "string", "Detailed description of the health event.", False),
+            ("body_part", "string", "Affected body part (e.g. '膝盖', '头', '腰').", False),
+            ("severity", "string", "Severity: mild, moderate, severe. Leave empty if N/A.", False),
+            ("status", "string", "Status: active, resolved, chronic, recurring. Default: active.", False),
+            ("medication_name", "string", "Medication name (for category=medication).", False),
+            ("dosage", "string", "Dosage (e.g. '1颗', '5ml').", False),
+            ("frequency", "string", "Frequency (e.g. '每日两次', '按需').", False),
+            ("duration", "string", "Duration (e.g. '2小时', '3天').", False),
+            ("exercise_type", "string", "Exercise type (for category=fitness).", False),
+            ("exercise_duration_min", "integer", "Exercise duration in minutes.", False),
+            ("exercise_intensity", "string", "Exercise intensity: low, moderate, high.", False),
+            ("sleep_hours", "number", "Hours of sleep (for category=sleep).", False),
+            ("sleep_quality", "string", "Sleep quality: good, fair, poor.", False),
+            ("mood", "string", "Mood description (for category=mental).", False),
+            ("stress_level", "string", "Stress level: low, moderate, high.", False),
+            ("metrics_json", "string",
+             "JSON string for extra metrics (e.g. '{\"weight_kg\": 72.5, \"steps\": 8000}').",
+             False),
+            ("tags", "string", "Comma-separated tags.", False),
+        ],
+    )
+
+
+def _tool_health_summary() -> ToolDefinition:
+    return _definition(
+        "solo_health_summary",
+        (
+            "Query structured health records for a given time range, subject, and/or category. "
+            "Use when the user asks about their own or a family member's health history, medication usage, "
+            "exercise patterns, sleep quality, etc. "
+            "Returns aggregated statistics and recent records."
+        ),
+        [
+            ("subject", "string",
+             "Filter by subject: 'self' (the user) or a family member name (e.g. '小明', '小红'). "
+             "Leave empty to query all subjects.",
+             False),
+            ("category", "string",
+             "Filter by health category: medical, symptom, medication, fitness, sleep, nutrition, mental, vital.",
+             False),
+            ("days", "integer", "Look back N days (default 30).", False),
+            ("status", "string", "Filter by status: active, resolved, chronic, recurring.", False),
         ],
     )
 
