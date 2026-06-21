@@ -26,7 +26,7 @@ across different days that relate to the same specific goal.
 - A frequently mentioned word or topic ("水果", "外卖", "作息", "调休", "硅谷", "吐槽")
 - A generic life category ("健康", "生活", "日常", "工作", "学习", "家庭", "饮食")
 - Casual observations that happen to share a topic without an explicit goal
-- People's names or places ("明月", "小朋友", "幼儿园")
+- People's names or places ("小红", "小朋友", "幼儿园")
 - One-off events or mentions
 - Single words that describe a domain rather than a specific endeavor
 

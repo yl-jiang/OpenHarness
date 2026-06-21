@@ -30,7 +30,7 @@ class SoloHealthRecord:
     id: str
     record_id: str = ""
     date: str = ""
-    subject: str = "self"       # self|图图|明月|... (健康记录主体)
+    subject: str = "self"       # self|小明|小红|... (健康记录主体)
     category: str = ""          # 健康类别（优先使用推荐类别，允许受约束的新类别）
     item: str = ""
     description: str = ""
@@ -317,7 +317,7 @@ def health_record_categories(self) -> dict[str, int]:
     return {row[0]: row[1] for row in rows}
 
 def health_record_subjects(self) -> dict[str, int]:
-    """返回 {subject: count}，如 {'self': 31, '图图': 13, '明月': 2}。
+    """返回 {subject: count}，如 {'self': 31, '小明': 13, '小红': 2}。
     供前端 SubjectFilter 与 /api/solo/health/subjects 端点使用。"""
     rows = self._db.execute(
         "SELECT subject, COUNT(*) FROM health_records GROUP BY subject"
@@ -367,7 +367,7 @@ def _tool_health_record() -> ToolDefinition:
             "physical symptoms, medical visits, medications, exercise/fitness activities, "
             "sleep patterns, nutrition/diet, mental health/mood changes, or vital signs. "
             "IMPORTANT: Health info may be mentioned INCIDENTALLY as a side note in a daily record "
-            "(e.g. '明月没去游乐场，因为她去体检了' → extract 明月's medical visit). "
+            "(e.g. '小红没去游乐场，因为她去体检了' → extract 小红's medical visit). "
             "Scan the ENTIRE message for health signals, not just the main topic. "
             "Call this in the SAME TURN as solo_record when the user's message "
             "contains both daily events AND health information. "
@@ -394,7 +394,7 @@ def _tool_health_record() -> ToolDefinition:
              True),
             ("date", "string", "Date in YYYY-MM-DD format. Defaults to today.", False),
             ("subject", "string",
-             "Who this health record is about: 'self' (the user), or a family member name (e.g. '图图', '明月'). "
+             "Who this health record is about: 'self' (the user), or a family member name (e.g. '小明', '小红'). "
              "Default: 'self'. Set this when the health event is about a family member, especially children.",
              False),
             ("description", "string", "Detailed description of the health event.", False),
@@ -557,7 +557,7 @@ uv run pytest tests/test_solo/ -v -k "health" --timeout=120
 
 ### 目标
 
-让 agent 能查询健康历史，用于回答用户的健康相关问题。**必须支持 `subject` 参数**，否则无法回答"图图最近吃药情况"。
+让 agent 能查询健康历史，用于回答用户的健康相关问题。**必须支持 `subject` 参数**，否则无法回答"小明最近吃药情况"。
 
 ### 步骤
 
@@ -577,7 +577,7 @@ def _tool_health_summary() -> ToolDefinition:
         ),
         [
             ("subject", "string",
-             "Filter by subject: 'self' (the user) or a family member name (e.g. '图图', '明月'). "
+             "Filter by subject: 'self' (the user) or a family member name (e.g. '小明', '小红'). "
              "Leave empty to query all subjects.",
              False),
             ("category", "string", "Filter by health category: medical, symptom, medication, fitness, sleep, nutrition, mental, vital.", False),
@@ -688,11 +688,11 @@ uv run pytest tests/test_solo/test_tools.py -v -k "health_summary"
 
 | 用户说的（日常记录） | 隐含的健康信息 | 提取结果 |
 |---------------------|---------------|----------|
-| "今天带图图去游乐场玩了，明月没去，因为她去体检了" | 明月去体检 | subject=明月, category=medical, item=体检 |
+| "今天带小明去游乐场玩了，小红没去，因为她去体检了" | 小红去体检 | subject=小红, category=medical, item=体检 |
 | "周末陪爸妈去了一趟医院，老爸做了个胃镜" | 老爸做胃镜 | subject=老爸, category=medical, item=胃镜 |
 | "今天加班到很晚，吃了颗维生素C" | 吃维生素C | subject=self, category=medication, item=维生素C |
-| "图图在幼儿园被小朋友传染了，开始流鼻涕" | 图图流鼻涕 | subject=图图, category=symptom, item=流鼻涕 |
-| "明月最近一直在吃中药调理身体" | 明月吃中药 | subject=明月, category=medication, item=中药 |
+| "小明在幼儿园被小朋友传染了，开始流鼻涕" | 小明流鼻涕 | subject=小明, category=symptom, item=流鼻涕 |
+| "小红最近一直在吃中药调理身体" | 小红吃中药 | subject=小红, category=medication, item=中药 |
 | "下午开会头疼，喝了杯咖啡就好了" | 头疼 | subject=self, category=symptom, item=头疼 |
 
 ### 类别选择（category）
@@ -724,26 +724,26 @@ uv run pytest tests/test_solo/test_tools.py -v -k "health_summary"
 | "去医院做了体检" | self | medical | 年度体检 | description=体检结果 |
 | "体重72.5kg" | self | vital | 体重 | metrics_json={"weight_kg": 72.5} |
 | "控制碳水摄入" | self | nutrition | 低碳饮食 | description=控制碳水 |
-| "带图图去新华医院做发育评估" | **图图** | medical | 发育评估 | description=评估结果 |
-| "图图鼻炎又犯了" | **图图** | symptom | 过敏性鼻炎 | body_part=鼻, severity=mild |
-| "图图确诊过敏体质，开了眼药水" | **图图** | medication | 氨卓斯汀滴眼液 | medication_name=氨卓斯汀滴眼液, frequency=早晚各一次 |
-| "明月去医院复查皮肤" | **明月** | medical | 复查 | description=复查结果 |
-| "带图图去游乐场，明月没去因为她去体检了" | **明月**（隐含） | medical | 体检 | description=明月去体检（从日常记录附带信息中提取） |
+| "带小明去新华医院做发育评估" | **小明** | medical | 发育评估 | description=评估结果 |
+| "小明鼻炎又犯了" | **小明** | symptom | 过敏性鼻炎 | body_part=鼻, severity=mild |
+| "小明确诊过敏体质，开了眼药水" | **小明** | medication | 氨卓斯汀滴眼液 | medication_name=氨卓斯汀滴眼液, frequency=早晚各一次 |
+| "小红去医院复查皮肤" | **小红** | medical | 复查 | description=复查结果 |
+| "带小明去游乐场，小红没去因为她去体检了" | **小红**（隐含） | medical | 体检 | description=小红去体检（从日常记录附带信息中提取） |
 
 **subject 判断规则：**
 - 默认 `self`（用户自己）
-- 当消息明确提到家庭成员（如"图图"、"明月"、"老婆"）的健康事件时，设为对应名称
+- 当消息明确提到家庭成员（如"小明"、"小红"、"老婆"）的健康事件时，设为对应名称
 - 特别注意儿童健康记录：用户经常记录子女的就诊、症状、用药，必须正确识别 subject
 
 ### 操作要求
 
 1. 每次调用 `solo_record` 时，同步检查消息是否包含健康信息。若有，**同一轮**调用 `solo_health_record`
-2. **逐句扫描整条消息**，不要只看主题。健康信息可能作为附带信息出现（如"明月没去，因为她去体检了"）
+2. **逐句扫描整条消息**，不要只看主题。健康信息可能作为附带信息出现（如"小红没去，因为她去体检了"）
 3. 一条消息可能包含**多种健康事件**（如运动+用药），此时**分别调用**多次 `solo_health_record`
 4. `item` 使用中文，简明扼要
 5. 只填与 category 相关的字段，不要填无关字段
 6. `metrics_json` 仅用于无法被其他字段覆盖的量化数据（体重、心率、步数等）
-7. **`subject` 必须正确识别**：默认 `self`，但当健康事件是关于家庭成员（尤其是子女）时，必须设为对应名称（如"图图"、"明月"）
+7. **`subject` 必须正确识别**：默认 `self`，但当健康事件是关于家庭成员（尤其是子女）时，必须设为对应名称（如"小明"、"小红"）
 8. **稳定的健康事实**（如"我有过敏性鼻炎"）仍然用 `solo_remember`，`solo_health_record` 记录的是**事件级别**的健康信息（如"今天鼻炎发作了"）
 9. 如果用户只是泛泛提到健康但不包含具体事件（如"要注意健康了"），不需要调用
 
@@ -763,8 +763,8 @@ uv run pytest tests/test_solo/test_tools.py -v -k "health_summary"
 If this message contains health-related events (symptoms, medication, exercise, sleep,
 mood changes, medical visits, vital signs), also call solo_health_record in the SAME turn —
 once per distinct health event. Health info may be mentioned INCIDENTALLY as a side note
-(e.g. "明月没去游乐场，因为她去体检了" → extract 明月's medical visit). Set the `subject`
-parameter correctly — default "self"; use the family member's name (e.g. "图图") if the
+(e.g. "小红没去游乐场，因为她去体检了" → extract 小红's medical visit). Set the `subject`
+parameter correctly — default "self"; use the family member's name (e.g. "小明") if the
 event is about them.
 ```
 
@@ -1091,7 +1091,7 @@ app.include_router(health.router)
 uv run onboard run --reload &
 curl -s http://localhost:8090/api/solo/health/subjects | python -m json.tool
 curl -s "http://localhost:8090/api/solo/health/overview?subject=self" | python -m json.tool
-curl -s "http://localhost:8090/api/solo/health/records?subject=图图" | python -m json.tool
+curl -s "http://localhost:8090/api/solo/health/records?subject=小明" | python -m json.tool
 curl -s "http://localhost:8090/api/solo/health/timeline?subject=self" | python -m json.tool
 # 写操作
 curl -s -X PATCH http://localhost:8090/api/solo/health/records/<id> \
@@ -1123,7 +1123,7 @@ export interface SoloHealthRecord {
   id: string;
   record_id: string;
   date: string;
-  subject: string;  // 'self' | '图图' | '明月' | ... (健康记录主体)
+  subject: string;  // 'self' | '小明' | '小红' | ... (健康记录主体)
   category: HealthCategory;
   item: string;
   description: string;
@@ -1152,7 +1152,7 @@ export interface SoloHealthRecord {
 export interface HealthOverview {
   total_records: number;
   by_category: Record<string, number>;
-  by_subject: Record<string, number>;  // 始终全量：{'self': 31, '图图': 13, '明月': 2}
+  by_subject: Record<string, number>;  // 始终全量：{'self': 31, '小明': 13, '小红': 2}
   subject_filter: string | null;       // 当前过滤主体
   recent_7d_count: number;
   active_medications: number;
@@ -1299,7 +1299,7 @@ cd onboard/frontend && npx tsc --noEmit
 
 ```
 Zone 0: Subject Filter (主体选择器)
-  - 水平标签栏：全部 | 自己(self) | 图图 | 明月 | ...
+  - 水平标签栏：全部 | 自己(self) | 小明 | 小红 | ...
   - 从 api.health.subjects() 动态生成（'全部' + 各 subject）
   - selectedSubject 状态（默认 null=全部）贯穿所有 Zone
 
@@ -1350,7 +1350,7 @@ Zone 6: Health Timeline ← api.health.timeline(selectedSubject, {limit})
 ```bash
 cd onboard/frontend && npx tsc --noEmit
 # 访问 /health 确认所有区域正确渲染
-# 切换 SubjectFilter（全部→图图→明月）确认所有图表刷新
+# 切换 SubjectFilter（全部→小明→小红）确认所有图表刷新
 # 确认空数据时优雅降级（显示"暂无记录"而非空白）
 # 确认 Solo/Wolo 切换时数据刷新（wolo 下不显示 Health）
 ```
@@ -1365,7 +1365,7 @@ cd onboard/frontend && npx tsc --noEmit
 
 #### Store 层（test_store.py 或 test_health.py）
 - `add_health_record` + `get_health_record` 往返一致
-- `list_health_records` **subject 过滤**：插入 self/图图/明月 各若干条，验证 `subject="图图"` 只返回图图的
+- `list_health_records` **subject 过滤**：插入 self/小明/小红 各若干条，验证 `subject="小明"` 只返回小明的
 - `list_health_records` category/status/date_from/date_to/limit 组合过滤
 - `list_health_records` 空表返回 `[]`
 - `update_health_record`：可更新业务字段；尝试改 `id` 被忽略（`allowed - {"id"}`）
@@ -1384,19 +1384,19 @@ cd onboard/frontend && npx tsc --noEmit
 - `post_turn_backfill()` 多条回填：同轮创建 2 条 health_record，回填后两条都关联到同一个 record_id
 - `post_turn_backfill()` 无 health_record 时不报错（`_pending_health_ids` 为空直接返回）
 - `post_turn_backfill()` 无 record 时不报错（`_created_record_ids` 为空直接返回）
-- `_handle_health_summary` **subject 过滤**：传入 `subject="图图"` 只聚合图图的记录
+- `_handle_health_summary` **subject 过滤**：传入 `subject="小明"` 只聚合小明的记录
 - `_handle_health_summary` 空结果返回 `total: 0`
 - `_handle_health_summary` by_category/by_subject 计数正确
 
 #### 集成层（通过 agent）
 - 消息"今天跑了5公里，膝盖疼，吃了布洛芬"触发**多次** `solo_health_record`（fitness + symptom + medication）
-- 消息"带图图去游乐场，明月没去因为她去体检了"正确识别 **subject=明月**（隐含健康信息）
+- 消息"带小明去游乐场，小红没去因为她去体检了"正确识别 **subject=小红**（隐含健康信息）
 - 消息"我有过敏性鼻炎"走 `solo_remember` 而非 `solo_health_record`（长效事实 vs 事件）
 - 消息"要注意健康了"不触发任何 health 工具（泛泛表述）
 
 #### API 层（test_health_api.py 或手动）
 - `GET /api/solo/health/subjects` 返回主体计数
-- `GET /api/solo/health/records?subject=图图` 只返回图图的
+- `GET /api/solo/health/records?subject=小明` 只返回小明的
 - 各趋势端点带 `subject` 参数正确过滤
 - `DELETE /api/solo/health/records/{id}` 删除成功
 - `PATCH /api/solo/health/records/{id}` 不能改 subject（传 subject 被忽略）
@@ -1426,7 +1426,7 @@ uv run pytest -q tests/test_solo/
 - **Multi-subject support**: Health records distinguish between user (self) and family members (e.g. children, spouse) via `subject` field, enabling per-person filtering and statistics (subject filter pushed down to SQL).
 - **`solo_health_record` tool**: Agent automatically extracts health events from user messages into the structured health database (same-turn pattern with `solo_record`), correctly identifying subject for family member health events.
 - **`solo_health_summary` tool**: Agent can query health history (with subject filter) to answer health-related questions.
-- **Onboard Health page (solo-only)**: New sidebar page (visible only in solo mode) with structured health statistics, trend charts (fitness, sleep, symptoms, mental, vitals), medication tracking, health timeline, and subject filter (全部/自己/图图/明月...). All charts refresh on subject change.
+- **Onboard Health page (solo-only)**: New sidebar page (visible only in solo mode) with structured health statistics, trend charts (fitness, sleep, symptoms, mental, vitals), medication tracking, health timeline, and subject filter (全部/自己/小明/小红...). All charts refresh on subject change.
 - **Health record editing (restricted)**: DELETE / PATCH endpoints for single-record edit/delete; PATCH cannot change subject.
 ```
 
@@ -1436,7 +1436,7 @@ uv run pytest -q tests/test_solo/
 - [ ] Store CRUD 方法工作正常，**subject 过滤下推 SQL**
 - [ ] `health_record_subjects()` 返回主体计数
 - [ ] `solo_health_record` 工具可被 agent 调用（含 subject 参数）
-- [ ] Agent 能正确识别 subject（自己 vs 家庭成员如"图图"、"明月"），含隐含信息提取
+- [ ] Agent 能正确识别 subject（自己 vs 家庭成员如"小明"、"小红"），含隐含信息提取
 - [ ] **`post_turn_backfill()` 正确回填 record_id**：同轮 solo_record + solo_health_record 后，health_record.record_id 等于 record.id
 - [ ] `solo_health_summary` 工具支持 subject 过滤并返回正确数据
 - [ ] 提示词优化后 agent 能检测健康信息并正确设置 subject
@@ -1465,7 +1465,7 @@ uv run pytest -q tests/test_solo/
 |------|------|
 | `onboard/api/health.py` | Health REST API 路由（solo 前缀，含只读 + 受限写操作） |
 | `onboard/frontend/src/pages/Health.tsx` | Health 页面主组件 |
-| `onboard/frontend/src/components/health/SubjectFilter.tsx` | 主体选择器（全部/自己/图图/明月...） |
+| `onboard/frontend/src/components/health/SubjectFilter.tsx` | 主体选择器（全部/自己/小明/小红...） |
 | `onboard/frontend/src/components/health/HealthStatsCards.tsx` | 统计卡片 |
 | `onboard/frontend/src/components/health/CategoryBreakdown.tsx` | 类别分布图 |
 | `onboard/frontend/src/components/health/FitnessTrend.tsx` | 运动趋势 |
