@@ -77,6 +77,45 @@ export type SwarmNotificationSnapshot = {
 	timestamp: number;
 };
 
+export type GoalChangeStats = {
+	turns_used: number;
+	tokens_used: number;
+	wall_clock_ms: number;
+};
+
+export type GoalChange = {
+	kind: 'lifecycle' | 'completion';
+	status?: string | null;
+	reason?: string | null;
+	actor?: string | null;
+	stats?: GoalChangeStats | null;
+};
+
+export type GoalSnapshot = {
+	goal_id: string;
+	objective: string;
+	completion_criterion?: string | null;
+	status: string;
+	turns_used: number;
+	tokens_used: number;
+	wall_clock_ms: number;
+	terminal_reason?: string | null;
+	last_actor?: string | null;
+	budget: {
+		turn_budget?: number | null;
+		token_budget?: number | null;
+		wall_clock_budget_ms?: number | null;
+		remaining_turns?: number | null;
+		remaining_tokens?: number | null;
+		remaining_wall_clock_ms?: number | null;
+		turn_budget_reached: boolean;
+		token_budget_reached: boolean;
+		wall_clock_budget_reached: boolean;
+		over_budget: boolean;
+		usage_fraction: number;
+	};
+};
+
 export type BackendEventType =
 	| 'ready'
 	| 'state_snapshot'
@@ -96,6 +135,7 @@ export type BackendEventType =
 	| 'todo_update'
 	| 'plan_mode_change'
 	| 'swarm_status'
+	| 'goal_updated'
 	| 'error'
 	| 'shutdown'
 	| 'status';
@@ -126,6 +166,8 @@ export type BackendEvent = {
 	plan_mode?: string | null;
 	swarm_teammates?: SwarmTeammateSnapshot[] | null;
 	swarm_notifications?: SwarmNotificationSnapshot[] | null;
+	goal_snapshot?: GoalSnapshot | null;
+	goal_change?: GoalChange | null;
 	// Terminal-state reason for line_complete events
 	reason?: string | null;
 };

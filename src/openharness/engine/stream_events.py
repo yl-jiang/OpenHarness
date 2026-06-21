@@ -90,6 +90,44 @@ class StatusEvent:
 
 
 @dataclass(frozen=True)
+class GoalChangeStats:
+    """Final-iteration statistics attached to a goal completion event."""
+
+    turns_used: int
+    tokens_used: int
+    wall_clock_ms: int
+
+
+@dataclass(frozen=True)
+class GoalChange:
+    """Description of what happened to a goal in a single transition.
+
+    ``kind`` is ``"lifecycle"`` for created / active / paused / blocked and
+    ``"completion"`` for the (transient) terminal completion event. This
+    matches kimi-code's ``GoalChangeKind`` — no separate ``created`` kind.
+    """
+
+    kind: Literal["lifecycle", "completion"]
+    status: str | None = None
+    reason: str | None = None
+    actor: str | None = None
+    stats: GoalChangeStats | None = None
+
+
+@dataclass(frozen=True)
+class GoalUpdatedEvent:
+    """Broadcast when a goal is created, updated, or cleared.
+
+    ``snapshot is None`` signals that the goal record was deleted (complete or
+    cancel) — the UI should hide the goal panel. ``change is None`` is allowed
+    for a pure-refresh event (no status transition).
+    """
+
+    snapshot: Any  # GoalSnapshot | None — Any avoids a circular import
+    change: GoalChange | None = None
+
+
+@dataclass(frozen=True)
 class StreamFinished:
     """Terminal event yielded by the engine when streaming ends for a non-normal reason.
 
@@ -127,4 +165,5 @@ StreamEvent = (
     | StatusEvent
     | CompactProgressEvent
     | StreamFinished
+    | GoalUpdatedEvent
 )

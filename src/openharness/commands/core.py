@@ -28,6 +28,11 @@ class CommandResult:
     refresh_runtime: bool = False
     submit_prompt: str | None = None
     submit_model: str | None = None
+    # Goal-mode fields. ``goal_action`` signals the UI to show a permission
+    # prompt before starting/resuming a goal. See registry._goal_handler.
+    goal_action: str | None = None
+    goal_objective: str | None = None
+    goal_replace: bool = False
 
 
 @dataclass

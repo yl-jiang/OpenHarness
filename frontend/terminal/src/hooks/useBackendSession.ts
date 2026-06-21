@@ -6,6 +6,7 @@ import type {
 	BackendEvent,
 	BridgeSessionSnapshot,
 	FrontendConfig,
+	GoalSnapshot,
 	McpServerSnapshot,
 	SelectOptionPayload,
 	SwarmNotificationSnapshot,
@@ -43,6 +44,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	const [todoMarkdown, setTodoMarkdown] = useState('');
 	const [swarmTeammates, setSwarmTeammates] = useState<SwarmTeammateSnapshot[]>([]);
 	const [swarmNotifications, setSwarmNotifications] = useState<SwarmNotificationSnapshot[]>([]);
+	const [goalSnapshot, setGoalSnapshot] = useState<GoalSnapshot | null>(null);
 	const statusRef = useRef<Record<string, unknown>>({});
 	const childRef = useRef<ChildProcessWithoutNullStreams | null>(null);
 	const sentInitialPrompt = useRef(false);
@@ -533,6 +535,10 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			}
 			return;
 		}
+		if (event.type === 'goal_updated') {
+			setGoalSnapshot(event.goal_snapshot ?? null);
+			return;
+		}
 		if (event.type === 'shutdown') {
 			onExit(0);
 		}
@@ -564,6 +570,7 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			todoMarkdown,
 			swarmTeammates,
 			swarmNotifications,
+			goalSnapshot,
 			setModal,
 			setSelectRequest,
 			setBusy,
@@ -571,6 +578,6 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			sendRequest,
 			notifyCommandOutputStart,
 		}),
-		[assistantBuffer, bridgeSessions, busy, busyLabel, commandOutputStartCount, commands, mcpServers, modal, ready, reasoningBuffer, selectRequest, skills, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
+		[assistantBuffer, bridgeSessions, busy, busyLabel, commandOutputStartCount, commands, goalSnapshot, mcpServers, modal, ready, reasoningBuffer, selectRequest, skills, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
 	);
 }

@@ -18,3 +18,11 @@ class HookEvent(str, Enum):
     NOTIFICATION = "notification"
     STOP = "stop"
     SUBAGENT_STOP = "subagent_stop"
+    # Goal-mode lifecycle events. Fire-and-forget; hook scripts run
+    # asynchronously after each driver turn via GoalMode.flush_hooks().
+    GOAL_CREATED = "goal_created"
+    GOAL_RESUMED = "goal_resumed"
+    GOAL_PAUSED = "goal_paused"
+    GOAL_BLOCKED = "goal_blocked"
+    GOAL_COMPLETED = "goal_completed"
+    GOAL_CANCELLED = "goal_cancelled"

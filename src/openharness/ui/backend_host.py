@@ -24,6 +24,7 @@ from openharness.engine.stream_events import (
     AssistantTurnComplete,
     CompactProgressEvent,
     ErrorEvent,
+    GoalUpdatedEvent,
     ReasoningDelta,
     StatusEvent,
     StreamEvent,
@@ -533,9 +534,41 @@ class ReactBackendHost:
                     BackendEvent(type="transcript_item", item=TranscriptItem(role="system", text=event.message))
                 )
                 return
+            if isinstance(event, GoalUpdatedEvent):
+                logger.event(
+                    "backend_stream_event",
+                    session_id=self._bundle.session_id,
+                    event_type="goal_updated",
+                    status=event.change.status if event.change else None,
+                    kind=event.change.kind if event.change else None,
+                )
+                snapshot_dict = event.snapshot.to_dict() if event.snapshot is not None else None
+                change_dict = None
+                if event.change is not None:
+                    change_dict = {
+                        "kind": event.change.kind,
+                        "status": event.change.status,
+                        "reason": event.change.reason,
+                        "actor": event.change.actor,
+                        "stats": {
+                            "turns_used": event.change.stats.turns_used,
+                            "tokens_used": event.change.stats.tokens_used,
+                            "wall_clock_ms": event.change.stats.wall_clock_ms,
+                        } if event.change.stats is not None else None,
+                    }
+                await self._emit(
+                    BackendEvent(
+                        type="goal_updated",
+                        goal_snapshot=snapshot_dict,
+                        goal_change=change_dict,
+                    )
+                )
+                return
 
         async def _clear_output() -> None:
             await self._emit(BackendEvent(type="clear_transcript"))
+            await self._emit(BackendEvent(type="todo_update", todo_markdown=""))
+            await self._emit(BackendEvent(type="goal_updated", goal_snapshot=None, goal_change=None))
         prev_permission_mode = self._bundle.app_state.get().permission_mode
         try:
             handle_line_kwargs: dict[str, Any] = {

@@ -94,6 +94,10 @@ class TodoStore:
         """Check if there are any items in the list."""
         return bool(self._items)
 
+    def reset(self) -> None:
+        """Clear the in-memory todo list."""
+        self._items = []
+
     def format_for_injection(self) -> Optional[str]:
         """
         Render the todo list for post-compression injection.

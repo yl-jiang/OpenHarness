@@ -115,6 +115,7 @@ class BackendEvent(BaseModel):
         "todo_update",
         "plan_mode_change",
         "swarm_status",
+        "goal_updated",
         "error",
         "shutdown",
     ]
@@ -142,6 +143,9 @@ class BackendEvent(BaseModel):
     plan_mode: str | None = None
     swarm_teammates: list[dict[str, Any]] | None = None
     swarm_notifications: list[dict[str, Any]] | None = None
+    # Goal state for goal_updated events
+    goal_snapshot: dict[str, Any] | None = None
+    goal_change: dict[str, Any] | None = None
     # Terminal-state reason for line_complete events
     reason: str | None = None
 

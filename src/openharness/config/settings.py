@@ -188,6 +188,32 @@ class WebSettings(BaseModel):
     synthetic_dns_cidrs: list[str] = Field(default_factory=list)
 
 
+class GoalSettings(BaseModel):
+    """Goal-mode configuration.
+
+    - ``default_*_budget`` fields are applied to a freshly-created goal when
+      the user did not explicitly set a budget (via ``SetGoalBudget`` or
+      ``/goal`` flags).
+    - ``restore_permission_after_goal`` opts in to automatically reverting
+      the permission mode after a goal ends (complete / blocked / cancel /
+      paused). The default keeps the post-goal FULL_AUTO permission — this
+      matches kimi-code and avoids surprising the user.
+    - ``hard_cap_iterations`` bounds the goal driver loop across *all* goals
+      in a queue, not per goal, so a misbehaving model cannot spin forever.
+    - ``max_queue_length`` caps how many items the goal queue may hold.
+    """
+
+    enabled: bool = True
+    max_objective_length: int = 4000
+    default_turn_budget: int | None = None
+    default_token_budget: int | None = None
+    default_wall_clock_budget_s: int | None = None
+    auto_advance_on_blocked: bool = False
+    restore_permission_after_goal: bool = False
+    hard_cap_iterations: int = 200
+    max_queue_length: int = 50
+
+
 class ProviderProfile(BaseModel):
     """Named provider workflow configuration."""
 
@@ -679,6 +705,7 @@ class Settings(BaseModel):
     self_evolution: SelfEvolutionSettings = Field(default_factory=SelfEvolutionSettings)
     sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     web: WebSettings = Field(default_factory=WebSettings)
+    goal: GoalSettings = Field(default_factory=GoalSettings)
     enabled_plugins: dict[str, bool] = Field(default_factory=dict)
     allow_project_plugins: bool = False
     user_skill_dirs: list[str] = Field(default_factory=_default_user_skill_dirs)

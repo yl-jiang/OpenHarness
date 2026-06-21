@@ -29,6 +29,7 @@ import {nextSelectIndex, nextSelectIndexForWheel, SelectModal, type SelectOption
 import {StatusBar} from './components/StatusBar.js';
 import {SwarmPanel} from './components/SwarmPanel.js';
 import {TodoPanel} from './components/TodoPanel.js';
+import {GoalPanel} from './components/GoalPanel.js';
 import type {TerminalInputStream} from './input/terminalInput.js';
 import {useBackendSession} from './hooks/useBackendSession.js';
 import {useElapsedTimer} from './hooks/useElapsedTimer.js';
@@ -444,6 +445,7 @@ function AppInner({
 	const deferredTodoMarkdown = useDeferredValue(session.todoMarkdown);
 	const deferredSwarmTeammates = useDeferredValue(session.swarmTeammates);
 	const deferredSwarmNotifications = useDeferredValue(session.swarmNotifications);
+	const liveGoalSnapshot = session.goalSnapshot;
 
 	useEffect(() => {
 		if (!session.reasoningBuffer) {
@@ -1783,6 +1785,12 @@ function AppInner({
 			{session.ready && (deferredSwarmTeammates.length > 0 || deferredSwarmNotifications.length > 0) ? (
 				<Box flexShrink={0} flexDirection="column">
 					<SwarmPanel teammates={deferredSwarmTeammates} notifications={deferredSwarmNotifications} />
+				</Box>
+			) : null}
+
+			{session.ready && liveGoalSnapshot ? (
+				<Box flexShrink={0} flexDirection="column">
+					<GoalPanel goal={liveGoalSnapshot} />
 				</Box>
 			) : null}
 

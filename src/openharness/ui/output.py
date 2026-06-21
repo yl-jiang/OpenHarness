@@ -12,6 +12,7 @@ from openharness.engine.stream_events import (
     AssistantTurnComplete,
     CompactProgressEvent,
     CompactProgressPhase,
+    GoalUpdatedEvent,
     StreamEvent,
     ToolExecutionCompleted,
     ToolExecutionStarted,
@@ -138,6 +139,34 @@ class OutputRenderer:
             # Render tool output based on tool type
             tool_input = getattr(event, "tool_input", None) or self._last_tool_input
             self._render_tool_output(tool_name, tool_input, output)
+            return
+
+        if isinstance(event, GoalUpdatedEvent):
+            if self._assistant_line_open:
+                self.console.print()
+                self._assistant_line_open = False
+            change = event.change
+            if change is None:
+                return
+            if change.kind == "completion" and event.snapshot is not None:
+                stats = change.stats
+                elapsed = ""
+                if stats:
+                    secs = stats.wall_clock_ms // 1000
+                    mins, secs = divmod(secs, 60)
+                    elapsed = f" ({stats.turns_used} turns, {_fmt_num(stats.tokens_used)} tokens, {mins}m{secs:02d}s)"
+                reason = f" \u2014 {change.reason}" if change.reason else ""
+                self.console.print(f"[green bold]\u2713 Goal complete{reason}[/green bold]{elapsed}")
+            elif change.status == "blocked":
+                reason = f": {change.reason}" if change.reason else ""
+                self.console.print(f"[yellow]\u26a0 Goal blocked{reason}[/yellow]")
+            elif change.status == "paused":
+                self.console.print("[yellow]\u23f8 Goal paused[/yellow]")
+            elif change.status == "active" and change.actor in ("user", "model"):
+                objective = event.snapshot.objective if event.snapshot else ""
+                truncated = (objective[:60] + "...") if len(objective) > 60 else objective
+                self.console.print(f"[cyan]\u25cf Goal started: {truncated}[/cyan]")
+            return
 
     def print_system(self, message: str) -> None:
         self._stop_spinner()

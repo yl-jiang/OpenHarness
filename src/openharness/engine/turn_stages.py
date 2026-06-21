@@ -732,6 +732,38 @@ async def post_tool_stage(state: TurnState) -> AsyncIterator[tuple[StreamEvent, 
             )
         state.action = TurnAction.STOP
 
+    # Goal-mode stop signal: UpdateGoal(complete|blocked|paused) sets
+    # ``result_metadata["goal_stop_turn"] = True`` so the turn loop exits and
+    # the driver (QueryEngine._drive_goal) can react to the new status. We
+    # check this even if done() was already detected — goal wins.
+    from openharness.tools.update_goal_tool import GOAL_STOP_TURN_KEY
+
+    for result in tool_results:
+        meta = result.result_metadata or {}
+        if isinstance(meta, dict) and meta.get(GOAL_STOP_TURN_KEY):
+            logger.event(
+                "goal_stop_turn_detected",
+                session_id=state.session_id,
+                model=context.model,
+                turn_count=state.turn_count,
+            )
+            state.action = TurnAction.STOP
+            break
+
+    # Goal creation handoff: if create_goal was called this turn, stop so
+    # submit_message can route to _drive_goal.  The tool itself is a pure
+    # state writer; the turn-level routing decision lives here.
+    from openharness.tools.create_goal_tool import CREATE_GOAL_TOOL_NAME
+
+    if any(tc.name == CREATE_GOAL_TOOL_NAME for tc in tool_calls):
+        logger.event(
+            "goal_create_handoff",
+            session_id=state.session_id,
+            model=context.model,
+            turn_count=state.turn_count,
+        )
+        state.action = TurnAction.STOP
+
 
 # ---------------------------------------------------------------------------
 # Default stage sequence

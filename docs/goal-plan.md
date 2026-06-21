@@ -707,46 +707,135 @@ def _switch_to_full_auto(context: CommandContext) -> None:
 
 ### 3.2 前端组件（frontend/terminal/src/components/）
 
-> **路径修正**：前端在 `frontend/terminal/src/components/`（**不是** `_frontend/src/components/`）。参照现有 `StatusBar.tsx`、`TodoPanel.tsx`、`ModalHost.tsx`、`SelectModal.tsx`。
+> **路径修正**：前端在 `frontend/terminal/src/components/`（**不是** `_frontend/src/components/`）。参照现有 `StatusBar.tsx`、`TodoPanel.tsx`、`ModalHost.tsx`、`SelectModal.tsx`。设计详见 `goal-design.md` §10.5。
 
-#### `GoalPanel.tsx`（参照 TodoPanel.tsx）
+#### 3.2.1 协议层：`ui/protocol.py`
 
-```tsx
-// 渲染目标状态面板
-// - 目标名称 + 状态标签 (active/paused/blocked)
-// - 进度：turns/tokens/time vs budget
-// - 操作按钮：pause / resume / cancel
+把 `GoalUpdatedEvent` 注册到现有 StreamEvent 序列化表：
+
+```python
+# src/openharness/ui/protocol.py
+from openharness.engine.stream_events import GoalUpdatedEvent
+
+def _serialize_goal_event(event: GoalUpdatedEvent) -> dict:
+    return {
+        "type": "goal_updated",
+        "snapshot": event.snapshot.to_dict() if event.snapshot else None,
+        "change": {
+            "kind": event.change.kind,
+            "status": event.change.status,
+            "reason": event.change.reason,
+            "actor": event.change.actor,
+            "stats": event.change.stats.__dict__ if event.change.stats else None,
+        } if event.change else None,
+    }
+# 注册到现有的事件序列化表
 ```
 
-#### `GoalStartPermissionPrompt.tsx`（参照 SelectModal.tsx 的模态模式）
+前端在 `frontend/terminal/src/types/events.ts` 声明对应 TS 类型：
 
-```tsx
-interface Props {
-    action: "permission_prompt_create" | "permission_prompt_resume";
-    objective?: string;
-    replace?: boolean;
-    onSelect: (choice: "switch_auto" | "keep_default" | "cancel") => void;
+```ts
+export interface GoalUpdatedEvent {
+  type: "goal_updated";
+  snapshot: GoalSnapshot | null;
+  change: GoalChange | null;
 }
-// 3 选项：Switch to Auto and {start|resume}（推荐）/ Keep Default（带警告）/ Cancel
 ```
 
-#### `StatusBar.tsx` 修改
+#### 3.2.2 `GoalPanel.tsx`（参照 TodoPanel.tsx）
 
-显示当前 goal 简要状态（active 时显示 turns 进度）。
+```tsx
+// frontend/terminal/src/components/GoalPanel.tsx
+import { Box, Text } from "ink";
 
-#### 协议层 `ui/protocol.py` + 前端事件类型
+interface Props { snapshot: GoalSnapshot | null; }
 
-`GoalUpdatedEvent` 需在前后端协议层注册，前端才能接收渲染。
+export function GoalPanel({ snapshot }: Props) {
+  if (!snapshot) return null;
+  const statusColor = { active: "green", paused: "yellow", blocked: "red" }[snapshot.status] ?? "white";
+  return (
+    <Box flexDirection="column" borderStyle="round" paddingX={1}>
+      <Box><Text bold>Goal: </Text><Text color={statusColor}>[{snapshot.status}]</Text></Box>
+      <Text dimColor>{snapshot.objective}</Text>
+      {snapshot.completion_criterion && <Text dimColor>Criterion: {snapshot.completion_criterion}</Text>}
+      <BudgetBar label="turns" used={snapshot.turns_used} total={snapshot.budget.turn_budget} />
+      <BudgetBar label="tokens" used={snapshot.tokens_used} total={snapshot.budget.token_budget} />
+      <BudgetBar label="time" used={snapshot.wall_clock_ms} total={snapshot.budget.wall_clock_budget_ms} unit="ms" />
+    </Box>
+  );
+}
+```
 
-#### 事件处理
+`App.tsx`（或 `ConversationView.tsx`）订阅 `goal_updated` 事件，把最新 snapshot 存到 state 并渲染 `GoalPanel`；`snapshot === null` 时组件返回 `null`（面板自动隐藏）。
 
-| `change.kind` | `change.status` | 行为 |
+#### 3.2.3 `GoalStartPermissionPrompt.tsx`（参照 SelectModal.tsx 的模态模式）
+
+```tsx
+// frontend/terminal/src/components/GoalStartPermissionPrompt.tsx
+import { SelectModal } from "./SelectModal";
+
+interface Props {
+  action: "permission_prompt_create" | "permission_prompt_resume";
+  objective?: string;
+  onSelect: (choice: "switch_auto" | "keep_default" | "cancel") => void;
+}
+
+export function GoalStartPermissionPrompt({ action, objective, onSelect }: Props) {
+  const verb = action === "permission_prompt_create" ? "start" : "resume";
+  const options = [
+    { label: `Switch to Auto and ${verb} (recommended)`, value: "switch_auto" },
+    { label: `Keep Default and ${verb} (tools will confirm)`, value: "keep_default" },
+    { label: "Cancel", value: "cancel" },
+  ];
+  return (
+    <>
+      {objective && <Text dimColor>Objective: {objective}</Text>}
+      <SelectModal title="Goal permission" options={options} onSelect={onSelect} />
+    </>
+  );
+}
+```
+
+由 `ModalHost.tsx` 承载。TUI 启动时把 `onSelect` 包成异步函数注入 `bundle.goal_action_handler`。
+
+#### 3.2.4 `StatusBar.tsx` 修改
+
+在 StatusBar 右侧追加一个 chip：
+
+- active: 显示 `Goal: 3/20 turns` 或 `Goal: 45.2k/500k tokens`（按 budget 设置选择）
+- paused/blocked: 显示对应状态标签 + 短 reason
+- 无 goal: 不渲染
+
+#### 3.2.5 runtime 侧可插拔回调（重构现有非交互默认路径）
+
+把 `runtime.py` 现有的「权限自动升级」逻辑提取为 `_apply_full_auto_upgrade(bundle, context, result)`，并引入可替换的 `bundle.goal_action_handler`：
+
+```python
+# runtime.py
+goal_action_handler = bundle.goal_action_handler  # TUI 注入
+if result.goal_action is not None and result.submit_prompt is None:
+    if goal_action_handler is not None:
+        choice = await goal_action_handler(result)
+        if choice == "cancel":
+            sync_app_state(bundle)
+            return True
+        if choice == "keep_default":
+            _apply_goal_action_keep_default(bundle, context, result)
+            return True
+        # switch_auto: fall through
+    _apply_full_auto_upgrade(bundle, context, result)
+```
+
+headless 模式（`ohmo`、`backend_host`）不注入 handler，自动走「切 Auto」默认路径 —— 现有非交互行为完全兼容。
+
+#### 3.2.6 事件分发总览
+
+| 事件源 | 前端消费者 | 行为 |
 |---|---|---|
-| `lifecycle` | `active` (含 created) | 显示面板 |
-| `lifecycle` | `paused` | 状态标签 → paused |
-| `lifecycle` | `blocked` | 状态标签 → blocked |
-| `completion` | `complete` | 显示完成摘要 → 淡出面板 |
-| `snapshot=None` | — | 隐藏面板 |
+| `GoalUpdatedEvent(snapshot=..., change.kind=lifecycle)` | GoalPanel + StatusBar | 更新面板与状态 chip |
+| `GoalUpdatedEvent(snapshot=..., change.kind=completion)` | GoalPanel | 显示完成摘要，3s 后淡出 |
+| `GoalUpdatedEvent(snapshot=null)` | GoalPanel + StatusBar | 隐藏面板与 chip |
+| `CommandResult.goal_action` | ModalHost | 弹 `GoalStartPermissionPrompt` |
 
 ### 3.3 测试
 
@@ -795,7 +884,6 @@ tests/test_goal_permission.py
 | 中断检测 (CancelledError) | P0 | `_drive_goal` 捕获 Ctrl+C → `pause_goal(actor="runtime")` |
 | 并发安全 | P1 | goal 执行中用户输入新消息 → steer buffer 或拒绝 |
 | Max turns 交互 | P1 | goal 的 turn 计数独立于 engine 的 max_turns |
-| Hook 集成 | P1 | GoalCreated/GoalCompleted/GoalBlocked hook events |
 | 错误分类 | P2 | API 错误按类型生成不同 pause reason |
 | Cancel reminder 注入 | P0 | `/goal cancel` 后注入 GOAL_CANCELLED_REMINDER |
 | goal_stop_turn 在 post_tool_stage 生效 | P0 | 验证 UpdateGoal 后 tool loop 正确终止 |
@@ -804,17 +892,502 @@ tests/test_goal_permission.py
 
 - [ ] 进程重启后 `/goal resume` 恢复正常
 - [ ] Context overflow 后 goal 继续执行
-- [ ] Hook 能阻止 goal continuation
 - [ ] Ctrl+C 中断后 goal 变 paused（goal_state 未丢失）
 - [ ] `/goal cancel` 后模型不再响应已取消 goal 的 reminders
 
 ---
 
+## Phase 5：Hook Events（生命周期通知）
+
+**目标**：goal 的每次状态变更都能触发外部 hook 脚本，提供可观测性/自动化基础（设计详见 `goal-design.md` §10.6）。
+
+### 5.1 新增/修改文件
+
+```
+src/openharness/hooks/__init__.py      # HookEvent 枚举加 6 个新事件
+src/openharness/goal/state.py          # GoalMode 接受 hook_executor + _pending_hooks 队列
+src/openharness/ui/runtime.py          # 创建 GoalMode 时传入 engine._hook_executor
+src/openharness/engine/query_engine.py # _drive_goal 每轮结束 flush_hooks
+tests/test_goal_hooks.py               # 新增
+```
+
+### 5.2 实现内容
+
+#### `hooks/__init__.py`
+
+```python
+class HookEvent(str, Enum):
+    ...
+    GOAL_CREATED    = "goal_created"
+    GOAL_RESUMED    = "goal_resumed"
+    GOAL_PAUSED     = "goal_paused"
+    GOAL_BLOCKED    = "goal_blocked"
+    GOAL_COMPLETED  = "goal_completed"
+    GOAL_CANCELLED  = "goal_cancelled"
+```
+
+#### `goal/state.py` —— GoalMode 接收 hook_executor
+
+```python
+class GoalMode:
+    def __init__(self, tool_metadata, *, hook_executor=None):
+        self._metadata = tool_metadata
+        self._hook_executor = hook_executor
+        self._pending_hooks: list[tuple[HookEvent, dict]] = []
+        ...
+
+    def create_goal(self, ...):
+        ...
+        self._pending_hooks.append((
+            HookEvent.GOAL_CREATED,
+            {"event": HookEvent.GOAL_CREATED.value, "goal": snapshot.to_dict()},
+        ))
+        return snapshot
+
+    # pause_goal / resume_goal / mark_blocked / mark_complete / cancel_goal 同理入队
+
+    async def flush_hooks(self) -> None:
+        if self._hook_executor is None:
+            self._pending_hooks.clear()
+            return
+        pending = self._pending_hooks
+        self._pending_hooks = []
+        for event, payload in pending:
+            await self._hook_executor.execute(event, payload)
+```
+
+> **设计权衡**：状态变更方法保持同步（避免给所有调用方引入 await），hook 触发延迟到 driver 每轮结束。这意味着快速的状态连锁变更（create→pause）会合并到一次 flush，但不会丢失。
+
+#### `runtime.py` 注入
+
+```python
+goal_mode = GoalMode(engine.tool_metadata, hook_executor=engine._hook_executor)
+engine.tool_metadata[GOAL_MODE_KEY] = goal_mode
+```
+
+#### `_drive_goal` 每轮 flush
+
+```python
+async for event in self._stream_query_with_guards(...):
+    yield event
+await goal_mode.flush_hooks()
+```
+
+#### Payload schema
+
+所有 hook 统一：`{"event": "goal_<x>", "goal": <snapshot_dict>, "reason": "...", "actor": "..."}`。Hook 脚本通过环境变量 `GOAL_OBJECTIVE` / `GOAL_REASON` / `GOAL_ID` / `GOAL_STATUS` 等访问 payload 字段（与现有 hook 机制一致）。
+
+### 5.3 测试
+
+```
+tests/test_goal_hooks.py
+  - test_create_goal_enqueues_created_hook
+  - test_mark_complete_enqueues_completed_hook
+  - test_mark_blocked_carries_reason_in_payload
+  - test_cancel_goal_enqueues_cancelled_hook
+  - test_flush_hooks_clears_queue
+  - test_flush_noop_when_no_executor
+  - test_driver_flushes_after_each_turn  # 用 fake hook_executor 计数
+  - test_hook_receives_snapshot_dict_payload
+  - test_multiple_state_changes_flush_in_order
+```
+
+### 5.4 验证标准
+
+- [ ] `.openharness/hooks.yaml` 配置 `goal_completed` hook → 完成后文件追加日志
+- [ ] `goal_blocked` hook 能触发外部通知（notify-send / Slack）
+- [ ] 没有 hook 配置时 GoalMode 行为完全不变
+- [ ] Hook 脚本失败不会阻断 driver（`hook_executor` 已隔离异常）
+- [ ] 连续多个状态变更（create→pause→resume→complete）按顺序触发对应事件
+
+---
+
+## Phase 6：Goal Queue（多目标队列）
+
+**目标**：支持多目标排队执行，对齐 kimi-code 的 `GoalQueueStore + /goal next`（设计详见 `goal-design.md` §14）。
+
+### 6.1 新增/修改文件
+
+```
+src/openharness/goal/queue.py              # QueuedGoal + GoalQueueStore
+src/openharness/goal/state.py              # GoalMode.start_next_from_queue()
+src/openharness/tools/queue_goal_tool.py   # QueueGoalTool (模型用)
+src/openharness/tools/__init__.py          # 注册 QueueGoalTool
+src/openharness/engine/types.py            # ToolMetadataKey.GOAL_QUEUE
+src/openharness/commands/registry.py       # /goal queue * 子命令 + /goal next/skip
+src/openharness/commands/goal.py           # parse_goal_command 支持 queue 子命令
+src/openharness/engine/query_engine.py     # _drive_goal 末尾检查队列并启动下一个
+tests/test_goal_queue.py                   # 新增
+tests/test_goal_queue_driver.py            # 新增
+```
+
+### 6.2 实现内容
+
+#### `goal/queue.py`
+
+```python
+@dataclass
+class QueuedGoal:
+    queue_id: str
+    objective: str
+    completion_criterion: str | None = None
+    budget_limits: GoalBudgetLimits = field(default_factory=GoalBudgetLimits)
+    priority: int = 0
+    created_at: float = field(default_factory=time.time)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+class GoalQueueStore:
+    QUEUE_KEY = "goal_queue"
+
+    def __init__(self, tool_metadata: dict):
+        self._metadata = tool_metadata
+        self._items: list[QueuedGoal] = self._restore()
+
+    def enqueue(self, objective, *, priority=0, ...) -> QueuedGoal: ...
+    def pop(self) -> QueuedGoal | None: ...
+    def remove(self, queue_id: str) -> bool: ...
+    def reorder(self, queue_ids: list[str]) -> None: ...
+    def clear(self) -> None: ...
+    def peek(self) -> QueuedGoal | None: ...
+    def list(self) -> list[QueuedGoal]: ...
+    def __len__(self) -> int: ...
+
+    # 借鉴 kimi-code `restoreGoalQueueItem`：启动失败时把队列项放回头部。
+    # 幂等：queue_id 已存在则跳过，避免重复恢复。
+    def restore_to_head(self, goal: QueuedGoal) -> None:
+        if any(g.queue_id == goal.queue_id for g in self._items):
+            return
+        self._items.insert(0, goal)
+        self._persist()
+
+    def _persist(self) -> None:
+        self._metadata[self.QUEUE_KEY] = [asdict(q) for q in self._items]
+    def _restore(self) -> list[QueuedGoal]: ...
+```
+
+#### `engine/types.py` —— 新增 `GOAL_QUEUE`
+
+```python
+class ToolMetadataKey(str, Enum):
+    ...
+    GOAL_QUEUE = "goal_queue"
+
+    @classmethod
+    def all_persisted_keys(cls):
+        return (..., cls.GOAL_STATE, cls.GOAL_QUEUE)
+```
+
+#### `tools/queue_goal_tool.py`
+
+```python
+class QueueGoalTool(BaseTool):
+    name = "queue_goal"
+    description = (
+        "Enqueue a follow-up goal to start after the current goal finishes. "
+        "Use when you identify a natural next step but the current goal is "
+        "not yet done. Does not interrupt the current goal."
+    )
+
+    class InputModel(BaseModel):
+        objective: str
+        completion_criterion: str | None = None
+        priority: int = 0
+
+    async def execute(self, arguments, context):
+        queue = context.metadata.get(GOAL_QUEUE_KEY)
+        if queue is None:
+            return ToolResult(is_error=True, output="Goal queue not available.")
+        queued = queue.enqueue(arguments.objective, ...)
+        return ToolResult(output=json.dumps({"queued": asdict(queued), "queue_length": len(queue)}))
+```
+
+#### `goal/state.py` —— GoalMode.start_next_from_queue
+
+借鉴 kimi-code 的 `restoreGoalQueueItem`：先 `pop()`、`create_goal` 抛异常时把队列项放回 `_items[0]`，保证队列项不因启动失败而丢失。
+
+```python
+def start_next_from_queue(self, queue: GoalQueueStore) -> GoalSnapshot | None:
+    """从队列 pop 一个并 create_goal。启动失败时回滚到头部（不丢失）。
+
+    上下文策略（详见 goal-design.md §14.7）：
+    新 goal 共享当前 agent 的完整 conversation history / tool_metadata /
+    cost tracker，与 kimi-code 一致；不做任何上下文重置。
+    """
+    if self._state is not None:
+        return None
+    queued = queue.pop()
+    if queued is None:
+        return None
+    try:
+        return self.create_goal(
+            queued.objective,
+            completion_criterion=queued.completion_criterion,
+            actor="runtime",
+        )
+    except Exception:
+        # create_goal 抛异常（例如 objective 太长 / 已有 active goal）→
+        # 把队列项放回头部，下次重试仍是同一个。
+        queue.restore_to_head(queued)
+        return None
+```
+
+#### `_drive_goal` 末尾检查队列
+
+```python
+if goal_mode.get_goal() is None:
+    queue = self._tool_metadata.get(GOAL_QUEUE_KEY)
+    if isinstance(queue, GoalQueueStore):
+        next_snap = goal_mode.start_next_from_queue(queue)
+        if next_snap is not None:
+            is_first_turn = True
+            continue  # 继续外层循环，驱动下一个目标
+```
+
+#### `/goal queue` 子命令族
+
+```
+/goal queue                       # 列出队列
+/goal queue add Ship feature Y
+/goal queue add --priority 10 ...
+/goal queue remove <queue_id>
+/goal queue clear
+/goal queue reorder <id1> <id2> ...
+/goal next                        # 取消当前 active，pop 并启动
+/goal skip                        # 取消当前 active，pop 并丢弃
+```
+
+`parse_goal_command` 增加 `queue` 二级保留词处理。
+
+#### kimi-code 对齐说明（参考 `~/Github/kimi-code` 源码）
+
+| kimi-code 机制 | OpenHarness 实现 |
+|---|---|
+| `upcoming-goals.json` 独立文件存储 | 不引入独立文件，保持 `tool_metadata["goal_queue"]`（与 goal_state 同寿） |
+| `UpcomingGoal` 仅含 `{id, objective, createdAt, updatedAt}` | `QueuedGoal` 可带 criterion/budget（显式指定时尊重），默认仅 objective |
+| `restoreGoalQueueItem` 失败回滚到头部 | `GoalQueueStore.restore_to_head`（幂等） |
+| `queueMutationLocks` per-file mutex | 不需要（Python 单进程，tool_metadata 是 dict） |
+| `promoteNextQueuedGoal` 走标准 `/goal` 命令 | `_drive_goal` 末尾 `start_next_from_queue` 走标准 `create_goal`（等价语义） |
+| `notifyQueuedGoalWaitingOnBlocked` blocked 不自动跳 | `_drive_goal` 仅在 `status == complete` 时检查队列（默认） |
+| 队列任务共享同一 agent 上下文（无隔离） | 同样不做隔离（详见 `goal-design.md` §14.7） |
+
+### 6.3 测试
+
+```
+tests/test_goal_queue.py
+  - test_enqueue_and_list
+  - test_pop_returns_highest_priority
+  - test_remove_by_id
+  - test_reorder
+  - test_clear
+  - test_persist_and_restore
+  - test_enqueue_length_limit                    # 队列上限（如 50）
+  - test_enqueue_empty_objective_rejected
+  - test_restore_to_head_inserts_at_index_0
+  - test_restore_to_head_is_idempotent           # 重复 restore 不重复插入
+  - test_restore_to_head_preserves_existing_order  # 已有同 id 项时跳过
+  - test_start_next_from_queue_creates_goal
+  - test_start_next_from_queue_skips_when_active
+  - test_start_next_from_queue_restores_on_failure   # create_goal 抛异常 → 队列项回滚到头部
+  - test_start_next_from_queue_returns_none_on_empty
+
+tests/test_goal_queue_driver.py
+  - test_driver_auto_starts_next_after_complete
+  - test_driver_does_not_advance_after_blocked   # 默认行为
+  - test_driver_does_not_advance_after_cancel
+  - test_goal_next_command_skips_current
+  - test_queue_goal_tool_enqueues_without_interrupting
+  - test_queued_goal_sees_previous_completion_summary   # 上下文共享：新 goal 的 messages 含上一 goal 的摘要
+  - test_queued_goal_shares_tool_metadata                # read_file_state 等跨任务保留
+  - test_queued_goal_cumulative_token_usage              # cost tracker 跨任务累加
+  - test_queue_rollback_on_objective_too_long            # 队列项 objective 超限 → 回滚到头部，不丢
+```
+
+### 6.4 验证标准
+
+- [ ] `/goal queue add X; /goal queue add Y` → 列出两项
+- [ ] 当前 goal `complete` → driver 自动启动队列中下一个
+- [ ] 当前 goal `blocked` → driver **不**自动启动下一个（默认）
+- [ ] 当前 goal `cancel` → driver **不**自动启动下一个
+- [ ] `/goal next` 取消当前 active 并启动队列头
+- [ ] 模型调用 `queue_goal` 工具 → 入队成功，当前 turn 继续
+- [ ] Session 重启 → 队列原样恢复
+- [ ] 队列空时 driver 正常退出
+- [ ] **启动失败回滚**：队列中某项 objective 过长 / 格式错误，启动抛异常 → 该项被恢复到队列头部，下次重试仍是同一个（借鉴 kimi-code `restoreGoalQueueItem`）
+- [ ] **上下文共享**：队列中 Goal B 启动时，能看到 Goal A 的 completion summary（messages 中）和 read_file_state（tool_metadata 中）；cost tracker 跨任务累加
+- [ ] **blocked 通知**：当前 goal blocked 且队列非空时，提示用户"下一个队列任务将在此 goal 完成后启动"（对标 kimi-code `notifyQueuedGoalWaitingOnBlocked`）
+
+---
+
+## Phase 7：Goal Settings 与权限自动恢复
+
+**目标**：引入 `GoalSettings` 配置块（全局默认预算、driver 上限等），并提供可选的「goal 结束后自动恢复权限模式」（设计详见 `goal-design.md` §15）。
+
+### 7.1 新增/修改文件
+
+```
+src/openharness/config/settings.py        # 新增 GoalSettings
+src/openharness/goal/state.py              # GoalState.original_permission_mode
+src/openharness/commands/registry.py       # 传递 original_permission_mode；新增 /permissions restore
+src/openharness/engine/query_engine.py     # _drive_goal 末尾 _maybe_restore_permission
+src/openharness/ui/runtime.py              # 处理 _pending_permission_restore
+tests/test_goal_settings.py                # 新增
+tests/test_goal_permission_restore.py      # 新增
+```
+
+### 7.2 实现内容
+
+#### `config/settings.py`
+
+```python
+class GoalSettings(BaseModel):
+    enabled: bool = True
+    max_objective_length: int = 4000
+    default_turn_budget: int | None = None
+    default_token_budget: int | None = None
+    default_wall_clock_budget_s: int | None = None
+    auto_advance_on_blocked: bool = False       # 见 §14.6
+    restore_permission_after_goal: bool = False # 见 §15.2
+    hard_cap_iterations: int = 200
+    max_queue_length: int = 50
+
+class Settings(BaseModel):
+    ...
+    goal: GoalSettings = field(default_factory=GoalSettings)
+```
+
+`~/.openharness/settings.yaml` 支持：
+
+```yaml
+goal:
+  default_turn_budget: 50
+  restore_permission_after_goal: true
+```
+
+#### `goal/state.py` —— 记录原始权限
+
+```python
+@dataclass
+class GoalState:
+    ...
+    original_permission_mode: str | None = None
+
+class GoalMode:
+    def create_goal(self, ..., *, original_permission_mode: str | None = None):
+        ...
+        self._state.original_permission_mode = original_permission_mode
+
+    def original_permission_mode(self) -> str | None:
+        return self._state.original_permission_mode if self._state else None
+```
+
+`/goal` handler 在 create/resume 时传入：
+
+```python
+original = _current_permission_mode(context)
+goal_mode.create_goal(objective, ..., original_permission_mode=original)
+```
+
+#### `_drive_goal` 末尾判断恢复
+
+```python
+def _maybe_restore_permission(self):
+    settings = self._settings
+    if settings is None or not settings.goal.restore_permission_after_goal:
+        return
+    goal_mode = self._tool_metadata.get(GOAL_MODE_KEY)
+    if not isinstance(goal_mode, GoalMode):
+        return
+    original = goal_mode.original_permission_mode()
+    if original and original != PermissionMode.FULL_AUTO.value:
+        self._tool_metadata["_pending_permission_restore"] = original
+```
+
+> `_pending_permission_restore` 用 `_` 前缀 → 自动进入 `_turn_private_metadata_keys`，turn 取消时回滚；不持久化。
+
+#### `runtime.py` 在 submit_message 结束后处理
+
+```python
+try:
+    async for event in bundle.engine.submit_message(submit_prompt):
+        await render_event(event)
+finally:
+    pending = bundle.engine.tool_metadata.pop("_pending_permission_restore", None)
+    if pending is not None:
+        _restore_permission_mode(context, bundle, pending)
+        await print_system(f"Restored permission mode to {pending}.")
+```
+
+`_restore_permission_mode` 复用 `/permissions <mode>` 完整路径（`build_permission_checker` + `_sync_full_auto_tools` + `app_state.set`）。
+
+#### `/permissions restore` 子命令
+
+```python
+async def _permissions_restore_handler(args, context):
+    goal_mode = context.engine.tool_metadata.get(GOAL_MODE_KEY)
+    original = goal_mode.original_permission_mode() if goal_mode else None
+    if original is None:
+        return CommandResult(message="No goal-driven permission change to restore.")
+    _restore_permission_mode(context, bundle, original)
+    return CommandResult(message=f"Restored to {original}.")
+```
+
+注册：`registry.register(SlashCommand("permissions", ..., subcommands=[..., "restore"]))`。
+
+#### 默认预算应用
+
+`/goal` 创建时若用户未指定 budget，handler 根据 `settings.goal.default_turn_budget` 等自动调用 `set_budget_limits`：
+
+```python
+goal_mode.create_goal(objective, ..., actor="user")
+defaults = GoalBudgetLimits(
+    turn_budget=settings.goal.default_turn_budget,
+    token_budget=settings.goal.default_token_budget,
+    wall_clock_budget_ms=settings.goal.default_wall_clock_budget_s * 1000
+        if settings.goal.default_wall_clock_budget_s else None,
+)
+if any(v is not None for v in (defaults.turn_budget, defaults.token_budget, defaults.wall_clock_budget_ms)):
+    goal_mode.set_budget_limits(defaults)
+```
+
+### 7.3 测试
+
+```
+tests/test_goal_settings.py
+  - test_default_settings_values
+  - test_settings_yaml_load
+  - test_default_budget_applied_on_create
+  - test_user_explicit_budget_overrides_default
+  - test_hard_cap_iterations_from_settings
+
+tests/test_goal_permission_restore.py
+  - test_restore_disabled_by_default
+  - test_restore_enabled_returns_to_original
+  - test_restore_skipped_when_original_was_full_auto
+  - test_restore_via_pending_metadata_signal
+  - test_restore_command_without_prior_change_errors
+  - test_pending_restore_cleared_on_turn_cancel  # _前缀 key 的回滚
+  - test_restore_survives_session_restart       # original_permission_mode 跨 session
+```
+
+### 7.4 验证标准
+
+- [ ] 默认配置下 goal 完成后权限**不**恢复（向后兼容）
+- [ ] 配置 `restore_permission_after_goal: true` 后：DEFAULT → /goal → FULL_AUTO → 完成 → 自动回 DEFAULT
+- [ ] `/permissions restore` 手动恢复
+- [ ] 原始权限为 FULL_AUTO 时不触发恢复（避免无意义切换）
+- [ ] 全局默认 turn_budget 生效；用户显式指定时覆盖默认
+- [ ] Turn 取消时 `_pending_permission_restore` 被回滚（不恢复）
+- [ ] Session 重启后仍能恢复到进入前权限（original_permission_mode 持久化在 goal_state）
+
+---
+
 ## 文件变更清单
+
 
 ### 新增文件
 
 ```
+# Phase 1：核心状态机 + 工具
 src/openharness/goal/__init__.py
 src/openharness/goal/state.py
 src/openharness/goal/injection.py
@@ -827,10 +1400,30 @@ tests/test_goal_state.py
 tests/test_goal_injection.py
 tests/test_goal_tools.py
 tests/test_goal_budget.py
+
+# Phase 2：QueryEngine 集成
 tests/test_goal_driver.py
+tests/test_goal_turn_stages.py
+
+# Phase 3：Slash 命令 + TUI
+src/openharness/commands/goal.py              # parse_goal_command + format_goal_status
+tests/test_goal_command.py
 tests/test_goal_permission.py
 frontend/terminal/src/components/GoalPanel.tsx
 frontend/terminal/src/components/GoalStartPermissionPrompt.tsx
+
+# Phase 5：Hook Events
+tests/test_goal_hooks.py
+
+# Phase 6：Goal Queue
+src/openharness/goal/queue.py
+src/openharness/tools/queue_goal_tool.py
+tests/test_goal_queue.py
+tests/test_goal_queue_driver.py
+
+# Phase 7：Goal Settings + 权限恢复
+tests/test_goal_settings.py
+tests/test_goal_permission_restore.py
 ```
 
 ### 修改文件
@@ -861,13 +1454,18 @@ frontend/terminal/src/App.tsx (或同等入口)   # 处理 GoalUpdatedEvent + go
 
 ## 里程碑与时间估算
 
-| Phase | 预估工时 | 依赖 |
-|-------|---------|------|
-| Phase 1: 状态机 + 工具 + budget | 3-4 天 | 无 |
-| Phase 2: QueryEngine 集成 | 2-3 天 | Phase 1 |
-| Phase 3: TUI 集成 | 1-2 天 | Phase 2 |
-| Phase 4: 健壮性 | 1-2 天 | Phase 2 |
-| **总计** | **7-11 天** | |
+| Phase | 预估工时 | 依赖 | 状态 |
+|-------|---------|------|------|
+| Phase 1: 状态机 + 工具 + budget | 3-4 天 | 无 | ✅ 已完成（80 测试通过） |
+| Phase 2: QueryEngine 集成 | 2-3 天 | Phase 1 | ✅ 已完成 |
+| Phase 3: Slash 命令 + TUI（基础部分） | 1-2 天 | Phase 2 | ⚠️ 命令/runtime 已完成；TUI 组件待实现 |
+| Phase 4: 健壮性 | 1-2 天 | Phase 2 | ⚠️ 核心项已完成（cancel/interrupt/session 恢复）；剩余并发/overflow |
+| **Phase 5: Hook Events** | **1 天** | **Phase 2** | 待实施 |
+| **Phase 6: Goal Queue** | **2-3 天** | **Phase 5** | 待实施 |
+| **Phase 7: Goal Settings + 权限恢复** | **1-2 天** | **Phase 5** | 待实施 |
+| **总计（剩余）** | **4-6 天** | | |
+
+> **推荐实施顺序**：Phase 5 → Phase 7 → Phase 6 → Phase 3 TUI 组件。Hook Events 先做能让后续功能自动获得可观测性；权限恢复实现简单且解决真实痛点；Goal Queue 工作量最大但价值中等；TUI 组件需要 React/Ink 经验且已有 runtime 兜底，可放最后。
 
 ---
 
@@ -883,4 +1481,13 @@ frontend/terminal/src/App.tsx (或同等入口)   # 处理 GoalUpdatedEvent + go
 | 工具始终注册导致误用 | CreateGoalTool description 限制场景；无 goal 时其它工具返回错误 |
 | Reminder 注入合并问题 | reminder + continuation prompt 合为一条字符串注入（inject_user_message 会合并连续 user msg） |
 | completion 摘要的 provider prefill 限制 | 摘要作为 user message 注入在 tool result 之后，确保 provider 请求以 user message 结尾（kimi-code 用 system-reminder 正是为规避此点；OpenHarness 需验证） |
-| 权限切换后用户困惑 | 对话框明确告知切换行为；goal 完成后不自动恢复；可 `/permissions default` 手动切回 |
+| 权限切换后用户困惑 | 对话框明确告知切换行为；goal 完成后不自动恢复（除非配置启用）；可 `/permissions default` 或 `/permissions restore` 手动切回 |
+| **Hook 脚本失败阻断 driver**（Phase 5） | `hook_executor` 已隔离异常；flush_hooks 内 try/except 兜底；hook 失败降级为日志而非 raise |
+| **Hook 顺序与合并**（Phase 5） | `_pending_hooks` FIFO；driver 每轮 flush 一次；快速连锁（create→pause）合并到一次 flush 但顺序保持 |
+| **队列无限增长**（Phase 6） | `max_queue_length`（默认 50）入队时校验；超限返回错误 |
+| **driver 在队列中死循环**（Phase 6） | `hard_cap_iterations` 作用于**所有目标累计**，不是单目标；配置可调 |
+| **blocked 后自动跳到下一个**（Phase 6） | 默认 `auto_advance_on_blocked: false`；显式开启才跳，避免掩盖需要人工介入的问题 |
+| **权限恢复在 turn 取消时错误触发**（Phase 7） | `_pending_permission_restore` 用 `_` 前缀 → 自动进入 `_turn_private_metadata_keys`，turn 取消时回滚 |
+| **原始权限记录跨 session 损坏**（Phase 7） | `_restore_from_metadata` 校验 `original_permission_mode` 取值必须为 `DEFAULT/PLAN/FULL_AUTO`；非法值降级为不恢复 |
+| **TUI 模态框与 headless 模式不兼容**（Phase 3.2.5） | runtime 侧用可插拔回调；headless 模式不注入 handler，自动走「切 Auto」默认路径 |
+| **Goal Queue 与现有单 goal UI 冲突**（Phase 6） | GoalPanel 显示当前 active；队列状态单独 chip 或 `/goal queue` 查看，不合并到主面板 |

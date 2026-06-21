@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -25,11 +26,20 @@ from openharness.engine.query import (
 from openharness.engine.stream_events import (
     AssistantTurnComplete,
     CompactProgressPhase,
+    GoalChange,
+    GoalChangeStats,
+    GoalUpdatedEvent,
     StatusEvent,
     StreamEvent,
     StreamFinished,
 )
 from openharness.engine.types import ToolMetadataKey
+from openharness.goal.injection import (
+    GOAL_CONTINUATION_PROMPT,
+    build_completion_summary_prompt,
+    build_goal_reminder,
+)
+from openharness.goal.state import GOAL_MODE_KEY, GoalMode
 from openharness.hooks import HookEvent, HookExecutor
 from openharness.permissions.approvals import ApprovalCoordinator, ApprovalRequest, PromptFn
 from openharness.permissions.checker import PermissionChecker
@@ -135,6 +145,10 @@ class QueryEngine:
         self._messages: list[ConversationMessage] = []
         self._export_messages: list[ConversationMessage] = []
         self._cost_tracker = CostTracker()
+        # Cached pre-goal permission mode; populated by _drive_goal right
+        # before clear_after_complete() so _maybe_restore_permission can read
+        # it after the goal record is gone. None means "nothing cached".
+        self._cached_original_permission: str | None = None
 
         if approval_coordinator is not None:
             self._approval_coordinator: ApprovalCoordinator = approval_coordinator
@@ -705,9 +719,24 @@ class QueryEngine:
         coordinator_context = self._build_coordinator_context_message()
         if coordinator_context is not None:
             query_messages.append(coordinator_context)
+        # Route to the goal driver when a durable goal is active. The goal
+        # branch reuses the same QueryContext (hooks + memory are finalized by
+        # the surrounding try/finally in submit_message, not inside _drive_goal).
+        goal_mode = self._tool_metadata.get(GOAL_MODE_KEY)
+        active_goal = goal_mode.get_active_goal() if isinstance(goal_mode, GoalMode) else None
         try:
-            async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):
-                yield event
+            if active_goal is not None:
+                async for event in self._drive_goal(
+                    context=context,
+                    query_messages=query_messages,
+                    initial_snapshot=active_goal,
+                ):
+                    yield event
+            else:
+                async for event in self._stream_query_with_guards(context=context, query_messages=query_messages):
+                    yield event
+                async for event in self._maybe_handoff_new_goal(context, query_messages):
+                    yield event
         finally:
             await self._update_session_memory()
             self._schedule_extract_memories()
@@ -721,6 +750,358 @@ class QueryEngine:
             session_id=self._tool_metadata.get("session_id"),
             message_count_after=len(self._messages),
         )
+
+    async def _maybe_handoff_new_goal(
+        self,
+        context: QueryContext,
+        query_messages: list[ConversationMessage],
+    ) -> AsyncIterator[StreamEvent]:
+        """Check for a goal created mid-turn and route to the driver.
+
+        ``post_tool_stage`` stops the turn when ``create_goal`` is called.
+        After ``_stream_query_with_guards`` returns, this method picks up
+        the newly active goal and delegates to ``_drive_goal``.
+        """
+        goal_mode = self._tool_metadata.get(GOAL_MODE_KEY)
+        if not isinstance(goal_mode, GoalMode):
+            return
+        new_goal = goal_mode.get_active_goal()
+        if new_goal is None:
+            return
+        async for event in self._drive_goal(
+            context=context,
+            query_messages=query_messages,
+            initial_snapshot=new_goal,
+        ):
+            yield event
+
+    async def _drive_goal(
+        self,
+        *,
+        context: QueryContext,
+        query_messages: list[ConversationMessage],
+        initial_snapshot,
+    ) -> AsyncIterator[StreamEvent]:
+        """Multi-turn driver for an active goal.
+
+        Called from ``submit_message`` when an active goal exists. Each
+        iteration:
+
+        1. Pre-checks budget (blocks immediately if exceeded).
+        2. Increments the turn counter.
+        3. Injects a goal reminder (+ continuation prompt on turns > 1).
+        4. Runs one turn via ``_stream_query_with_guards``, tracking token use.
+        5. Post-checks status changes made by ``UpdateGoal``:
+           - ``complete``/``blocked``: inject summary/blocked prompt, run a
+             final turn for the model to write the response, clear state.
+           - ``paused``/cancel: exit without further turns.
+        6. Post-checks budget again.
+        7. If still ``active``, loop (injecting a continuation prompt on the
+           next iteration). The driver does NOT auto-pause — the model must
+           explicitly call UpdateGoal to stop.
+
+        ``CancelledError`` (Ctrl+C, task cancel) pauses the goal and re-raises.
+        """
+        goal_mode = self._tool_metadata.get(GOAL_MODE_KEY)
+        if not isinstance(goal_mode, GoalMode):
+            # Defensive: caller routed here but GoalMode is gone. Fall through
+            # to a single regular turn so the user's message still gets answered.
+            async for event in self._stream_query_with_guards(
+                context=context, query_messages=query_messages
+            ):
+                yield event
+            return
+
+        # Announce the start of goal-driven work.
+        yield GoalUpdatedEvent(
+            snapshot=goal_mode.get_goal(),
+            change=GoalChange(
+                kind="lifecycle",
+                status="active",
+                actor=initial_snapshot.last_actor or "user",
+            ),
+        )
+
+        hard_cap_iterations = 200  # defensive safety net across the entire queue
+        total_iterations = 0
+        is_first_turn_of_current_goal = True
+
+        while True:
+            # 1. Budget pre-check.
+            goal = goal_mode.get_goal()
+            if goal is None:
+                return
+            if goal.status != "active":
+                return
+            if goal.budget.over_budget:
+                snapshot = goal_mode.mark_blocked(
+                    reason="A configured budget was reached", actor="runtime"
+                )
+                yield GoalUpdatedEvent(
+                    snapshot=snapshot,
+                    change=GoalChange(
+                        kind="lifecycle",
+                        status="blocked",
+                        reason="budget reached",
+                        actor="runtime",
+                    ),
+                )
+                # Blocked by budget: never auto-advance (user should inspect).
+                self._maybe_restore_permission()
+                return
+
+            # 2. Count this turn.
+            goal_mode.increment_turn()
+            total_iterations += 1
+            if total_iterations >= hard_cap_iterations:
+                # Hit the hard cap: block rather than loop forever.
+                snapshot = goal_mode.mark_blocked(
+                    reason="Driver iteration cap reached", actor="runtime"
+                )
+                yield GoalUpdatedEvent(
+                    snapshot=snapshot,
+                    change=GoalChange(
+                        kind="lifecycle",
+                        status="blocked",
+                        reason="driver iteration cap",
+                        actor="runtime",
+                    ),
+                )
+                self._maybe_restore_permission()
+                return
+
+            # 3. Inject reminder + continuation. On the first turn of the
+            # current goal the user's original input is already the trailing
+            # user message (added by submit_message); we only prepend a
+            # reminder. On subsequent turns we inject a fresh user message
+            # carrying both.
+            reminder = build_goal_reminder(goal_mode.get_goal())
+            if is_first_turn_of_current_goal:
+                if reminder:
+                    self.inject_user_message(reminder)
+                    query_messages = list(self._messages)
+            else:
+                if reminder:
+                    combined = f"{reminder}\n\n{GOAL_CONTINUATION_PROMPT}"
+                else:
+                    combined = GOAL_CONTINUATION_PROMPT
+                continuation = ConversationMessage.from_user_text(combined)
+                self._messages.append(continuation)
+                self.capture_export_checkpoint(self._messages)
+                query_messages = list(self._messages)
+
+            # 4. Run one turn. Track token use via AssistantTurnComplete.
+            turn_was_cancelled = False
+            try:
+                async for event in self._stream_query_with_guards(
+                    context=context, query_messages=query_messages
+                ):
+                    yield event
+                    if isinstance(event, AssistantTurnComplete):
+                        try:
+                            total_tokens = int(event.usage.total_tokens or 0)
+                        except (TypeError, AttributeError):
+                            total_tokens = 0
+                        if total_tokens > 0:
+                            goal_mode.record_token_usage(total_tokens)
+                        # Sync the local view with whatever run_query mutated.
+                        query_messages = list(self._messages)
+                        # Emit a stats-refresh event immediately so the frontend
+                        # sees updated turns/tokens during long auto_continue
+                        # sequences. Without this, the refresh at step 7 only
+                        # fires after _stream_query_with_guards returns, which
+                        # may be many sub-turns later.
+                        yield GoalUpdatedEvent(snapshot=goal_mode.get_goal(), change=None)
+            except asyncio.CancelledError:
+                # Ctrl+C / task cancel: pause (don't lose state), then re-raise.
+                turn_was_cancelled = True
+                goal_mode.pause_goal(
+                    reason="Paused after interruption", actor="runtime"
+                )
+                yield GoalUpdatedEvent(
+                    snapshot=goal_mode.get_goal(),
+                    change=GoalChange(
+                        kind="lifecycle",
+                        status="paused",
+                        reason="Paused after interruption",
+                        actor="runtime",
+                    ),
+                )
+                raise
+
+            # Fire-and-forget hook flush: any GOAL_* events enqueued during
+            # this turn (by tool calls or by the cancel branch above) are
+            # dispatched now. Failures are logged but do not abort the driver.
+            await goal_mode.flush_hooks()
+
+            is_first_turn_of_current_goal = False
+
+            # 5. React to status changes.
+            goal = goal_mode.get_goal()
+            if goal is None:
+                # Cancelled while we were running.
+                self._maybe_restore_permission()
+                return
+
+            if goal.status == "complete":
+                # Inject a summary prompt and run one last turn for the model
+                # to compose the completion reply. The record still carries
+                # status="complete" — clear it after the summary turn.
+                summary_prompt = build_completion_summary_prompt(goal)
+                summary_message = ConversationMessage.from_user_text(summary_prompt)
+                self._messages.append(summary_message)
+                self.capture_export_checkpoint(self._messages)
+                summary_messages = list(self._messages)
+                async for event in self._stream_query_with_guards(
+                    context=context, query_messages=summary_messages
+                ):
+                    yield event
+                yield GoalUpdatedEvent(
+                    snapshot=goal,
+                    change=GoalChange(
+                        kind="completion",
+                        status="complete",
+                        reason=goal.terminal_reason,
+                        actor=goal.last_actor,
+                        stats=GoalChangeStats(
+                            turns_used=goal.turns_used,
+                            tokens_used=goal.tokens_used,
+                            wall_clock_ms=goal.wall_clock_ms,
+                        ),
+                    ),
+                )
+                # Snapshot the original permission mode BEFORE clear_after_complete
+                # wipes the state.
+                self._cached_original_permission = goal_mode.original_permission_mode()
+                goal_mode.clear_after_complete()
+                yield GoalUpdatedEvent(snapshot=None, change=None)
+
+                # Advance queue (kimi-code alignment): complete always promotes.
+                promoted = self._maybe_promote_queued_goal(goal_mode)
+                if promoted is not None:
+                    # Discard the pending permission-restore signal: we are
+                    # continuing within the same submit_message.
+                    self._tool_metadata.pop("_pending_permission_restore", None)
+                    self._cached_original_permission = None
+                    is_first_turn_of_current_goal = True
+                    continue
+                self._maybe_restore_permission()
+                return
+
+            if goal.status == "blocked":
+                yield GoalUpdatedEvent(
+                    snapshot=goal,
+                    change=GoalChange(
+                        kind="lifecycle",
+                        status="blocked",
+                        reason=goal.terminal_reason,
+                        actor=goal.last_actor,
+                    ),
+                )
+                # Default: blocked does NOT auto-advance — user should inspect.
+                # Opt-in via settings.goal.auto_advance_on_blocked.
+                settings = self._settings
+                auto_advance = bool(
+                    settings
+                    and getattr(getattr(settings, "goal", None), "auto_advance_on_blocked", False)
+                )
+                if auto_advance:
+                    promoted = self._maybe_promote_queued_goal(goal_mode)
+                    if promoted is not None:
+                        self._tool_metadata.pop("_pending_permission_restore", None)
+                        self._cached_original_permission = None
+                        is_first_turn_of_current_goal = True
+                        continue
+                self._maybe_restore_permission()
+                return
+
+            if goal.status != "active" or turn_was_cancelled:
+                # Paused or cancelled — exit the driver.
+                yield GoalUpdatedEvent(
+                    snapshot=goal,
+                    change=GoalChange(
+                        kind="lifecycle",
+                        status=goal.status,
+                        reason=goal.terminal_reason,
+                        actor=goal.last_actor,
+                    ),
+                )
+                self._maybe_restore_permission()
+                return
+
+            # 6. Budget post-check.
+            if goal.budget.over_budget:
+                snapshot = goal_mode.mark_blocked(
+                    reason="A configured budget was reached", actor="runtime"
+                )
+                yield GoalUpdatedEvent(
+                    snapshot=snapshot,
+                    change=GoalChange(
+                        kind="lifecycle",
+                        status="blocked",
+                        reason="budget reached",
+                        actor="runtime",
+                    ),
+                )
+                self._maybe_restore_permission()
+                return
+
+            # 7. Still active — emit a stats-refresh event so the frontend
+            # sees updated turns/tokens/elapsed before the next continuation.
+            yield GoalUpdatedEvent(snapshot=goal_mode.get_goal(), change=None)
+
+    def _maybe_promote_queued_goal(self, goal_mode: GoalMode):
+        """Pop the next queued goal and create it. Returns the new snapshot or None.
+
+        The runtime ``GoalQueueStore`` handle lives at ``"goal_queue"``; the
+        serialized persistence data lives at ``GOAL_QUEUE_KEY``
+        (``"goal_queue_state"``). We read the runtime handle here.
+        """
+        queue = self._tool_metadata.get("goal_queue")
+        if queue is None:
+            # Lazy-construct an empty queue store so duck-typing inside
+            # start_next_from_queue has a consistent surface.
+            from openharness.goal.queue import GoalQueueStore
+
+            queue = GoalQueueStore(self._tool_metadata)
+            self._tool_metadata["goal_queue"] = queue
+        return goal_mode.start_next_from_queue(queue)
+
+    def _maybe_restore_permission(self) -> None:
+        """Signal runtime to restore the pre-goal permission mode, if opted in.
+
+        The signal lives in ``tool_metadata["_pending_permission_restore"]``
+        (underscore prefix → turn-private, auto-rolled-back on cancel). The
+        actual permission switch happens in ``runtime.py`` after
+        ``submit_message`` returns, so it doesn't interact with the driver's
+        in-flight turn.
+        """
+        settings = self._settings
+        if settings is None:
+            return
+        goal_cfg = getattr(settings, "goal", None)
+        if goal_cfg is None or not getattr(
+            goal_cfg, "restore_permission_after_goal", False
+        ):
+            return
+        # Prefer the cached value (captured right before clear_after_complete
+        # wiped the goal record). Fall back to the live GoalMode state for
+        # the other exit points (blocked / paused / cancelled) where the
+        # goal record is still around.
+        original = self._cached_original_permission
+        self._cached_original_permission = None
+        if original is None:
+            goal_mode = self._tool_metadata.get(GOAL_MODE_KEY)
+            if isinstance(goal_mode, GoalMode):
+                original = goal_mode.original_permission_mode()
+        if not original:
+            return
+        from openharness.permissions import PermissionMode
+
+        if original == PermissionMode.FULL_AUTO.value:
+            # No point restoring FULL_AUTO — the user is already there.
+            return
+        self._tool_metadata["_pending_permission_restore"] = original
 
     def _self_evolution_controller(self):
         controller = self._tool_metadata.get(ToolMetadataKey.SELF_EVOLUTION_CONTROLLER.value)

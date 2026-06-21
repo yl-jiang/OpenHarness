@@ -181,6 +181,12 @@ def create_default_command_registry(
 
     async def _clear_handler(_: str, context: CommandContext) -> CommandResult:
         context.engine.clear()
+        todo_store = context.engine.tool_metadata.get("todo_store")
+        if todo_store is not None and hasattr(todo_store, "reset"):
+            todo_store.reset()
+        goal_mode = context.engine.tool_metadata.get("goal_mode")
+        if goal_mode is not None and hasattr(goal_mode, "clear_after_complete"):
+            goal_mode.clear_after_complete()
         return CommandResult(message="Conversation cleared.", clear_screen=True)
 
     async def _status_handler(_: str, context: CommandContext) -> CommandResult:
@@ -1138,6 +1144,43 @@ def create_default_command_registry(
                     f"Denied tools: {permission.denied_tools}"
                 )
             )
+        if tokens[0] == "restore" and len(tokens) == 1:
+            from openharness.goal.state import GOAL_MODE_KEY, GoalMode
+
+            goal_mode = context.engine.tool_metadata.get(GOAL_MODE_KEY)
+            original = (
+                goal_mode.original_permission_mode()
+                if isinstance(goal_mode, GoalMode)
+                else None
+            )
+            if not original:
+                return CommandResult(
+                    message="No goal-driven permission change to restore."
+                )
+            try:
+                target = PermissionMode(original)
+            except ValueError:
+                return CommandResult(
+                    message=f"Recorded mode {original!r} is no longer valid."
+                )
+            if settings.permission.mode == target:
+                label = _MODE_LABELS.get(target, target.value if hasattr(target, "value") else target)
+                return CommandResult(
+                    message=f"Permission mode is already {label}."
+                )
+            settings.permission.mode = target
+            save_settings(settings)
+            context.engine.set_permission_checker(
+                _build_permission_checker(settings, context)
+            )
+            _sync_full_auto_tools(context, settings.permission.mode == PermissionMode.FULL_AUTO)
+            if context.app_state is not None:
+                context.app_state.set(permission_mode=settings.permission.mode.value)
+            label = _MODE_LABELS.get(target.value, target.value)
+            return CommandResult(
+                message=f"Permission mode restored to {label}.",
+                refresh_runtime=True,
+            )
         target_mode: str | None = None
         if tokens[0] == "set" and len(tokens) == 2:
             target_mode = tokens[1]
@@ -1152,7 +1195,7 @@ def create_default_command_registry(
                 context.app_state.set(permission_mode=settings.permission.mode.value)
             label = _MODE_LABELS.get(target_mode, target_mode)
             return CommandResult(message=f"Permission mode set to {label}", refresh_runtime=True)
-        return CommandResult(message="Usage: /permissions [show|default|full_auto|plan]")
+        return CommandResult(message="Usage: /permissions [show|default|full_auto|plan|restore]")
 
     async def _plan_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1174,6 +1217,237 @@ def create_default_command_registry(
                 context.app_state.set(permission_mode=settings.permission.mode.value)
             return CommandResult(message="Plan mode disabled.", refresh_runtime=True)
         return CommandResult(message="Usage: /plan [on|off]")
+
+    # ------------------------------------------------------------------ /goal
+    from openharness.commands.goal import format_goal_status, parse_goal_command
+    from openharness.goal.injection import GOAL_CANCELLED_REMINDER
+    from openharness.goal.state import GOAL_MODE_KEY, GoalMode
+
+    def _get_goal_mode(context: CommandContext) -> GoalMode | None:
+        mode = context.engine.tool_metadata.get(GOAL_MODE_KEY)
+        return mode if isinstance(mode, GoalMode) else None
+
+    def _current_permission_mode(context: CommandContext) -> str:
+        state = context.app_state.get() if context.app_state is not None else None
+        if state is not None and getattr(state, "permission_mode", None):
+            return str(state.permission_mode)
+        settings = load_settings()
+        return settings.permission.mode.value
+
+    def _switch_to_full_auto(context: CommandContext) -> None:
+        """Mirror ``/permissions full_auto`` — reuse the exact code path so
+        permission checker, tool registry, and app_state stay in sync."""
+        settings = load_settings()
+        settings.permission.mode = PermissionMode.FULL_AUTO
+        save_settings(settings)
+        context.engine.set_permission_checker(_build_permission_checker(settings, context))
+        _sync_full_auto_tools(context, is_full_auto=True)
+        if context.app_state is not None:
+            context.app_state.set(permission_mode=PermissionMode.FULL_AUTO.value)
+
+    async def _goal_handler(args: str, context: CommandContext) -> CommandResult:
+        parsed = parse_goal_command(args)
+        goal_mode = _get_goal_mode(context)
+
+        if parsed["kind"] == "error":
+            return CommandResult(message=parsed.get("message", "Invalid /goal usage."))
+
+        if parsed["kind"] == "status":
+            snapshot = goal_mode.get_goal() if goal_mode is not None else None
+            if snapshot is None:
+                return CommandResult(
+                    message="No goal set. Start one with `/goal <objective>`."
+                )
+            return CommandResult(message=format_goal_status(snapshot))
+
+        if goal_mode is None:
+            return CommandResult(
+                message="Goal mode is not available in this session.",
+            )
+
+        if parsed["kind"] == "cancel":
+            snapshot = goal_mode.cancel_goal()
+            if snapshot is None:
+                return CommandResult(message="No goal to cancel.")
+            # Tell the model to forget earlier active-goal reminders.
+            context.engine.inject_user_message(GOAL_CANCELLED_REMINDER)
+            return CommandResult(message="Goal cancelled.")
+
+        if parsed["kind"] == "pause":
+            snapshot = goal_mode.get_goal()
+            if snapshot is None:
+                return CommandResult(message="No goal to pause.")
+            if snapshot.status != "active":
+                return CommandResult(
+                    message=f"Goal is {snapshot.status}; only an active goal can be paused."
+                )
+            goal_mode.pause_goal(actor="user")
+            return CommandResult(
+                message="Goal paused. Use `/goal resume` to continue."
+            )
+
+        if parsed["kind"] == "resume":
+            snapshot = goal_mode.get_goal()
+            if snapshot is None:
+                return CommandResult(message="No goal to resume.")
+            if snapshot.status not in ("paused", "blocked"):
+                return CommandResult(
+                    message=f"Goal is {snapshot.status} and cannot be resumed."
+                )
+            permission_mode = _current_permission_mode(context)
+            if permission_mode == PermissionMode.PLAN.value:
+                return CommandResult(
+                    message=(
+                        "Plan mode blocks all mutating tools. Switch to Auto or "
+                        "Default before resuming a goal."
+                    )
+                )
+            if permission_mode == PermissionMode.DEFAULT.value:
+                return CommandResult(
+                    message="",
+                    goal_action="permission_prompt_resume",
+                )
+            goal_mode.resume_goal(actor="user")
+            return CommandResult(
+                message="Resuming goal...",
+                submit_prompt="Resume the active goal.",
+            )
+
+        # --- Queue subcommands (Phase 6) ---
+        from openharness.goal.queue import GOAL_QUEUE_KEY, GoalQueueStore
+
+        def _queue_store() -> GoalQueueStore:
+            store = context.engine.tool_metadata.get(GOAL_QUEUE_KEY)
+            if isinstance(store, GoalQueueStore):
+                return store
+            store = GoalQueueStore(context.engine.tool_metadata)
+            context.engine.tool_metadata[GOAL_QUEUE_KEY] = store
+            return store
+
+        if parsed["kind"] == "queue_list":
+            items = _queue_store().list()
+            if not items:
+                return CommandResult(message="Goal queue is empty.")
+            lines = [f"Goal queue ({len(items)} item{'s' if len(items) != 1 else ''}):"]
+            for index, queued in enumerate(items, start=1):
+                priority_tag = f" [priority={queued.priority}]" if queued.priority else ""
+                lines.append(f"  {index}. {queued.objective}{priority_tag}  (id={queued.queue_id[:8]})")
+            return CommandResult(message="\n".join(lines))
+
+        if parsed["kind"] == "queue_add":
+            try:
+                queued = _queue_store().enqueue(
+                    str(parsed["objective"]),
+                    priority=int(parsed.get("priority", 0) or 0),
+                )
+            except ValueError as exc:
+                return CommandResult(message=str(exc))
+            return CommandResult(
+                message=(
+                    f"Queued goal: {queued.objective} "
+                    f"(id={queued.queue_id[:8]}, queue length={len(_queue_store())})"
+                )
+            )
+
+        if parsed["kind"] == "queue_remove":
+            removed = _queue_store().remove(str(parsed["queue_id"]))
+            if not removed:
+                # Accept prefix matches for ergonomics.
+                store = _queue_store()
+                matches = [
+                    g for g in store.list()
+                    if g.queue_id.startswith(str(parsed["queue_id"]))
+                ]
+                if len(matches) == 1:
+                    store.remove(matches[0].queue_id)
+                    removed = True
+            if not removed:
+                return CommandResult(message="No queued goal matched that id.")
+            return CommandResult(message="Removed queued goal.")
+
+        if parsed["kind"] == "queue_clear":
+            _queue_store().clear()
+            return CommandResult(message="Goal queue cleared.")
+
+        if parsed["kind"] == "next":
+            # Cancel the current active (if any) and promote the queue head.
+            snapshot = goal_mode.get_goal()
+            if snapshot is not None:
+                goal_mode.cancel_goal()
+                context.engine.inject_user_message(GOAL_CANCELLED_REMINDER)
+            store = _queue_store()
+            promoted = goal_mode.start_next_from_queue(store)
+            if promoted is None:
+                return CommandResult(
+                    message=(
+                        "No queued goal to promote."
+                        if snapshot is not None
+                        else "No active goal to skip, and the queue is empty."
+                    )
+                )
+            return CommandResult(
+                message=f"Started next queued goal: {promoted.objective}",
+                submit_prompt=promoted.objective,
+            )
+
+        if parsed["kind"] == "skip":
+            # Cancel the current active (if any) and pop the queue head without
+            # starting it.
+            snapshot = goal_mode.get_goal()
+            if snapshot is not None:
+                goal_mode.cancel_goal()
+                context.engine.inject_user_message(GOAL_CANCELLED_REMINDER)
+            popped = _queue_store().pop()
+            if popped is None:
+                return CommandResult(
+                    message=(
+                        "Queue is empty; nothing to skip."
+                        if snapshot is not None
+                        else "No active goal to skip, and the queue is empty."
+                    )
+                )
+            return CommandResult(
+                message=f"Skipped queued goal: {popped.objective} "
+                        f"(queue length={len(_queue_store())})"
+            )
+
+        # kind == "create"
+        assert parsed["kind"] == "create"
+        objective = str(parsed["objective"])
+        replace = bool(parsed.get("replace", False))
+        snapshot = goal_mode.get_goal()
+        if snapshot is not None and snapshot.status == "active" and not replace:
+            return CommandResult(
+                message=(
+                    "A goal is already active. Use `/goal replace <objective>` "
+                    "to replace it, or `/goal status` to inspect it."
+                )
+            )
+        permission_mode = _current_permission_mode(context)
+        if permission_mode == PermissionMode.PLAN.value:
+            return CommandResult(
+                message=(
+                    "Plan mode blocks all mutating tools. Switch to Auto or "
+                    "Default before starting a goal."
+                )
+            )
+        if permission_mode == PermissionMode.DEFAULT.value:
+            return CommandResult(
+                message="",
+                goal_action="permission_prompt_create",
+                goal_objective=objective,
+                goal_replace=replace,
+            )
+        goal_mode.create_goal(
+            objective,
+            replace=replace,
+            actor="user",
+            original_permission_mode=permission_mode,
+        )
+        return CommandResult(
+            message=f"Goal set: {objective}",
+            submit_prompt=objective,
+        )
 
     async def _model_handler(args: str, context: CommandContext) -> CommandResult:
         settings = load_settings()
@@ -1699,6 +1973,12 @@ def create_default_command_registry(
     registry.register(SlashCommand("reload-plugins", "Reload plugin discovery for this workspace", _reload_plugins_handler, remote_invocable=False, remote_admin_opt_in=True))
     registry.register(SlashCommand("permissions", "Show or update permission mode; Tab in the TUI opens the mode picker", _permissions_handler, remote_invocable=False, remote_admin_opt_in=True))
     registry.register(SlashCommand("plan", "Toggle plan permission mode; /permissions default|full_auto exits plan explicitly", _plan_handler, remote_invocable=False, remote_admin_opt_in=True))
+    registry.register(SlashCommand(
+        "goal",
+        "Set, manage, and track autonomous goals",
+        _goal_handler,
+        subcommands=["status", "pause", "resume", "cancel", "replace", "next", "skip", "queue"],
+    ))
     registry.register(SlashCommand("fast", "Show or update fast mode", _fast_handler))
     registry.register(SlashCommand("effort", "Show or update reasoning effort", _effort_handler))
     registry.register(SlashCommand("passes", "Show or update reasoning pass count", _passes_handler))

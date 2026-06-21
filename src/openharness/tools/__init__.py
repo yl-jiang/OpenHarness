@@ -6,6 +6,7 @@ from openharness.tools.bash_tool import BashTool
 from openharness.tools.base import BaseTool, ToolExecutionContext, ToolRegistry, ToolResult
 from openharness.tools.brief_tool import BriefTool
 from openharness.tools.config_tool import ConfigTool
+from openharness.tools.create_goal_tool import CreateGoalTool
 from openharness.tools.done_tool import DoneTool
 from openharness.tools.cron_manager_tool import CronManagerTool
 from openharness.tools.enter_worktree_tool import EnterWorktreeTool
@@ -13,6 +14,7 @@ from openharness.tools.exit_worktree_tool import ExitWorktreeTool
 from openharness.tools.file_edit_tool import FileEditTool
 from openharness.tools.file_read_tool import FileReadTool
 from openharness.tools.file_write_tool import FileWriteTool
+from openharness.tools.get_goal_tool import GetGoalTool
 from openharness.tools.glob_tool import GlobTool
 from openharness.tools.grep_tool import GrepTool
 from openharness.tools.image_generation_tool import ImageGenerationTool
@@ -24,9 +26,11 @@ from openharness.tools.mcp_tool import McpToolAdapter
 from openharness.tools.memory_tool import MemoryTool
 from openharness.tools.notebook_edit_tool import NotebookEditTool
 from openharness.tools.plan_mode_tool import PlanModeTool
+from openharness.tools.queue_goal_tool import QueueGoalTool
 from openharness.tools.read_mcp_resource_tool import ReadMcpResourceTool
 from openharness.tools.remote_trigger_tool import RemoteTriggerTool
 from openharness.tools.send_message_tool import SendMessageTool
+from openharness.tools.set_goal_budget_tool import SetGoalBudgetTool
 from openharness.tools.skill_delete_tool import SkillDeleteTool
 from openharness.tools.skill_list_tool import SkillListTool
 from openharness.tools.skill_load_tool import SkillLoadTool
@@ -45,6 +49,7 @@ from openharness.tools.team_create_tool import TeamCreateTool
 from openharness.tools.team_delete_tool import TeamDeleteTool
 from openharness.tools.todo_tool import TodoTool
 from openharness.tools.tool_search_tool import ToolSearchTool
+from openharness.tools.update_goal_tool import UpdateGoalTool
 from openharness.tools.web_fetch_tool import WebFetchTool
 from openharness.tools.web_search_tool import WebSearchTool
 
@@ -84,6 +89,11 @@ def create_default_tool_registry(mcp_manager=None) -> ToolRegistry:
         PlanModeTool(),
         CronManagerTool(),
         RemoteTriggerTool(),
+        CreateGoalTool(),
+        UpdateGoalTool(),
+        GetGoalTool(),
+        SetGoalBudgetTool(),
+        QueueGoalTool(),
         TaskCreateTool(),
         TaskGetTool(),
         TaskListTool(),

@@ -631,6 +631,28 @@ async def build_runtime(
 
     engine.tool_metadata["system_prompt_refresher"] = _refresh_system_prompt
 
+    # Goal-mode wiring: GoalMode reads/writes tool_metadata["goal_state"]
+    # (persisted across sessions) and registers itself under the runtime key
+    # so tools can retrieve it via context.metadata["goal_mode"]. The engine's
+    # hook_executor is forwarded so state transitions enqueue GOAL_* events
+    # for the driver to flush once per turn.
+    from openharness.goal.queue import GOAL_QUEUE_KEY, GoalQueueStore
+    from openharness.goal.state import GOAL_MODE_KEY, GoalMode
+
+    goal_mode = GoalMode(
+        engine.tool_metadata,
+        hook_executor=getattr(engine, "_hook_executor", None),
+    )
+    engine.tool_metadata[GOAL_MODE_KEY] = goal_mode
+    # Queue store: same durability semantics as goal_state (persisted, not
+    # rolled back on turn cancel).
+    if GOAL_QUEUE_KEY not in engine.tool_metadata:
+        engine.tool_metadata[GOAL_QUEUE_KEY] = GoalQueueStore(engine.tool_metadata)
+    if restore_messages:
+        # Replayed active state cannot survive a restart — the driver loop is
+        # gone. Downgrade to paused so the user decides when to resume.
+        goal_mode.normalize_after_replay()
+
     if autodream_context is not None:
         engine.tool_metadata["autodream_context"] = autodream_context
     # Restore messages from a saved session if provided
@@ -932,6 +954,59 @@ async def handle_line(
         if result.refresh_runtime:
             refresh_runtime_client(bundle)
         await _render_command_result(result, print_system, clear_output, render_event)
+
+        # /goal requested a permission prompt. Mirror /permissions full_auto
+        # and then proceed with the create/resume action. This is the
+        # non-interactive default; a future TUI modal can intercept
+        # goal_action earlier to offer "keep Default" or "Cancel".
+        if result.goal_action is not None and result.submit_prompt is None:
+            from openharness.config.settings import load_settings, save_settings
+            from openharness.permissions import PermissionMode
+            from openharness.commands.skills import (
+                build_permission_checker as _build_permission_checker,
+            )
+            from openharness.tools.ask_user_question_tool import AskUserQuestionTool
+            from openharness.tools.done_tool import DoneTool
+
+            settings = load_settings()
+            # Capture the *pre-upgrade* permission mode so the driver can
+            # opt-in restore it after the goal ends (Phase 7 §15.2).
+            pre_upgrade_permission = settings.permission.mode.value
+            settings.permission.mode = PermissionMode.FULL_AUTO
+            save_settings(settings)
+            context.engine.set_permission_checker(
+                _build_permission_checker(settings, context)
+            )
+            # Mirror _sync_full_auto_tools: register/unregister the done tool
+            # and toggle require_explicit_done on the engine.
+            tool_registry = bundle.tool_registry
+            if tool_registry.get("done") is None:
+                tool_registry.register(DoneTool())
+            if tool_registry.get("ask_user_question") is None:
+                tool_registry.register(AskUserQuestionTool())
+            context.engine.set_require_explicit_done(True)
+            if context.app_state is not None:
+                context.app_state.set(permission_mode=PermissionMode.FULL_AUTO.value)
+
+            goal_mode = context.engine.tool_metadata.get("goal_mode")
+            if result.goal_action == "permission_prompt_create" and goal_mode is not None:
+                try:
+                    goal_mode.create_goal(
+                        result.goal_objective or "",
+                        replace=bool(result.goal_replace),
+                        actor="user",
+                        original_permission_mode=pre_upgrade_permission,
+                    )
+                except ValueError as exc:
+                    await print_system(str(exc))
+                    sync_app_state(bundle)
+                    return True
+                result.submit_prompt = result.goal_objective
+            elif result.goal_action == "permission_prompt_resume" and goal_mode is not None:
+                goal_mode.resume_goal(actor="user")
+                result.submit_prompt = "Resume the active goal."
+            await print_system("Switched to Auto mode for goal execution.")
+
         if result.submit_prompt is not None:
             original_model = bundle.engine.model
             if result.submit_model:
@@ -1047,6 +1122,7 @@ async def handle_line(
             system_prompt=system_prompt,
         )
         sync_app_state(bundle)
+        await _maybe_restore_permission_after_goal(bundle, context)
         return True
     _save_runtime_snapshot(
         bundle,
@@ -1054,7 +1130,65 @@ async def handle_line(
         system_prompt=system_prompt,
     )
     sync_app_state(bundle)
+    await _maybe_restore_permission_after_goal(bundle, context)
     return True
+
+
+async def _maybe_restore_permission_after_goal(
+    bundle: RuntimeBundle,
+    context: CommandContext,
+) -> None:
+    """Apply the driver-emitted permission restore signal, if any.
+
+    The driver's ``_maybe_restore_permission`` writes
+    ``tool_metadata["_pending_permission_restore"]`` when the goal ends and
+    the user opted in via ``settings.goal.restore_permission_after_goal``.
+    The underscore prefix keeps the signal turn-local (rolled back if the
+    user cancels the turn), and this function is the single consumer.
+    """
+    pending = bundle.engine.tool_metadata.pop("_pending_permission_restore", None)
+    if not pending or not isinstance(pending, str):
+        return
+    from openharness.config.settings import load_settings, save_settings
+    from openharness.permissions import PermissionMode
+    from openharness.commands.skills import (
+        build_permission_checker as _build_permission_checker,
+    )
+    from openharness.tools.ask_user_question_tool import AskUserQuestionTool
+    from openharness.tools.done_tool import DoneTool
+
+    try:
+        target = PermissionMode(pending)
+    except ValueError:
+        return
+    settings = load_settings()
+    if settings.permission.mode == target:
+        return  # already in the desired mode
+    settings.permission.mode = target
+    save_settings(settings)
+    context.engine.set_permission_checker(_build_permission_checker(settings, context))
+    # Mirror _sync_full_auto_tools so the tool registry reflects the new mode.
+    is_full_auto = target == PermissionMode.FULL_AUTO
+    tool_registry = bundle.tool_registry
+    if is_full_auto:
+        if tool_registry.get("done") is None:
+            tool_registry.register(DoneTool())
+    else:
+        tool_registry.unregister("done")
+    if tool_registry.get("ask_user_question") is None:
+        tool_registry.register(AskUserQuestionTool())
+    context.engine.set_require_explicit_done(is_full_auto)
+    if context.app_state is not None:
+        context.app_state.set(permission_mode=target.value)
+    # Use a simple inline print via the existing logger pathway — runtime.py
+    # does not have a direct print_system handle here, so log as an event.
+    from openharness.utils.log import get_logger
+
+    get_logger(__name__).event(
+        "goal_permission_restored",
+        target_mode=target.value,
+        session_id=bundle.session_id,
+    )
 
 
 async def _render_command_result(

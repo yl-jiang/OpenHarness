@@ -75,6 +75,13 @@ class ToolMetadataKey(str, Enum):
     VISION_CALL_RECORDER = "vision_call_recorder"
     IMAGE_GENERATION_CONFIG = "image_generation_config"
     UTILITY_CLIENT_RESOLUTION = "utility_client_resolution"
+    # Durable goal-mode state (persists across sessions, not rolled back on
+    # turn cancel). The runtime handle "goal_mode" lives outside this enum
+    # because it is not serializable.
+    GOAL_STATE = "goal_state"
+    # Persisted queue data for upcoming goals. The runtime GoalQueueStore
+    # handle lives at the separate "goal_queue" key (see goal/queue.py).
+    GOAL_QUEUE = "goal_queue_state"
 
     @classmethod
     def all_persisted_keys(cls) -> tuple["ToolMetadataKey", ...]:
@@ -91,6 +98,8 @@ class ToolMetadataKey(str, Enum):
             cls.COMPACT_CHECKPOINTS,
             cls.COMPACT_LAST,
             cls.SELF_EVOLUTION_STATE,
+            cls.GOAL_STATE,
+            cls.GOAL_QUEUE,
         )
 
     @classmethod
