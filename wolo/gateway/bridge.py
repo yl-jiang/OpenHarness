@@ -30,11 +30,6 @@ logger = get_logger(__name__)
 _CONTENT_DEDUP_WINDOW = 300  # seconds: ignore identical messages within this window
 
 
-def _hash_content(text: str) -> str:
-    normalized = " ".join(text.split())
-    return hashlib.sha256(normalized.encode()).hexdigest()
-
-
 def _reply_dedup_context(message: InboundMessage) -> dict[str, str]:
     metadata = message.metadata or {}
     context: dict[str, str] = {}

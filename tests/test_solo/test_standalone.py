@@ -19,7 +19,7 @@ from openharness.tools.skill_write_tool import SkillWriteInput
 from solo.config import build_channel_manager_config, load_config, save_config
 from solo.gateway.bridge import SoloGatewayBridge
 from solo.gateway.service import SoloGatewayService
-from solo.core.models import PendingConfirmation, SoloConfig, SoloTodo
+from solo.core.models import SoloConfig, SoloTodo
 from solo.runner import SoloQueryRunner
 from solo.core.session import save_conversation
 from solo.core.store import SoloStore
@@ -1554,38 +1554,6 @@ def test_solo_heartbeat_cli_status_reflects_config(tmp_path: Path):
     assert result.exit_code == 0
     assert "enabled=True" in result.output
     assert "interval_s=600" in result.output
-
-
-def test_solo_heartbeat_agenda_includes_pending_confirmations_and_file_tasks(tmp_path: Path):
-    from datetime import datetime, timezone
-
-    from solo.gateway.heartbeat import SoloHeartbeatService
-
-    workspace = initialize_workspace(tmp_path / ".solo")
-    store = SoloStore(workspace)
-    store.add_pending_confirmation(
-        PendingConfirmation(
-            id="pending1",
-            entry_id="entry1",
-            raw_content="他说下周去检查",
-            clarification_reason="指代不清",
-            questions=["他说的是谁？"],
-            created_at=datetime.now(timezone.utc).isoformat(),
-        )
-    )
-    (workspace / "HEARTBEAT.md").write_text("- 检查这个月的睡眠趋势\n", encoding="utf-8")
-
-    agenda = SoloHeartbeatService(
-        bus=MessageBus(),
-        workspace=workspace,
-        provider_profile="codex",
-        enabled_channels=[],
-    ).build_agenda()
-
-    assert agenda is not None
-    assert "pending_confirmation" in agenda
-    assert "他说的是谁" in agenda
-    assert "检查这个月的睡眠趋势" in agenda
 
 
 # ── _extract_final_reply_media tests ──

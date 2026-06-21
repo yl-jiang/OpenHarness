@@ -568,24 +568,6 @@ class WoloHeartbeatService:
                 lines.append(f"- {at}  {summary}")
         return "\n".join(lines) if lines else "（无）"
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def build_agenda(self) -> str | None:
-        signals = self.gather_signals()
-        if signals.is_empty and not signals.system_health:
-            return None
-        parts: list[str] = []
-        if signals.has_user_signals:
-            items = [f"{k}:{m}" for k, m in signals.iter_user_items()]
-            parts.append("User signals: " + "; ".join(items))
-        if signals.has_agent_tasks:
-            parts.append("Agent tasks: " + signals.heartbeat_tasks[:200])
-        if signals.system_health:
-            parts.append("System health (internal): " + "; ".join(signals.system_health))
-        return "\n".join(parts)
-
     @staticmethod
     def _extract_notifications(response: str) -> list[str]:
         text = response.strip()

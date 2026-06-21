@@ -21,15 +21,6 @@ class SoloCommand:
     backfill_missing_yesterday: bool = False
     backfill_date: str | None = None
 
-    @property
-    def argument(self) -> str:
-        if self.action == "report":
-            return self.report_type
-        if self.action == "view":
-            return str(self.limit)
-        if self.action == "backfill" and self.backfill_date:
-            return f"{self.backfill_date} {self.content}".strip()
-        return self.content
 
 def extract_solo_content(text: str) -> str | None:
     stripped = text.strip()

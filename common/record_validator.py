@@ -15,11 +15,6 @@ from typing import Any
 
 from common.constants import EMOTION_MAX_LENGTH, SUMMARY_MAX_LENGTH
 
-FIELD_LIMITS: dict[str, int] = {
-    "emotion": EMOTION_MAX_LENGTH,
-    "summary": SUMMARY_MAX_LENGTH,
-}
-
 
 @dataclass(frozen=True)
 class Rule:

@@ -386,24 +386,6 @@ class WoloProcessor:
         logger.info("generate_report done id=%s type=%s", report.id, report.report_type)
         return report
 
-    def empty_result(
-        self,
-        *,
-        backfill_date: str | None = None,
-        backfill_prompt: str | None = None,
-        pending_reminder: str | None = None,
-        missing_day_reminder: str | None = None,
-    ) -> ProcessResult:
-        return ProcessResult(
-            auto_processed=0,
-            pending_confirmations=0,
-            backfilled=backfill_date is not None,
-            backfill_date=backfill_date,
-            backfill_prompt=backfill_prompt,
-            pending_reminder=pending_reminder,
-            missing_day_reminder=missing_day_reminder,
-        )
-
     def _build_record(
         self,
         entry: WoloEntry,

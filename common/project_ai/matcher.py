@@ -8,11 +8,6 @@ from __future__ import annotations
 import re
 
 
-def _normalize(text: str) -> str:
-    """Lowercase, strip, collapse whitespace."""
-    return re.sub(r"\s+", " ", text.strip().lower())
-
-
 def tokenize_enhanced(text: str) -> list[str]:
     """Tokenize text: Jieba for Chinese, regex for English/numbers."""
     if not text:

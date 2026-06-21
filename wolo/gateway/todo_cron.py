@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -16,9 +15,6 @@ from openharness.utils.log import get_logger
 from wolo.core.workspace import get_data_dir
 
 logger = get_logger(__name__)
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_APP_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _cron_registry_path(workspace: str | Path | None) -> Path:
@@ -43,13 +39,6 @@ def _save(workspace: str | Path | None, jobs: list[dict[str, Any]]) -> None:
         _cron_registry_path(workspace),
         json.dumps(jobs, indent=2) + "\n",
     )
-
-
-def _get_cron_job(job_name: str, workspace: str | Path | None) -> dict[str, Any] | None:
-    for job in _load(workspace):
-        if job.get("name") == job_name:
-            return job
-    return None
 
 
 def _upsert_cron_job(job: dict[str, Any], workspace: str | Path | None) -> None:
@@ -159,74 +148,3 @@ def schedule_one_shot_agent_task(
     _upsert_cron_job(job, workspace)
     logger.info("Registered one-shot agent_task job: %s next_run=%s", job["name"], job["next_run"])
     return job
-
-
-def ensure_todo_reminder_job(
-    app: str,
-    *,
-    workspace: str | Path | None = None,
-    notify: dict[str, str] | None = None,
-    schedule: str = "0 9 * * *",  # schedule for daily at 9:00 AM
-    timezone: str = "Asia/Shanghai",
-) -> None:
-    """Register or update the cron job that checks todos and sends reminders.
-
-    If the job already exists but is missing a notify config and one is now
-    available, the job will be updated with the new notify target.
-
-    Args:
-        app: app name (e.g. "wolo")
-        workspace: workspace path for store access
-        notify: optional notification config (e.g. {"type": "feishu_dm", "user_open_id": "..."})
-        schedule: cron expression (default: daily at 9:00 AM)
-        timezone: IANA timezone for the schedule
-    """
-    job_name = f"{app}-todo-reminder"
-    python = sys.executable
-    script = str(_APP_ROOT / "gateway" / "todo_reminder.py")
-    expected_command = f"{python} {script}"
-    if workspace:
-        expected_command += f" --workspace {workspace}"
-    expected_cwd = str(_REPO_ROOT)
-    existing = _get_cron_job(job_name, workspace)
-    if existing is not None:
-        updated = False
-        # Reconcile job drift from older versions (command/schedule/cwd/notify).
-        if str(existing.get("command") or "").strip() != expected_command:
-            existing["command"] = expected_command
-            updated = True
-        if str(existing.get("cwd") or "").strip() != expected_cwd:
-            existing["cwd"] = expected_cwd
-            updated = True
-        if str(existing.get("schedule") or "").strip() != str(schedule).strip():
-            existing["schedule"] = schedule
-            updated = True
-        if str(existing.get("timezone") or "").strip() != str(timezone).strip():
-            existing["timezone"] = timezone
-            updated = True
-        if not bool(existing.get("enabled", True)):
-            existing["enabled"] = True
-            updated = True
-        if notify and existing.get("notify") != notify:
-            existing["notify"] = notify
-            updated = True
-        if updated:
-            _upsert_cron_job(existing, workspace)
-            logger.info("Reconciled todo reminder cron job %s", job_name)
-        else:
-            logger.debug("todo reminder cron job already exists: %s", job_name)
-        return
-
-    job: dict[str, object] = {
-        "name": job_name,
-        "schedule": schedule,
-        "timezone": timezone,
-        "command": expected_command,
-        "cwd": expected_cwd,
-        "enabled": True,
-    }
-    if notify:
-        job["notify"] = notify
-
-    _upsert_cron_job(job, workspace)
-    logger.info("Registered todo reminder cron job: %s (schedule=%s tz=%s)", job_name, schedule, timezone)

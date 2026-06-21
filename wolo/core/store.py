@@ -971,20 +971,6 @@ class WoloStore:
             rows = cur.fetchall()
         return [self._row_to_entry(row) for row in rows]
 
-    def delete_entry(self, entry_id: str) -> bool:
-        """Permanently delete an entry and cascade to records, pending_confirmations, and their children."""
-        # First cascade: find all records linked to this entry and delete them (with their children)
-        record_rows = self._db.execute("SELECT id FROM records WHERE entry_id = ?", (entry_id,)).fetchall()
-        for (rid,) in record_rows:
-            for child_table in ("todos", "experiments", "profile_updates", "decisions", "highlights"):
-                self._db.execute(f"DELETE FROM {child_table} WHERE record_id = ?", (rid,))
-            self._db.execute("DELETE FROM records WHERE id = ?", (rid,))
-        # Delete pending_confirmations referencing this entry
-        self._db.execute("DELETE FROM pending_confirmations WHERE entry_id = ?", (entry_id,))
-        cur = self._db.execute("DELETE FROM entries WHERE id = ?", (entry_id,))
-        self._db.commit()
-        return cur.rowcount > 0
-
     def get_entry(self, entry_id: str) -> WoloEntry | None:
         cur = self._db.execute("SELECT * FROM entries WHERE id = ?", (entry_id,))
         row = cur.fetchone()
@@ -1270,19 +1256,6 @@ class WoloStore:
             f"INSERT INTO highlights ({', '.join(cols)}) VALUES ({placeholders})", vals
         )
         self._db.commit()
-
-    def resolve_highlight(self, highlight_id: str) -> bool:
-        cur = self._db.execute("SELECT tags FROM highlights WHERE id = ?", (highlight_id,))
-        row = cur.fetchone()
-        if row is None:
-            return False
-        existing_tags = row[0] or ""
-        if "resolved" in existing_tags.lower():
-            return True  # already resolved
-        new_tags = f"{existing_tags},resolved".lstrip(",")
-        self._db.execute("UPDATE highlights SET tags = ? WHERE id = ?", (new_tags, highlight_id))
-        self._db.commit()
-        return True
 
 
     def add_experiment(self, experiment: WoloExperiment) -> None:
@@ -2319,73 +2292,6 @@ class WoloStore:
             "total_output_tokens": sum(item["output_tokens"] for item in models),
             "models": models,
         }
-
-    def vision_token_daily_summary(
-        self,
-        *,
-        start_date: str,
-        end_date: str,
-        target_tz: tzinfo | None = None,
-    ) -> list[dict[str, object]]:
-        zone = target_tz or datetime.now().astimezone().tzinfo or timezone.utc
-        cur = self._db.execute(
-            "SELECT model, created_at, input_tokens, output_tokens "
-            "FROM vision_calls ORDER BY created_at ASC, model ASC"
-        )
-        daily: dict[tuple[str, str], dict[str, object]] = {}
-        for row in cur.fetchall():
-            model = str(row[0] or "").strip()
-            created_at = str(row[1] or "").strip()
-            if not model or not created_at:
-                continue
-            try:
-                call_at = datetime.fromisoformat(created_at)
-            except ValueError:
-                continue
-            if call_at.tzinfo is None:
-                call_at = call_at.replace(tzinfo=timezone.utc)
-            day = call_at.astimezone(zone).date().isoformat()
-            if day < start_date or day > end_date:
-                continue
-            key = (day, model)
-            point = daily.setdefault(
-                key,
-                {"date": day, "model": model, "input_tokens": 0, "output_tokens": 0},
-            )
-            point["input_tokens"] += max(0, int(row[2] or 0))
-            point["output_tokens"] += max(0, int(row[3] or 0))
-        return sorted(daily.values(), key=lambda item: (str(item["date"]), str(item["model"])))
-
-    def vision_call_daily_summary(
-        self,
-        *,
-        start_date: str,
-        end_date: str,
-        target_tz: tzinfo | None = None,
-    ) -> list[dict[str, object]]:
-        zone = target_tz or datetime.now().astimezone().tzinfo or timezone.utc
-        cur = self._db.execute(
-            "SELECT model, created_at FROM vision_calls ORDER BY created_at ASC, model ASC"
-        )
-        daily: dict[tuple[str, str], dict[str, object]] = {}
-        for row in cur.fetchall():
-            model = str(row[0] or "").strip()
-            created_at = str(row[1] or "").strip()
-            if not model or not created_at:
-                continue
-            try:
-                call_at = datetime.fromisoformat(created_at)
-            except ValueError:
-                continue
-            if call_at.tzinfo is None:
-                call_at = call_at.replace(tzinfo=timezone.utc)
-            day = call_at.astimezone(zone).date().isoformat()
-            if day < start_date or day > end_date:
-                continue
-            key = (day, model)
-            point = daily.setdefault(key, {"date": day, "model": model, "count": 0})
-            point["count"] += 1
-        return sorted(daily.values(), key=lambda item: (str(item["date"]), str(item["model"])))
 
     def dates_with_activity(self) -> set[str]:
         dates: set[str] = set()

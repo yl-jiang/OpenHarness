@@ -16,7 +16,7 @@ from openharness.tools.base import ToolExecutionContext
 from openharness.tools.skill_write_tool import SkillWriteInput
 
 from wolo.config import load_config, save_config
-from wolo.core.models import WoloConfig, WoloHighlight, WoloTodo
+from wolo.core.models import WoloConfig, WoloTodo
 from wolo.gateway.bridge import WoloGatewayBridge
 from wolo.runner import WoloQueryRunner
 from wolo.core.session import save_conversation
@@ -826,44 +826,6 @@ async def test_wolo_query_runner_abnormal_termination_avoids_leaking_tool_chain(
     messages, loaded_sid = load_conversation(workspace, session_key)
     assert loaded_sid == "sid-abnormal"
     assert [message.text for message in messages] == ["上一条正常工作消息", "上一条正常工作回复"]
-
-
-@pytest.mark.asyncio
-async def test_wolo_heartbeat_agenda_includes_todos_and_blockers(tmp_path: Path):
-    from wolo.gateway.heartbeat import WoloHeartbeatService
-
-    workspace = initialize_workspace(tmp_path / ".wolo")
-    store = WoloStore(workspace)
-    store.add_todo(
-        WoloTodo(
-            id="todo1",
-            record_id="record1",
-            title="补齐 gateway heartbeat 测试",
-            project="OpenHarness",
-            due_date="2026-05-21",
-        )
-    )
-    store.add_highlight(
-        WoloHighlight(
-            id="h1",
-            record_id="record1",
-            kind="blocker",
-            title="飞书 token 过期",
-            project="OpenHarness",
-            content="需要重新登录后再验证 gateway",
-        )
-    )
-
-    agenda = WoloHeartbeatService(
-        bus=MessageBus(),
-        workspace=workspace,
-        provider_profile="codex",
-        enabled_channels=[],
-    ).build_agenda()
-
-    assert agenda is not None
-    assert "补齐 gateway heartbeat 测试" in agenda
-    assert "飞书 token 过期" in agenda
 
 
 @pytest.mark.asyncio
