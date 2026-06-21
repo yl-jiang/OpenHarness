@@ -1354,7 +1354,12 @@ class SoloService:
         return self.store.update_health_record(record_id, **safe)
 
     def import_apple_health(self, file_bytes: bytes, filename: str) -> dict[str, Any]:
-        """Parse Apple Health export and import aggregated daily records."""
+        """Parse Apple Health export and import aggregated daily records.
+
+        Performs a full replace: deletes all existing Apple Health records
+        (source="import" with "apple_health" tag) before inserting fresh data.
+        Manually entered records (symptoms, medications, etc.) are unaffected.
+        """
         from solo.core.apple_health import AppleHealthImporter
         from solo.core.models import SoloHealthRecord
 
@@ -1367,12 +1372,16 @@ class SoloService:
         if not parsed.daily and not parsed.workouts:
             return {"ok": False, "error": "No health data found in export"}
 
-        existing_dates = {
-            r.date for r in self.store.list_health_records(subject="self")
+        # Delete all existing Apple Health records before re-importing
+        existing = [
+            r for r in self.store.list_health_records(subject="self")
             if r.source == "import" and "apple_health" in (r.tags or "")
-        }
+        ]
+        deleted = len(existing)
+        for r in existing:
+            self.store.delete_health_record(r.id)
 
-        record_dicts, result = importer.build_records(parsed, existing_dates)
+        record_dicts, result = importer.build_records(parsed)
         for rd in record_dicts:
             self.store.add_health_record(SoloHealthRecord(**rd))
 
@@ -1380,12 +1389,11 @@ class SoloService:
             "ok": result.ok,
             "error": result.error,
             "parsed_records": result.parsed_records,
-            "dates_total": result.dates_total,
-            "dates_new": result.dates_new,
             "inserted": result.inserted,
-            "skipped": result.skipped,
+            "deleted": deleted,
             "date_range": result.date_range,
-            "message": result.message,
+            "message": result.message
+                + (f"，替换 {deleted} 条旧记录" if deleted else ""),
             "by_type": result.by_type,
         }
 

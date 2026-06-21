@@ -56,11 +56,17 @@ def main():
         print(f"\nBy type: {result.by_type}")
     else:
         store = SoloStore(Path(args.workspace).expanduser())
-        existing_dates = {
-            r.date for r in store.list_health_records(subject="self")
+        # Delete all existing Apple Health records before re-importing
+        existing = [
+            r for r in store.list_health_records(subject="self")
             if r.source == "import" and "apple_health" in (r.tags or "")
-        }
-        record_dicts, result = importer.build_records(parsed, existing_dates)
+        ]
+        for r in existing:
+            store.delete_health_record(r.id)
+        if existing:
+            print(f"  Deleted {len(existing)} existing Apple Health records")
+
+        record_dicts, result = importer.build_records(parsed)
         print(f"\n{result.message}")
         if result.date_range:
             print(f"  Date range: {result.date_range}")

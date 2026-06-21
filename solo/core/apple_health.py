@@ -100,7 +100,6 @@ class ImportResult:
     dates_total: int = 0
     dates_new: int = 0
     inserted: int = 0
-    skipped: int = 0
     date_range: str = ""
     message: str = ""
     by_type: dict[str, int] = field(default_factory=dict)
@@ -154,22 +153,17 @@ class AppleHealthImporter:
     def build_records(
         self,
         parsed: ParseResult,
-        existing_dates: set[str] | None = None,
     ) -> tuple[list[dict[str, Any]], ImportResult]:
-        """Build health record dicts from parsed data, skipping already-imported dates.
+        """Build health record dicts from parsed data for all dates.
 
         Returns (records_to_insert, import_result_summary).
         """
-        existing = existing_dates or set()
-        daily = {d: m for d, m in parsed.daily.items() if d not in existing}
-        skipped_dates = len(parsed.daily) - len(daily)
+        daily = parsed.daily
 
-        if not daily and not any(w for d, ws in parsed.workouts.items() for w in ws if d not in existing):
+        if not daily and not parsed.workouts:
             return [], ImportResult(
                 parsed_records=parsed.record_count,
-                dates_total=skipped_dates,
-                skipped=skipped_dates,
-                message=f"全部 {skipped_dates} 天数据已导入过，无需重复导入",
+                message="No health data found in parsed export",
             )
 
         now = datetime.now().isoformat()
@@ -251,8 +245,6 @@ class AppleHealthImporter:
 
         # Workout records
         for date_str in sorted(parsed.workouts.keys()):
-            if date_str in existing:
-                continue
             for w in parsed.workouts[date_str]:
                 w_metrics: dict[str, Any] = {}
                 if w.distance:
@@ -271,17 +263,15 @@ class AppleHealthImporter:
                 ))
                 categories.append("fitness")
 
-        all_dates = set(daily.keys()) | {d for d in parsed.workouts if d not in existing}
+        all_dates = set(daily.keys()) | set(parsed.workouts.keys())
         import_result = ImportResult(
             ok=True,
             parsed_records=parsed.record_count,
-            dates_total=len(parsed.daily) + skipped_dates,
+            dates_total=len(all_dates),
             dates_new=len(all_dates),
             inserted=len(records),
-            skipped=skipped_dates,
             date_range=f"{min(all_dates)} ~ {max(all_dates)}" if all_dates else "",
-            message=f"导入 {len(records)} 条新记录（{len(all_dates)} 天新数据）"
-                    + (f"，跳过 {skipped_dates} 天已导入数据" if skipped_dates else ""),
+            message=f"导入 {len(records)} 条记录（{len(all_dates)} 天数据）",
             by_type=dict(Counter(categories)),
         )
         return records, import_result
