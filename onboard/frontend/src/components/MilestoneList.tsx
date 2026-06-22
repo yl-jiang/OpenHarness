@@ -285,7 +285,8 @@ export function MilestoneList({ app, projectId, milestones, onChange }: Props) {
           type="date"
           value={newDate}
           onChange={(e) => setNewDate(e.target.value)}
-          className="px-2 py-1.5 rounded-md bg-surface-2 border border-border text-xs text-text"
+          onClick={(e) => (e.target as HTMLInputElement).showPicker?.()}
+          className="px-2 py-1.5 rounded-md bg-surface-2 border border-border text-xs text-text [color-scheme:dark] cursor-pointer"
         />
         <button
           onClick={handleAdd}
