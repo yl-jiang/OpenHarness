@@ -49,7 +49,7 @@ class WoloService:
         records = self.store.list_records()
         todos = self.store.list_todos()
         blockers = self.store.list_highlights(kind="blocker")
-        pending_todos = [todo for todo in todos if todo.status != "done"]
+        pending_todos = [todo for todo in todos if todo.status in ("pending", "in_progress")]
         open_blockers = [item for item in blockers if "resolved" not in item.tags.lower()]
         llm_usage = self.store.llm_usage_summary()
         vision_usage = self.store.vision_usage_summary()

@@ -48,7 +48,7 @@ class SoloService:
         status = self.store.status()
         records = self.store.list_records()
         todos = self.store.list_todos()
-        pending_todos = [todo for todo in todos if todo.status != "done"]
+        pending_todos = [todo for todo in todos if todo.status in ("pending", "in_progress")]
         llm_usage = self.store.llm_usage_summary()
         vision_usage = self.store.vision_usage_summary()
         month_start, month_end = current_month_range()
