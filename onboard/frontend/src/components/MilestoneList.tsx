@@ -243,6 +243,8 @@ export function MilestoneList({ app, projectId, milestones, onChange }: Props) {
 
   return (
     <div className="space-y-1.5">
+      <div className="relative">
+      <div className={localItems.length > 8 ? 'max-h-[340px] overflow-y-auto pr-2' : ''}>
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
@@ -270,6 +272,11 @@ export function MilestoneList({ app, projectId, milestones, onChange }: Props) {
           ) : null}
         </DragOverlay>
       </DndContext>
+      </div>
+      {localItems.length > 8 && (
+        <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-surface-1 to-transparent pointer-events-none" />
+      )}
+      </div>
 
       {/* Add milestone form */}
       <div className="flex items-center gap-2 pt-2">
