@@ -18,6 +18,15 @@ export function Layout({ appName, gatewayStatus, onAppChange }: LayoutProps) {
   const isFullBleed = location.pathname === '/chat';
   const isDashboard = location.pathname === '/';
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const soloOnlyPaths = new Set(['/health', '/finance']);
+
+  const handleAppChange = (app: AppName) => {
+    if (app === 'wolo' && soloOnlyPaths.has(location.pathname)) {
+      navigate('/');
+    }
+    onAppChange(app);
+    setSidebarOpen(false);
+  };
 
   return (
     <div className="layout-grid grid grid-cols-[220px_minmax(0,1fr)] min-h-screen" data-theme={appName}>
@@ -37,7 +46,7 @@ export function Layout({ appName, gatewayStatus, onAppChange }: LayoutProps) {
       <div className={`sidebar-panel ${sidebarOpen ? 'sidebar-open' : ''}`}>
         <Sidebar
           appName={appName}
-          onAppChange={(app) => { onAppChange(app); setSidebarOpen(false); }}
+          onAppChange={handleAppChange}
           gatewayStatus={gatewayStatus}
         />
       </div>

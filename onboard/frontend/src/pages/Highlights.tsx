@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react';
 
 import { api } from '../api/client';
 import { DataTable } from '../components/DataTable';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
 const kindColors: Record<string, string> = {
@@ -23,16 +24,23 @@ const kindBadge: Record<string, string> = {
 export function Highlights() {
   const { data, error, loading, reload } = useApi(() => api.highlights(), [], { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS });
   const [kindFilter, setKindFilter] = useState<string>('all');
+  const [pendingResolve, setPendingResolve] = useState<{ id: string; title: string } | null>(null);
 
-  const handleResolve = useCallback(async (id: string, title: string) => {
-    if (!confirm(`Resolve blocker "${title}"?`)) return;
+  const handleResolve = useCallback((id: string, title: string) => {
+    setPendingResolve({ id, title });
+  }, []);
+
+  const confirmResolve = useCallback(async () => {
+    if (!pendingResolve) return;
     try {
-      await api.resolveHighlight(id);
+      await api.resolveHighlight(pendingResolve.id);
       reload();
     } catch {
       alert('Failed to resolve highlight');
+    } finally {
+      setPendingResolve(null);
     }
-  }, [reload]);
+  }, [pendingResolve, reload]);
 
   if (loading) {
     return <div className="h-60 rounded-lg bg-gradient-to-r from-surface-1 via-surface-2 to-surface-1 bg-[length:200%_auto] animate-[shimmer_1.5s_linear_infinite]" />;
@@ -90,6 +98,14 @@ export function Highlights() {
             );
           }},
         ]}
+      />
+      <ConfirmDialog
+        open={!!pendingResolve}
+        title="Resolve Blocker"
+        description={pendingResolve ? `Resolve blocker "${pendingResolve.title}"?` : ''}
+        confirmLabel="Resolve"
+        onConfirm={confirmResolve}
+        onCancel={() => setPendingResolve(null)}
       />
     </div>
   );

@@ -17,6 +17,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import type { AppName, Milestone } from "../api/types";
 import { api } from "../api/client";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 interface Props {
   app: AppName;
@@ -164,6 +165,7 @@ export function MilestoneList({ app, projectId, milestones, onChange }: Props) {
   const [newDate, setNewDate] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [localItems, setLocalItems] = useState<Milestone[]>(milestones);
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
 
   /* Sync local state when parent data changes */
   if (milestones !== localItems && !activeId) {
@@ -229,8 +231,13 @@ export function MilestoneList({ app, projectId, milestones, onChange }: Props) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm("Delete this milestone?")) return;
-    await api.deleteMilestone(app, id);
+    setPendingDeleteId(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDeleteId) return;
+    await api.deleteMilestone(app, pendingDeleteId);
+    setPendingDeleteId(null);
     onChange();
   };
 
@@ -287,6 +294,15 @@ export function MilestoneList({ app, projectId, milestones, onChange }: Props) {
           Add
         </button>
       </div>
+      <ConfirmDialog
+        open={!!pendingDeleteId}
+        title="Delete Milestone"
+        description="This milestone will be permanently deleted. This action cannot be undone."
+        confirmLabel="Delete"
+        danger
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDeleteId(null)}
+      />
     </div>
   );
 }

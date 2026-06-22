@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { api } from '../api/client';
 import type { AppName, MemoryItem, MemoryType } from '../api/types';
 import { useToast } from '../components/ToastProvider';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
 const MEMORY_TYPE_COLORS: Record<string, string> = {
   user: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
@@ -17,6 +18,8 @@ export function Memory({ appName }: { appName: AppName }) {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -38,13 +41,21 @@ export function Memory({ appName }: { appName: AppName }) {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this memory?')) return;
+    setPendingDeleteId(id);
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDeleteId) return;
+    setDeleting(true);
     try {
-      await api.deleteMemory(appName, id);
+      await api.deleteMemory(appName, pendingDeleteId);
       toast('Memory deleted successfully', 'success');
       loadMemories();
     } catch (err) {
       toast(err instanceof Error ? err.message : 'Failed to delete memory', 'error');
+    } finally {
+      setDeleting(false);
+      setPendingDeleteId(null);
     }
   };
 
@@ -165,6 +176,16 @@ export function Memory({ appName }: { appName: AppName }) {
           ))}
         </div>
       )}
+      <ConfirmDialog
+        open={!!pendingDeleteId}
+        title="Delete Memory"
+        description="This memory will be permanently deleted. This action cannot be undone."
+        confirmLabel="Delete"
+        danger
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setPendingDeleteId(null)}
+      />
     </div>
   );
 }

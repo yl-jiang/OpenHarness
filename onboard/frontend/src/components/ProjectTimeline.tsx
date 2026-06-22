@@ -37,10 +37,14 @@ export function ProjectTimeline({ events }: { events: TimelineEvent[] }) {
     );
   }
 
+  const SCROLL_THRESHOLD = 8;
+  const needsScroll = events.length > SCROLL_THRESHOLD;
+
   return (
-    <div className="relative pl-6">
-      {/* Vertical line */}
-      <div className="absolute left-[9px] top-1 bottom-1 w-px bg-border" />
+    <div className="relative">
+      <div className={`relative pl-6 ${needsScroll ? 'max-h-[340px] overflow-y-auto pr-2' : ''}`}>
+        {/* Vertical line */}
+        <div className="absolute left-[9px] top-1 bottom-1 w-px bg-border" />
 
       {events.map((ev, i) => {
         const b = badge(ev);
@@ -77,6 +81,10 @@ export function ProjectTimeline({ events }: { events: TimelineEvent[] }) {
           </div>
         );
       })}
+      </div>
+      {needsScroll && (
+        <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-surface-1 to-transparent pointer-events-none" />
+      )}
     </div>
   );
 }

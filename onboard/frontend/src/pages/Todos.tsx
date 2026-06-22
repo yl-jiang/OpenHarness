@@ -21,6 +21,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { api } from '../api/client';
 import type { AppName, Todo, TodoStatus } from '../api/types';
 import { useToast } from '../components/ToastProvider';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
 
 const columns: { key: TodoStatus; label: string; dot: string }[] = [
@@ -247,6 +248,7 @@ export function Todos({ appName }: { appName: AppName }) {
   const [localItems, setLocalItems] = useState<Todo[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showCancelled, setShowCancelled] = useState(false);
+  const [pendingAction, setPendingAction] = useState<{ todo: Todo; action: 'delete' | 'cancel' } | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -354,26 +356,16 @@ export function Todos({ appName }: { appName: AppName }) {
   // --- Action handler (button clicks) ---
 
   async function handleAction(todo: Todo, target: TodoStatus | 'delete') {
-    // Confirmation for destructive actions
     if (target === 'delete') {
-      if (!confirm(`Delete "${todo.title}"? This cannot be undone.`)) return;
-    } else if (target === 'cancelled') {
-      if (!confirm(`Cancel "${todo.title}"?`)) return;
+      setPendingAction({ todo, action: 'delete' });
+      return;
+    }
+    if (target === 'cancelled') {
+      setPendingAction({ todo, action: 'cancel' });
+      return;
     }
 
     try {
-      if (target === 'delete') {
-        await api.deleteTodo(appName, todo.id);
-        toast(`"${todo.title}" deleted`, 'success');
-        reload();
-        return;
-      }
-      if (target === 'cancelled') {
-        await api.cancelTodo(appName, todo.id);
-        toast(`"${todo.title}" cancelled`, 'success');
-        reload();
-        return;
-      }
       if (todo.status === 'done' && target !== 'done') {
         await api.reopenTodo(appName, todo.id);
       } else if (target === 'done') {
@@ -384,6 +376,24 @@ export function Todos({ appName }: { appName: AppName }) {
         await api.revertTodo(appName, todo.id);
       }
       toast(`"${todo.title}" → ${columns.find((c) => c.key === target)?.label}`, 'success');
+      reload();
+    } catch {
+      toast('Failed to update todo', 'error');
+    }
+  }
+
+  async function confirmPendingAction() {
+    if (!pendingAction) return;
+    const { todo, action } = pendingAction;
+    setPendingAction(null);
+    try {
+      if (action === 'delete') {
+        await api.deleteTodo(appName, todo.id);
+        toast(`"${todo.title}" deleted`, 'success');
+      } else {
+        await api.cancelTodo(appName, todo.id);
+        toast(`"${todo.title}" cancelled`, 'success');
+      }
       reload();
     } catch {
       toast('Failed to update todo', 'error');
@@ -504,6 +514,19 @@ export function Todos({ appName }: { appName: AppName }) {
           ) : null}
         </DragOverlay>
       </DndContext>
+      <ConfirmDialog
+        open={!!pendingAction}
+        title={pendingAction?.action === 'delete' ? 'Delete Todo' : 'Cancel Todo'}
+        description={
+          pendingAction?.action === 'delete'
+            ? `"${pendingAction.todo.title}" will be permanently deleted. This cannot be undone.`
+            : `Cancel "${pendingAction?.todo.title}"?`
+        }
+        confirmLabel={pendingAction?.action === 'delete' ? 'Delete' : 'Cancel Todo'}
+        danger={pendingAction?.action === 'delete'}
+        onConfirm={confirmPendingAction}
+        onCancel={() => setPendingAction(null)}
+      />
     </div>
   );
 }

@@ -4,7 +4,7 @@ import type { AppName } from '../api/types';
 import { StatusBadge } from './StatusBadge';
 
 const SOLO_HEALTH_ITEM = ['/health', '♡', 'Health'] as const;
-const SOLO_FINANCE_ITEM = ['/finance', '💰', 'Finance'] as const;
+const SOLO_FINANCE_ITEM = ['/finance', '$', 'Finance'] as const;
 
 const commonItems = [
   ['/', '◇', 'Dashboard'],

@@ -79,6 +79,7 @@ build:
 # 前台启动 onboard（只清理 onboard 旧进程）
 onboard:
 	@$(RESTART_CLEAN) --only onboard --quiet
+	npm --prefix onboard/frontend ci
 	npm --prefix onboard/frontend run build
 	uv run onboard run $(ONBOARD_ARGS)
 

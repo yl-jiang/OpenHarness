@@ -68,9 +68,9 @@ export function Finance() {
           <SpendingCards overview={overview} />
         </div>
 
-        {/* Zone 2: Monthly cashflow trend */}
-        <Section title="月度收支趋势">
-          <CashflowTrend days={selectedDays} />
+        {/* Zone 2: Daily cashflow */}
+        <Section title="每日收支">
+          <CategoryRanking />
         </Section>
 
         {/* Zone 3: Category donut + Budget rings */}
@@ -85,8 +85,8 @@ export function Finance() {
 
         {/* Zone 4: Category ranking + Invest trend */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          <Section title="每日收支">
-            <CategoryRanking />
+          <Section title="月度收支趋势">
+            <CashflowTrend days={selectedDays} />
           </Section>
           <Section title="理财盈亏趋势">
             <InvestTrend days={selectedDays} />

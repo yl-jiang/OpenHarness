@@ -9,6 +9,7 @@ import { ProjectHealthPill } from "../components/ProjectHealthPill";
 import { SegmentedControl } from "../components/SegmentedControl";
 import { MilestoneList } from "../components/MilestoneList";
 import { ProjectTimeline } from "../components/ProjectTimeline";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 
 type EntityTab = "all" | "record" | "todo" | "decision" | "highlight" | "experiment";
 
@@ -31,6 +32,9 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
   const [gitCommits, setGitCommits] = useState<GitCommit[]>([]);
   const [gitLoading, setGitLoading] = useState(false);
   const [showAnalysis, setShowAnalysis] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [pendingUnlinkId, setPendingUnlinkId] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!id) return;
@@ -71,15 +75,33 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
           await api.reactivateProject(appName, id);
           break;
         case "delete":
-          if (!confirm("Delete this project? Linked records will NOT be deleted.")) return;
-          await api.deleteProject(appName, id);
-          window.location.href = "/projects";
+          setShowDeleteConfirm(true);
           return;
       }
       load(true);
     } catch (e) {
       setError(String(e));
     }
+  };
+
+  const handleDelete = async () => {
+    if (!id) return;
+    setDeleting(true);
+    try {
+      await api.deleteProject(appName, id);
+      window.location.href = "/projects";
+    } catch (e) {
+      setError(String(e));
+      setDeleting(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
+  const confirmUnlink = async () => {
+    if (!pendingUnlinkId) return;
+    await api.deleteProjectLink(appName, pendingUnlinkId);
+    setPendingUnlinkId(null);
+    load(true);
   };
 
   const handleAnalyze = async () => {
@@ -260,7 +282,8 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
           {filteredLinks.length === 0 ? (
             <p className="text-[11px] text-text-muted">No entities linked yet.</p>
           ) : (
-            <div className="border-t border-border">
+            <div className="relative border-t border-border">
+              <div className={filteredLinks.length > 8 ? 'max-h-[340px] overflow-y-auto' : ''}>
               {filteredLinks.map((l, idx) => (
                 <div
                   key={l.id}
@@ -306,10 +329,20 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
                         <button onClick={() => { api.rejectProjectLink(appName, l.id).then(() => load(true)); }} className="text-[11px] text-danger cursor-pointer bg-transparent border-0 hover:underline">Reject</button>
                       </>
                     )}
-                    <button onClick={() => { api.deleteProjectLink(appName, l.id).then(() => load(true)); }} className="text-[11px] text-text-muted hover:text-danger cursor-pointer bg-transparent border-0">Unlink</button>
+                    <button onClick={() => setPendingUnlinkId(l.id)} className="p-1 text-text-muted hover:text-danger cursor-pointer bg-transparent border-0 rounded transition-colors" title="Unlink">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M9 17H7A5 5 0 017 7h2" />
+                        <path d="M15 7h2a5 5 0 010 10h-2" />
+                        <line x1="2" y1="2" x2="22" y2="22" />
+                      </svg>
+                    </button>
                   </div>
                 </div>
               ))}
+              </div>
+              {filteredLinks.length > 8 && (
+                <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-surface-1 to-transparent pointer-events-none" />
+              )}
             </div>
           )}
         </section>
@@ -515,6 +548,25 @@ export function ProjectDetail({ appName }: { appName: AppName }) {
             )}
           </div>
         </section>
+        <ConfirmDialog
+          open={showDeleteConfirm}
+          title="Delete Project"
+          description="Linked records will NOT be deleted. This action cannot be undone."
+          confirmLabel="Delete"
+          danger
+          loading={deleting}
+          onConfirm={handleDelete}
+          onCancel={() => setShowDeleteConfirm(false)}
+        />
+        <ConfirmDialog
+          open={!!pendingUnlinkId}
+          title="Unlink Record"
+          description="Remove this record from the project? The record itself will not be deleted."
+          confirmLabel="Unlink"
+          danger
+          onConfirm={confirmUnlink}
+          onCancel={() => setPendingUnlinkId(null)}
+        />
     </div>
   );
 }
