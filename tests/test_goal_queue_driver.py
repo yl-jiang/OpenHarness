@@ -12,7 +12,7 @@ from openharness.config.settings import GoalSettings, Settings
 from openharness.engine.messages import ConversationMessage, TextBlock, ToolUseBlock
 from openharness.engine.query_engine import QueryEngine
 from openharness.engine.stream_events import GoalUpdatedEvent
-from openharness.goal.queue import GOAL_QUEUE_KEY, GoalQueueStore
+from openharness.goal.queue import GoalQueueStore
 from openharness.goal.state import GOAL_MODE_KEY, GoalMode
 from openharness.permissions import PermissionChecker, PermissionMode
 from openharness.config.settings import PermissionSettings

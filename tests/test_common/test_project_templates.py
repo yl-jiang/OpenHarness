@@ -4,11 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-import pytest
-
 from common.project_ai.templates import (
-    SOLO_TEMPLATES,
-    WOLO_TEMPLATES,
     ProjectTemplate,
     get_template,
     list_templates,

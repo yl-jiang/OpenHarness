@@ -1,7 +1,6 @@
 """Tests for solo processor _project_context method."""
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
 from solo.core.store import SoloStore
 from solo.core.models import Project, Milestone

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from openharness.engine.types import ToolMetadataKey
-from openharness.goal.queue import GOAL_QUEUE_KEY, GoalQueueStore, QueuedGoal
+from openharness.goal.queue import GOAL_QUEUE_KEY, GoalQueueStore
 from openharness.goal.state import GoalBudgetLimits, GoalMode
 
 

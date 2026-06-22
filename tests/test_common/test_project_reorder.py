@@ -27,7 +27,7 @@ class TestProjectLinkReorder:
         store.reorder_project_links("p1", ["C", "A", "B"])
 
         links = store.list_project_links(project_id="p1")
-        assert [l.id for l in links] == ["C", "A", "B"]
+        assert [link.id for link in links] == ["C", "A", "B"]
 
     def test_reorder_preserves_data(self, tmp_path: Path) -> None:
         """Reordering should not change entity_type or entity_id."""
@@ -71,5 +71,5 @@ class TestProjectLinkReorder:
         )
 
         links = store.list_project_links(project_id="p1")
-        assert [l.id for l in links] == ["first", "second", "third"]
-        assert all(l.sort_order == 0 for l in links)
+        assert [link.id for link in links] == ["first", "second", "third"]
+        assert all(link.sort_order == 0 for link in links)

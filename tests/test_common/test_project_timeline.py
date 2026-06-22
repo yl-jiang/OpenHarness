@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from solo.core.models import Milestone, Project, ProjectSignal, ProjectSnapshot
 from solo.core.store import SoloStore
 

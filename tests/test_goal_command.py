@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
+from openharness.commands.core import CommandContext
 from openharness.commands.goal import format_goal_status, parse_goal_command
-from openharness.goal.state import GoalMode
+from openharness.commands.registry import create_default_command_registry
+from openharness.goal.state import GOAL_MODE_KEY, GoalMode
 
 
 def test_parse_status_default() -> None:
@@ -129,12 +133,6 @@ def test_format_goal_status_with_budget() -> None:
 
 
 # ---------------------------------------------------------------- /permissions restore integration
-
-
-import pytest
-from openharness.commands.core import CommandContext
-from openharness.commands.registry import create_default_command_registry
-from openharness.goal.state import GOAL_MODE_KEY
 
 
 class _StubEngine:

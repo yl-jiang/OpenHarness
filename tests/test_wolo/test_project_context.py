@@ -1,7 +1,6 @@
 """Tests for wolo processor _project_context method."""
 from __future__ import annotations
 
-import pytest
 from pathlib import Path
 from wolo.core.store import WoloStore
 from wolo.core.models import Project
