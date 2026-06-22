@@ -58,6 +58,9 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- React TUI `/goal` now asks Default-mode users before switching to Auto for goal execution; accepting continues the goal, while denying keeps Default mode and blocks the goal submission.
+- `oh` startup now suppresses Python 3.13 `jieba` invalid-escape `SyntaxWarning` output and runtime cleanup now skips `.openharness-venv`, so running `make onboard` or `make wolo-gw` no longer makes the next `oh` launch print the warning.
+- `solo` / `wolo` entrypoints now suppress Python 3.13 `jieba` `SyntaxWarning` spam during startup by installing the filter from `common.project_ai` before the shared matcher imports `jieba`, so commands like `wolo gateway run` no longer print invalid-escape warnings on launch.
 - Onboard dashboard's LLM Token Usage card now keeps the y-axis visible with an explicit token/day label, uses grouped per-model legends and compact K/M/B/T token units, renders the chart as a readable month-to-date view, and updates input/output series smoothly on the live 5s refresh without remounting the chart.
 - `edit_file` now also accepts `old_string` / `new_string` as aliases for its `old_str` / `new_str` parameters (via pydantic validation aliases), so models that follow the common Anthropic-style edit naming no longer fail input validation and retry; the API schema still advertises `old_str` / `new_str` as canonical.
 - Onboard Chat now forwards solo/wolo runner progress and tool-internal backend progress to the WebSocket UI, so long-running chat actions show the same detailed operation updates that channel-triggered runs already send.
