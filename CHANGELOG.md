@@ -50,6 +50,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Changed
 
+- React TUI status bar no longer shows the Auto-mode foreground elapsed timer; the bar now keeps foreground work state compact and task-count focused.
 - `solo` / `wolo` now show clearer in-channel help text and richer top-level CLI `--help` command summaries, making the most common record/process/view/report flows easier to discover without opening the README.
 - `skill_manager` patch action now uses `old_str` / `new_str` parameters (was `old_string` / `new_string`) to match the `edit_file` tool, removing the dual edit-parameter naming convention that caused models to repeatedly mis-call `edit_file` with `old_string` / `new_string` and fail input validation.
 - `wolo` now separates main record structuring from work artifact extraction and retries malformed JSON responses, so long-running apps keep the primary log even when artifact extraction fails transiently.

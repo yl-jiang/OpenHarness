@@ -52,7 +52,6 @@ async function waitForOutputToStabilize(getOutput: () => string): Promise<string
 async function renderStatusBar(
 	tasks: TaskSnapshot[],
 	status: Record<string, unknown> = {model: 'test-model', permission_mode: 'default'},
-	options: {elapsedSeconds?: number | null; busy?: boolean} = {},
 ): Promise<string> {
 	const stdout = createTestStdout();
 	let output = '';
@@ -65,8 +64,6 @@ async function renderStatusBar(
 			<StatusBar
 				status={status}
 				tasks={tasks}
-				elapsedSeconds={options.elapsedSeconds}
-				busy={options.busy}
 			/>
 		</ThemeProvider>,
 		{stdout: stdout as unknown as NodeJS.WriteStream, debug: true, patchConsole: false},
@@ -84,15 +81,11 @@ async function renderStatusBar(
 async function renderRerenderableStatusBar({
 	tasks = [],
 	status = {model: 'test-model', permission_mode: 'default'},
-	elapsedSeconds = null,
-	busy = false,
 }: {
 	tasks?: TaskSnapshot[];
 	status?: Record<string, unknown>;
-	elapsedSeconds?: number | null;
-	busy?: boolean;
 } = {}): Promise<{
-	rerender: (props: {tasks?: TaskSnapshot[]; status?: Record<string, unknown>; elapsedSeconds?: number | null; busy?: boolean}) => void;
+	rerender: (props: {tasks?: TaskSnapshot[]; status?: Record<string, unknown>}) => void;
 	getRawOutput: () => string;
 	cleanup: () => Promise<void>;
 }> {
@@ -105,8 +98,6 @@ async function renderRerenderableStatusBar({
 	type StatusBarRenderProps = {
 		tasks: TaskSnapshot[];
 		status: Record<string, unknown>;
-		elapsedSeconds: number | null;
-		busy: boolean;
 	};
 	let setRenderProps: ((props: Partial<StatusBarRenderProps>) => void) | null = null;
 
@@ -114,8 +105,6 @@ async function renderRerenderableStatusBar({
 		const [renderProps, updateRenderProps] = useState<StatusBarRenderProps>({
 			tasks,
 			status,
-			elapsedSeconds,
-			busy,
 		});
 		setRenderProps = (props) => updateRenderProps((current) => ({...current, ...props}));
 
@@ -124,8 +113,6 @@ async function renderRerenderableStatusBar({
 				<StatusBar
 					status={renderProps.status}
 					tasks={renderProps.tasks}
-					elapsedSeconds={renderProps.elapsedSeconds}
-					busy={renderProps.busy}
 				/>
 			</ThemeProvider>
 		);
@@ -162,31 +149,6 @@ test('counts only active background tasks in the status bar', async () => {
 	assert.doesNotMatch(output, /⚙  5/u);
 });
 
-test('updates the activity timer during long running foreground work', async () => {
-	const statusBar = await renderRerenderableStatusBar({elapsedSeconds: 1, busy: true});
-	try {
-		const before = statusBar.getRawOutput();
-		statusBar.rerender({elapsedSeconds: 2});
-		await nextLoopTurn();
-		await nextLoopTurn();
-
-		const after = statusBar.getRawOutput();
-		assert.notEqual(after, before);
-		assert.match(stripAnsi(after), /[◐◓◑◒]  2s/u);
-	} finally {
-		await statusBar.cleanup();
-	}
-});
-
-test('shows a dynamic background task activity segment with elapsed time', async () => {
-	const output = await renderStatusBar(
-		[{id: 'task-1', type: 'local_agent', status: 'running', description: 'running', metadata: {}}],
-		{model: 'test-model', permission_mode: 'default'},
-		{elapsedSeconds: 12, busy: true},
-	);
-
-	assert.match(output, /⚙  1  [◐◓◑◒]  12s/u);
-});
 
 test('does not repaint when active background task metadata changes', async () => {
 	const statusBar = await renderRerenderableStatusBar({

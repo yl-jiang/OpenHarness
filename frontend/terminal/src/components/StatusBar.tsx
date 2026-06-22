@@ -23,13 +23,10 @@ const WRITE_TOOLS = new Set([
 	'Bash', 'computer', 'str_replace_editor',
 ]);
 const ACTIVE_TASK_STATUSES = new Set(['pending', 'running']);
-const TASK_ACTIVITY_FRAMES = ['◐', '◓', '◑', '◒'];
 type StatusBarProps = {
 	status: Record<string, unknown>;
 	tasks: TaskSnapshot[];
 	activeToolName?: string;
-	elapsedSeconds?: number | null;
-	busy?: boolean;
 	showTaskSegment?: boolean;
 };
 
@@ -110,8 +107,6 @@ function StatusBarInner({
 	status,
 	tasks,
 	activeToolName,
-	elapsedSeconds,
-	busy,
 	showTaskSegment = true,
 }: StatusBarProps): React.JSX.Element {
 	const {theme} = useTheme();
@@ -125,8 +120,6 @@ function StatusBarInner({
 	const inputTokens = Number(status.input_tokens ?? 0);
 	const outputTokens = Number(status.output_tokens ?? 0);
 	const isPlanMode = mode === 'plan' || mode === 'Plan Mode';
-	const hasElapsed = elapsedSeconds != null;
-	const taskActivity = hasElapsed ? `${TASK_ACTIVITY_FRAMES[elapsedSeconds % TASK_ACTIVITY_FRAMES.length]}  ${formatDuration(elapsedSeconds)}` : null;
 
 	return (
 		<Box flexDirection="column" marginTop={1}>
@@ -150,7 +143,7 @@ function StatusBarInner({
 				{showTaskSegment && taskCount > 0 ? (
 					<>
 						<Text dimColor>{SEP}</Text>
-						<Text dimColor>{'⚙  '}{taskCount}{taskActivity ? `  ${taskActivity}` : ''}</Text>
+						<Text dimColor>{'⚙  '}{taskCount}</Text>
 					</>
 				) : null}
 				{reviewsCompleted > 0 ? (
@@ -163,12 +156,6 @@ function StatusBarInner({
 					<>
 						<Text dimColor>{SEP}</Text>
 						<Text dimColor>{'⊞  '}{mcpCount}</Text>
-					</>
-				) : null}
-				{(taskCount === 0 || !showTaskSegment) && hasElapsed ? (
-					<>
-						<Text dimColor>{SEP}</Text>
-						<Text color={busy ? 'cyan' : undefined} dimColor={!busy}>{TASK_ACTIVITY_FRAMES[elapsedSeconds % TASK_ACTIVITY_FRAMES.length]}  {formatDuration(elapsedSeconds)}</Text>
 					</>
 				) : null}
 			</Text>
@@ -211,22 +198,6 @@ export function areStatusBarPropsEqual(prev: StatusBarProps, next: StatusBarProp
 	if (prevTaskCount !== nextTaskCount) {
 		return false;
 	}
-	if ((prev.busy || prevTaskCount > 0 || next.busy || nextTaskCount > 0) && prev.elapsedSeconds !== next.elapsedSeconds) {
-		return false;
-	}
 	return VISIBLE_STATUS_KEYS.every((key) => prev.status[key] === next.status[key]);
 }
 
-export function formatDuration(seconds: number): string {
-	if (seconds < 60) {
-		return `${seconds}s`;
-	}
-	const minutes = Math.floor(seconds / 60);
-	const remainingSeconds = seconds % 60;
-	if (minutes < 60) {
-		return remainingSeconds > 0 ? `${minutes}m${remainingSeconds}s` : `${minutes}m`;
-	}
-	const hours = Math.floor(minutes / 60);
-	const remainingMinutes = minutes % 60;
-	return remainingMinutes > 0 ? `${hours}h${remainingMinutes}m` : `${hours}h`;
-}

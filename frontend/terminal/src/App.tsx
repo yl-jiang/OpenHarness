@@ -32,7 +32,6 @@ import {TodoPanel} from './components/TodoPanel.js';
 import {GoalPanel} from './components/GoalPanel.js';
 import type {TerminalInputStream} from './input/terminalInput.js';
 import {useBackendSession} from './hooks/useBackendSession.js';
-import {useElapsedTimer} from './hooks/useElapsedTimer.js';
 import {useMouseWheel} from './hooks/useMouseWheel.js';
 import {useTerminalMouse} from './hooks/useTerminalMouse.js';
 import {useCopyMode} from './hooks/useCopyMode.js';
@@ -530,10 +529,6 @@ function AppInner({
 	const hasActiveWork = session.busy || activeBackgroundTaskCount > 0;
 	const inlineActivityEnabled = shouldAnimateBackgroundCue();
 	const spinnerAnimationEnabled = shouldAnimateSpinner();
-	const isFullAuto = String(displayStatus.permission_mode ?? 'default') === 'Auto';
-	const elapsedSeconds = useElapsedTimer(
-		session.busy && isFullAuto && !inlineActivityEnabled,
-	);
 
 	// Command hints
 	const commandPickerModel = useMemo(
@@ -1830,8 +1825,6 @@ function AppInner({
 						status={displayStatus}
 						tasks={deferredTasks}
 						activeToolName={session.busy ? currentToolName : undefined}
-						elapsedSeconds={elapsedSeconds}
-						busy={hasActiveWork}
 						showTaskSegment={!inlineActivityEnabled || activeBackgroundTaskCount === 0}
 					/>
 				</Box>
