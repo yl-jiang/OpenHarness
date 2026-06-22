@@ -41,6 +41,7 @@ from openharness.engine.stream_events import (
 from openharness.engine.types import ToolMetadataKey
 from openharness.api.provider import is_model_multimodal
 from openharness.tools.base import ToolExecutionContext
+from openharness.tools.image_to_text_tool import _DEFAULT_VISION_PROMPT
 from openharness.hooks import HookEvent
 from openharness.tools.done_tool import DONE_TOOL_NAME
 from openharness.utils.log import get_logger
@@ -230,10 +231,7 @@ async def _preprocess_images_in_messages(
         tool_input = {
             "image_data": block.data,
             "media_type": block.media_type,
-            "prompt": (
-                "Describe this image in detail, including any text, UI elements, "
-                "code, diagrams, or visual information present."
-            ),
+            "prompt": _DEFAULT_VISION_PROMPT,
         }
         try:
             parsed = tool.input_model.model_validate(tool_input)

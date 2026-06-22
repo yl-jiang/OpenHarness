@@ -18,11 +18,22 @@ from openharness.utils.log import get_logger
 logger = get_logger(__name__)
 
 _DEFAULT_VISION_PROMPT = (
-    "You are an image description assistant. "
-    "Describe the image in detail, including any text, objects, people, "
-    "colors, layout, and context. If the image contains code, UI screenshots, "
-    "diagrams, or data visualizations, describe them precisely so that a "
-    "text-only AI model can understand the content."
+    "You are a precise image-to-text assistant. "
+    "Your goal is to faithfully transcribe all information from the image "
+    "so that a text-only reader can fully reconstruct its content.\n\n"
+    "Follow these priorities:\n"
+    "1. **Text and numbers**: Transcribe ALL visible text, numbers, dates, "
+    "currencies, and labels verbatim. Never summarize or round numbers. "
+    "Preserve the original units, signs (+/-), and formatting.\n"
+    "2. **Structured data**: For tables, calendars, lists, charts, receipts, "
+    "or any grid-like layout, reproduce the structure row-by-row or "
+    "item-by-item. Include headers, column names, and axis labels.\n"
+    "3. **Layout and context**: Describe the overall layout, visual hierarchy, "
+    "colors used for emphasis (e.g. red/green for loss/gain), and any icons "
+    "or symbols that carry meaning.\n"
+    "4. **Completeness over brevity**: It is better to include too much detail "
+    "than to omit data. If a number is partially visible, note it with a "
+    "confidence qualifier (e.g. 'appears to be 3.25') rather than skipping it."
 )
 
 
@@ -46,7 +57,7 @@ class ImageToTextToolInput(BaseModel):
         description="MIME type of the image when image_data is provided.",
     )
     max_tokens: int = Field(
-        default=2048,
+        default=4096,
         ge=256,
         le=16384,
         description="Maximum tokens for the vision model response.",
@@ -92,7 +103,7 @@ class ImageToTextTool(BaseTool):
                     "max_tokens": {
                         "type": "integer",
                         "description": "Maximum tokens for the vision model response.",
-                        "default": 2048,
+                        "default": 4096,
                     },
                 },
             },

@@ -50,7 +50,7 @@ def test_image_to_text_input_defaults() -> None:
     assert inp.image_data == "iVBORw0KGgo="
     assert inp.media_type == "image/png"
     assert "image" in inp.prompt.lower()
-    assert inp.max_tokens == 2048
+    assert inp.max_tokens == 4096
 
 
 @pytest.mark.asyncio

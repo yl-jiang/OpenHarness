@@ -59,6 +59,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- `image_to_text` vision prompt now instructs the vision model to faithfully transcribe all text, numbers, and structured data verbatim instead of summarizing, and the engine preprocessing path uses the same prompt instead of a hardcoded override. `max_tokens` default raised from 2048 to 4096 to accommodate detailed transcription of data-rich images (calendars, receipts, tables).
 - React TUI `/goal` now asks Default-mode users before switching to Auto for goal execution; accepting continues the goal, while denying keeps Default mode and blocks the goal submission.
 - `oh` startup now suppresses Python 3.13 `jieba` invalid-escape `SyntaxWarning` output and runtime cleanup now skips `.openharness-venv`, so running `make onboard` or `make wolo-gw` no longer makes the next `oh` launch print the warning.
 - `solo` / `wolo` entrypoints now suppress Python 3.13 `jieba` `SyntaxWarning` spam during startup by installing the filter from `common.project_ai` before the shared matcher imports `jieba`, so commands like `wolo gateway run` no longer print invalid-escape warnings on launch.
