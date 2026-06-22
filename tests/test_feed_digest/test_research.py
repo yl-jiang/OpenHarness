@@ -52,13 +52,15 @@ async def test_opencli_runner_rejects_actions_outside_catalog() -> None:
     runner = OpenCliRunner()
     catalog = [OpenCliCommand(site="hackernews", name="search", strategy="public", browser=False)]
 
-    with pytest.raises(ValueError, match="not present in OpenCLI catalog"):
-        await runner.run(
-            ResearchAction(source="bad", site="github", command="search", args=["AI"]),
-            catalog=catalog,
-            timeout_seconds=10,
-            max_output_chars=1000,
-        )
+    evidence = await runner.run(
+        ResearchAction(source="bad", site="github", command="search", args=["AI"]),
+        catalog=catalog,
+        timeout_seconds=10,
+        max_output_chars=1000,
+    )
+
+    assert evidence.failed
+    assert "not present in catalog" in evidence.error
 
 
 @pytest.mark.asyncio

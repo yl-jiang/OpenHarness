@@ -24,6 +24,23 @@ def isolate_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_load_skill_registry_includes_bundled(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+
+    bundled_dir = tmp_path / "bundled"
+    bundled_dir.mkdir()
+    (bundled_dir / "simplify.md").write_text(
+        "---\nname: simplify\ndescription: Simplify text\n---\n# Simplify\n", encoding="utf-8"
+    )
+    (bundled_dir / "review.md").write_text(
+        "---\nname: review\ndescription: Review code\n---\n# Review\n", encoding="utf-8"
+    )
+    (bundled_dir / "skill-creator.md").write_text(
+        "---\nname: skill-creator\ndescription: Create, improve, and verify OpenHarness skills\n---\n# Skill Creator\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "openharness.skills.bundled._CONTENT_DIR", bundled_dir
+    )
+
     registry = load_skill_registry()
 
     names = [skill.name for skill in registry.list_skills()]

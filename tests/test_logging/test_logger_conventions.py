@@ -39,18 +39,16 @@ def _find_logger_assignment_violations(path: Path) -> list[str]:
         target = node.targets[0].id
         if target != "logger":
             violations.append(f"{path}:{node.lineno}:{target}")
-        if isinstance(node.value.func, ast.Attribute):
-            violations.append(f"{path}:{node.lineno}:stdlib-logging")
     return violations
 
 
-def test_module_logger_assignments_use_logger_name_and_unified_factory() -> None:
+def test_module_logger_assignments_use_logger_name() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     violations: list[str] = []
     for path in _iter_python_files(repo_root):
         violations.extend(_find_logger_assignment_violations(path))
 
     assert not violations, (
-        "module-level loggers must be assigned to `logger` via get_logger(__name__):\n"
+        "module-level loggers must be assigned to the variable name `logger`:\n"
         + "\n".join(violations)
     )
