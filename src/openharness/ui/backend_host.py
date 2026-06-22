@@ -14,7 +14,7 @@ from uuid import uuid4
 
 from openharness.api.client import SupportsStreamingMessages
 from openharness.auth.manager import AuthManager
-from openharness.commands import MemoryCommandBackend
+from openharness.commands import CommandResult, MemoryCommandBackend
 from openharness.config.settings import CLAUDE_MODEL_ALIAS_OPTIONS, resolve_model_setting
 from openharness.bridge import get_bridge_manager
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock
@@ -579,6 +579,7 @@ class ReactBackendHost:
             }
             if user_message is not None:
                 handle_line_kwargs["user_message"] = user_message
+            handle_line_kwargs["goal_permission_prompt"] = self._goal_permission_prompt
             should_continue = await handle_line(self._bundle, line, **handle_line_kwargs)
         except asyncio.CancelledError:
             self._bundle.engine.restore_turn_checkpoint(turn_checkpoint)
@@ -1054,6 +1055,16 @@ class ReactBackendHost:
         else:
             modal = {"kind": "permission", "tool_name": request.tool_name, "reason": request.reason}
         return await self._prompt_approval(modal)
+
+    async def _goal_permission_prompt(self, result: CommandResult) -> bool:
+        modal = {
+            "kind": "goal_permission",
+            "goal_action": result.goal_action,
+            "objective": result.goal_objective or "",
+        }
+        reply = await self._prompt_approval(modal)
+        return reply in {"once", "always"}
+
 
     async def _ask_question(self, question: str, choices: list[str] | None = None) -> str:
         request_id = uuid4().hex

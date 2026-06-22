@@ -318,6 +318,34 @@ function ModalHostInner({
 	onSubmit: (value: string) => void;
 }): React.JSX.Element | null {
 	const {cols} = useTerminalSize();
+        if (modal?.kind === 'goal_permission') {
+                const objective = String(modal.objective ?? '').trim();
+                const action = modal.goal_action === 'permission_prompt_resume' ? 'resume' : 'run';
+                const objectiveWidth = Math.max(MIN_REASON_WIDTH, cols - 6);
+                const objectiveText = objective
+                        ? truncateWithEllipsis(objective, objectiveWidth)
+                        : 'Active goal';
+                return (
+                        <Box flexDirection="column" marginTop={1}>
+                                <Text>
+                                        <Text color="yellow" bold>{'\u250C '}</Text>
+                                        <Text bold>Switch to Auto mode?</Text>
+                                </Text>
+                                <Text>
+                                        <Text color="yellow">{'\u2502 '}</Text>
+                                        <Text dimColor>Goal: </Text>
+                                        <Text color="cyan">{objectiveText}</Text>
+                                </Text>
+                                <Text>
+                                        <Text color="yellow">{'\u2514 '}</Text>
+                                        <Text color="green">[y] Switch and {action}</Text>
+                                        <Text>{'  '}</Text>
+                                        <Text color="red">[n] Cancel</Text>
+                                </Text>
+                        </Box>
+                );
+        }
+
 
 	if (modal?.kind === 'permission') {
 		const reason = modal.reason ? String(modal.reason) : '';

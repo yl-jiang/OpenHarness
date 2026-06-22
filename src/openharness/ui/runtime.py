@@ -63,6 +63,7 @@ from openharness.utils.log import get_logger
 
 PermissionPrompt = Callable[[str, str], Awaitable[bool]]
 AskUserPrompt = Callable[[str, list[str] | None], Awaitable[str]]
+GoalPermissionPrompt = Callable[[CommandResult], Awaitable[bool]]
 SystemPrinter = Callable[[str], Awaitable[None]]
 StreamRenderer = Callable[[StreamEvent], Awaitable[None]]
 ClearHandler = Callable[[], Awaitable[None]]
@@ -898,6 +899,7 @@ async def handle_line(
     clear_output: ClearHandler,
     input_mode: str = "chat",
     user_message: ConversationMessage | None = None,
+    goal_permission_prompt: GoalPermissionPrompt | None = None,
 ) -> bool:
     """Handle one submitted line for either headless or TUI rendering."""
     if not bundle.external_api_client:
@@ -955,12 +957,17 @@ async def handle_line(
             refresh_runtime_client(bundle)
         await _render_command_result(result, print_system, clear_output, render_event)
 
-        # /goal requested a permission prompt. Mirror /permissions full_auto
-        # and then proceed with the create/resume action. This is the
-        # non-interactive default; a future TUI modal can intercept
-        # goal_action earlier to offer "keep Default" or "Cancel".
+        # /goal requested permission to switch to Auto before executing. React
+        # TUI sessions prompt the user; headless sessions keep the historical
+        # non-interactive behavior and auto-upgrade.
         if result.goal_action is not None and result.submit_prompt is None:
             from openharness.config.settings import load_settings, save_settings
+            if goal_permission_prompt is not None:
+                allowed = await goal_permission_prompt(result)
+                if not allowed:
+                    await print_system("Goal command cancelled. Permission mode remains unchanged.")
+                    sync_app_state(bundle)
+                    return True
             from openharness.permissions import PermissionMode
             from openharness.commands.skills import (
                 build_permission_checker as _build_permission_checker,

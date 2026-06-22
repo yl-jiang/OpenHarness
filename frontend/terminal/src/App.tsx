@@ -441,6 +441,10 @@ function AppInner({
 	const vimEnabled = Boolean(session.status.vim_enabled);
 	const deferredTranscript = useDeferredValue(session.transcript);
 	const deferredStatus = useDeferredValue(session.status);
+	const displayStatus = useMemo(
+		() => ({...deferredStatus, permission_mode: session.status.permission_mode}),
+		[deferredStatus, session.status.permission_mode],
+	);
 	const deferredTasks = useDeferredValue(session.tasks);
 	const deferredTodoMarkdown = useDeferredValue(session.todoMarkdown);
 	const deferredSwarmTeammates = useDeferredValue(session.swarmTeammates);
@@ -526,7 +530,7 @@ function AppInner({
 	const hasActiveWork = session.busy || activeBackgroundTaskCount > 0;
 	const inlineActivityEnabled = shouldAnimateBackgroundCue();
 	const spinnerAnimationEnabled = shouldAnimateSpinner();
-	const isFullAuto = String(deferredStatus.permission_mode ?? 'default') === 'Auto';
+	const isFullAuto = String(displayStatus.permission_mode ?? 'default') === 'Auto';
 	const elapsedSeconds = useElapsedTimer(
 		session.busy && isFullAuto && !inlineActivityEnabled,
 	);
@@ -1265,6 +1269,32 @@ function AppInner({
 			}
 		}
 
+                // --- Goal permission modal ---
+                if (session.modal?.kind === 'goal_permission') {
+                        if (chunk.toLowerCase() === 'y') {
+                                session.sendRequest({
+                                        type: 'permission_response',
+                                        request_id: session.modal.request_id,
+                                        permission_reply: 'once',
+                                        allowed: true,
+                                });
+                                session.setStatus((s) => ({...s, permission_mode: 'Auto'}));
+                                session.setModal(null);
+                                return;
+                        }
+                        if (chunk.toLowerCase() === 'n' || key.escape) {
+                                session.sendRequest({
+                                        type: 'permission_response',
+                                        request_id: session.modal.request_id,
+                                        permission_reply: 'reject',
+                                        allowed: false,
+                                });
+                                session.setModal(null);
+                                return;
+                        }
+                        return;
+                }
+
 		// --- Permission modal ---
 		if (session.modal?.kind === 'permission' || session.modal?.kind === 'edit_diff') {
 			if (chunk.toLowerCase() === 'y') {
@@ -1797,7 +1827,7 @@ function AppInner({
 			{session.ready ? (
 				<Box flexShrink={0} flexDirection="column">
 					<StatusBar
-						status={deferredStatus}
+						status={displayStatus}
 						tasks={deferredTasks}
 						activeToolName={session.busy ? currentToolName : undefined}
 						elapsedSeconds={elapsedSeconds}

@@ -529,3 +529,63 @@ setInterval(() => {}, 1000);
 		instance.cleanup();
 	}
 });
+
+test('sends allow response for goal permission modal', async () => {
+        const stdout = createTestStdout();
+        const stdin = createTestStdin();
+        let output = '';
+        stdout.on('data', (chunk) => {
+                output += chunk.toString();
+        });
+
+        const backendScript = `
+const emit = (event) => process.stdout.write('OHJSON:' + JSON.stringify(event) + '\\n');
+emit({type: 'ready', state: {model: 'test-model', permission_mode: 'default', cwd: process.cwd()}, tasks: []});
+emit({type: 'modal_request', modal: {kind: 'goal_permission', request_id: 'goal-1', objective: 'Ship feature X', goal_action: 'permission_prompt_create'}});
+let buffer = '';
+process.stdin.on('data', (chunk) => {
+  buffer += chunk.toString();
+  const lines = buffer.split('\\n');
+  buffer = lines.pop() || '';
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const request = JSON.parse(line);
+    if (request.type === 'permission_response') {
+      emit({type: 'transcript_item', item: {role: 'system', text: 'reply ' + request.request_id + ' ' + request.permission_reply + ' ' + request.allowed}});
+    }
+  }
+});
+setInterval(() => {}, 1000);
+`;
+
+        const instance = render(
+                <App config={{backend_command: [process.execPath, '-e', backendScript], theme: 'default'}} />,
+                {
+                        stdout: stdout as unknown as NodeJS.WriteStream,
+                        stdin: stdin as unknown as NodeJS.ReadStream,
+                        exitOnCtrlC: false,
+                        patchConsole: false,
+                        debug: true,
+                },
+        );
+
+        try {
+                await sleep(160);
+                await nextLoopTurn();
+                assert.match(stripAnsi(output), /Switch to Auto mode\?/u);
+
+                output = '';
+                stdin.write('y');
+                await sleep(160);
+                await nextLoopTurn();
+
+                assert.match(stripAnsi(output), /Auto/u);
+
+                assert.match(stripAnsi(output), /reply goal-1 once true/u);
+        } finally {
+                const exitPromise = instance.waitUntilExit();
+                instance.unmount();
+                await exitPromise;
+                instance.cleanup();
+        }
+});

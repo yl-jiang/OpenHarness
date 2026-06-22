@@ -92,3 +92,41 @@ test('keeps permission actions visible when the reason is very long', async () =
 	assert.match(output, /\.\.\. \d+ more lines hidden/);
 	assert.doesNotMatch(output, /tail-marker-999/);
 });
+
+test('renders goal permission prompt with auto-mode actions', async () => {
+        const stdout = createTestStdout(70);
+        let output = '';
+        stdout.on('data', (chunk) => {
+                output += chunk.toString();
+        });
+
+        const instance = render(
+                <ModalHost
+                        modal={{
+                                kind: 'goal_permission',
+                                objective: 'Ship feature X',
+                                goal_action: 'permission_prompt_create',
+                        }}
+                        modalInput=""
+                        setModalInput={() => {}}
+                        onSubmit={() => {}}
+                />,
+                {
+                        stdout: stdout as unknown as NodeJS.WriteStream,
+                        debug: true,
+                        patchConsole: false,
+                },
+        );
+
+        const exitPromise = instance.waitUntilExit();
+        const stableOutput = await waitForOutputToStabilize(() => output);
+        instance.unmount();
+        await exitPromise;
+        instance.cleanup();
+
+        const text = stripAnsi(stableOutput);
+        assert.match(text, /Switch to Auto mode\?/);
+        assert.match(text, /Ship feature X/);
+        assert.match(text, /\[y\] Switch and run/);
+        assert.match(text, /\[n\] Cancel/);
+});

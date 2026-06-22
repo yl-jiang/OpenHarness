@@ -12,6 +12,7 @@ from openharness.api.client import ApiMessageCompleteEvent, ApiReasoningDeltaEve
 from openharness.api.usage import UsageSnapshot
 from openharness.engine.stream_events import CompactProgressEvent, CompactProgressPhase
 from openharness.engine.messages import ConversationMessage, ImageBlock, TextBlock
+from openharness.commands import CommandResult
 from openharness.services.session_storage import load_session_snapshot
 from openharness.state import AppState
 from openharness.ui.backend_host import (
@@ -22,7 +23,7 @@ from openharness.ui.backend_host import (
     run_backend_host,
 )
 from openharness.ui.protocol import BackendEvent, FrontendImageAttachment
-from openharness.ui.runtime import build_runtime, close_runtime, start_runtime
+from openharness.ui.runtime import build_runtime, close_runtime, handle_line, start_runtime
 
 
 class StaticApiClient:
@@ -62,6 +63,17 @@ class FailingApiClient:
         if False:
             yield None
         raise RuntimeError(self._message)
+
+class CountingApiClient(StaticApiClient):
+    def __init__(self, text: str = "done") -> None:
+        super().__init__(text)
+        self.call_count = 0
+
+    async def stream_message(self, request):
+        self.call_count += 1
+        async for event in super().stream_message(request):
+            yield event
+
 
 
 class BlockingThenSuccessApiClient:
@@ -141,6 +153,131 @@ async def test_run_backend_host_accepts_permission_mode(monkeypatch):
 
     assert result == 0
     assert captured["permission_mode"] == "full_auto"
+
+@pytest.mark.asyncio
+async def test_handle_line_goal_default_mode_reject_blocks_submission(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    client = CountingApiClient()
+    bundle = await build_runtime(
+        api_client=client,
+        cwd=str(tmp_path),
+        permission_mode="default",
+    )
+    printed: list[str] = []
+    prompt_actions: list[str | None] = []
+
+    async def _print_system(message: str) -> None:
+        printed.append(message)
+
+    async def _clear_output() -> None:
+        return None
+
+    async def _render_event(event) -> None:
+        del event
+
+    async def _goal_permission_prompt(result: CommandResult) -> bool:
+        prompt_actions.append(result.goal_action)
+        return False
+
+    await start_runtime(bundle)
+    try:
+        should_continue = await handle_line(
+            bundle,
+            "/goal Ship feature X",
+            print_system=_print_system,
+            clear_output=_clear_output,
+            render_event=_render_event,
+            goal_permission_prompt=_goal_permission_prompt,
+        )
+    finally:
+        await close_runtime(bundle)
+
+    assert should_continue is True
+    assert prompt_actions == ["permission_prompt_create"]
+    assert client.call_count == 0
+    assert bundle.app_state.get().permission_mode == "default"
+    assert bundle.engine.tool_metadata["goal_mode"].get_goal() is None
+    assert any("cancelled" in message.lower() for message in printed)
+
+
+@pytest.mark.asyncio
+async def test_handle_line_goal_default_mode_confirm_switches_auto_and_submits(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("OPENHARNESS_DATA_DIR", str(tmp_path / "data"))
+
+    client = CountingApiClient()
+    bundle = await build_runtime(
+        api_client=client,
+        cwd=str(tmp_path),
+        permission_mode="default",
+        max_turns=1,
+    )
+    printed: list[str] = []
+    prompt_actions: list[str | None] = []
+
+    async def _print_system(message: str) -> None:
+        printed.append(message)
+
+    async def _clear_output() -> None:
+        return None
+
+    async def _render_event(event) -> None:
+        del event
+
+    async def _goal_permission_prompt(result: CommandResult) -> bool:
+        prompt_actions.append(result.goal_action)
+        return True
+
+    await start_runtime(bundle)
+    try:
+        should_continue = await handle_line(
+            bundle,
+            "/goal Ship feature X",
+            print_system=_print_system,
+            clear_output=_clear_output,
+            render_event=_render_event,
+            goal_permission_prompt=_goal_permission_prompt,
+        )
+    finally:
+        await close_runtime(bundle)
+
+    assert should_continue is True
+    assert prompt_actions == ["permission_prompt_create"]
+    assert client.call_count >= 1
+    assert bundle.engine.tool_metadata["goal_mode"].get_goal().objective == "Ship feature X"
+    assert any("Switched to Auto mode" in message for message in printed)
+
+
+@pytest.mark.asyncio
+async def test_backend_host_goal_permission_prompt_emits_modal_and_returns_reply():
+    host = ReactBackendHost(BackendHostConfig(api_client=StaticApiClient("unused")))
+    events: list[BackendEvent] = []
+
+    async def _fake_emit(event: BackendEvent) -> None:
+        events.append(event)
+        if event.type == "modal_request" and event.modal:
+            request_id = str(event.modal["request_id"])
+            host._approval_requests[request_id].set_result("reject")
+
+    host._emit = _fake_emit  # type: ignore[method-assign]
+
+    allowed = await host._goal_permission_prompt(
+        CommandResult(goal_action="permission_prompt_create", goal_objective="Ship feature X")
+    )
+
+    assert allowed is False
+    modal_events = [event for event in events if event.type == "modal_request"]
+    assert modal_events[0].modal == {
+        "kind": "goal_permission",
+        "request_id": modal_events[0].modal["request_id"],
+        "goal_action": "permission_prompt_create",
+        "objective": "Ship feature X",
+    }
+    assert modal_events[-1].modal is None
 
 
 @pytest.mark.asyncio
