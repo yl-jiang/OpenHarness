@@ -1635,17 +1635,32 @@ class WoloToolRegistry:
             updated_at=now,
         )
         self.store.create_project(project)
+        from wolo.core.models import Milestone
+        default_milestones = [
+            Milestone(
+                id=str(uuid4()), project_id=project.id,
+                title=f"创建 {title}", status="completed",
+                completed_at=now, created_at=now, updated_at=now, sort_order=0,
+            ),
+            Milestone(
+                id=str(uuid4()), project_id=project.id,
+                title=f"完成 {title}", status="pending",
+                created_at=now, updated_at=now, sort_order=1,
+            ),
+        ]
+        for ms in default_milestones:
+            self.store.create_milestone(ms)
         milestones = arguments.get("milestones") or []
         if isinstance(milestones, list):
             for ms_title in milestones:
                 if isinstance(ms_title, str) and ms_title.strip():
-                    from wolo.core.models import Milestone
                     ms = Milestone(
                         id=str(uuid4()),
                         project_id=project.id,
                         title=ms_title.strip(),
                         created_at=now,
                         updated_at=now,
+                        sort_order=len(default_milestones),
                     )
                     self.store.create_milestone(ms)
         return {"ok": True, "project_id": project.id, "title": title}
