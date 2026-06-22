@@ -227,6 +227,7 @@ if [ "$DO_PYC" -eq 1 ]; then
   EXCLUDES=""
   for p in \
     "$REPO_ROOT/.venv" \
+    "$REPO_ROOT/.openharness-venv" \
     "$REPO_ROOT/node_modules" \
     "$REPO_ROOT/onboard/frontend/node_modules" \
     "$REPO_ROOT/dist" \
