@@ -410,7 +410,7 @@ export function Todos({ appName }: { appName: AppName }) {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col h-[calc(100vh-120px)] gap-5">
       <div className="flex items-baseline justify-between flex-wrap gap-3">
         <h2 className="font-serif text-2xl text-text m-0">Todos</h2>
         <div className="flex items-center gap-3">
@@ -478,32 +478,40 @@ export function Todos({ appName }: { appName: AppName }) {
         onDragOver={handleDragOver}
         onDragEnd={handleDragEnd}
       >
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {columns.filter((c) => c.key !== 'cancelled').map((col) => (
-            <section key={col.key} className="space-y-2.5">
-              <div className="flex items-center gap-2 mb-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 flex-1 min-h-0">
+          {columns.filter((c) => c.key !== 'cancelled').map((col) => {
+            const items = columnItems[col.key];
+            return (
+            <section key={col.key} className="flex flex-col min-h-0">
+              <div className="flex items-center gap-2 mb-3 shrink-0">
                 <span className={`w-2 h-2 rounded-full ${col.dot}`} />
                 <span className="text-[12px] font-medium uppercase tracking-wider text-text-muted">{col.label}</span>
                 <span className="ml-auto text-[11px] font-mono text-text-muted">
-                  {columnItems[col.key].length}
+                  {items.length}
                 </span>
               </div>
-              <DroppableColumn
-                status={col.key}
-                items={columnItems[col.key].map((t) => t.id)}
-                isDragging={activeId !== null}
-              >
-                {columnItems[col.key].map((todo) => (
-                  <SortableCard
-                    key={todo.id}
-                    todo={todo}
-                    isDragging={activeId === todo.id}
-                    onAction={handleAction}
-                  />
-                ))}
-              </DroppableColumn>
+              <div className="relative flex-1 min-h-0">
+                <div className="h-full overflow-y-auto pr-1">
+                  <DroppableColumn
+                    status={col.key}
+                    items={items.map((t) => t.id)}
+                    isDragging={activeId !== null}
+                  >
+                    {items.map((todo) => (
+                      <SortableCard
+                        key={todo.id}
+                        todo={todo}
+                        isDragging={activeId === todo.id}
+                        onAction={handleAction}
+                      />
+                    ))}
+                  </DroppableColumn>
+                </div>
+                <div className="absolute bottom-0 left-0 right-0 h-8 bg-gradient-to-t from-bg to-transparent pointer-events-none" />
+              </div>
             </section>
-          ))}
+            );
+          })}
         </div>
 
         <DragOverlay dropAnimation={{ duration: 200, easing: 'ease' }}>

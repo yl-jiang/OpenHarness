@@ -262,7 +262,7 @@ export function Dashboard({ appName }: { appName: AppName }) {
       { label: "Records", value: data.total_records, icon: "\u25C7" },
       { label: "This Week", value: data.this_week_records, icon: "\u25B3" },
       {
-        label: "Pending",
+        label: "Active",
         value: data.pending_todos,
         icon: "\u2610",
         accent: data.pending_todos > 0 ? "#fbbf24" : undefined,
