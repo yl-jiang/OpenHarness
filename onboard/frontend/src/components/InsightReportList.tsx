@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 
 import { api } from '../api/client';
 import type { InsightDomain, Report } from '../api/types';
-import { useApi } from '../hooks/useApi';
+import { useApi, LIVE_REFRESH_INTERVAL_MS } from '../hooks/useApi';
+import { useInsightGenerating } from '../hooks/useInsightGenerating';
 
 interface InsightReportListProps {
   domain: InsightDomain;
@@ -21,7 +22,7 @@ const REPORT_TYPE_OPTIONS = [
 ];
 
 export function InsightReportList({ domain }: InsightReportListProps) {
-  const [generating, setGenerating] = useState(false);
+  const [generating, setGenerating] = useInsightGenerating(domain);
   const [showTypePicker, setShowTypePicker] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
 
@@ -41,11 +42,12 @@ export function InsightReportList({ domain }: InsightReportListProps) {
   const { data: reports, loading, reload } = useApi(
     () => api.insightReports.list({ domain }),
     [domain],
+    { refreshIntervalMs: generating ? LIVE_REFRESH_INTERVAL_MS : undefined },
   );
 
   const handleGenerate = async (reportType: string) => {
     setShowTypePicker(false);
-    setGenerating(true);
+    setGenerating(reportType);
     setGenError(null);
     try {
       await api.insightReports.generate(domain, reportType);
@@ -53,7 +55,7 @@ export function InsightReportList({ domain }: InsightReportListProps) {
     } catch (err) {
       setGenError(err instanceof Error ? err.message : '生成失败');
     } finally {
-      setGenerating(false);
+      setGenerating(null);
     }
   };
 
@@ -68,7 +70,7 @@ export function InsightReportList({ domain }: InsightReportListProps) {
         <div className="relative" ref={pickerRef}>
           <button
             onClick={() => setShowTypePicker(!showTypePicker)}
-            disabled={generating}
+            disabled={!!generating}
             className="px-3 py-1.5 rounded-md text-xs font-medium bg-accent-solo/10 text-accent-solo hover:bg-accent-solo/20 transition-colors cursor-pointer border border-accent-solo/30 disabled:opacity-50"
           >
             {generating ? '生成中...' : '✨ 生成洞察报告'}

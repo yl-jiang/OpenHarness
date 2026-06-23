@@ -605,6 +605,20 @@ class SoloStore:
             CREATE INDEX IF NOT EXISTS idx_health_records_status ON health_records(status);
             CREATE INDEX IF NOT EXISTS idx_health_records_record_id ON health_records(record_id);"""
         )
+        existing_health_cols = {
+            row[1]
+            for row in self._conn.execute("PRAGMA table_info(health_records)").fetchall()
+        }
+        for name, definition in (
+            ("mood_sentiment", "TEXT NOT NULL DEFAULT ''"),
+            ("linked_memory_id", "TEXT NOT NULL DEFAULT ''"),
+            ("created_at", "TEXT NOT NULL DEFAULT ''"),
+            ("updated_at", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if name not in existing_health_cols:
+                self._conn.execute(
+                    f"ALTER TABLE health_records ADD COLUMN {name} {definition}"
+                )
 
         # Migration v8: finance tables (idempotent CREATE TABLE IF NOT EXISTS)
         self._conn.executescript(
@@ -1279,19 +1293,23 @@ class SoloStore:
             params.append(date_to)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         order = "ORDER BY date DESC, created_at DESC"
+        _health_cols = ", ".join(self._HEALTH_RECORD_COLUMNS)
         if limit is not None:
             cur = self._db.execute(
-                f"SELECT * FROM health_records{where} {order} LIMIT ?",
+                f"SELECT {_health_cols} FROM health_records{where} {order} LIMIT ?",
                 params + [limit],
             )
         else:
             cur = self._db.execute(
-                f"SELECT * FROM health_records{where} {order}", params
+                f"SELECT {_health_cols} FROM health_records{where} {order}", params
             )
         return [self._row_to_health_record(r) for r in cur.fetchall()]
 
     def get_health_record(self, record_id: str) -> SoloHealthRecord | None:
-        cur = self._db.execute("SELECT * FROM health_records WHERE id = ?", (record_id,))
+        _health_cols = ", ".join(self._HEALTH_RECORD_COLUMNS)
+        cur = self._db.execute(
+            f"SELECT {_health_cols} FROM health_records WHERE id = ?", (record_id,)
+        )
         row = cur.fetchone()
         return self._row_to_health_record(row) if row else None
 

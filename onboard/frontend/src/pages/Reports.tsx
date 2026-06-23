@@ -4,8 +4,10 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { AppName, InsightDomain, Report, ReportType } from '../api/types';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { SegmentedControl } from '../components/SegmentedControl';
 import { useToast } from '../components/ToastProvider';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
+import { useInsightGenerating } from '../hooks/useInsightGenerating';
 
 const DOMAIN_LABELS: Record<InsightDomain, string> = {
   health: '♡ Health Insights',
@@ -120,8 +122,15 @@ export function Reports({ appName }: { appName: AppName }) {
   const [genError, setGenError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
-  // Insight report generating state
-  const [insightGenerating, setInsightGenerating] = useState<{ domain: InsightDomain; type: ReportType } | null>(null);
+  const [activeTab, setActiveTab] = useState('reports');
+  // Insight report generating state (module-level, survives navigation)
+  const [healthInsightGenerating, setHealthInsightGenerating] = useInsightGenerating('health');
+  const [financeInsightGenerating, setFinanceInsightGenerating] = useInsightGenerating('finance');
+  const insightGenerating = healthInsightGenerating || financeInsightGenerating;
+  const setInsightGenerating = (domain: InsightDomain, value: string | null) => {
+    if (domain === 'health') setHealthInsightGenerating(value);
+    else setFinanceInsightGenerating(value);
+  };
   const { toast } = useToast();
 
   async function generate(type: ReportType) {
@@ -141,7 +150,7 @@ export function Reports({ appName }: { appName: AppName }) {
   }
 
   async function generateInsight(domain: InsightDomain, type: ReportType) {
-    setInsightGenerating({ domain, type });
+    setInsightGenerating(domain, type);
     setGenError(null);
     try {
       await api.insightReports.generate(domain, type);
@@ -154,7 +163,7 @@ export function Reports({ appName }: { appName: AppName }) {
       setGenError(msg);
       toast(msg, 'error');
     } finally {
-      setInsightGenerating(null);
+      setInsightGenerating(domain, null);
     }
   }
 
@@ -199,31 +208,124 @@ export function Reports({ appName }: { appName: AppName }) {
     return <div className="border border-danger/30 rounded-lg bg-danger/5 p-5 text-sm text-text" role="alert">{error ?? 'Failed to load reports.'}</div>;
   }
 
-  const weekly = sortByPeriod(data.filter((r) => r.report_type === 'weekly' && !(r.metadata?.domain)));
-  const monthly = sortByPeriod(data.filter((r) => r.report_type === 'monthly' && !(r.metadata?.domain)));
-  const yearly = sortByPeriod(data.filter((r) => r.report_type === 'yearly' && !(r.metadata?.domain)));
+  const allClassic = sortByPeriod(data.filter((r) => !(r.metadata?.domain)));
 
-  const sections: { type: ReportType; label: string; items: Report[] }[] = [
-    { type: 'weekly', label: 'Weekly Reports', items: weekly },
-    { type: 'monthly', label: 'Monthly Reports', items: monthly },
-    { type: 'yearly', label: 'Yearly Reports', items: yearly },
-  ];
+  const insightSections: Record<string, { label: string; icon: string; items: Report[] }> = appName === 'solo' ? {
+    health: { label: DOMAIN_LABELS.health, icon: DOMAIN_ICONS.health, items: sortByPeriod(healthInsights || []) },
+    finance: { label: DOMAIN_LABELS.finance, icon: DOMAIN_ICONS.finance, items: sortByPeriod(financeInsights || []) },
+  } : {};
 
-  // Insight report sections (solo only)
-  const insightSections: { domain: InsightDomain; label: string; icon: string; items: Report[] }[] = appName === 'solo' ? [
-    { domain: 'health', label: DOMAIN_LABELS.health, icon: DOMAIN_ICONS.health, items: sortByPeriod(healthInsights || []) },
-    { domain: 'finance', label: DOMAIN_LABELS.finance, icon: DOMAIN_ICONS.finance, items: sortByPeriod(financeInsights || []) },
-  ] : [];
+  const isSolo = appName === 'solo';
+  const tabOptions = isSolo
+    ? [{ label: 'Reports', value: 'reports' }, { label: 'Health', value: 'health' }, { label: 'Finance', value: 'finance' }]
+    : [];
 
-  const classicCount = weekly.length + monthly.length + yearly.length;
-  const totalCount = classicCount + (healthInsights?.length || 0) + (financeInsights?.length || 0);
+  const classicCount = allClassic.length;
+  const insightCount = isSolo ? (healthInsights?.length || 0) + (financeInsights?.length || 0) : 0;
+  const totalCount = classicCount + insightCount;
+
+  const TYPE_BADGE: Record<string, string> = { weekly: 'W', monthly: 'M', yearly: 'Y' };
+  const TYPE_LABEL: Record<string, string> = { weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' };
+
+  function ReportRow({ report, index, onDelete, domain }: { report: Report; index: number; onDelete: (id: string) => void; domain?: InsightDomain }) {
+    const period = formatPeriod(report);
+    return (
+      <div
+        className="flex items-center justify-between px-4 py-3 bg-surface-1 hover:bg-surface-2/60 transition-colors animate-[fade-in_0.3s_ease-out_both]"
+        style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
+      >
+        <div className="flex items-center gap-3">
+          <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-accent-solo/10 text-accent-solo text-[11px] font-mono font-medium">{TYPE_BADGE[report.report_type]}</span>
+          {period && <span className="font-mono text-[12px] text-text">{period}</span>}
+          <span className="font-mono text-[11px] text-text-muted">
+            {period ? `generated ${formatGeneratedTime(report.created_at)}` : formatGeneratedTime(report.created_at)}
+          </span>
+        </div>
+        <span className="inline-flex items-center gap-3">
+          <Link to={`/reports/${report.id}`} className="text-[12px] text-accent-solo hover:underline no-underline">Open →</Link>
+          <button
+            onClick={() => onDelete(report.id)}
+            disabled={deleting === report.id}
+            className="text-[12px] text-text-muted hover:text-danger cursor-pointer bg-transparent border-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            aria-label={`Delete ${domain ? `${domain} ` : ''}report ${period || report.id}`}
+          >
+            {deleting === report.id ? '…' : '✕'}
+          </button>
+        </span>
+      </div>
+    );
+  }
+
+  function handleDelete(id: string) {
+    setConfirmDeleteId(id);
+  }
+
+  function GenerateButton({ label, active, onClick, disabled }: { label: string; active: boolean; onClick: () => void; disabled: boolean }) {
+    return (
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={`text-[12px] px-3 py-1.5 rounded-md border cursor-pointer transition-all active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 ${
+          active
+            ? 'border-accent-solo/40 bg-accent-solo-dim text-accent-solo'
+            : 'border-border bg-surface-2 text-text-secondary hover:text-text hover:border-text-muted'
+        }`}
+      >
+        {active ? (
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block w-3 h-3 border-[1.5px] border-current border-t-transparent rounded-full animate-spin" />
+            generating…
+          </span>
+        ) : (
+          `+ ${label}`
+        )}
+      </button>
+    );
+  }
+
+  function renderInsightTab(domain: InsightDomain) {
+    const sec = insightSections[domain];
+    const domainGenerating = domain === 'health' ? healthInsightGenerating : financeInsightGenerating;
+    const anyBusy = generating !== null || insightGenerating !== null;
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-text-secondary m-0">{sec.icon} {sec.label}</h3>
+          <div className="flex items-center gap-1.5">
+            {(['weekly', 'monthly', 'yearly'] as ReportType[]).map((type) => (
+              <GenerateButton
+                key={type}
+                label={TYPE_LABEL[type]}
+                active={domainGenerating === type}
+                onClick={() => generateInsight(domain, type)}
+                disabled={anyBusy}
+              />
+            ))}
+          </div>
+        </div>
+        {sec.items.length === 0 ? (
+          <p className="text-[13px] text-text-muted italic m-0 pl-1">No {domain} insight reports yet.</p>
+        ) : (
+          <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
+            {sec.items.map((report, i) => (
+              <ReportRow key={report.id} report={report} index={i} onDelete={handleDelete} domain={domain} />
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       <div className="flex items-baseline justify-between">
         <h2 className="font-serif text-2xl text-text m-0">Reports</h2>
         <span className="text-[11px] font-mono text-text-muted">{totalCount} total</span>
       </div>
+
+      {isSolo && (
+        <SegmentedControl options={tabOptions} value={activeTab} onChange={setActiveTab} />
+      )}
 
       {genError && (
         <div className="flex items-center gap-2 border border-danger/30 rounded-md bg-danger/5 px-4 py-2.5 text-[13px] text-text" role="alert">
@@ -233,139 +335,36 @@ export function Reports({ appName }: { appName: AppName }) {
         </div>
       )}
 
-      {sections.map(({ type, label, items }) => (
-        <section key={type} className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-text-secondary m-0">{label}</h3>
-            <button
-              onClick={() => generate(type)}
-              disabled={generating !== null || insightGenerating !== null}
-              className={`text-[12px] px-3 py-1.5 rounded-md border cursor-pointer transition-all active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 ${
-                generating === type
-                  ? 'border-accent-solo/40 bg-accent-solo-dim text-accent-solo'
-                  : 'border-border bg-surface-2 text-text-secondary hover:text-text hover:border-text-muted'
-              }`}
-            >
-              {generating === type ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="inline-block w-3 h-3 border-[1.5px] border-current border-t-transparent rounded-full animate-spin" />
-                  generating…
-                </span>
-              ) : (
-                `+ ${type}`
-              )}
-            </button>
+      {/* Classic reports tab */}
+      {(!isSolo || activeTab === 'reports') && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-1.5">
+            {(['weekly', 'monthly', 'yearly'] as ReportType[]).map((type) => (
+              <GenerateButton
+                key={type}
+                label={TYPE_LABEL[type]}
+                active={generating === type}
+                onClick={() => generate(type)}
+                disabled={generating !== null || insightGenerating !== null}
+              />
+            ))}
           </div>
 
-          {items.length === 0 ? (
-            <p className="text-[13px] text-text-muted italic m-0 pl-1">No {type} reports yet.</p>
+          {allClassic.length === 0 ? (
+            <p className="text-[13px] text-text-muted italic m-0 pl-1">No reports yet. Generate one above.</p>
           ) : (
             <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
-              {items.map((report, index) => {
-                const period = formatPeriod(report);
-                return (
-                  <div
-                    key={report.id}
-                    className="flex items-center justify-between px-4 py-3 bg-surface-1 hover:bg-surface-2/60 transition-colors animate-[fade-in_0.3s_ease-out_both]"
-                    style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
-                  >
-                    <div className="flex items-center gap-3">
-                      {period && (
-                        <span className="font-mono text-[12px] text-text">{period}</span>
-                      )}
-                      <span className="font-mono text-[11px] text-text-muted">
-                        {period ? `generated ${formatGeneratedTime(report.created_at)}` : formatGeneratedTime(report.created_at)}
-                      </span>
-                    </div>
-                    <span className="inline-flex items-center gap-3">
-                      <Link to={`/reports/${report.id}`} className="text-[12px] text-accent-solo hover:underline no-underline">Open →</Link>
-                      <button
-                        onClick={() => setConfirmDeleteId(report.id)}
-                        disabled={deleting === report.id}
-                        className="text-[12px] text-text-muted hover:text-danger cursor-pointer bg-transparent border-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        aria-label={`Delete report ${period || report.id}`}
-                      >
-                        {deleting === report.id ? '…' : '✕'}
-                      </button>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
-      ))}
-
-      {/* Insight report sections (solo only) */}
-      {insightSections.map(({ domain, label, icon, items }) => (
-        <section key={domain} className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-medium text-text-secondary m-0">{icon} {label}</h3>
-            <div className="flex items-center gap-1.5">
-              {(['weekly', 'monthly', 'yearly'] as ReportType[]).map((type) => (
-                <button
-                  key={type}
-                  onClick={() => generateInsight(domain, type)}
-                  disabled={generating !== null || insightGenerating !== null}
-                  className={`text-[12px] px-2.5 py-1 rounded-md border cursor-pointer transition-all active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 ${
-                    insightGenerating?.domain === domain && insightGenerating?.type === type
-                      ? 'border-accent-solo/40 bg-accent-solo-dim text-accent-solo'
-                      : 'border-border bg-surface-2 text-text-secondary hover:text-text hover:border-text-muted'
-                  }`}
-                >
-                  {insightGenerating?.domain === domain && insightGenerating?.type === type ? (
-                    <span className="inline-flex items-center gap-1">
-                      <span className="inline-block w-2.5 h-2.5 border-[1.5px] border-current border-t-transparent rounded-full animate-spin" />
-                      …
-                    </span>
-                  ) : (
-                    `+ ${type === 'weekly' ? 'W' : type === 'monthly' ? 'M' : 'Y'}`
-                  )}
-                </button>
+              {allClassic.map((report, i) => (
+                <ReportRow key={report.id} report={report} index={i} onDelete={handleDelete} />
               ))}
             </div>
-          </div>
-
-          {items.length === 0 ? (
-            <p className="text-[13px] text-text-muted italic m-0 pl-1">No {domain} insight reports yet.</p>
-          ) : (
-            <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
-              {items.map((report, index) => {
-                const period = formatPeriod(report);
-                const typeLabel = report.report_type === 'weekly' ? 'W' : report.report_type === 'monthly' ? 'M' : 'Y';
-                return (
-                  <div
-                    key={report.id}
-                    className="flex items-center justify-between px-4 py-3 bg-surface-1 hover:bg-surface-2/60 transition-colors animate-[fade-in_0.3s_ease-out_both]"
-                    style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
-                  >
-                    <div className="flex items-center gap-3">
-                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-accent-solo/10 text-accent-solo text-[11px] font-mono font-medium">{typeLabel}</span>
-                      {period && (
-                        <span className="font-mono text-[12px] text-text">{period}</span>
-                      )}
-                      <span className="font-mono text-[11px] text-text-muted">
-                        {period ? `generated ${formatGeneratedTime(report.created_at)}` : formatGeneratedTime(report.created_at)}
-                      </span>
-                    </div>
-                    <span className="inline-flex items-center gap-3">
-                      <Link to={`/reports/${report.id}`} className="text-[12px] text-accent-solo hover:underline no-underline">Open →</Link>
-                      <button
-                        onClick={() => setConfirmDeleteId(report.id)}
-                        disabled={deleting === report.id}
-                        className="text-[12px] text-text-muted hover:text-danger cursor-pointer bg-transparent border-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                        aria-label={`Delete insight report ${period || report.id}`}
-                      >
-                        {deleting === report.id ? '…' : '✕'}
-                      </button>
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
           )}
-        </section>
-      ))}
+        </div>
+      )}
+
+      {/* Insight tabs (solo only) */}
+      {isSolo && activeTab === 'health' && renderInsightTab('health')}
+      {isSolo && activeTab === 'finance' && renderInsightTab('finance')}
 
       <ConfirmDialog
         open={confirmDeleteId !== null}
@@ -375,7 +374,6 @@ export function Reports({ appName }: { appName: AppName }) {
         danger
         onConfirm={() => {
           const id = confirmDeleteId!;
-          // Check if it's an insight report by finding it in insight data
           const isInsight = (healthInsights || []).some(r => r.id === id) || (financeInsights || []).some(r => r.id === id);
           const domain = (healthInsights || []).some(r => r.id === id) ? 'health' as InsightDomain : 'finance' as InsightDomain;
           if (isInsight) deleteInsightReport(id, domain);

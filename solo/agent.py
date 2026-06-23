@@ -205,15 +205,19 @@ class OpenHarnessSoloAgent:
             f"## 输出要求\n\n"
             f"严格输出 JSON，schema 如下：\n```json\n{schema_str}\n```"
         )
-        content = await self._complete(
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            max_tokens=4096,
-        )
-        result = _safe_parse_json(content)
-        if not result or "headline" not in result:
-            raise RuntimeError(f"LLM did not return valid insight JSON: {content[:200]}")
-        return result
+        last_content = ""
+        for attempt in range(2):
+            content = await self._complete(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_tokens=8192,
+            )
+            last_content = content
+            result = _safe_parse_json(content)
+            if result and "headline" in result:
+                return result
+            logger.warning("generate_insight_report attempt %d failed, content=%r", attempt + 1, content[:200])
+        raise RuntimeError(f"LLM did not return valid insight JSON after 2 attempts: {last_content[:200]}")
 
     async def _complete(self, *, system_prompt: str, user_prompt: str, max_tokens: int | None = None) -> str:
         request = ApiMessageRequest(
