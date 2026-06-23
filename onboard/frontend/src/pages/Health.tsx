@@ -13,6 +13,7 @@ import { StatsCard } from '../components/StatsCard';
 import { SubjectFilter } from '../components/health/SubjectFilter';
 import { HealthTimeline } from '../components/health/HealthTimeline';
 import { useApi } from '../hooks/useApi';
+import { InsightReportList } from '../components/InsightReportList';
 
 const palette = ['#b8956a', '#6a9e8e', '#8b7db8', '#c4a35a', '#b87070', '#6a8a9e', '#7eb87e', '#c48a6a'];
 
@@ -214,6 +215,7 @@ export function Health() {
       {/* Subject Filter */}
       <SubjectFilter subjects={subjects} selected={selectedSubject} onSelect={setSelectedSubject} />
 
+      <InsightReportList domain="health" />
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatsCard label="总记录" value={overview?.total_records ?? 0} icon="♡" />

@@ -461,6 +461,7 @@ export interface SoloHealthRecord {
   sleep_hours: number;
   sleep_quality: string;
   mood: string;
+  mood_sentiment: string;
   stress_level: string;
   metrics_json: string;
   tags: string;
@@ -575,3 +576,67 @@ export interface FinanceBudgetWithUtilization extends SoloFinanceBudget {
   spent: number;
   utilization: number;
 }
+
+// ---------------------------------------------------------------------------
+// Insight Report types
+// ---------------------------------------------------------------------------
+
+export type InsightDomain = 'health' | 'finance';
+
+export interface InsightBlindSpot {
+  title: string;
+  why: string;
+  evidence: string;
+  severity: 'info' | 'watch' | 'alert';
+}
+
+export interface InsightItem {
+  icon?: string;
+  title: string;
+  analysis: string;
+  evidence: string[];
+  severity: 'info' | 'watch' | 'alert';
+  tags?: string[];
+}
+
+export interface InsightPattern {
+  name: string;
+  strength: 'strong' | 'moderate' | 'weak';
+  detail: string;
+}
+
+export interface InsightRecommendation {
+  action: string;
+  rationale: string;
+  expected_signal: string;
+}
+
+export interface InsightMetric {
+  label: string;
+  value: number;
+  unit: string;
+  trend?: number[];
+  comparison_value?: number;
+  comparison_label?: string;
+}
+
+export interface InsightPeriodComparison {
+  metric: string;
+  current: number;
+  previous: number;
+  delta_pct: number;
+  direction: 'up' | 'down' | 'flat';
+  unit?: string;
+}
+
+export interface InsightReportJSON {
+  headline: string;
+  narrative: string;
+  period_comparison?: InsightPeriodComparison[];
+  blind_spots: InsightBlindSpot[];
+  insights: InsightItem[];
+  patterns?: InsightPattern[];
+  recommendations: InsightRecommendation[];
+  metrics?: InsightMetric[];
+}
+

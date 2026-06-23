@@ -250,6 +250,53 @@ class SoloService:
         )
         return to_jsonable(report)
 
+
+    async def generate_insight_report(
+        self,
+        domain: str,
+        report_type: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        """Generate a domain-specific insight report."""
+        config = load_config(self.workspace)
+        agent = OpenHarnessSoloAgent(
+            profile=config.provider_profile,
+            record_model_call=self.store.record_llm_call,
+        )
+        report = await SoloProcessor(self.store, agent).generate_insight_report(
+            domain, report_type, start_date=start_date, end_date=end_date,
+        )
+        return to_jsonable(report)
+
+    def list_insight_reports(
+        self, domain: str | None = None, report_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List insight reports, optionally filtered by domain and type."""
+        reports = self.store.list_reports()
+        # Filter: only reports with metadata.domain
+        filtered = [r for r in reports if (r.metadata or {}).get("domain")]
+        if domain:
+            filtered = [r for r in filtered if (r.metadata or {}).get("domain") == domain]
+        if report_type:
+            filtered = [r for r in filtered if r.report_type == report_type]
+        filtered.sort(key=lambda r: r.period_start or r.created_at, reverse=True)
+        return [to_jsonable(r) for r in filtered]
+
+    def get_insight_report(self, report_id: str) -> dict[str, Any] | None:
+        """Get a single insight report by ID."""
+        report = find_by_id(self.store.list_reports(), report_id)
+        if report is None or not (report.metadata or {}).get("domain"):
+            return None
+        return to_jsonable(report)
+
+    def delete_insight_report(self, report_id: str) -> bool:
+        """Delete an insight report."""
+        report = find_by_id(self.store.list_reports(), report_id)
+        if report is None or not (report.metadata or {}).get("domain"):
+            return False
+        return self.store.delete_report(report_id)
+
     async def process_pending(self, limit: int = 20) -> dict[str, Any]:
         config = load_config(self.workspace)
         agent = OpenHarnessSoloAgent(

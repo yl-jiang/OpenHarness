@@ -14,6 +14,7 @@ import type {
   LogRecord,
   PaginatedResponse,
   Report,
+  InsightReportJSON,
   SearchResult,
   SleepDay,
   SoloHealthRecord,
@@ -316,6 +317,21 @@ export const api = {
     request<{ deleted: boolean }>(`/api/${app}/memory/${id}`, { method: "DELETE" }),
 
   // ── Health (solo-only) ─────────────────────────────────────────────
+
+  insightReports: {
+    list: (params: { domain?: string; report_type?: string } = {}) =>
+      request<Report[]>(`/api/solo/insight-reports${query(params as Record<string, QueryValue>)}`),
+    get: (id: string) =>
+      request<Report>(`/api/solo/insight-reports/${id}`),
+    generate: (domain: string, report_type: string) =>
+      request<Report>(`/api/solo/insight-reports/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain, report_type }),
+      }),
+    delete: (id: string) =>
+      request<{ ok: boolean }>(`/api/solo/insight-reports/${id}`, { method: 'DELETE' }),
+  },
   health: {
     subjects: () =>
       request<{ subjects: Record<string, number> }>(`/api/solo/health/subjects`),

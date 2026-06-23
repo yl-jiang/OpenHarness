@@ -42,6 +42,7 @@ const ProjectInbox = lazyWithRetry(() => import("./pages/ProjectInbox").then((m)
 const Memory = lazyWithRetry(() => import("./pages/Memory").then((m) => ({ default: m.Memory })));
 const Health = lazyWithRetry(() => import("./pages/Health").then((m) => ({ default: m.Health })));
 const Finance = lazyWithRetry(() => import("./pages/Finance").then((m) => ({ default: m.Finance })));
+const InsightReportView = lazyWithRetry(() => import('./pages/InsightReportView').then((m) => ({ default: m.InsightReportView })));
 
 function PageLoader() {
   return (
@@ -108,6 +109,7 @@ export function App() {
         { path: 'records/:id', element: <SuspenseLoader><RecordDetail appName={appName} /></SuspenseLoader> },
         { path: 'health', element: <SuspenseLoader><Health /></SuspenseLoader> },
         { path: 'finance', element: <SuspenseLoader><Finance /></SuspenseLoader> },
+        { path: 'insight-reports/:id', element: <SuspenseLoader><InsightReportView /></SuspenseLoader> },
         { path: 'todos', element: <SuspenseLoader><Todos appName={appName} /></SuspenseLoader> },
         { path: 'reports', element: <SuspenseLoader><Reports appName={appName} /></SuspenseLoader> },
         { path: 'reports/:id', element: <SuspenseLoader><ReportView appName={appName} /></SuspenseLoader> },

@@ -10,6 +10,7 @@ import { InvestTrend } from '../components/finance/InvestTrend';
 import { SpendingHeatmap } from '../components/finance/SpendingHeatmap';
 import { TransactionTimeline } from '../components/finance/TransactionTimeline';
 import { useApi } from '../hooks/useApi';
+import { InsightReportList } from '../components/InsightReportList';
 import { api } from '../api/client';
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -62,6 +63,7 @@ export function Finance() {
             ))}
           </div>
         </div>
+        <InsightReportList domain="finance" />
 
         {/* Zone 1: Monthly overview cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

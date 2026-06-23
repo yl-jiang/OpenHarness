@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
 import { api } from '../api/client';
-import type { AppName } from '../api/types';
+import type { AppName, InsightDomain, InsightReportJSON, InsightBlindSpot, InsightItem, InsightPattern, InsightRecommendation, InsightMetric, InsightPeriodComparison } from '../api/types';
 import { Breadcrumb } from '../components/Breadcrumb';
 import { MarkdownView } from '../components/MarkdownView';
 import { useApi } from '../hooks/useApi';
@@ -56,6 +56,175 @@ function extractHeadings(content: string): TocItem[] {
   return items;
 }
 
+
+// ── Insight report structured rendering ──────────────────────────
+
+const SEVERITY_STYLES: Record<string, string> = {
+  alert: 'border-l-4 border-l-danger bg-danger/5 text-danger',
+  watch: 'border-l-4 border-l-warning bg-warning/5 text-warning',
+  info: 'border-l-4 border-l-accent-solo bg-accent-solo/5 text-accent-solo',
+};
+
+const SEVERITY_ICONS: Record<string, string> = {
+  alert: '🔴',
+  watch: '🟡',
+  info: 'ℹ️',
+};
+
+const DIRECTION_ARROWS: Record<string, string> = { up: '↑', down: '↓', flat: '→' };
+const STRENGTH_DOTS: Record<string, string> = { strong: '●●●', moderate: '●●○', weak: '●○○' };
+
+function Sparkline({ data }: { data: number[] }) {
+  if (!data || data.length === 0) return null;
+  const min = Math.min(...data);
+  const max = Math.max(...data);
+  const range = max - min || 1;
+  const chars = '▁▂▃▄▅▆▇█';
+  return (
+    <span className="font-mono text-xs text-text-muted tracking-wider">
+      {data.map((v, i) => {
+        const idx = Math.round(((v - min) / range) * (chars.length - 1));
+        return <span key={i}>{chars[idx]}</span>;
+      })}
+    </span>
+  );
+}
+
+function InsightHeroBand({ insight, domain, reportType }: { insight: InsightReportJSON; domain: string; reportType: string }) {
+  const domainLabel = domain === 'health' ? 'Health' : 'Finance';
+  const periodLabel = { weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' }[reportType] || reportType;
+  const comparisons = insight.period_comparison || [];
+  return (
+    <section className="p-5 rounded-lg border border-border bg-surface-1">
+      <h2 className="text-lg font-serif text-text mb-2">
+        {domain === 'health' ? '♡' : '$'} {domainLabel} {periodLabel} Insight
+      </h2>
+      {insight.headline && <p className="text-base font-medium text-text mb-2">{insight.headline}</p>}
+      {insight.narrative && <p className="text-sm text-text-muted mb-4">{insight.narrative}</p>}
+      {comparisons.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {comparisons.map((c: InsightPeriodComparison, i: number) => {
+            const arrow = DIRECTION_ARROWS[c.direction] || '';
+            const isUp = c.direction === 'up';
+            return (
+              <span key={i} className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono ${
+                isUp ? 'bg-danger/10 text-danger' : c.direction === 'down' ? 'bg-success/10 text-success' : 'bg-surface-2 text-text-muted'
+              }`}>
+                {c.metric} {c.current}{c.unit || ''} {arrow}{Math.abs(c.delta_pct).toFixed(1)}%
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function InsightBlindSpots({ blindSpots }: { blindSpots: InsightBlindSpot[] }) {
+  if (!blindSpots.length) return null;
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-medium text-text">🕳️ Blind Spots</h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        {blindSpots.map((bs, i) => (
+          <div key={i} className={`p-4 rounded-lg ${SEVERITY_STYLES[bs.severity] || SEVERITY_STYLES.info}`}>
+            <p className="font-medium text-sm mb-1">{SEVERITY_ICONS[bs.severity] || 'ℹ️'} {bs.title}</p>
+            <p className="text-xs opacity-80 mb-1">{bs.why}</p>
+            <p className="text-xs opacity-60">Evidence: {bs.evidence}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function InsightMetrics({ metrics }: { metrics: InsightMetric[] }) {
+  if (!metrics || !metrics.length) return null;
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-medium text-text">📈 Key Metrics</h3>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {metrics.map((m, i) => (
+          <div key={i} className="p-4 rounded-lg border border-border bg-surface-1">
+            <p className="text-xs text-text-muted mb-1">{m.label}</p>
+            <p className="text-xl font-mono text-text">{m.value}<span className="text-xs text-text-muted ml-1">{m.unit}</span></p>
+            {m.trend && m.trend.length > 0 && <div className="mt-2"><Sparkline data={m.trend} /></div>}
+            {m.comparison_value != null && <p className="text-xs text-text-muted mt-1">vs {m.comparison_label || 'prev'} {m.comparison_value}{m.unit}</p>}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function InsightInsights({ insights }: { insights: InsightItem[] }) {
+  if (!insights.length) return null;
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-medium text-text">🔍 Deep Insights</h3>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {insights.map((ins, i) => (
+          <div key={i} className={`p-4 rounded-lg border border-border bg-surface-1 ${SEVERITY_STYLES[ins.severity] || ''}`}>
+            <p className="font-medium text-sm mb-2">{ins.icon || '🔍'} {ins.title}</p>
+            <p className="text-xs text-text-muted mb-2">{ins.analysis}</p>
+            {ins.evidence && ins.evidence.length > 0 && (
+              <div className="flex flex-wrap gap-1 mb-2">
+                {ins.evidence.map((e, j) => (
+                  <span key={j} className="px-1.5 py-0.5 rounded text-[10px] bg-surface-2 text-text-muted font-mono">{e}</span>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                ins.severity === 'alert' ? 'bg-danger/10 text-danger' :
+                ins.severity === 'watch' ? 'bg-warning/10 text-warning' :
+                'bg-accent-solo/10 text-accent-solo'
+              }`}>{ins.severity}</span>
+              {ins.tags && ins.tags.map((t, j) => <span key={j} className="text-[10px] text-text-muted">#{t}</span>)}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function InsightPatterns({ patterns }: { patterns: InsightPattern[] }) {
+  if (!patterns || !patterns.length) return null;
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-medium text-text">🔗 Patterns</h3>
+      <div className="flex flex-wrap gap-2">
+        {patterns.map((p, i) => (
+          <span key={i} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-border bg-surface-1 text-xs">
+            <span className="font-medium text-text">{p.name}</span>
+            <span className="text-text-muted">[{STRENGTH_DOTS[p.strength] || '●○○'}]</span>
+            <span className="text-text-muted">{p.detail}</span>
+          </span>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function InsightRecommendations({ recommendations }: { recommendations: InsightRecommendation[] }) {
+  if (!recommendations.length) return null;
+  return (
+    <section className="space-y-3">
+      <h3 className="text-sm font-medium text-text">💡 Recommendations</h3>
+      <ol className="space-y-2">
+        {recommendations.map((r, i) => (
+          <li key={i} className="p-3 rounded-lg border border-border bg-surface-1 text-sm">
+            <p className="font-medium text-text">{i + 1}. {r.action}</p>
+            <p className="text-xs text-text-muted mt-1">{r.rationale}</p>
+            <p className="text-xs text-text-muted">Signal: {r.expected_signal}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 export function ReportView({ appName }: { appName: AppName }) {
   const { id = '' } = useParams();
   const { data, error, loading } = useApi(() => api.report(appName, id), [appName, id]);
@@ -96,6 +265,40 @@ export function ReportView({ appName }: { appName: AppName }) {
         : `${data.period_start} → ${data.period_end}`
       : null;
 
+  const metadata = data.metadata || {};
+  const domain = metadata.domain as InsightDomain | undefined;
+  const insightJson = metadata.insight_json as InsightReportJSON | undefined;
+  const isInsight = !!domain && !!insightJson;
+
+  if (isInsight) {
+    // Structured insight report rendering
+    const domainLabel = domain === 'health' ? 'Health' : 'Finance';
+    const domainIcon = domain === 'health' ? '♡' : '$';
+    return (
+      <div className="max-w-5xl space-y-6">
+        <Breadcrumb items={[
+          { label: 'Reports', to: '/reports' },
+          { label: `${domainIcon} ${domainLabel} ${data.report_type} Insight` },
+        ]} />
+        <InsightHeroBand insight={insightJson} domain={domain!} reportType={data.report_type} />
+        <InsightBlindSpots blindSpots={insightJson.blind_spots || []} />
+        <InsightMetrics metrics={insightJson.metrics || []} />
+        <InsightInsights insights={insightJson.insights || []} />
+        <InsightPatterns patterns={insightJson.patterns || []} />
+        <InsightRecommendations recommendations={insightJson.recommendations || []} />
+        <div className="border-t border-border pt-3">
+          <details>
+            <summary className="text-xs text-text-muted cursor-pointer">Raw Markdown</summary>
+            <div className="mt-2 p-4 rounded-lg bg-surface-2 text-xs font-mono text-text-muted overflow-auto max-h-96">
+              <MarkdownView content={data.content} />
+            </div>
+          </details>
+        </div>
+      </div>
+    );
+  }
+
+  // Classic report rendering
   return (
     <div className="max-w-5xl">
       <Breadcrumb items={[
