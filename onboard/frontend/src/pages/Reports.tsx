@@ -2,10 +2,20 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import { api } from '../api/client';
-import type { AppName, Report, ReportType } from '../api/types';
+import type { AppName, InsightDomain, Report, ReportType } from '../api/types';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { useToast } from '../components/ToastProvider';
 import { LIVE_REFRESH_INTERVAL_MS, useApi } from '../hooks/useApi';
+
+const DOMAIN_LABELS: Record<InsightDomain, string> = {
+  health: '♡ Health Insights',
+  finance: '$ Finance Insights',
+};
+
+const DOMAIN_ICONS: Record<InsightDomain, string> = {
+  health: '♡',
+  finance: '$',
+};
 
 function formatGeneratedTime(raw: string): string {
   const d = new Date(raw);
@@ -95,10 +105,23 @@ function useReportGenerating(app: AppName): [ReportType | null, (value: ReportTy
 
 export function Reports({ appName }: { appName: AppName }) {
   const { data, error, loading, reload } = useApi(() => api.reports(appName), [appName], { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS });
+  // Load insight reports (solo only)
+  const { data: healthInsights, reload: reloadHealth } = useApi(
+    () => appName === 'solo' ? api.insightReports.list({ domain: 'health' }) : Promise.resolve([]),
+    [appName],
+    { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS, enabled: appName === 'solo' },
+  );
+  const { data: financeInsights, reload: reloadFinance } = useApi(
+    () => appName === 'solo' ? api.insightReports.list({ domain: 'finance' }) : Promise.resolve([]),
+    [appName],
+    { refreshIntervalMs: LIVE_REFRESH_INTERVAL_MS, enabled: appName === 'solo' },
+  );
   const [generating, setGenerating] = useReportGenerating(appName);
   const [genError, setGenError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  // Insight report generating state
+  const [insightGenerating, setInsightGenerating] = useState<{ domain: InsightDomain; type: ReportType } | null>(null);
   const { toast } = useToast();
 
   async function generate(type: ReportType) {
@@ -114,6 +137,24 @@ export function Reports({ appName }: { appName: AppName }) {
       toast(msg, 'error');
     } finally {
       setGenerating(null);
+    }
+  }
+
+  async function generateInsight(domain: InsightDomain, type: ReportType) {
+    setInsightGenerating({ domain, type });
+    setGenError(null);
+    try {
+      await api.insightReports.generate(domain, type);
+      if (domain === 'health') reloadHealth();
+      else reloadFinance();
+      reload();
+      toast(`${DOMAIN_LABELS[domain]} ${type} report generated`, 'success');
+    } catch (err) {
+      const msg = `Failed to generate ${domain} insight${err instanceof Error ? `: ${err.message}` : ''}`;
+      setGenError(msg);
+      toast(msg, 'error');
+    } finally {
+      setInsightGenerating(null);
     }
   }
 
@@ -133,6 +174,24 @@ export function Reports({ appName }: { appName: AppName }) {
     }
   }
 
+  async function deleteInsightReport(id: string, domain: InsightDomain) {
+    setDeleting(id);
+    setConfirmDeleteId(null);
+    try {
+      await api.insightReports.delete(id);
+      if (domain === 'health') reloadHealth();
+      else reloadFinance();
+      reload();
+      toast('Insight report deleted', 'success');
+    } catch (err) {
+      const msg = `Failed to delete${err instanceof Error ? `: ${err.message}` : ''}`;
+      setGenError(msg);
+      toast(msg, 'error');
+    } finally {
+      setDeleting(null);
+    }
+  }
+
   if (loading) {
     return <div className="h-60 rounded-lg bg-gradient-to-r from-surface-1 via-surface-2 to-surface-1 bg-[length:200%_auto] animate-[shimmer_1.5s_linear_infinite]" />;
   }
@@ -140,9 +199,9 @@ export function Reports({ appName }: { appName: AppName }) {
     return <div className="border border-danger/30 rounded-lg bg-danger/5 p-5 text-sm text-text" role="alert">{error ?? 'Failed to load reports.'}</div>;
   }
 
-  const weekly = sortByPeriod(data.filter((r) => r.report_type === 'weekly'));
-  const monthly = sortByPeriod(data.filter((r) => r.report_type === 'monthly'));
-  const yearly = sortByPeriod(data.filter((r) => r.report_type === 'yearly'));
+  const weekly = sortByPeriod(data.filter((r) => r.report_type === 'weekly' && !(r.metadata?.domain)));
+  const monthly = sortByPeriod(data.filter((r) => r.report_type === 'monthly' && !(r.metadata?.domain)));
+  const yearly = sortByPeriod(data.filter((r) => r.report_type === 'yearly' && !(r.metadata?.domain)));
 
   const sections: { type: ReportType; label: string; items: Report[] }[] = [
     { type: 'weekly', label: 'Weekly Reports', items: weekly },
@@ -150,11 +209,20 @@ export function Reports({ appName }: { appName: AppName }) {
     { type: 'yearly', label: 'Yearly Reports', items: yearly },
   ];
 
+  // Insight report sections (solo only)
+  const insightSections: { domain: InsightDomain; label: string; icon: string; items: Report[] }[] = appName === 'solo' ? [
+    { domain: 'health', label: DOMAIN_LABELS.health, icon: DOMAIN_ICONS.health, items: sortByPeriod(healthInsights || []) },
+    { domain: 'finance', label: DOMAIN_LABELS.finance, icon: DOMAIN_ICONS.finance, items: sortByPeriod(financeInsights || []) },
+  ] : [];
+
+  const classicCount = weekly.length + monthly.length + yearly.length;
+  const totalCount = classicCount + (healthInsights?.length || 0) + (financeInsights?.length || 0);
+
   return (
     <div className="space-y-8">
       <div className="flex items-baseline justify-between">
         <h2 className="font-serif text-2xl text-text m-0">Reports</h2>
-        <span className="text-[11px] font-mono text-text-muted">{data.length} total</span>
+        <span className="text-[11px] font-mono text-text-muted">{totalCount} total</span>
       </div>
 
       {genError && (
@@ -171,7 +239,7 @@ export function Reports({ appName }: { appName: AppName }) {
             <h3 className="text-sm font-medium text-text-secondary m-0">{label}</h3>
             <button
               onClick={() => generate(type)}
-              disabled={generating !== null}
+              disabled={generating !== null || insightGenerating !== null}
               className={`text-[12px] px-3 py-1.5 rounded-md border cursor-pointer transition-all active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 ${
                 generating === type
                   ? 'border-accent-solo/40 bg-accent-solo-dim text-accent-solo'
@@ -228,13 +296,91 @@ export function Reports({ appName }: { appName: AppName }) {
         </section>
       ))}
 
+      {/* Insight report sections (solo only) */}
+      {insightSections.map(({ domain, label, icon, items }) => (
+        <section key={domain} className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-text-secondary m-0">{icon} {label}</h3>
+            <div className="flex items-center gap-1.5">
+              {(['weekly', 'monthly', 'yearly'] as ReportType[]).map((type) => (
+                <button
+                  key={type}
+                  onClick={() => generateInsight(domain, type)}
+                  disabled={generating !== null || insightGenerating !== null}
+                  className={`text-[12px] px-2.5 py-1 rounded-md border cursor-pointer transition-all active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 ${
+                    insightGenerating?.domain === domain && insightGenerating?.type === type
+                      ? 'border-accent-solo/40 bg-accent-solo-dim text-accent-solo'
+                      : 'border-border bg-surface-2 text-text-secondary hover:text-text hover:border-text-muted'
+                  }`}
+                >
+                  {insightGenerating?.domain === domain && insightGenerating?.type === type ? (
+                    <span className="inline-flex items-center gap-1">
+                      <span className="inline-block w-2.5 h-2.5 border-[1.5px] border-current border-t-transparent rounded-full animate-spin" />
+                      …
+                    </span>
+                  ) : (
+                    `+ ${type === 'weekly' ? 'W' : type === 'monthly' ? 'M' : 'Y'}`
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {items.length === 0 ? (
+            <p className="text-[13px] text-text-muted italic m-0 pl-1">No {domain} insight reports yet.</p>
+          ) : (
+            <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
+              {items.map((report, index) => {
+                const period = formatPeriod(report);
+                const typeLabel = report.report_type === 'weekly' ? 'W' : report.report_type === 'monthly' ? 'M' : 'Y';
+                return (
+                  <div
+                    key={report.id}
+                    className="flex items-center justify-between px-4 py-3 bg-surface-1 hover:bg-surface-2/60 transition-colors animate-[fade-in_0.3s_ease-out_both]"
+                    style={{ animationDelay: `${Math.min(index, 12) * 40}ms` }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-accent-solo/10 text-accent-solo text-[11px] font-mono font-medium">{typeLabel}</span>
+                      {period && (
+                        <span className="font-mono text-[12px] text-text">{period}</span>
+                      )}
+                      <span className="font-mono text-[11px] text-text-muted">
+                        {period ? `generated ${formatGeneratedTime(report.created_at)}` : formatGeneratedTime(report.created_at)}
+                      </span>
+                    </div>
+                    <span className="inline-flex items-center gap-3">
+                      <Link to={`/reports/${report.id}`} className="text-[12px] text-accent-solo hover:underline no-underline">Open →</Link>
+                      <button
+                        onClick={() => setConfirmDeleteId(report.id)}
+                        disabled={deleting === report.id}
+                        className="text-[12px] text-text-muted hover:text-danger cursor-pointer bg-transparent border-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                        aria-label={`Delete insight report ${period || report.id}`}
+                      >
+                        {deleting === report.id ? '…' : '✕'}
+                      </button>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      ))}
+
       <ConfirmDialog
         open={confirmDeleteId !== null}
         title="Delete report?"
         description="This action cannot be undone."
         confirmLabel="Delete"
         danger
-        onConfirm={() => confirmDeleteId && deleteReport(confirmDeleteId)}
+        onConfirm={() => {
+          const id = confirmDeleteId!;
+          // Check if it's an insight report by finding it in insight data
+          const isInsight = (healthInsights || []).some(r => r.id === id) || (financeInsights || []).some(r => r.id === id);
+          const domain = (healthInsights || []).some(r => r.id === id) ? 'health' as InsightDomain : 'finance' as InsightDomain;
+          if (isInsight) deleteInsightReport(id, domain);
+          else deleteReport(id);
+        }}
         onCancel={() => setConfirmDeleteId(null)}
       />
     </div>
