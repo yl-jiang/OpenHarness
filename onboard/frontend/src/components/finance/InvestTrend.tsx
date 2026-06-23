@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import {
   ResponsiveContainer, AreaChart, Area,
-  XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine,
+  XAxis, YAxis, CartesianGrid, Tooltip,
 } from 'recharts';
 
 import { useApi } from '../../hooks/useApi';
@@ -70,12 +70,9 @@ export function InvestTrend() {
     return <div className="text-sm text-text-muted py-8 text-center">暂无理财数据</div>;
   }
 
-  const allValues = chartData.flatMap((d) => [d.gain, -d.loss]);
-  const vMax = Math.max(0, ...allValues);
-  const vMin = Math.min(0, ...allValues);
-  const pad = (vMax - vMin) * 0.15 || 100;
-  const yMax = Math.ceil(vMax + pad);
-  const yMin = Math.floor(vMin - pad);
+  const allValues = chartData.flatMap((d) => [d.gain, d.loss]);
+  const dataMax = Math.max(0, ...allValues);
+  const yMax = dataMax <= 0 ? 100 : Math.ceil(dataMax * 1.15);
 
   const tickDays = chartData
     .filter((_, i) => i === 0 || (i + 1) % 5 === 0 || i === chartData.length - 1)
@@ -105,12 +102,12 @@ export function InvestTrend() {
               tickLine={{ stroke: '#2e2e33' }}
             />
             <YAxis
-              domain={[yMin, yMax]}
+              domain={[0, yMax]}
               tick={{ fontSize: 11, fill: '#a1a1aa' }}
               tickLine={{ stroke: '#2e2e33' }}
               axisLine={{ stroke: '#2e2e33' }}
               stroke="#63636e"
-              tickFormatter={(v) => v >= 1000 || v <= -1000 ? `${v / 1000}k` : String(v)}
+              tickFormatter={(v) => v >= 1000 ? `${v / 1000}k` : String(v)}
               allowDecimals={false}
               width={40}
             />
@@ -123,7 +120,6 @@ export function InvestTrend() {
               ]}
               labelFormatter={(label) => `${month}-${label}`}
             />
-            <ReferenceLine y={0} stroke="#555" strokeDasharray="3 3" />
             <Area
               type="monotone"
               dataKey="gain"
