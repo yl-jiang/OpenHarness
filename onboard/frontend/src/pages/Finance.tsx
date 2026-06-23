@@ -91,7 +91,7 @@ export function Finance() {
             <CashflowTrend days={selectedDays} />
           </Section>
           <Section title="理财盈亏趋势">
-            <InvestTrend days={selectedDays} />
+            <InvestTrend />
           </Section>
         </div>
 
