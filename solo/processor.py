@@ -387,6 +387,94 @@ class SoloProcessor:
         return report
 
 
+
+    async def generate_insight_report(
+        self,
+        domain: str,          # "health" | "finance"
+        report_type: str,     # "weekly" | "monthly" | "yearly"
+        *,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> SoloReport:
+        """Generate a domain-specific insight report (health or finance)."""
+        from solo.core.evidence import build_finance_evidence, build_health_evidence, _compute_prev_period
+        from solo.core.insight_render import render_insight_markdown
+
+        # 1. Resolve period
+        now = datetime.now(timezone.utc)
+        if start_date and end_date:
+            start, end = start_date, end_date
+        elif start_date:
+            start, end = start_date, now.strftime("%Y-%m-%d")
+        else:
+            _window = REPORT_WINDOW_DAYS
+            start = (now - timedelta(days=_window.get(report_type, 30))).strftime("%Y-%m-%d")
+            end = now.strftime("%Y-%m-%d")
+
+        # 2. Build evidence pack
+        prev_start, prev_end = _compute_prev_period(start, end)
+        if domain == "finance":
+            evidence = build_finance_evidence(
+                self.store, start_date=start, end_date=end,
+                prev_start=prev_start, prev_end=prev_end,
+            )
+        elif domain == "health":
+            evidence = build_health_evidence(
+                self.store, start_date=start, end_date=end,
+                prev_start=prev_start, prev_end=prev_end,
+            )
+        else:
+            raise ValueError(f"unsupported domain: {domain}")
+
+        # 3. Check data sufficiency
+        has_data = (
+            evidence.get("record_count", 0) >= 5
+            if domain == "finance"
+            else (bool(evidence.get("sleep", {}).get("mean", 0) > 0)
+                 or evidence.get("exercise", {}).get("days_with_exercise", 0) > 0)
+        )
+        if not has_data:
+            domain_label = {"health": "健康", "finance": "财务"}.get(domain, domain)
+            content = (
+                f"# {domain_label}{report_type.capitalize()} 洞察\n\n"
+                f"> 📅 {start} ~ {end}\n\n"
+                f"该时间段内数据不足，无法生成洞察报告。建议积累更多记录后再试。"
+            )
+            report = SoloReport(
+                id=uuid4().hex[:12], report_type=report_type, content=content,
+                created_at=_now(), period_start=start, period_end=end,
+                metadata={"domain": domain},
+            )
+            self.store.add_report(report)
+            return report
+
+        # 4. LLM generation
+        profile_context = self._profile_context()
+        insight_json = await self.agent.generate_insight_report(
+            domain, evidence, profile_context, report_type=report_type,
+        )
+
+        # 5. Render Markdown fallback
+        markdown_content = render_insight_markdown(insight_json, domain, report_type)
+
+        # 6. Store
+        report = SoloReport(
+            id=uuid4().hex[:12],
+            report_type=report_type,
+            content=markdown_content,
+            created_at=_now(),
+            period_start=start,
+            period_end=end,
+            metadata={
+                "domain": domain,
+                "insight_json": insight_json,
+                "evidence_summary": f"records={evidence.get('record_count', 0)}",
+            },
+        )
+        self.store.add_report(report)
+        logger.info("generate_insight_report done id=%s domain=%s type=%s", report.id, domain, report_type)
+        return report
+
     def _build_record(
         self,
         entry: SoloEntry,

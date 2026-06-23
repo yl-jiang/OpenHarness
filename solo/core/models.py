@@ -371,6 +371,7 @@ class SoloHealthRecord:
     sleep_hours: float = 0
     sleep_quality: str = ""
     mood: str = ""
+    mood_sentiment: str = ""  # "positive" | "neutral" | "negative" — LLM-classified at write time
     stress_level: str = ""
     metrics_json: str = "{}"
     tags: str = ""
@@ -407,7 +408,7 @@ class SoloHealthRecord:
             "exercise_duration_min": self.exercise_duration_min,
             "exercise_intensity": self.exercise_intensity,
             "sleep_hours": self.sleep_hours, "sleep_quality": self.sleep_quality,
-            "mood": self.mood, "stress_level": self.stress_level,
+            "mood": self.mood, "mood_sentiment": self.mood_sentiment, "stress_level": self.stress_level,
             "metrics_json": self.metrics_json, "tags": self.tags,
             "source": self.source, "linked_memory_id": self.linked_memory_id,
             "created_at": self.created_at, "updated_at": self.updated_at,

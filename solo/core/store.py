@@ -590,6 +590,7 @@ class SoloStore:
                 sleep_hours REAL NOT NULL DEFAULT 0,
                 sleep_quality TEXT NOT NULL DEFAULT '',
                 mood TEXT NOT NULL DEFAULT '',
+                mood_sentiment TEXT NOT NULL DEFAULT '',
                 stress_level TEXT NOT NULL DEFAULT '',
                 metrics_json TEXT NOT NULL DEFAULT '{}',
                 tags TEXT NOT NULL DEFAULT '',
@@ -1222,7 +1223,7 @@ class SoloStore:
         "id", "record_id", "date", "subject", "category", "item", "description",
         "body_part", "severity", "status", "medication_name", "dosage",
         "frequency", "duration", "exercise_type", "exercise_duration_min",
-        "exercise_intensity", "sleep_hours", "sleep_quality", "mood",
+        "exercise_intensity", "sleep_hours", "sleep_quality", "mood", "mood_sentiment",
         "stress_level", "metrics_json", "tags", "source", "linked_memory_id",
         "created_at", "updated_at",
     ]
@@ -1241,9 +1242,9 @@ class SoloStore:
             dosage=row[11], frequency=row[12], duration=row[13],
             exercise_type=row[14], exercise_duration_min=row[15],
             exercise_intensity=row[16], sleep_hours=row[17],
-            sleep_quality=row[18], mood=row[19], stress_level=row[20],
-            metrics_json=row[21], tags=row[22], source=row[23],
-            linked_memory_id=row[24], created_at=row[25], updated_at=row[26],
+            sleep_quality=row[18], mood=row[19], mood_sentiment=row[20], stress_level=row[21],
+            metrics_json=row[22], tags=row[23], source=row[24],
+            linked_memory_id=row[25], created_at=row[26], updated_at=row[27],
         )
 
     def add_health_record(self, record: SoloHealthRecord) -> None:

@@ -750,3 +750,56 @@ SKILLS_PROMPT_HEADER = [
     KEYWORD_TRIGGER_WARNING,
     "",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Insight report system prompts (health / finance)
+# ---------------------------------------------------------------------------
+
+_FINANCE_INSIGHT_SYSTEM_PROMPT = """\
+你是一位个人财务洞察分析师。你的任务是从预计算的统计证据中：
+1. 发现用户自己可能忽视的消费习惯和盲点
+2. 识别异常模式和潜在风险
+3. 给出可量化验证的具体建议
+
+## 核心原则
+- **盲点优先**：你的价值不是重复数据，而是发现"用户看了数据也未必注意到"的模式
+- **引用证据**：每个结论必须引用具体日期/金额/百分比
+- **不空洞**：禁止"注意消费""量入为出"等通用建议，每条建议必须可量化验证
+- **结构化输出**：严格输出 JSON（InsightReportSchema）
+
+## 输出格式
+严格输出 JSON，schema 如下：
+{schema}
+"""
+
+_HEALTH_INSIGHT_SYSTEM_PROMPT = """\
+你是一位个人健康趋势分析师。你的任务是从预计算的健康统计证据中：
+1. 发现用户自己可能忽视的健康习惯和模式
+2. 识别跨维度相关性（睡眠↔情绪、运动↔精力、用药↔症状）
+3. 标记需要关注的趋势恶化信号
+
+## 核心原则
+- **模式优先**：重点识别跨维度关联，而非单一指标复述
+- **时间序列敏感**：关注趋势方向（连续恶化 vs 波动 vs 改善）
+- **不做医疗诊断**：只观察行为模式和趋势，不给医学建议
+- **引用证据**：每个结论引用具体日期/数值
+- **结构化输出**：严格输出 JSON（InsightReportSchema）
+
+## 输出格式
+严格输出 JSON，schema 如下：
+{schema}
+"""
+
+
+def insight_report_system_prompt(domain: str) -> str:
+    """Return the system prompt for domain-specific insight report generation."""
+    import json
+    from solo.core.insight_schema import INSIGHT_REPORT_SCHEMA
+
+    schema_str = json.dumps(INSIGHT_REPORT_SCHEMA, ensure_ascii=False, indent=2)
+    if domain == "finance":
+        return _FINANCE_INSIGHT_SYSTEM_PROMPT.format(schema=schema_str)
+    if domain == "health":
+        return _HEALTH_INSIGHT_SYSTEM_PROMPT.format(schema=schema_str)
+    raise ValueError(f"unsupported domain: {domain}")

@@ -182,6 +182,39 @@ class OpenHarnessSoloAgent:
         """Public interface for single-turn LLM completion (used by project discovery)."""
         return await self._complete(system_prompt=system_prompt, user_prompt=user_prompt)
 
+
+    async def generate_insight_report(
+        self,
+        domain: str,
+        evidence_pack: dict[str, Any],
+        profile_context: str,
+        *,
+        report_type: str,
+    ) -> dict[str, Any]:
+        """Generate a structured insight report via LLM. Returns parsed JSON."""
+        import json as _json
+        from solo.core.insight_schema import INSIGHT_REPORT_SCHEMA
+        from solo.prompts import insight_report_system_prompt
+
+        schema_str = _json.dumps(INSIGHT_REPORT_SCHEMA, ensure_ascii=False, indent=2)
+        system_prompt = insight_report_system_prompt(domain)
+        user_prompt = (
+            f"{profile_context}\n\n"
+            f"## 预计算统计证据\n\n"
+            f"```json\n{_json.dumps(evidence_pack, ensure_ascii=False, indent=2)}\n```\n\n"
+            f"## 输出要求\n\n"
+            f"严格输出 JSON，schema 如下：\n```json\n{schema_str}\n```"
+        )
+        content = await self._complete(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=4096,
+        )
+        result = _safe_parse_json(content)
+        if not result or "headline" not in result:
+            raise RuntimeError(f"LLM did not return valid insight JSON: {content[:200]}")
+        return result
+
     async def _complete(self, *, system_prompt: str, user_prompt: str, max_tokens: int | None = None) -> str:
         request = ApiMessageRequest(
             model=self._settings.model,

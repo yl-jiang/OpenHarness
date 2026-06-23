@@ -1112,6 +1112,7 @@ class SoloToolRegistry:
             sleep_hours=float(arguments.get("sleep_hours") or 0),
             sleep_quality=str(arguments.get("sleep_quality") or ""),
             mood=str(arguments.get("mood") or ""),
+            mood_sentiment=str(arguments.get("mood_sentiment") or ""),
             stress_level=str(arguments.get("stress_level") or ""),
             metrics_json=str(arguments.get("metrics_json") or "{}"),
             tags=str(arguments.get("tags") or ""),
@@ -2540,7 +2541,7 @@ def _tool_health_record() -> ToolDefinition:
             "contains both daily events AND health information. "
             "You may call this tool MULTIPLE TIMES per turn if the message contains "
             "different types of health events (e.g. exercise + medication). "
-            "For STABLE health facts (chronic conditions, allergies), use solo_remember instead."
+            "For STABLE health facts (chronic conditions, allergies), use solo_remember instead. When recording mood (category=mental), always classify the sentiment as positive, neutral, or negative in the mood_sentiment field."
         ),
         [
             ("category", "string",
@@ -2576,6 +2577,7 @@ def _tool_health_record() -> ToolDefinition:
             ("sleep_hours", "number", "Hours of sleep (for category=sleep).", False),
             ("sleep_quality", "string", "Sleep quality: good, fair, poor.", False),
             ("mood", "string", "Mood description (for category=mental).", False),
+            ("mood_sentiment", "string", "Sentiment classification of the mood: positive, neutral, or negative. Required when mood is set.", False),
             ("stress_level", "string", "Stress level: low, moderate, high.", False),
             ("metrics_json", "string",
              "JSON string for extra metrics (e.g. '{\"weight_kg\": 72.5, \"steps\": 8000}').",
