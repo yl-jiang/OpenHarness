@@ -68,7 +68,14 @@ def add_memory_entry(
             (header for header in existing if _effective_signature(header.path, header.signature) == signature),
             None,
         )
-        path = duplicate.path if duplicate is not None else _next_memory_path(memory_dir, slug)
+        # If no exact content match, check for a same-slug file to update instead of creating a _2 duplicate.
+        slug_match = None
+        if duplicate is None:
+            slug_match = next(
+                (header for header in existing if header.path.stem == slug and not header.disabled),
+                None,
+            )
+        path = duplicate.path if duplicate is not None else (slug_match.path if slug_match is not None else _next_memory_path(memory_dir, slug))
         now = utc_now()
         now_text = format_datetime(now)
         if path.exists():

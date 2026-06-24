@@ -24,7 +24,7 @@ class RelevantMemory:
 MemorySelector = Callable[[str, list[MemoryHeader]], list[str]]
 
 
-def build_memory_manifest(headers: Iterable[MemoryHeader]) -> str:
+def build_memory_manifest(headers: Iterable[MemoryHeader], *, include_body: bool = False) -> str:
     """Render a compact manifest for selector prompts and diagnostics."""
 
     lines: list[str] = []
@@ -37,6 +37,8 @@ def build_memory_manifest(headers: Iterable[MemoryHeader]) -> str:
         ]
         if header.description:
             bits.append(f"- {header.description}")
+        if include_body and header.body_preview:
+            bits.append(f"| {header.body_preview}")
         lines.append(" ".join(bits))
     return "\n".join(lines)
 

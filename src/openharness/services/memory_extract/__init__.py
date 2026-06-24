@@ -120,12 +120,18 @@ async def extract_memories_from_turn(
 def build_extraction_prompt(cwd: str | Path, messages: list[ConversationMessage], *, max_records: int) -> str:
     """Build the extraction request from recent messages and manifest."""
 
-    manifest = build_memory_manifest(scan_memory_files(cwd, max_files=80))
+    manifest = build_memory_manifest(scan_memory_files(cwd, max_files=80), include_body=True)
     transcript = "\n".join(_summarize_message(message) for message in messages[-12:])
     return (
         "Extract only durable memories from the recent conversation.\n"
-        f"Return JSON with at most {max_records} records. Existing memory manifest:\n"
+        f"Return JSON with at most {max_records} records. Existing memory manifest (with body previews):\n"
         f"{manifest or '(empty)'}\n\n"
+        "IMPORTANT dedup rules:\n"
+        "- If a fact is already covered by an existing memory (even with different wording), "
+        "set its title to EXACTLY match the existing entry's filename (without .md) so it updates "
+        "the existing file instead of creating a duplicate.\n"
+        "- Do NOT create a new memory for a fact that is already recorded above.\n"
+        "- Only extract genuinely new information not represented in the manifest.\n\n"
         "Recent conversation:\n"
         f"{transcript}\n\n"
         'JSON schema: {"memories":[{"title":"...","type":"user|feedback|project|reference",'
