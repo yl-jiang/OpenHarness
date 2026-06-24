@@ -1073,7 +1073,7 @@ class SoloToolRegistry:
 
     _HEALTH_STANDARD_CATEGORIES = frozenset({
         "medical", "symptom", "medication", "fitness",
-        "sleep", "nutrition", "mental", "vital",
+        "sleep", "nutrition", "mental", "vital", "period",
     })
     _HEALTH_VAGUE_NAMES = frozenset({
         "other", "misc", "general", "unknown", "custom", "test",

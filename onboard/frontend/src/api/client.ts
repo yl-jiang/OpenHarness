@@ -13,6 +13,7 @@ import type {
   Highlight,
   LogRecord,
   PaginatedResponse,
+  PeriodAnalysis,
   Report,
   InsightReportJSON,
   SearchResult,
@@ -358,6 +359,9 @@ export const api = {
     vitalTrends: (subject?: string, month?: string) =>
       request<{ start_date: string; end_date: string; daily: { date: string; hr_min: number | null; hr_max: number | null; spo2_min: number | null; spo2_max: number | null }[] }>(
         `/api/solo/health/vital-trends${query({ ...(subject ? { subject } : {}), ...(month ? { month } : {}) })}`),
+    period: (subject?: string, days: number = 180) =>
+      request<PeriodAnalysis>(
+        `/api/solo/health/period${query({ ...(subject ? { subject } : {}), days })}`),
     timeline: (subject?: string, params: Record<string, QueryValue> = {}) =>
       request<{ items: HealthTimelineItem[]; total: number; limit: number; offset: number }>(
         `/api/solo/health/timeline${query({ ...(subject ? { subject } : {}), ...params })}`),

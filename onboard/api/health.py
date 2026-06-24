@@ -136,6 +136,15 @@ def health_vital_trends(
     return _service(workspace).health_vital_trends(subject=subject, month=month)
 
 
+@router.get("/period")
+def health_period(
+    subject: str | None = None,
+    days: int = Query(180, ge=1, le=3650),
+    workspace: str | None = None,
+) -> dict[str, Any]:
+    return _service(workspace).health_period_cycles(subject=subject, days=days)
+
+
 @router.get("/timeline")
 def health_timeline(
     subject: str | None = None,

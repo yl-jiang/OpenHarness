@@ -1374,6 +1374,179 @@ class SoloService:
             "daily": rows,
         }
 
+    def health_period_cycles(self, subject: str | None = None, days: int = 180) -> dict[str, Any]:
+        """Analyse menstrual cycles for a subject.
+
+        Groups `category="period"` records (each carrying a date) into per-cycle
+        spans of consecutive days, computes cycle-length and period-length
+        averages, and projects the next period / ovulation estimate.
+        """
+        from datetime import datetime, timedelta
+
+        cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        records = self.store.list_health_records(
+            subject=subject, category="period", date_from=cutoff, limit=1000,
+        )
+        if not records:
+            return {
+                "cycles": [], "stats": {}, "forecast": {}, "calendar": [],
+                "total": 0,
+            }
+
+        by_date: dict[str, dict] = {}
+        for r in records:
+            if not r.date:
+                continue
+            d = r.date[:10]
+            slot = by_date.setdefault(d, {"flow": "", "symptoms": []})
+            flow = ""
+            if r.metrics_json:
+                try:
+                    import json
+                    m = json.loads(r.metrics_json)
+                    flow = str(m.get("flow") or "").lower()
+                except Exception:
+                    flow = ""
+            if not flow and r.severity:
+                flow = r.severity.lower()
+            if flow:
+                slot["flow"] = flow
+            if r.item:
+                slot["symptoms"].append(r.item)
+
+        ordered = sorted(by_date.items())
+        cycles: list[dict] = []
+        cur: list[tuple[str, dict]] = []
+        for d, info in ordered:
+            if cur:
+                prev = cur[-1][0]
+                if (datetime.strptime(d, "%Y-%m-%d")
+                        - datetime.strptime(prev, "%Y-%m-%d")).days > 2:
+                    cycles.append(self._build_cycle(cur))
+                    cur = []
+            cur.append((d, info))
+        if cur:
+            cycles.append(self._build_cycle(cur))
+
+        for i in range(len(cycles) - 1):
+            nxt = cycles[i + 1]
+            cycles[i]["length_days"] = (
+                datetime.strptime(nxt["start_date"], "%Y-%m-%d")
+                - datetime.strptime(cycles[i]["start_date"], "%Y-%m-%d")
+            ).days
+
+        cycle_lengths = [c["length_days"] for c in cycles if c.get("length_days")]
+        period_lengths = [c["period_days"] for c in cycles if c.get("period_days")]
+        avg_cycle = (
+            round(sum(cycle_lengths) / len(cycle_lengths), 1)
+            if cycle_lengths else None
+        )
+        avg_period = (
+            round(sum(period_lengths) / len(period_lengths), 1)
+            if period_lengths else None
+        )
+
+        forecast: dict[str, Any] = {}
+        ovulation: str | None = None
+        fertile_window: dict[str, str] = {}
+        if cycles:
+            last_start = cycles[-1]["start_date"]
+            if avg_cycle is not None:
+                nxt = (
+                    datetime.strptime(last_start, "%Y-%m-%d")
+                    + timedelta(days=round(avg_cycle))
+                )
+                length_days = round(avg_period) if avg_period else 5
+                forecast = {
+                    "next_start": nxt.strftime("%Y-%m-%d"),
+                    "next_end": (nxt + timedelta(days=length_days - 1)).strftime("%Y-%m-%d"),
+                    "length_days": length_days,
+                }
+                ov_est = nxt - timedelta(days=14)
+                ovulation = ov_est.strftime("%Y-%m-%d")
+                fw_start = ov_est - timedelta(days=5)
+                fw_end = ov_est + timedelta(days=1)
+                fertile_window = {
+                    "start": fw_start.strftime("%Y-%m-%d"),
+                    "end": fw_end.strftime("%Y-%m-%d"),
+                }
+
+        today = datetime.now().date()
+        cal_start = datetime(today.year, today.month, 1).date() - timedelta(days=60)
+        cal_end_dt = (
+            datetime(today.year, today.month, 1).date()
+            + timedelta(days=120)
+        )
+        period_days = {d for d in by_date}
+        predicted: set[str] = set()
+        if forecast:
+            nxt = datetime.strptime(forecast["next_start"], "%Y-%m-%d").date()
+            for i in range(forecast.get("length_days", 5)):
+                predicted.add((nxt + timedelta(days=i)).strftime("%Y-%m-%d"))
+
+        fertile_set: set[str] = set()
+        if fertile_window:
+            fs = datetime.strptime(fertile_window["start"], "%Y-%m-%d").date()
+            fe = datetime.strptime(fertile_window["end"], "%Y-%m-%d").date()
+            cur_fw = fs
+            while cur_fw <= fe:
+                fertile_set.add(cur_fw.strftime("%Y-%m-%d"))
+                cur_fw += timedelta(days=1)
+
+        calendar: list[dict] = []
+        cur = cal_start
+        while cur <= cal_end_dt:
+            ds = cur.strftime("%Y-%m-%d")
+            if ds in period_days:
+                state = "period"
+            elif ds in predicted:
+                state = "predicted"
+            elif ds in fertile_set:
+                state = "fertile"
+            else:
+                state = "none"
+            if state != "none":
+                calendar.append({
+                    "date": ds, "state": state,
+                    "flow": by_date.get(ds, {}).get("flow", ""),
+                })
+            cur += timedelta(days=1)
+
+        return {
+            "cycles": cycles,
+            "stats": {
+                "avg_cycle_days": avg_cycle,
+                "avg_period_days": avg_period,
+                "cycle_count": len(cycles),
+                "last_start": cycles[-1]["start_date"] if cycles else None,
+                "last_end": cycles[-1]["end_date"] if cycles else None,
+            },
+            "forecast": forecast,
+            "ovulation_estimate": ovulation,
+            "fertile_window": fertile_window,
+            "calendar": calendar,
+            "total": len(records),
+        }
+
+    @staticmethod
+    def _build_cycle(entries: list[tuple[str, dict]]) -> dict:
+        from datetime import datetime
+        start = datetime.strptime(entries[0][0], "%Y-%m-%d")
+        end = datetime.strptime(entries[-1][0], "%Y-%m-%d")
+        days = [info for _, info in entries]
+        flows = [d["flow"] for d in days if d.get("flow")]
+        symptoms: list[str] = []
+        for d in days:
+            symptoms.extend(d.get("symptoms") or [])
+        return {
+            "start_date": entries[0][0],
+            "end_date": entries[-1][0],
+            "period_days": (end - start).days + 1,
+            "length_days": 0,
+            "flow_summary": ",".join(sorted(set(flows))) if flows else "",
+            "symptoms": sorted(set(symptoms)),
+        }
+
     def health_timeline(self, subject: str | None = None, limit: int = 30, offset: int = 0) -> dict[str, Any]:
         records = self.store.list_health_records(subject=subject)
         total = len(records)

@@ -12,6 +12,7 @@ import type {
 import { StatsCard } from '../components/StatsCard';
 import { SubjectFilter } from '../components/health/SubjectFilter';
 import { HealthTimeline } from '../components/health/HealthTimeline';
+import { PeriodTracker } from '../components/health/PeriodTracker';
 import { useApi } from '../hooks/useApi';
 import { InsightReportList } from '../components/InsightReportList';
 
@@ -28,7 +29,7 @@ const tooltipStyle = {
 
 const CATEGORY_LABELS: Record<string, string> = {
   medical: '就诊', symptom: '症状', medication: '用药', fitness: '运动',
-  sleep: '睡眠', nutrition: '饮食', mental: '心理', vital: '体征',
+  sleep: '睡眠', nutrition: '饮食', mental: '心理', vital: '体征', period: '生理期',
 };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -215,7 +216,17 @@ export function Health() {
       {/* Subject Filter */}
       <SubjectFilter subjects={subjects} selected={selectedSubject} onSelect={setSelectedSubject} />
 
+      {/* Health insight reports — pinned near the top */}
       <InsightReportList domain="health" />
+
+      {/* Period tracker — shown for any non-self subject (the LLM has already
+          routed period records to the correct person-specific subject). */}
+      {selectedSubject !== null && selectedSubject !== 'self' && (
+        <Section title="生理期追踪">
+          <PeriodTracker subject={selectedSubject} />
+        </Section>
+      )}
+
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatsCard label="总记录" value={overview?.total_records ?? 0} icon="♡" />

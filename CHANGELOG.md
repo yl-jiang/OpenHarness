@@ -8,6 +8,10 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Added
 
+- Onboard Health page now shows a "生理期追踪" card on any non-self subject's tab. The new `PeriodTracker` component renders a 3-month calendar overlay (past period days in red, predicted next period in dashed red, ovulation estimate in amber), summary stats (last start, average cycle length, average period length, days until next period), and a list of recent cycles. Backed by a new `GET /api/solo/health/period` endpoint that groups `category="period"` health records into per-cycle spans and computes cycle/period averages plus the next-period forecast. `"period"` is now a first-class health record category, so the solo LLM agent can create records directly (e.g. "老婆今天来大姨妈了").
+
+### Changed
+
 - `skill_manager` tool now supports `action="search"` for hybrid (BM25 + heuristic token, fused via Reciprocal Rank Fusion) skill discovery by natural language query, with optional `tag` filtering and `limit`, so the agent can progressively disclose the growing skill catalogue instead of scanning a flat list. Common text-search primitives were factored into a new `openharness.search.text` module shared with `memory/search.py`.
 - `solo` / `wolo` gateways now auto-register recurring report jobs that archive a natural-week report every Sunday at 21:00 and a natural-month report at 21:00 on the month's last day, automatically DM the generated report to the resolved Feishu user, and use longer cron timeouts so monthly synthesis can finish without being killed after 5 minutes.
 - Root `Makefile` now provides `make onboard`, which builds `onboard/frontend` and then runs the onboard app in the foreground; optional CLI flags can be passed through with `ONBOARD_ARGS="..."`.

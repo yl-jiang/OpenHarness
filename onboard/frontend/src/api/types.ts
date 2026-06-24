@@ -483,6 +483,50 @@ export interface HealthOverview {
   fitness_count_7d: number;
 }
 
+export interface PeriodCycle {
+  start_date: string;
+  end_date: string;
+  period_days: number;
+  length_days: number;
+  flow_summary: string;
+  symptoms: string[];
+}
+
+export interface PeriodForecast {
+  next_start: string;
+  next_end: string;
+  length_days: number;
+}
+
+export interface PeriodStats {
+  avg_cycle_days: number | null;
+  avg_period_days: number | null;
+  cycle_count: number;
+  last_start: string | null;
+  last_end: string | null;
+}
+
+export interface PeriodCalendarDay {
+  date: string;
+  state: 'period' | 'predicted' | 'ovulation' | 'fertile';
+  flow: string;
+}
+
+export interface FertileWindow {
+  start: string;
+  end: string;
+}
+
+export interface PeriodAnalysis {
+  cycles: PeriodCycle[];
+  stats: PeriodStats;
+  forecast: PeriodForecast;
+  ovulation_estimate: string | null;
+  fertile_window: FertileWindow;
+  calendar: PeriodCalendarDay[];
+  total: number;
+}
+
 export interface FitnessDay {
   date: string;
   session_count: number;
