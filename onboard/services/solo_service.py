@@ -1698,24 +1698,24 @@ class SoloService:
         }
 
     def finance_transactions_trend(self, days: int = 180) -> dict[str, Any]:
-        """Monthly income/expense/net series for ComposedChart."""
+        """Daily income/expense/net series for ComposedChart/AreaChart."""
         from collections import defaultdict
         from datetime import datetime, timedelta
 
         cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
         records = self.store.list_finance_transactions(date_from=cutoff)
-        by_month: dict[str, dict] = defaultdict(lambda: {"income": 0.0, "expense": 0.0})
+        by_day: dict[str, dict] = defaultdict(lambda: {"income": 0.0, "expense": 0.0})
         for r in records:
             if r.currency != "CNY":
                 continue
-            m = r.date[:7]
+            d = r.date[:10]
             if r.type == "income":
-                by_month[m]["income"] += r.amount
+                by_day[d]["income"] += r.amount
             elif r.type == "expense":
-                by_month[m]["expense"] += r.amount
-        trend = [{"month": m, "income": round(v["income"], 2), "expense": round(v["expense"], 2),
+                by_day[d]["expense"] += r.amount
+        trend = [{"month": d, "income": round(v["income"], 2), "expense": round(v["expense"], 2),
                   "net": round(v["income"] - v["expense"], 2)}
-                 for m, v in sorted(by_month.items())]
+                 for d, v in sorted(by_day.items())]
         return {"trend": trend}
 
     def finance_transactions_daily(self, month: str | None = None) -> dict[str, Any]:

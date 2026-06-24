@@ -8,8 +8,8 @@ import { useApi } from '../../hooks/useApi';
 import { api } from '../../api/client';
 import type { SoloFinanceTransaction } from '../../api/types';
 
-const EXPENSE_COLOR = '#e0b87a';
-const INCOME_COLOR = '#7ec4a8';
+const EXPENSE_COLOR = '#34d399';
+const INCOME_COLOR = '#f87171';
 
 const tooltipStyle = {
   background: '#1c1c21',
@@ -57,15 +57,17 @@ export function CategoryRanking() {
       }
     }
 
+    const mm = month.slice(5);
     return Array.from({ length: daysInMonth }, (_, i) => {
       const day = String(i + 1).padStart(2, '0');
+      const label = `${mm}/${day}`;
       return {
-        day,
+        day: label,
         expense: expenseByDay.get(day) || 0,
         income: incomeByDay.get(day) || 0,
       };
     });
-  }, [data, daysInMonth]);
+  }, [data, daysInMonth, month]);
 
   const hasData = chartData.some((d) => d.expense > 0 || d.income > 0);
   if (!hasData) {
@@ -120,7 +122,7 @@ export function CategoryRanking() {
                 `¥${v.toLocaleString()}`,
                 name === 'expense' ? '支出' : '收入',
               ]}
-              labelFormatter={(label) => `${month}-${label}`}
+              labelFormatter={(label) => `${month.slice(0, 7)}-${label.replace('/', '-')}`}
             />
             <Area
               type="monotone"
@@ -139,7 +141,6 @@ export function CategoryRanking() {
               name="income"
               stroke={INCOME_COLOR}
               strokeWidth={1.75}
-              strokeDasharray="6 4"
               fill="url(#incomeGrad)"
               dot={{ r: 2.5, fill: INCOME_COLOR, strokeWidth: 0 }}
               activeDot={{ r: 4 }}
@@ -158,8 +159,8 @@ export function CategoryRanking() {
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span
-            className="h-2 w-4 rounded-sm border border-dashed"
-            style={{ borderColor: INCOME_COLOR }}
+            className="h-2 w-4 rounded-sm"
+            style={{ backgroundColor: INCOME_COLOR, opacity: 0.35, boxShadow: `inset 0 0 0 1px ${INCOME_COLOR}` }}
           />
           收入
         </span>

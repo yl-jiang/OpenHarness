@@ -8,8 +8,8 @@ import { useApi } from '../../hooks/useApi';
 import { api } from '../../api/client';
 import type { SoloFinanceTransaction } from '../../api/types';
 
-const GAIN_COLOR = '#34d399';
-const LOSS_COLOR = '#f87171';
+const GAIN_COLOR = '#f87171';
+const LOSS_COLOR = '#34d399';
 
 const tooltipStyle = {
   background: '#1c1c21',
@@ -57,13 +57,15 @@ export function InvestTrend() {
       }
     }
 
+    const mm = month.slice(5);
     return Array.from({ length: daysInMonth }, (_, i) => {
       const day = String(i + 1).padStart(2, '0');
+      const label = `${mm}/${day}`;
       const gain = gainByDay.get(day) || 0;
       const loss = lossByDay.get(day) || 0;
-      return { day, gain, loss, net: gain - loss };
+      return { day: label, gain, loss, net: gain - loss };
     });
-  }, [data, daysInMonth]);
+  }, [data, daysInMonth, month]);
 
   const hasData = chartData.some((d) => d.gain > 0 || d.loss > 0);
   if (!hasData) {
@@ -118,7 +120,7 @@ export function InvestTrend() {
                 `¥${v.toLocaleString()}`,
                 name === 'gain' ? '收益' : '亏损',
               ]}
-              labelFormatter={(label) => `${month}-${label}`}
+              labelFormatter={(label) => `${month.slice(0, 7)}-${label.replace('/', '-')}`}
             />
             <Area
               type="monotone"
@@ -137,7 +139,6 @@ export function InvestTrend() {
               name="loss"
               stroke={LOSS_COLOR}
               strokeWidth={1.75}
-              strokeDasharray="6 4"
               fill="url(#investLossGrad)"
               dot={{ r: 2.5, fill: LOSS_COLOR, strokeWidth: 0 }}
               activeDot={{ r: 4 }}
@@ -156,8 +157,8 @@ export function InvestTrend() {
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span
-            className="h-2 w-4 rounded-sm border border-dashed"
-            style={{ borderColor: LOSS_COLOR }}
+            className="h-2 w-4 rounded-sm"
+            style={{ backgroundColor: LOSS_COLOR, opacity: 0.35, boxShadow: `inset 0 0 0 1px ${LOSS_COLOR}` }}
           />
           亏损
         </span>
