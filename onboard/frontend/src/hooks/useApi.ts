@@ -20,16 +20,22 @@ export function useApi<T>(loader: () => Promise<T>, deps: unknown[], options: Ap
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [version, setVersion] = useState(0);
+  const [reloadCounter, setReloadCounter] = useState(0);
   const hasData = useRef(false);
+  const prevDataRef = useRef<string | null>(null);
+  const loaderRef = useRef(loader);
+  loaderRef.current = loader;
 
+  // Reset on deps change
   useEffect(() => {
     hasData.current = false;
+    prevDataRef.current = null;
     setData(null);
     setError(null);
     setLoading(enabled);
   }, [enabled, ...deps]);
 
+  // Initial fetch + manual reload
   useEffect(() => {
     if (!enabled) {
       setLoading(false);
@@ -38,10 +44,12 @@ export function useApi<T>(loader: () => Promise<T>, deps: unknown[], options: Ap
     let cancelled = false;
     setLoading(!hasData.current);
     setError(null);
-    loader()
+    loaderRef.current()
       .then((result) => {
         if (!cancelled) {
           hasData.current = true;
+          const serialized = JSON.stringify(result);
+          prevDataRef.current = serialized;
           setData(result);
         }
       })
@@ -55,21 +63,28 @@ export function useApi<T>(loader: () => Promise<T>, deps: unknown[], options: Ap
           setLoading(false);
         }
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, ...deps, version]);
+  }, [enabled, ...deps, reloadCounter]);
 
+  // Polling — fetch directly in interval, only update state when data changes
   useEffect(() => {
-    if (!refreshIntervalMs) {
-      return;
-    }
+    if (!refreshIntervalMs || !enabled) return;
     const interval = window.setInterval(() => {
-      setVersion((value) => value + 1);
+      loaderRef.current()
+        .then((result) => {
+          const serialized = JSON.stringify(result);
+          if (serialized !== prevDataRef.current) {
+            prevDataRef.current = serialized;
+            setData(result);
+          }
+        })
+        .catch(() => {
+          // Silently ignore polling errors — the last known data stays visible
+        });
     }, refreshIntervalMs);
     return () => window.clearInterval(interval);
-  }, [...deps, refreshIntervalMs]);
+  }, [enabled, ...deps, refreshIntervalMs]);
 
-  return { data, error, loading, reload: () => setVersion((value) => value + 1) };
+  return { data, error, loading, reload: () => setReloadCounter((v) => v + 1) };
 }
