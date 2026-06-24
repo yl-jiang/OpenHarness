@@ -7,6 +7,7 @@ from openharness.evolution.self_evolution import (
     SelfEvolutionConfig,
     SelfEvolutionController,
     SelfEvolutionReviewRequest,
+    build_review_system_prompt,
     build_self_evolution_review_prompt,
     extract_review_actions,
     format_review_summary,
@@ -14,6 +15,7 @@ from openharness.evolution.self_evolution import (
 
 __all__ = [
     "BackgroundSelfEvolutionRunner",
+    "build_review_system_prompt",
     "extract_review_actions",
     "format_review_summary",
     "ReviewAction",

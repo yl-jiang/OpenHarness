@@ -34,6 +34,7 @@ from openharness.evolution import (
     BackgroundSelfEvolutionRunner,
     SelfEvolutionConfig,
     SelfEvolutionController,
+    build_review_system_prompt,
 )
 from openharness.hooks import HookEvent, HookExecutionContext, HookExecutor, load_hook_registry
 from openharness.hooks.hot_reload import HookReloader
@@ -561,6 +562,7 @@ async def build_runtime(
 
         _evo_client = utility_resolution.api_client if utility_resolution else resolved_api_client
         _evo_model = utility_resolution.model if utility_resolution else settings.model
+        review_system_prompt = build_review_system_prompt(cwd=cwd)
         restored_metadata[ToolMetadataKey.SELF_EVOLUTION_CONTROLLER.value] = SelfEvolutionController(
             evolution_config,
             BackgroundSelfEvolutionRunner(
@@ -569,7 +571,7 @@ async def build_runtime(
                 permission_checker=permission_checker,
                 cwd=cwd,
                 model=_evo_model,
-                system_prompt=system_prompt_text,
+                system_prompt=review_system_prompt,
                 max_tokens=settings.max_tokens,
                 config=evolution_config,
                 tool_metadata=restored_metadata,

@@ -58,6 +58,45 @@ _COMBINED_REVIEW_PROMPT = (
 )
 
 
+_REVIEW_IDENTITY = (
+    "You are the background self-evolution reviewer for OpenHarness. "
+    "Your sole job is to review a recent conversation slice and decide whether "
+    "anything should be durably captured as user memory or as a reusable skill. "
+    "You are not the foreground assistant — do not answer the user's prior "
+    "questions, do not propose code changes, and do not chat."
+)
+
+
+_REVIEW_PRINCIPLES = (
+    "# Review principles\n"
+    "- Write only when the signal is clear and reusable. When in doubt, skip.\n"
+    "- Prefer updating an existing memory/skill over creating a duplicate.\n"
+    "- Keep entries concise; capture the lesson, not the full story.\n"
+    "- Never echo file contents or conversation text back; just use the tools.\n"
+    "- Do not read files unless the review task genuinely requires it.\n"
+    "- Finish as soon as the review decision is made — no extra commentary."
+)
+
+
+def build_review_system_prompt(cwd: str | Path | None = None) -> str:
+    """Build a minimal system prompt for the background review agent.
+
+    Intentionally much leaner than the main agent prompt: only identity,
+    task scope, writing principles, and a tiny environment hint. Tool
+    documentation comes from the tool registry itself.
+    """
+    env_line = ""
+    if cwd is not None:
+        from datetime import date as _date
+
+        env_line = (
+            f"\n\n# Environment\n"
+            f"- Working directory: {Path(cwd).resolve()}\n"
+            f"- Date: {_date.today().isoformat()}"
+        )
+    return f"{_REVIEW_IDENTITY}\n\n{_REVIEW_PRINCIPLES}{env_line}"
+
+
 @dataclass(frozen=True)
 class ReviewAction:
     """A single write action performed by the background review agent."""
