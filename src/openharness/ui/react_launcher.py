@@ -140,6 +140,21 @@ async def launch_react_tui(
     permission_mode: str | None = None,
 ) -> int:
     """Launch the React terminal frontend as the default UI."""
+    if not sys.stdin.isatty():
+        print(
+            "Error: The OpenHarness interactive TUI requires a terminal (TTY).\n"
+            "The current stdin is not a TTY, so the React frontend cannot start.\n\n"
+            "To run without the TUI, use:\n"
+            "  oh -p 'your prompt'\n\n"
+            "Or use one of the non-interactive subcommands:\n"
+            "  oh --help\n"
+            "  oh auth status\n"
+            "  oh provider list\n"
+            "  oh config show",
+            file=sys.stderr,
+        )
+        return 1
+
     frontend_dir = get_frontend_dir()
     package_json = frontend_dir / "package.json"
     if not package_json.exists():

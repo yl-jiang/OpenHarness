@@ -38,7 +38,7 @@ for arg in "$@"; do
             echo "Installs the current checkout in editable mode and"
             echo "registers CLI commands in ~/.local/bin."
             echo ""
-            echo "  default         use ./ .openharness-venv inside the current repo"
+            echo "  default         use ./.venv if it exists, otherwise create ./.openharness-venv"
             echo "  --global-venv   use ~/.openharness-venv but still install the current repo"
             echo "  --with-channels deprecated compatibility flag; common IM deps install by default"
             exit 0
@@ -54,6 +54,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 if [ "$GLOBAL_VENV" = true ]; then
     VENV_DIR="$HOME/.openharness-venv"
+elif [ -d "$REPO_ROOT/.venv" ]; then
+    VENV_DIR="$REPO_ROOT/.venv"
 else
     VENV_DIR="$REPO_ROOT/.openharness-venv"
 fi
@@ -87,6 +89,10 @@ if command -v uv >/dev/null 2>&1; then
 fi
 
 step "Preparing developer virtual environment"
+
+if [ "$VENV_DIR" = "$REPO_ROOT/.venv" ]; then
+    info "Reusing existing virtual environment at ${VENV_DIR}"
+fi
 
 if [ ! -d "$VENV_DIR" ]; then
     info "Creating virtual environment at ${VENV_DIR}"

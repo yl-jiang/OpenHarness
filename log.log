@@ -1,0 +1,112 @@
+╭─────────────────────────────────────────────────────────────────────── Traceback (most recent call last) ────────────────────────────────────────────────────────────────────────╮
+│ /home/jyl/E/Github/OpenHarness/src/openharness/cli.py:1555 in main                                                                                                               │
+│                                                                                                                                                                                  │
+│   1552 │   │   if not prompt:                                                                                                                                                    │
+│   1553 │   │   │   print("Error: -p/--print requires a prompt value, e.g. -p 'your prompt'", file=sys.stderr)                                                                    │
+│   1554 │   │   │   raise typer.Exit(1)                                                                                                                                           │
+│ ❱ 1555 │   │   asyncio.run(                                                                                                                                                      │
+│   1556 │   │   │   run_print_mode(                                                                                                                                               │
+│   1557 │   │   │   │   prompt=prompt,                                                                                                                                            │
+│   1558 │   │   │   │   output_format=output_format or "text",                                                                                                                    │
+│                                                                                                                                                                                  │
+│ /home/jyl/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py:205 in run                                                                    │
+│                                                                                                                                                                                  │
+│   202 │   │   │   "asyncio.run() cannot be called from a running event loop")                                                                                                    │
+│   203 │                                                                                                                                                                          │
+│   204 │   with Runner(debug=debug, loop_factory=loop_factory) as runner:                                                                                                         │
+│ ❱ 205 │   │   return runner.run(main)                                                                                                                                            │
+│   206                                                                                                                                                                            │
+│   207                                                                                                                                                                            │
+│   208 def _cancel_all_tasks(loop):                                                                                                                                               │
+│                                                                                                                                                                                  │
+│ /home/jyl/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/runners.py:128 in run                                                                    │
+│                                                                                                                                                                                  │
+│   125 │   │                                                                                                                                                                      │
+│   126 │   │   self._interrupt_count = 0                                                                                                                                          │
+│   127 │   │   try:                                                                                                                                                               │
+│ ❱ 128 │   │   │   return self._loop.run_until_complete(task)                                                                                                                     │
+│   129 │   │   except exceptions.CancelledError:                                                                                                                                  │
+│   130 │   │   │   if self._interrupt_count > 0:                                                                                                                                  │
+│   131 │   │   │   │   uncancel = getattr(task, "uncancel", None)                                                                                                                 │
+│                                                                                                                                                                                  │
+│ /home/jyl/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/asyncio/base_events.py:719 in run_until_complete                                                 │
+│                                                                                                                                                                                  │
+│    716 │   │   if not future.done():                                                                                                                                             │
+│    717 │   │   │   raise RuntimeError('Event loop stopped before Future completed.')                                                                                             │
+│    718 │   │                                                                                                                                                                     │
+│ ❱  719 │   │   return future.result()                                                                                                                                            │
+│    720 │                                                                                                                                                                         │
+│    721 │   def stop(self):                                                                                                                                                       │
+│    722 │   │   """Stop running the event loop.                                                                                                                                   │
+│                                                                                                                                                                                  │
+│ /home/jyl/E/Github/OpenHarness/src/openharness/ui/app.py:432 in run_print_mode                                                                                                   │
+│                                                                                                                                                                                  │
+│   429 │   async def _noop_ask(question: str, choices: list[str] | None = None) -> str:                                                                                           │
+│   430 │   │   return ""                                                                                                                                                          │
+│   431 │                                                                                                                                                                          │
+│ ❱ 432 │   bundle = await build_runtime(                                                                                                                                          │
+│   433 │   │   prompt=prompt,                                                                                                                                                     │
+│   434 │   │   cwd=cwd,                                                                                                                                                           │
+│   435 │   │   model=model,                                                                                                                                                       │
+│                                                                                                                                                                                  │
+│ /home/jyl/E/Github/OpenHarness/src/openharness/ui/runtime.py:487 in build_runtime                                                                                                │
+│                                                                                                                                                                                  │
+│    484 │   │   ),                                                                                                                                                                │
+│    485 │   )                                                                                                                                                                     │
+│    486 │   engine_max_turns = settings.max_turns if (enforce_max_turns or max_turns is not None) else None                                                                       │
+│ ❱  487 │   system_prompt_text = build_runtime_system_prompt(                                                                                                                     │
+│    488 │   │   settings,                                                                                                                                                         │
+│    489 │   │   cwd=cwd,                                                                                                                                                          │
+│    490 │   │   latest_user_prompt=prompt,                                                                                                                                        │
+│                                                                                                                                                                                  │
+│ /home/jyl/E/Github/OpenHarness/src/openharness/prompts/context.py:243 in build_runtime_system_prompt                                                                             │
+│                                                                                                                                                                                  │
+│   240 ) -> str:                                                                                                                                                                  │
+│   241 │   """Build the runtime system prompt with project instructions and memory."""                                                                                            │
+│   242 │   return render_prompt_blocks(                                                                                                                                           │
+│ ❱ 243 │   │   build_runtime_prompt_blocks(                                                                                                                                       │
+│   244 │   │   │   settings,                                                                                                                                                      │
+│   245 │   │   │   cwd=cwd,                                                                                                                                                       │
+│   246 │   │   │   latest_user_prompt=latest_user_prompt,                                                                                                                         │
+│                                                                                                                                                                                  │
+│ /home/jyl/E/Github/OpenHarness/src/openharness/prompts/context.py:273 in build_runtime_prompt_blocks                                                                             │
+│                                                                                                                                                                                  │
+│   270 │   extra_skill_dirs_key = _normalize_path_tuple(extra_skill_dirs)                                                                                                         │
+│   271 │   extra_plugin_roots_key = _normalize_path_tuple(extra_plugin_roots)                                                                                                     │
+│   272 │   coordinator_mode = is_coordinator_mode()                                                                                                                               │
+│ ❱ 273 │   dependency_fingerprint = _runtime_prompt_dependency_fingerprint(                                                                                                       │
+│   274 │   │   resolved_cwd,                                                                                                                                                      │
+│   275 │   │   settings=settings,                                                                                                                                                 │
+│   276 │   │   extra_skill_dirs=extra_skill_dirs_key,                                                                                                                             │
+│                                                                                                                                                                                  │
+│ /home/jyl/E/Github/OpenHarness/src/openharness/prompts/context.py:699 in _runtime_prompt_dependency_fingerprint                                                                  │
+│                                                                                                                                                                                  │
+│   696 │   │   _LOCAL_RULES_FILE,                                                                                                                                                 │
+│   697 │   ]                                                                                                                                                                      │
+│   698 │   if not coordinator_mode:                                                                                                                                               │
+│ ❱ 699 │   │   for directory in get_user_skill_dirs(settings, create_missing=True):                                                                                               │
+│   700 │   │   │   paths.extend(_iter_prompt_dependency_files(directory))                                                                                                         │
+│   701 │   │   if settings.allow_project_skills:                                                                                                                                  │
+│   702 │   │   │   for directory in discover_project_skill_dirs(root, settings.project_skill_dirs):                                                                               │
+│                                                                                                                                                                                  │
+│ /home/jyl/E/Github/OpenHarness/src/openharness/skills/loader.py:37 in get_user_skill_dirs                                                                                        │
+│                                                                                                                                                                                  │
+│    34 │   directories = [Path(path).expanduser().resolve() for path in raw_dirs if str(path).strip()]                                                                            │
+│    35 │   if create_missing:                                                                                                                                                     │
+│    36 │   │   for directory in directories:                                                                                                                                      │
+│ ❱  37 │   │   │   directory.mkdir(parents=True, exist_ok=True)                                                                                                                   │
+│    38 │   return directories                                                                                                                                                     │
+│    39                                                                                                                                                                            │
+│    40                                                                                                                                                                            │
+│                                                                                                                                                                                  │
+│ /home/jyl/.local/share/uv/python/cpython-3.14.6-linux-x86_64-gnu/lib/python3.14/pathlib/__init__.py:1011 in mkdir                                                                │
+│                                                                                                                                                                                  │
+│   1008 │   │   Create a new directory at this given path.                                                                                                                        │
+│   1009 │   │   """                                                                                                                                                               │
+│   1010 │   │   try:                                                                                                                                                              │
+│ ❱ 1011 │   │   │   os.mkdir(self, mode)                                                                                                                                          │
+│   1012 │   │   except FileNotFoundError:                                                                                                                                         │
+│   1013 │   │   │   if not parents or self.parent == self:                                                                                                                        │
+│   1014 │   │   │   │   raise                                                                                                                                                     │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+PermissionError: [Errno 13] Permission denied: '/home/uih/.openharness/skills'

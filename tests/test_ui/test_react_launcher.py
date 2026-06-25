@@ -6,7 +6,7 @@ import pytest
 from types import SimpleNamespace
 
 from openharness.ui.app import run_print_mode, run_repl, run_task_worker
-from openharness.ui.react_launcher import build_backend_command, build_frontend_config
+from openharness.ui.react_launcher import build_backend_command, build_frontend_config, launch_react_tui
 
 
 class _AsyncIterator:
@@ -206,3 +206,18 @@ async def test_run_task_worker_decodes_multiline_json_payload(monkeypatch):
     await run_task_worker(cwd="/tmp/demo")
 
     assert seen == ["line 1\nline 2\nline 3"]
+
+
+@pytest.mark.asyncio
+async def test_launch_react_tui_rejects_non_tty_stdin(monkeypatch, capsys):
+    class _NonTTYStdin:
+        def isatty(self):
+            return False
+
+    monkeypatch.setattr("openharness.ui.react_launcher.sys.stdin", _NonTTYStdin())
+    exit_code = await launch_react_tui(prompt="hi", cwd="/tmp/demo")
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert "requires a terminal" in captured.err
+    assert "oh -p" in captured.err
