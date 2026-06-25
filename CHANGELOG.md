@@ -59,6 +59,7 @@ The format is based on Keep a Changelog, and this project currently tracks chang
 
 ### Fixed
 
+- Onboard Health "生理期追踪" page now loads period data again: restored the `health_period_cycles` service method that was accidentally removed while the frontend and API route still depended on it, so existing `category=period` records for subjects like 明月 are analysed and rendered correctly.
 - `image_to_text` vision prompt now instructs the vision model to faithfully transcribe all text, numbers, and structured data verbatim instead of summarizing, and the engine preprocessing path uses the same prompt instead of a hardcoded override. `max_tokens` default raised from 2048 to 4096 to accommodate detailed transcription of data-rich images (calendars, receipts, tables).
 - React TUI `/goal` now asks Default-mode users before switching to Auto for goal execution; accepting continues the goal, while denying keeps Default mode and blocks the goal submission.
 - `oh` startup now suppresses Python 3.13 `jieba` invalid-escape `SyntaxWarning` output and runtime cleanup now skips `.openharness-venv`, so running `make onboard` or `make wolo-gw` no longer makes the next `oh` launch print the warning.
