@@ -187,7 +187,7 @@ class AgentRunContext:
             root_run_id=self.root_run_id or self.run_id,
             parent_run_id=self.run_id,
             session_role=child_role,
-            agent_profile=agent_profile,
+            agent_profile=agent_profile or "worker",
             lineage_depth=self.lineage_depth + 1,
             delegation_depth_remaining=child_depth_remaining,
             max_children=self.max_children if child_can_delegate else 0,

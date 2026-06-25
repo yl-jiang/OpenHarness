@@ -141,6 +141,8 @@ class AgentPromptProfile:
     include_tool_enforcement: bool = True
     include_delegation: bool = True
     include_skills: bool = True
+    include_memory: bool = True
+    include_project_context: bool = True
 
 
 DEFAULT_AGENT_PROMPT_PROFILE = AgentPromptProfile(name="default")
@@ -167,11 +169,21 @@ COMPACT_AGENT_PROMPT_PROFILE = AgentPromptProfile(
     include_tool_enforcement=False,
     include_delegation=False,
     include_skills=False,
+    include_memory=False,
+    include_project_context=False,
+)
+WORKER_AGENT_PROMPT_PROFILE = AgentPromptProfile(
+    name="worker",
+    include_delegation=False,
+    include_skills=False,
+    include_memory=False,
+    include_project_context=False,
 )
 _BUILTIN_AGENT_PROMPT_PROFILES = {
     DEFAULT_AGENT_PROMPT_PROFILE.name: DEFAULT_AGENT_PROMPT_PROFILE,
     PLAN_AGENT_PROMPT_PROFILE.name: PLAN_AGENT_PROMPT_PROFILE,
     COMPACT_AGENT_PROMPT_PROFILE.name: COMPACT_AGENT_PROMPT_PROFILE,
+    WORKER_AGENT_PROMPT_PROFILE.name: WORKER_AGENT_PROMPT_PROFILE,
 }
 
 
@@ -452,49 +464,50 @@ def _build_runtime_prompt_blocks_cached(
             )
         )
 
-    claude_md = load_claude_md_prompt(cwd)
-    if claude_md:
-        blocks.append(
-            PromptBlock(
-                id="project-instructions",
-                title="Project Instructions",
-                content=_CONTEXTUAL_INSTRUCTIONS_PREAMBLE + claude_md,
-                priority=200,
-                source="CLAUDE.md",
-            )
-        )
-
-    local_rules = load_local_rules()
-    if local_rules:
-        blocks.append(
-            PromptBlock(
-                id="local-rules",
-                title="Local Rules",
-                content=_CONTEXTUAL_INSTRUCTIONS_PREAMBLE + local_rules,
-                priority=190,
-                source="local_rules",
-            )
-        )
-
-    for block_id, title, path in (
-        ("issue-context", "Issue Context", get_project_issue_file(cwd)),
-        ("pr-comments", "Pull Request Comments", get_project_pr_comments_file(cwd)),
-        ("active-repo-context", "Active Repo Context", get_project_active_repo_context_path(cwd)),
-    ):
-        if path.exists():
-            content = path.read_text(encoding="utf-8", errors="replace").strip()
-            if content:
-                blocks.append(
-                    PromptBlock(
-                        id=block_id,
-                        title=title,
-                        content=f"# {title}\n\n```md\n{content[:12000]}\n```",
-                        priority=180,
-                        source="project_context",
-                    )
+    if profile.include_project_context:
+        claude_md = load_claude_md_prompt(cwd)
+        if claude_md:
+            blocks.append(
+                PromptBlock(
+                    id="project-instructions",
+                    title="Project Instructions",
+                    content=_CONTEXTUAL_INSTRUCTIONS_PREAMBLE + claude_md,
+                    priority=200,
+                    source="CLAUDE.md",
                 )
+            )
 
-    if include_project_memory and settings.memory.enabled:
+        local_rules = load_local_rules()
+        if local_rules:
+            blocks.append(
+                PromptBlock(
+                    id="local-rules",
+                    title="Local Rules",
+                    content=_CONTEXTUAL_INSTRUCTIONS_PREAMBLE + local_rules,
+                    priority=190,
+                    source="local_rules",
+                )
+            )
+
+        for block_id, title, path in (
+            ("issue-context", "Issue Context", get_project_issue_file(cwd)),
+            ("pr-comments", "Pull Request Comments", get_project_pr_comments_file(cwd)),
+            ("active-repo-context", "Active Repo Context", get_project_active_repo_context_path(cwd)),
+        ):
+            if path.exists():
+                content = path.read_text(encoding="utf-8", errors="replace").strip()
+                if content:
+                    blocks.append(
+                        PromptBlock(
+                            id=block_id,
+                            title=title,
+                            content=f"# {title}\n\n```md\n{content[:12000]}\n```",
+                            priority=180,
+                            source="project_context",
+                        )
+                    )
+
+    if include_project_memory and settings.memory.enabled and profile.include_memory:
         memory_section = load_memory_prompt(
             cwd,
             max_entrypoint_lines=settings.memory.max_entrypoint_lines,
@@ -646,6 +659,8 @@ def _agent_profile_cache_key(profile: AgentPromptProfile) -> str:
             "include_tool_enforcement": profile.include_tool_enforcement,
             "include_delegation": profile.include_delegation,
             "include_skills": profile.include_skills,
+            "include_memory": profile.include_memory,
+            "include_project_context": profile.include_project_context,
         },
         sort_keys=True,
         separators=(",", ":"),
@@ -660,6 +675,8 @@ def _agent_profile_from_cache_key(profile_key: str) -> AgentPromptProfile:
         include_tool_enforcement=data.get("include_tool_enforcement", True),
         include_delegation=data.get("include_delegation", True),
         include_skills=data.get("include_skills", True),
+        include_memory=data.get("include_memory", True),
+        include_project_context=data.get("include_project_context", True),
     )
 
 

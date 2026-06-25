@@ -491,6 +491,7 @@ async def build_runtime(
         extra_skill_dirs=normalized_skill_dirs,
         extra_plugin_roots=normalized_plugin_roots,
         include_project_memory=include_project_memory,
+        agent_profile=agent_run_context.agent_profile or "default",
     )
     logger.event(
         "runtime_session_mode_resolved",
