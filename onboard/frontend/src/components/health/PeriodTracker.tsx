@@ -62,6 +62,7 @@ function MonthBlock({
 }) {
   const cells = buildMonthGrid(year, month);
   const monthLabel = `${year} 年 ${month + 1} 月`;
+  const todayStr = new Date().toISOString().slice(0, 10);
 
   return (
     <div className="min-w-0">
@@ -76,6 +77,7 @@ function MonthBlock({
           }
           const info = dayMap.get(cell.date);
           const isOvulation = ovulationDate === cell.date;
+          const isToday = cell.date === todayStr;
           let bg = 'bg-surface-2';
           let ring = '';
           let text = 'text-text-secondary';
@@ -92,6 +94,10 @@ function MonthBlock({
           } else if (info?.state === 'fertile') {
             bg = 'bg-amber-400/30';
             text = 'text-amber-100';
+          }
+          if (isToday) {
+            ring = 'ring-2 ring-blue-400';
+            text = text.replace('text-text-secondary', 'text-text');
           }
           return (
             <div

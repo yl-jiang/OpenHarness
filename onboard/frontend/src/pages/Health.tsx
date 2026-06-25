@@ -46,7 +46,7 @@ function EmptyState() {
 }
 
 export function Health() {
-  const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
+  const [selectedSubject, setSelectedSubject] = useState<string | null>('self');
 
   const { data: subjectsData } = useApi(
     () => api.health.subjects(),
@@ -94,6 +94,11 @@ export function Health() {
   const { data: vitalTrends } = useApi(
     () => api.health.vitalTrends(selectedSubject ?? undefined, chartMonth),
     [selectedSubject, chartMonth],
+  );
+
+  const { data: periodData } = useApi(
+    () => api.health.period(selectedSubject ?? undefined, 365),
+    [selectedSubject],
   );
 
   const TIMELINE_PAGE_SIZE = 20;
@@ -219,9 +224,8 @@ export function Health() {
       {/* Health insight reports — pinned near the top */}
       <InsightReportList domain="health" />
 
-      {/* Period tracker — shown for any non-self subject (the LLM has already
-          routed period records to the correct person-specific subject). */}
-      {selectedSubject !== null && selectedSubject !== 'self' && (
+      {/* Period tracker — only shown for subjects that actually have period records. */}
+      {selectedSubject !== null && selectedSubject !== 'self' && periodData && periodData.total > 0 && (
         <Section title="生理期追踪">
           <PeriodTracker subject={selectedSubject} />
         </Section>

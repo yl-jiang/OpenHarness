@@ -12,18 +12,8 @@ export function SubjectFilter({ subjects, selected, onSelect }: SubjectFilterPro
   const entries = Object.entries(subjects);
   if (entries.length === 0) return null;
 
-  const total = entries.reduce((sum, [, count]) => sum + count, 0);
-
   return (
     <div className="flex items-center gap-1.5 flex-wrap">
-      <button
-        className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer border-0 ${
-          selected === null ? 'bg-surface-3 text-text' : 'bg-transparent text-text-muted hover:text-text-secondary'
-        }`}
-        onClick={() => onSelect(null)}
-      >
-        全部 ({total})
-      </button>
       {entries.map(([name, count]) => {
         const label = LABEL_MAP[name] ?? name;
         const isActive = selected === name;
