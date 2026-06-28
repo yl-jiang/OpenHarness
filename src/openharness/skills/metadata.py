@@ -30,6 +30,7 @@ class SkillMarkdownMetadata:
     required_context: tuple[str, ...] = ()
     argument_hint: str | None = None
     context: str | None = None
+    triggers: tuple[str, ...] = ()
     disable_model_invocation: bool = False
     user_invocable: bool = True
     shell_injection: bool = False
@@ -80,6 +81,7 @@ def _build_skill_definition_from_metadata(
         required_context=metadata.required_context,
         argument_hint=metadata.argument_hint,
         context=metadata.context,
+        triggers=metadata.triggers,
         disable_model_invocation=metadata.disable_model_invocation,
         user_invocable=metadata.user_invocable,
         shell_injection=metadata.shell_injection,
@@ -134,6 +136,9 @@ def parse_skill_markdown(
         frontmatter.get("argument-hint", frontmatter.get("argument_hint"))
     )
     context = _parse_context_value(frontmatter.get("context"))
+    triggers = _parse_string_tuple(
+        frontmatter.get("triggers", frontmatter.get("trigger"))
+    )
     disable_model_invocation = bool(frontmatter.get("disable-model-invocation", False))
     user_invocable_raw = frontmatter.get("user-invocable")
     user_invocable = True if user_invocable_raw is None else bool(user_invocable_raw)
@@ -154,6 +159,7 @@ def parse_skill_markdown(
         required_context=required_context,
         argument_hint=argument_hint,
         context=context,
+        triggers=triggers,
         disable_model_invocation=disable_model_invocation,
         user_invocable=user_invocable,
         shell_injection=shell_injection,

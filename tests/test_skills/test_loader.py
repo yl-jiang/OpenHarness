@@ -312,6 +312,9 @@ def test_parse_skill_metadata_exposes_optional_frontmatter_fields():
           - examples
         argument-hint: "[question] [dialect]"
         context: fork
+        triggers:
+          - database questions
+          - SQL queries
         disable-model-invocation: true
         user-invocable: false
         ---
@@ -331,6 +334,7 @@ def test_parse_skill_metadata_exposes_optional_frontmatter_fields():
     assert metadata.required_context == ("schema", "examples")
     assert metadata.argument_hint == "[question] [dialect]"
     assert metadata.context == "fork"
+    assert metadata.triggers == ("database questions", "SQL queries")
     assert metadata.disable_model_invocation is True
     assert metadata.user_invocable is False
 
@@ -348,6 +352,7 @@ def test_load_skill_definition_carries_optional_frontmatter_fields():
         required_context: [diff]
         argument-hint: "[target]"
         context: inline
+        triggers: code review, diff analysis
         ---
 
         # Review
@@ -365,6 +370,7 @@ def test_load_skill_definition_carries_optional_frontmatter_fields():
     assert skill.required_context == ("diff",)
     assert skill.argument_hint == "[target]"
     assert skill.context == "inline"
+    assert skill.triggers == ("code review", "diff analysis")
 
 
 def test_load_skill_registry_skips_mismatched_skill_name_and_logs(tmp_path: Path, monkeypatch, caplog):

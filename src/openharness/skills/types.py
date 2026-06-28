@@ -22,6 +22,7 @@ class SkillDefinition:
     required_context: tuple[str, ...] = ()
     argument_hint: str | None = None
     context: str | None = None
+    triggers: tuple[str, ...] = ()
     disable_model_invocation: bool = False
     user_invocable: bool = True
     shell_injection: bool = False
