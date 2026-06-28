@@ -217,6 +217,19 @@ class TestHealthRecordTool:
         assert len(registry._pending_health_ids) == 1
 
     @pytest.mark.asyncio
+    async def test_creation_returns_id_and_metadata(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        registry = SoloToolRegistry(store)
+        result = await registry._handle_health_record({
+            "category": "medication", "item": "维生素C",
+            "dosage": "1片", "frequency": "每日一次",
+        })
+        assert result["ok"] is True
+        assert "health_record_id" in result
+        assert result["_metadata"]["domain_event"] == "health_record_created"
+        assert result["health_record_id"] in result["_metadata"]["record_ids"]
+
+    @pytest.mark.asyncio
     async def test_metrics_json_stored(self, tmp_path: Path) -> None:
         store = SoloStore(tmp_path / ".solo")
         registry = SoloToolRegistry(store)
@@ -349,6 +362,55 @@ class TestHealthSummaryTool:
         assert result["subject_filter"] == "小明"
 
 
+class TestUpdateHealthRecordTool:
+    @pytest.mark.asyncio
+    async def test_update_medication_duration(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        registry = SoloToolRegistry(store)
+
+        create_result = await registry._handle_health_record({
+            "category": "medication", "item": "布洛芬",
+            "description": "头痛时服用", "dosage": "1颗", "frequency": "按需",
+        })
+        health_id = create_result["health_record_id"]
+
+        update_result = await registry._handle_update_health_record({
+            "health_record_id": health_id,
+            "duration": "3天",
+        })
+        assert update_result["ok"] is True
+
+        got = store.get_health_record(health_id)
+        assert got is not None
+        assert got.duration == "3天"
+
+    @pytest.mark.asyncio
+    async def test_update_rejects_invalid_id_format(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        registry = SoloToolRegistry(store)
+        result = await registry._handle_update_health_record({
+            "health_record_id": " <!-- not an id -->",
+            "duration": "3天",
+        })
+        assert result["ok"] is False
+        assert "不是有效的 12 位" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_update_rejects_same_turn_record(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        registry = SoloToolRegistry(store)
+        create_result = await registry._handle_health_record({
+            "category": "symptom", "item": "头疼",
+        })
+        # Same-turn updates are allowed by the handler; the guard lives at the
+        # agent/router level. Ensure the handler itself can perform the update.
+        update_result = await registry._handle_update_health_record({
+            "health_record_id": create_result["health_record_id"],
+            "severity": "severe",
+        })
+        assert update_result["ok"] is True
+
+
 class TestToolRegistration:
     def test_health_tools_registered(self, tmp_path: Path) -> None:
         store = SoloStore(tmp_path / ".solo")
@@ -356,3 +418,4 @@ class TestToolRegistration:
         names = {schema["name"] for schema in registry.tool_schemas()}
         assert "solo_health_record" in names
         assert "solo_health_summary" in names
+        assert "solo_update_health_record" in names

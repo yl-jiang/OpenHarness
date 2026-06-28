@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -219,8 +220,10 @@ class SoloToolRegistry:
             SoloDomainTool(_tool_profile_update(), self._handle_profile_update),
             SoloDomainTool(_tool_remember(), self._handle_remember),
             SoloDomainTool(_tool_health_record(), self._handle_health_record),
+            SoloDomainTool(_tool_update_health_record(), self._handle_update_health_record),
             SoloDomainTool(_tool_health_summary(), self._handle_health_summary),
             SoloDomainTool(_tool_finance_transaction(), self._handle_finance_transaction),
+            SoloDomainTool(_tool_update_finance_transaction(), self._handle_update_finance_transaction),
             SoloDomainTool(_tool_finance_budget(), self._handle_finance_budget),
             SoloDomainTool(_tool_finance_summary(), self._handle_finance_summary),
             SoloDomainTool(_tool_suggest_reflection(), self._handle_suggest_reflection),
@@ -897,6 +900,16 @@ class SoloToolRegistry:
         """Update fields of an existing solo record."""
         record_id = _required_text(arguments, "record_id")
 
+        if not re.fullmatch(r"^[0-9a-f]{12}$", record_id):
+            return {
+                "ok": False,
+                "message": (
+                    f"❌ record_id '{record_id}' 不是有效的 12 位小写十六进制记录 ID。"
+                    "请从之前工具返回的 _metadata.record_ids 中取用真实 ID，"
+                    "或使用 solo_search / solo_view 查找后再更新。"
+                ),
+            }
+
         existing = self.store.get_record(record_id)
         if existing is None:
             return {"ok": False, "message": f"❌ 未找到 ID 为 {record_id} 的记录。"}
@@ -1018,6 +1031,91 @@ class SoloToolRegistry:
         else:
             return {"ok": False, "message": f"❌ 未找到 ID 为 {record_id} 的记录。"}
 
+    async def _handle_update_health_record(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Update fields of an existing health record."""
+        health_record_id = _required_text(arguments, "health_record_id")
+        if not re.fullmatch(r"^[0-9a-f]{12}$", health_record_id):
+            return {
+                "ok": False,
+                "message": (
+                    f"❌ health_record_id '{health_record_id}' 不是有效的 12 位小写十六进制 ID。"
+                    "请从之前 solo_health_record 返回的 _metadata.record_ids 中取用真实 ID。"
+                ),
+            }
+
+        existing = self.store.get_health_record(health_record_id)
+        if existing is None:
+            return {"ok": False, "message": f"❌ 未找到 ID 为 {health_record_id} 的健康记录。"}
+
+        VALID_FIELDS = (
+            "subject", "date", "description", "body_part", "severity", "status",
+            "medication_name", "dosage", "frequency", "duration",
+            "exercise_type", "exercise_duration_min", "exercise_intensity",
+            "sleep_hours", "sleep_quality", "mood", "mood_sentiment",
+            "stress_level", "metrics_json", "tags",
+        )
+        updates: dict[str, Any] = {}
+        for field in VALID_FIELDS:
+            if field in arguments and arguments[field] is not None:
+                updates[field] = arguments[field]
+
+        if not updates:
+            return {"ok": False, "message": "未提供任何更新字段。"}
+
+        if "exercise_duration_min" in updates:
+            updates["exercise_duration_min"] = int(updates["exercise_duration_min"])
+        if "sleep_hours" in updates:
+            updates["sleep_hours"] = float(updates["sleep_hours"])
+
+        success = self.store.update_health_record(health_record_id, **updates)
+        if success:
+            return {"ok": True, "message": f"✅ 已成功更新健康记录 {health_record_id}。"}
+        return {"ok": False, "message": f"❌ 未找到 ID 为 {health_record_id} 的健康记录。"}
+
+    async def _handle_update_finance_transaction(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Update fields of an existing finance transaction."""
+        transaction_id = _required_text(arguments, "transaction_id")
+        if not re.fullmatch(r"^[0-9a-f]{12}$", transaction_id):
+            return {
+                "ok": False,
+                "message": (
+                    f"❌ transaction_id '{transaction_id}' 不是有效的 12 位小写十六进制 ID。"
+                    "请从之前 solo_finance_transaction 返回的 _metadata.record_ids 中取用真实 ID。"
+                ),
+            }
+
+        existing = self.store.get_finance_transaction(transaction_id)
+        if existing is None:
+            return {"ok": False, "message": f"❌ 未找到 ID 为 {transaction_id} 的财务记录。"}
+
+        new_type = arguments.get("type", existing.type)
+        if new_type not in self._FINANCE_TYPES:
+            return {"ok": False, "message": f"Invalid type '{new_type}'."}
+        if "category" in arguments and not self._is_valid_finance_category(new_type, arguments["category"]):
+            return {"ok": False, "message": f"Invalid category '{arguments['category']}' for type '{new_type}'."}
+        if "amount" in arguments and float(arguments["amount"]) <= 0:
+            return {"ok": False, "message": f"amount must be positive, got {arguments['amount']}"}
+
+        VALID_FIELDS = (
+            "type", "category", "amount", "currency", "date",
+            "account", "counterparty", "description", "tags", "metrics_json",
+        )
+        updates: dict[str, Any] = {}
+        for field in VALID_FIELDS:
+            if field in arguments and arguments[field] is not None:
+                updates[field] = arguments[field]
+
+        if not updates:
+            return {"ok": False, "message": "未提供任何更新字段。"}
+
+        if "amount" in updates:
+            updates["amount"] = float(updates["amount"])
+
+        success = self.store.update_finance_transaction(transaction_id, **updates)
+        if success:
+            return {"ok": True, "message": f"✅ 已成功更新财务记录 {transaction_id}。"}
+        return {"ok": False, "message": f"❌ 未找到 ID 为 {transaction_id} 的财务记录。"}
+
     async def _handle_status(self, arguments: dict[str, Any]) -> dict[str, Any]:
         status = self.store.status()
         message = (
@@ -1123,7 +1221,16 @@ class SoloToolRegistry:
         )
         self.store.add_health_record(record)
         self._pending_health_ids.append(record.id)
-        return {"ok": True, "message": f"健康记录已入库：{category}/{item} ({record.date})"}
+        return {
+            "ok": True,
+            "message": f"健康记录已入库：{category}/{item} ({record.date})",
+            "health_record_id": record.id,
+            "_metadata": {
+                "app": "solo",
+                "domain_event": "health_record_created",
+                "record_ids": [record.id],
+            },
+        }
 
     async def _handle_health_summary(self, arguments: dict[str, Any]) -> dict[str, Any]:
         subject = str(arguments.get("subject") or "").strip() or None
@@ -1218,7 +1325,16 @@ class SoloToolRegistry:
         )
         self.store.add_finance_transaction(txn)
         self._pending_finance_ids.append(txn.id)
-        return {"ok": True, "message": f"财务记录已入库：{txn_type}/{category} {amount} {txn.currency} ({txn.date})"}
+        return {
+            "ok": True,
+            "message": f"财务记录已入库：{txn_type}/{category} {amount} {txn.currency} ({txn.date})",
+            "transaction_id": txn.id,
+            "_metadata": {
+                "app": "solo",
+                "domain_event": "finance_transaction_created",
+                "record_ids": [txn.id],
+            },
+        }
 
     # ── Finance budget handler ──────────────────────────────────
 
@@ -2431,10 +2547,12 @@ def _tool_update_record() -> ToolDefinition:
             "authorize you to call this tool to apply the same label to a different, newer record. "
             "Each record's subjective fields are independent and must come from the current message. "
             "Also do NOT re-call this tool with identical arguments: if the prior result said the "
-            "update was a no-op (is_error), stop — do not issue another call for the same record."
+            "update was a no-op (is_error), stop — do not issue another call for the same record. "
+            "Use ONLY a valid 12-character lowercase hex ID returned by a previous tool; "
+            "if you do not know the ID, call solo_search or solo_view first."
         ),
         [
-            ("record_id", "string", "The ID of the record to update.", True),
+            ("record_id", "string", "The 12-character lowercase hex ID of the record to update.", True, {"pattern": "^[0-9a-f]{12}$"}),
             ("summary", "string", "New summary.", False),
             ("tags", "string", "New comma-separated tags.", False),
             ("emotion", "string", "New emotion label.", False),
@@ -2587,6 +2705,43 @@ def _tool_health_record() -> ToolDefinition:
     )
 
 
+def _tool_update_health_record() -> ToolDefinition:
+    return _definition(
+        "solo_update_health_record",
+        (
+            "Modify an EXISTING health record created in a previous turn. "
+            "Use when the user's latest message corrects or adds factual details to a prior health event "
+            "(e.g. '那药要吃三个月', '剂量改成一天三次'). "
+            "FORBIDDEN on a health record you just created in the same turn — if you forgot a field, "
+            "fold it into the next solo_record instead. "
+            "Use ONLY the 12-character lowercase hex ID returned by a previous solo_health_record call."
+        ),
+        [
+            ("health_record_id", "string", "The 12-character lowercase hex ID of the health record to update.", True, {"pattern": "^[0-9a-f]{12}$"}),
+            ("subject", "string", "Who this health record is about: 'self' or a family member name.", False),
+            ("date", "string", "Date in YYYY-MM-DD format.", False),
+            ("description", "string", "Detailed description of the health event.", False),
+            ("body_part", "string", "Affected body part.", False),
+            ("severity", "string", "Severity: mild, moderate, severe.", False),
+            ("status", "string", "Status: active, resolved, chronic, recurring.", False),
+            ("medication_name", "string", "Medication name.", False),
+            ("dosage", "string", "Dosage.", False),
+            ("frequency", "string", "Frequency.", False),
+            ("duration", "string", "Duration (e.g. '3个月', '2小时').", False),
+            ("exercise_type", "string", "Exercise type.", False),
+            ("exercise_duration_min", "integer", "Exercise duration in minutes.", False),
+            ("exercise_intensity", "string", "Exercise intensity: low, moderate, high.", False),
+            ("sleep_hours", "number", "Hours of sleep.", False),
+            ("sleep_quality", "string", "Sleep quality: good, fair, poor.", False),
+            ("mood", "string", "Mood description.", False),
+            ("mood_sentiment", "string", "Sentiment: positive, neutral, negative.", False),
+            ("stress_level", "string", "Stress level: low, moderate, high.", False),
+            ("metrics_json", "string", "JSON string for extra metrics.", False),
+            ("tags", "string", "Comma-separated tags.", False),
+        ],
+    )
+
+
 def _tool_health_summary() -> ToolDefinition:
     return _definition(
         "solo_health_summary",
@@ -2660,6 +2815,35 @@ def _tool_finance_transaction() -> ToolDefinition:
             ("description", "string",
              "Detailed description. Put investment target info (e.g. '茅台') here.",
              False),
+            ("tags", "string", "Comma-separated tags.", False),
+        ],
+    )
+
+
+def _tool_update_finance_transaction() -> ToolDefinition:
+    return _definition(
+        "solo_update_finance_transaction",
+        (
+            "Modify an EXISTING finance transaction created in a previous turn. "
+            "Use when the user's latest message corrects a prior money flow record "
+            "(e.g. '刚才那笔不是 35 是 53', '那笔打车费是 AA 的'). "
+            "FORBIDDEN on a transaction you just created in the same turn. "
+            "Use ONLY the 12-character lowercase hex ID returned by a previous solo_finance_transaction call."
+        ),
+        [
+            ("transaction_id", "string", "The 12-character lowercase hex ID of the transaction to update.", True, {"pattern": "^[0-9a-f]{12}$"}),
+            ("type", "string",
+             "Transaction type: expense, income, transfer, invest_gain, invest_loss.", False),
+            ("category", "string",
+             "Category. For expense prefer: dining, groceries, transport, shopping, housing, health, education, entertainment, family, social. "
+             "For income prefer: salary, bonus, refund, gift, other_income. "
+             "For invest_gain/loss prefer: stocks, fund, bond, crypto, gold, savings, insurance.", False),
+            ("amount", "number", "Exact positive amount.", False),
+            ("currency", "string", "ISO currency code. Default CNY.", False),
+            ("date", "string", "YYYY-MM-DD.", False),
+            ("account", "string", "Payment method / account note.", False),
+            ("counterparty", "string", "Counterparty person/company.", False),
+            ("description", "string", "Detailed description.", False),
             ("tags", "string", "Comma-separated tags.", False),
         ],
     )
@@ -3070,15 +3254,22 @@ def _ensure_heartbeat_file(path: Path) -> None:
 def _definition(
     name: str,
     description: str,
-    params: list[tuple[str, str, str, bool]],
+    params: list[tuple[str, str, str, bool] | tuple[str, str, str, bool, dict[str, Any]]],
 ) -> ToolDefinition:
+    properties: dict[str, Any] = {}
+    for param in params:
+        key, type_, desc, required = param[:4]
+        prop: dict[str, Any] = {"type": type_, "description": desc}
+        if len(param) > 4 and isinstance(param[4], dict):
+            prop.update(param[4])
+        properties[key] = prop
     return ToolDefinition(
         name=name,
         description=description,
         input_schema=ToolParameterSchema(
             type="object",
-            properties={key: {"type": type_, "description": desc} for key, type_, desc, _ in params},
-            required=[key for key, _, _, required in params if required],
+            properties=properties,
+            required=[key for key, _, _, required, *_ in params if required],
         ),
     )
 

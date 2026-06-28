@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 from solo.core.models import SoloConfig
@@ -142,6 +143,31 @@ def get_skills_dir(workspace: str | Path | None = None) -> Path:
     return get_workspace_root(workspace) / "skills"
 
 
+def get_default_skills_dir() -> Path:
+    """Return the directory containing bundled default skills shipped with solo."""
+    return Path(__file__).parent.parent / "skills"
+
+
+def _copy_missing_default_skills(workspace: str | Path | None = None) -> None:
+    """Copy missing default skills into the user workspace.
+
+    Existing skills (including user-modified default skills) are left untouched,
+    so future additions to the bundled defaults can still be synced to older
+    workspaces.
+    """
+    user_skills_dir = get_skills_dir(workspace)
+    default_skills_dir = get_default_skills_dir()
+    if not default_skills_dir.exists():
+        return
+    for source_path in sorted(default_skills_dir.rglob("SKILL.md")):
+        relative = source_path.relative_to(default_skills_dir)
+        dest_path = user_skills_dir / relative
+        if dest_path.exists():
+            continue
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, dest_path)
+
+
 def ensure_workspace(workspace: str | Path | None = None) -> Path:
     root = get_workspace_root(workspace)
     root.mkdir(parents=True, exist_ok=True)
@@ -171,6 +197,7 @@ def initialize_workspace(workspace: str | Path | None = None) -> Path:
     user_path = get_user_path(root)
     if not user_path.exists():
         user_path.write_text(USER_TEMPLATE.strip() + "\n", encoding="utf-8")
+    _copy_missing_default_skills(root)
     return root
 
 

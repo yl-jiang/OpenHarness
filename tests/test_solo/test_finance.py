@@ -436,3 +436,58 @@ class TestFinanceModels:
         d = b.to_dict()
         assert d["period"] == "monthly"
         assert d["amount"] == 2000.0
+
+
+class TestUpdateFinanceTransactionTool:
+    @pytest.mark.asyncio
+    async def test_creation_returns_id_and_metadata(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        registry = SoloToolRegistry(store)
+        result = await registry._handle_finance_transaction({
+            "type": "expense", "category": "dining", "amount": 35,
+            "description": "午餐",
+        })
+        assert result["ok"] is True
+        assert "transaction_id" in result
+        assert result["_metadata"]["domain_event"] == "finance_transaction_created"
+        assert result["transaction_id"] in result["_metadata"]["record_ids"]
+
+    @pytest.mark.asyncio
+    async def test_update_description(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        registry = SoloToolRegistry(store)
+        create = await registry._handle_finance_transaction({
+            "type": "expense", "category": "dining", "amount": 35,
+        })
+        update = await registry._handle_update_finance_transaction({
+            "transaction_id": create["transaction_id"],
+            "description": "团队聚餐",
+        })
+        assert update["ok"] is True
+        got = store.get_finance_transaction(create["transaction_id"])
+        assert got is not None
+        assert got.description == "团队聚餐"
+
+    @pytest.mark.asyncio
+    async def test_update_rejects_invalid_id_format(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        registry = SoloToolRegistry(store)
+        result = await registry._handle_update_finance_transaction({
+            "transaction_id": "I don't have the id",
+            "description": "团队聚餐",
+        })
+        assert result["ok"] is False
+        assert "不是有效的 12 位" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_update_rejects_invalid_category(self, tmp_path: Path) -> None:
+        store = SoloStore(tmp_path / ".solo")
+        registry = SoloToolRegistry(store)
+        create = await registry._handle_finance_transaction({
+            "type": "expense", "category": "dining", "amount": 35,
+        })
+        result = await registry._handle_update_finance_transaction({
+            "transaction_id": create["transaction_id"],
+            "category": "other",
+        })
+        assert result["ok"] is False

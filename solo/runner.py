@@ -425,24 +425,41 @@ def _build_system_prompt(workspace: Path) -> str:
     if memory:
         sections.append(memory)
 
-    skills_prompt = _build_skills_prompt(workspace)
+    registry = load_skill_registry_cached(None, extra_skill_dirs=[get_skills_dir(workspace)])
+
+    skills_prompt = _build_skills_prompt(registry)
     if skills_prompt:
         sections.append(skills_prompt)
 
     sections.append(_FACT_DISCIPLINE_CONTEXT.strip())
-    sections.append(TOOL_ROUTER_PROMPT.strip())
+    sections.append(TOOL_ROUTER_PROMPT.replace("{SKILL_GUIDANCE}", _build_skill_guidance(registry)).strip())
 
     return "\n\n".join(sections)
 
 
-def _build_skills_prompt(workspace: Path) -> str | None:
-    registry = load_skill_registry_cached(None, extra_skill_dirs=[get_skills_dir(workspace)])
+def _build_skills_prompt(registry) -> str | None:
     skills = [skill for skill in registry.list_skills() if not skill.disable_model_invocation]
     if not skills:
         return None
     lines = list(SKILLS_PROMPT_HEADER)
     for skill in skills:
         lines.append(f"- **{skill.name}**: {skill.description}")
+    return "\n".join(lines)
+
+
+def _build_skill_guidance(registry) -> str:
+    """Build the 'specialized topic -> skill' mapping from skill triggers metadata.
+
+    Only skills that declare explicit triggers are listed here, so the router
+    prompt stays short when no domain skills are configured.
+    """
+    skills = [skill for skill in registry.list_skills() if skill.triggers and not skill.disable_model_invocation]
+    if not skills:
+        return "（当前没有配置专业主题 skill）"
+    lines = []
+    for skill in skills:
+        trigger_text = " / ".join(skill.triggers)
+        lines.append(f"- {trigger_text} → `{skill.name}`")
     return "\n".join(lines)
 
 

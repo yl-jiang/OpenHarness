@@ -988,6 +988,24 @@ async def test_solo_update_record_rejects_same_turn_supplement(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_solo_update_record_rejects_malformed_id(tmp_path: Path):
+    from solo.tools import SoloToolRegistry
+
+    workspace = initialize_workspace(tmp_path / ".solo")
+    store = SoloStore(workspace)
+    registry = SoloToolRegistry(store)
+
+    update = await registry._handle_update_record(
+        {
+            "record_id": " <!-- I need to find the record ID... -->",
+            "corrected_content": "test",
+        }
+    )
+    assert update["ok"] is False
+    assert "不是有效的 12 位" in update["message"]
+
+
+@pytest.mark.asyncio
 async def test_solo_update_record_allows_cross_turn_correction(tmp_path: Path):
     """Cross-turn corrections must still work. A fresh registry instance has
     an empty _created_record_ids set, so an update on an older record (one
