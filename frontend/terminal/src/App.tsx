@@ -34,7 +34,6 @@ import type {TerminalInputStream} from './input/terminalInput.js';
 import {useBackendSession} from './hooks/useBackendSession.js';
 import {useMouseWheel} from './hooks/useMouseWheel.js';
 import {useTerminalMouse} from './hooks/useTerminalMouse.js';
-import {useCopyMode} from './hooks/useCopyMode.js';
 import {useTerminalSize} from './hooks/useTerminalSize.js';
 import {applyVimNormalMode, nextWordBoundary, prevWordBoundary, toChars, type VimInputMode} from './input/vim.js';
 import {discoverMentionFiles, filterMentionCandidates, findMentionQuery, replaceMentionQuery} from './input/mentions.js';
@@ -230,22 +229,17 @@ export function App({config}: {config: FrontendConfig}): React.JSX.Element {
 }
 
 function AppShell({config}: {config: FrontendConfig}): React.JSX.Element {
-	const [mouseTracking, setMouseTracking] = useState<boolean | 'select'>(true);
 	return (
-		<AlternateScreen mouseTracking={mouseTracking}>
-			<AppInner config={config} mouseTracking={mouseTracking} setMouseTracking={setMouseTracking} />
+		<AlternateScreen>
+			<AppInner config={config} />
 		</AlternateScreen>
 	);
 }
 
 function AppInner({
 	config,
-	mouseTracking,
-	setMouseTracking,
 }: {
 	config: FrontendConfig;
-	mouseTracking: boolean | 'select';
-	setMouseTracking: (value: (boolean | 'select') | ((prev: boolean | 'select') => boolean | 'select')) => void;
 }): React.JSX.Element {
 	const {exit} = useApp();
 	const {stdin: _stdin} = useStdin();
@@ -490,11 +484,12 @@ function AppInner({
 		conversationRef.current?.scrollToTop();
 	}, []);
 
-	// Copy mode (app-level text selection with mouse drag + wheel scroll)
-	const copyMode = useCopyMode(scrollUp, scrollDown, cols);
+	// Copy mode removed: kimi-code style — user uses the terminal's native
+	// click-drag selection + Cmd/Ctrl+C.  Mouse tracking is off by default in
+	// AlternateScreen so native selection works; these handlers stay wired for
+	// callers that opt back into mouseTracking.
 
 	useMouseWheel((delta) => {
-		if (copyMode.state.active) return; // handled by copy mode's own mouse handler
 		if (selectModal) {
 			setSelectIndex((i) => nextSelectIndexForWheel(i, delta, visibleSelectOptions.length));
 			return;
@@ -948,11 +943,6 @@ function AppInner({
 		})();
 	}, [session.status.cwd, setInputValue, setShellCompletionCycleValue, shellCommands]);
 	useTerminalMouse(useCallback((event) => {
-		// In copy mode, all mouse events are handled by the copy mode hook
-		if (copyMode.state.active) {
-			copyMode.handleMouseEvent(event);
-			return;
-		}
 		if (event.kind !== 'button' || event.action !== 'release' || event.buttonCode !== 0) {
 			return;
 		}
@@ -968,7 +958,7 @@ function AppInner({
 		if (hitboxContainsPoint(getPromptExpandTriggerHitbox(cols, rows), event.column, event.row)) {
 			openExpandedComposer();
 		}
-	}, [cols, copyMode, expandedComposer, openExpandedComposer, rows, selectModal, session.busy, session.modal, session.ready, submitExpandedComposer]));
+	}, [cols, expandedComposer, openExpandedComposer, rows, selectModal, session.busy, session.modal, session.ready, submitExpandedComposer]));
 
 	useInput((chunk, key) => {
 		const isPaste = chunk.length > 1 && !key.ctrl && !key.meta;
@@ -1170,18 +1160,8 @@ function AppInner({
 			return;
 		}
 
-		// Ctrl+X toggles copy mode: app-level text selection with drag + wheel
-		// scroll.  In copy mode, mouse mode 1002 tracks drag events so both
-		// selection and scrolling work simultaneously.
-		if (key.ctrl && chunk === 'x') {
-			suppressNextCharRef.current = 'x';
-			copyMode.toggle();
-			setMouseTracking((prev) => {
-				if (prev === 'select') return true;
-				return 'select';
-			});
-			return;
-		}
+		// Copy mode removed. To copy text, use the terminal's native click-drag
+		// selection + Cmd/Ctrl+C (same as kimi-code). Ctrl+X is left unbound.
 
 		// Ctrl+V attaches an image from the clipboard.
 		if (key.ctrl && chunk === 'v' && !session.busy) {
@@ -1707,15 +1687,6 @@ function AppInner({
 	const showWelcome = session.ready && outputStyle !== 'codex';
 	const isPaused = paused;
 
-	// Re-render selection highlight after each Ink paint cycle
-	useEffect(() => {
-		if (copyMode.state.active && copyMode.state.selection) {
-			// Schedule highlight after Ink's render is flushed to stdout
-			const timer = setImmediate(() => copyMode.renderHighlight());
-			return () => clearImmediate(timer);
-		}
-	});
-
 	if (expandedComposer) {
 		return (
 			<Box flexDirection="column" height={rows} paddingX={1}>
@@ -1750,15 +1721,6 @@ function AppInner({
 				<Box flexShrink={0} flexDirection="column">
 					<Text color={theme.colors.warning} dimColor>
 						— history view (PgDn/End/G to resume) —
-					</Text>
-				</Box>
-			) : null}
-
-			{mouseTracking === 'select' ? (
-				<Box flexShrink={0} flexDirection="column">
-					<Text color={theme.colors.warning} dimColor>
-						— copy mode: drag to select · wheel to scroll · ctrl+x to exit —
-						{copyMode.state.copiedNotice ? ` [${copyMode.state.copiedNotice}]` : ''}
 					</Text>
 				</Box>
 			) : null}

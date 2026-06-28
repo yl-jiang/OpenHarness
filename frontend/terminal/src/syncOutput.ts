@@ -9,9 +9,6 @@
  *    flash that occurs when the terminal processes the screen clear before the
  *    replacement content arrives.
  *
- * 3. Maintains a screen buffer (plain text lines) of the last rendered frame
- *    for app-level text selection in copy mode.
- *
  * Terminals that do not support mode 2026 simply ignore the BSU/ESU escapes.
  */
 
@@ -26,19 +23,6 @@ const CURSOR_HOME = '\x1b[H';
 const CLEAR_TO_EOL = '\x1b[K';
 const CLEAR_TO_EOS = '\x1b[J';
 
-// Strip ANSI escape sequences to get plain text
-const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?(?:\x07|\x1b\\)/g;
-
-let screenLines: string[] = [];
-
-/**
- * Returns the plain-text lines currently displayed on the terminal.
- * Each array entry corresponds to one terminal row.
- */
-export function getScreenLines(): readonly string[] {
-	return screenLines;
-}
-
 type WriteCallback = (error?: Error | null) => void;
 type WriteFn = (chunk: any, encodingOrCallback?: BufferEncoding | WriteCallback, callback?: WriteCallback) => boolean;
 
@@ -49,8 +33,6 @@ type WriteFn = (chunk: any, encodingOrCallback?: BufferEncoding | WriteCallback,
  * Each line's leftover characters from the previous frame are erased by
  * clear-to-end-of-line, and any extra lines at the bottom are erased by
  * clear-to-end-of-screen.  The screen is never blank between frames.
- *
- * Also captures the frame content as plain text lines for copy-mode selection.
  */
 function rewriteFullScreenClear(chunk: string): string {
 	if (!chunk.startsWith(CLEAR_TERMINAL)) {
@@ -58,8 +40,6 @@ function rewriteFullScreenClear(chunk: string): string {
 	}
 	const content = chunk.slice(CLEAR_TERMINAL.length);
 	const lines = content.split('\n');
-	// Capture plain-text screen buffer (strip ANSI escape sequences)
-	screenLines = lines.map((line) => line.replace(ANSI_ESCAPE_RE, ''));
 	return CURSOR_HOME + lines.join(CLEAR_TO_EOL + '\n') + CLEAR_TO_EOL + CLEAR_TO_EOS;
 }
 

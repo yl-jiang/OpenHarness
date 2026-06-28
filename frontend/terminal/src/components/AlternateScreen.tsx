@@ -3,17 +3,14 @@ import {useStdout} from 'ink';
 
 const ENTER_ALT = '\x1b[?1049h';
 const LEAVE_ALT = '\x1b[?1049l';
-// SGR mouse mode (1006) + basic press tracking (1000) lets us receive
-// wheel-up/down ESC sequences from xterm-compatible terminals.  We
-// deliberately skip 1002 (button-event drag tracking) so the user can still
-// click-and-drag to select / copy text in their terminal.
+// Mouse tracking is disabled by default.  Enabling even basic button tracking
+// (mode 1000) causes most terminal emulators to route mouse events to the
+// application and disable native click-drag text selection.  Keeping all mouse
+// modes off lets users select / copy text with the terminal's native behavior
+// (Cmd+C / Ctrl+Shift+C) — matching kimi-code.  The mouseTracking prop is kept
+// so wheel/click handling can be opted back in when selection is not required.
 const ENTER_MOUSE = '\x1b[?1000h\x1b[?1006h';
 const LEAVE_MOUSE = '\x1b[?1006l\x1b[?1000l';
-// Mode 1002 (button-event tracking) reports press, release, wheel, AND
-// motion-while-button-held (drag).  Used in copy mode to let the app track
-// selection while keeping wheel scroll working.
-const ENTER_MOUSE_BTN_EVENT = '\x1b[?1002h\x1b[?1006h';
-const LEAVE_MOUSE_BTN_EVENT = '\x1b[?1006l\x1b[?1002l';
 const HIDE_CURSOR = '\x1b[?25l';
 const SHOW_CURSOR = '\x1b[?25h';
 
@@ -40,8 +37,6 @@ function installSignalCleanup(cleanup: () => void): () => void {
 		}
 	};
 	process.on('exit', runAll);
-	// SIGINT/SIGTERM are also handled in index.tsx; we only register cleanup
-	// hooks here, never call process.exit() so Ink can still finish unmount.
 	process.once('SIGINT', () => {
 		runAll();
 	});
@@ -58,21 +53,17 @@ function installSignalCleanup(cleanup: () => void): () => void {
  * this component and ensures it is restored when the component unmounts or
  * the process exits unexpectedly.
  *
- * Mouse tracking (so wheel events are delivered to the app) is controlled
- * separately via the `mouseTracking` prop.  Disabling it lets the user
- * click-and-drag to select / copy text in their terminal — at the cost of
- * losing in-app wheel scrolling.
- *
- * When set to `'select'`, mode 1002 (button-event tracking) is used so the
- * app receives press, drag, release, and wheel events — enabling app-level
- * text selection with simultaneous wheel scrolling.
+ * Mouse tracking is disabled by default so the terminal's native click-drag
+ * selection and copy behavior (Cmd+C / Ctrl+Shift+C) works — matching
+ * kimi-code.  Pass `mouseTracking={true}` to opt into wheel/click events at
+ * the cost of losing native selection.
  */
 export function AlternateScreen({
 	children,
-	mouseTracking = true,
+	mouseTracking = false,
 }: {
 	children: React.ReactNode;
-	mouseTracking?: boolean | 'select';
+	mouseTracking?: boolean;
 }): React.JSX.Element {
 	const {stdout} = useStdout();
 
@@ -81,7 +72,7 @@ export function AlternateScreen({
 		stdout.write(ENTER_ALT + HIDE_CURSOR);
 		const cleanup = (): void => {
 			try {
-				stdout.write(LEAVE_MOUSE + LEAVE_MOUSE_BTN_EVENT + LEAVE_ALT + SHOW_CURSOR);
+				stdout.write(LEAVE_MOUSE + LEAVE_ALT + SHOW_CURSOR);
 			} catch {
 				/* ignore */
 			}
@@ -95,20 +86,8 @@ export function AlternateScreen({
 
 	useEffect(() => {
 		if (!stdout) return;
-		if (mouseTracking === 'select') {
-			// Disable normal mode first, then enable button-event mode
-			stdout.write(LEAVE_MOUSE + ENTER_MOUSE_BTN_EVENT);
-			return () => {
-				try {
-					stdout.write(LEAVE_MOUSE_BTN_EVENT);
-				} catch {
-					/* ignore */
-				}
-			};
-		}
 		if (mouseTracking) {
-			// Disable button-event mode first, then enable normal mode
-			stdout.write(LEAVE_MOUSE_BTN_EVENT + ENTER_MOUSE);
+			stdout.write(ENTER_MOUSE);
 			return () => {
 				try {
 					stdout.write(LEAVE_MOUSE);
@@ -117,7 +96,7 @@ export function AlternateScreen({
 				}
 			};
 		}
-		stdout.write(LEAVE_MOUSE + LEAVE_MOUSE_BTN_EVENT);
+		stdout.write(LEAVE_MOUSE);
 		return undefined;
 	}, [stdout, mouseTracking]);
 
