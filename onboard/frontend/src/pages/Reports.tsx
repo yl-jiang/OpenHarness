@@ -76,6 +76,20 @@ function sortByPeriod(reports: Report[]): Report[] {
   });
 }
 
+const TYPE_ORDER: ReportType[] = ['yearly', 'monthly', 'weekly'];
+
+function groupReportsByType(reports: Report[]): Record<ReportType, Report[]> {
+  const groups = { weekly: [], monthly: [], yearly: [] } as Record<ReportType, Report[]>;
+  for (const report of reports) {
+    const type = report.report_type as ReportType;
+    if (groups[type]) groups[type].push(report);
+  }
+  for (const type of TYPE_ORDER) {
+    groups[type] = sortByPeriod(groups[type]);
+  }
+  return groups;
+}
+
 // Module-level generating state — survives component unmount (navigation away and back)
 const _reportGenerating = new Map<AppName, ReportType | null>();
 const _reportGenListeners = new Map<AppName, Set<() => void>>();
@@ -226,6 +240,7 @@ export function Reports({ appName }: { appName: AppName }) {
 
   const TYPE_BADGE: Record<string, string> = { weekly: 'W', monthly: 'M', yearly: 'Y' };
   const TYPE_LABEL: Record<string, string> = { weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' };
+  const groupedClassic = groupReportsByType(allClassic);
 
   function ReportRow({ report, index, onDelete, domain }: { report: Report; index: number; onDelete: (id: string) => void; domain?: InsightDomain }) {
     const period = formatPeriod(report);
@@ -287,6 +302,7 @@ export function Reports({ appName }: { appName: AppName }) {
     const sec = insightSections[domain];
     const domainGenerating = domain === 'health' ? healthInsightGenerating : financeInsightGenerating;
     const anyBusy = generating !== null || insightGenerating !== null;
+    const grouped = groupReportsByType(sec.items);
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between">
@@ -306,10 +322,29 @@ export function Reports({ appName }: { appName: AppName }) {
         {sec.items.length === 0 ? (
           <p className="text-[13px] text-text-muted italic m-0 pl-1">No {domain} insight reports yet.</p>
         ) : (
-          <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
-            {sec.items.map((report, i) => (
-              <ReportRow key={report.id} report={report} index={i} onDelete={handleDelete} domain={domain} />
-            ))}
+          <div className="space-y-5">
+            {TYPE_ORDER.map((type) => {
+              const items = grouped[type];
+              if (items.length === 0) return null;
+              return (
+                <div key={type}>
+                  <div className="flex items-center gap-2 mb-2 px-1">
+                    <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-accent-solo/10 text-accent-solo text-[11px] font-mono font-medium">
+                      {TYPE_BADGE[type]}
+                    </span>
+                    <h4 className="text-[11px] font-medium text-text-secondary uppercase tracking-wider">
+                      {TYPE_LABEL[type]}
+                    </h4>
+                    <span className="text-[11px] text-text-muted">{items.length}</span>
+                  </div>
+                  <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
+                    {items.map((report, i) => (
+                      <ReportRow key={report.id} report={report} index={i} onDelete={handleDelete} domain={domain} />
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -353,10 +388,29 @@ export function Reports({ appName }: { appName: AppName }) {
           {allClassic.length === 0 ? (
             <p className="text-[13px] text-text-muted italic m-0 pl-1">No reports yet. Generate one above.</p>
           ) : (
-            <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
-              {allClassic.map((report, i) => (
-                <ReportRow key={report.id} report={report} index={i} onDelete={handleDelete} />
-              ))}
+            <div className="space-y-5">
+              {TYPE_ORDER.map((type) => {
+                const items = groupedClassic[type];
+                if (items.length === 0) return null;
+                return (
+                  <div key={type}>
+                    <div className="flex items-center gap-2 mb-2 px-1">
+                      <span className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-accent-solo/10 text-accent-solo text-[11px] font-mono font-medium">
+                        {TYPE_BADGE[type]}
+                      </span>
+                      <h4 className="text-[11px] font-medium text-text-secondary uppercase tracking-wider">
+                        {TYPE_LABEL[type]}
+                      </h4>
+                      <span className="text-[11px] text-text-muted">{items.length}</span>
+                    </div>
+                    <div className="border border-border rounded-lg overflow-hidden divide-y divide-border">
+                      {items.map((report, i) => (
+                        <ReportRow key={report.id} report={report} index={i} onDelete={handleDelete} />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
