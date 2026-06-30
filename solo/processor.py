@@ -493,6 +493,19 @@ class SoloProcessor:
         """
         metadata = entry.metadata or {}
         date = str(data.get("date") or metadata.get("record_date") or entry.created_at[:10])
+        # Guard: LLM 可能把未来事件日期误赋给 record.date；超过 3 天的未来漂移强制回退到 entry 创建日。
+        # 补录流程会把显式日期写入 metadata.record_date 和 entry.created_at 本身，所以此守卫不会误伤补录。
+        try:
+            _rec_d = datetime.strptime(date, "%Y-%m-%d").date()
+            _entry_d = datetime.strptime(entry.created_at[:10], "%Y-%m-%d").date()
+            if _rec_d > _entry_d + timedelta(days=3):
+                logger.warning(
+                    "record date %s far in future vs entry %s, fallback to entry date",
+                    date, entry.created_at[:10],
+                )
+                date = entry.created_at[:10]
+        except ValueError:
+            date = entry.created_at[:10]
         raw = raw_content if raw_content is not None else entry.content
         events = str(data.get("events") or "")
         holiday = _get_holiday(date)
