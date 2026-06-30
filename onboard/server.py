@@ -20,7 +20,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from onboard.api import chat, lifecycle, solo_routes, stats, wolo_routes
+from onboard.api import chat, cron, lifecycle, solo_routes, stats, wolo_routes
 from onboard.api import health as health_api
 from onboard.api import finance as finance_api
 from onboard.api import insight_reports as insight_reports_api
@@ -74,6 +74,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(lifecycle.router)
     app.include_router(stats.router)
+    app.include_router(cron.router)
 
     @app.get("/api/health")
     def health() -> dict[str, str]:

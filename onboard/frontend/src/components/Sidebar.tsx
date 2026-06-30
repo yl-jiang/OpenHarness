@@ -18,6 +18,7 @@ const commonItems = [
   ['/search', '⌕', 'Search'],
   ['/chat', '⊙', 'Chat'],
   ['/entries', '⊞', 'Entries'],
+  ['/cron', '⏲', 'Cron'],
 ] as const;
 
 const woloItems = [

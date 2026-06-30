@@ -684,3 +684,31 @@ export interface InsightReportJSON {
   metrics?: InsightMetric[];
 }
 
+// ---------------------------------------------------------------------------
+// Cron scheduler types
+// ---------------------------------------------------------------------------
+
+export interface CronJob {
+  name: string;
+  schedule: string;
+  enabled: boolean;
+  next_run: string | null;
+  last_run: string | null;
+  last_status: 'success' | 'failed' | 'error' | 'timeout' | null;
+  created_at: string;
+  command?: string;
+  payload?: Record<string, unknown> | null;
+  notify?: Record<string, unknown> | null;
+  timezone?: string | null;
+  timeout_s?: number;
+}
+
+export interface CronSchedulerStatus {
+  running: boolean;
+  pid: number | null;
+  total_jobs: number;
+  enabled_jobs: number;
+  log_file: string;
+  history_file: string;
+}
+

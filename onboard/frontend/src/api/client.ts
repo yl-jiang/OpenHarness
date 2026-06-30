@@ -3,6 +3,8 @@ import type {
   AppStats,
   ChatSession,
   ChatSessionDetail,
+  CronJob,
+  CronSchedulerStatus,
   Decision,
   Entry,
   FeedDigest,
@@ -365,6 +367,12 @@ export const api = {
     timeline: (subject?: string, params: Record<string, QueryValue> = {}) =>
       request<{ items: HealthTimelineItem[]; total: number; limit: number; offset: number }>(
         `/api/solo/health/timeline${query({ ...(subject ? { subject } : {}), ...params })}`),
+  },
+
+  // ── Cron scheduler (read-only dashboard) ─────────────────────
+  cron: {
+    jobs: (app: AppName) => request<CronJob[]>(`/api/cron/jobs${query({ app_name: app })}`),
+    status: (app: AppName) => request<CronSchedulerStatus>(`/api/cron/status${query({ app_name: app })}`),
   },
 
   // ── Finance (solo-only) ──────────────────────────────────────

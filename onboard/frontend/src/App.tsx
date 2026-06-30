@@ -25,6 +25,7 @@ function lazyWithRetry<T extends React.ComponentType<any>>(
 
 // Lazy-loaded pages for code splitting
 const Chat = lazyWithRetry(() => import('./pages/Chat').then((m) => ({ default: m.Chat })));
+const CronBoard = lazyWithRetry(() => import('./pages/CronBoard').then((m) => ({ default: m.CronBoard })));
 const Decisions = lazyWithRetry(() => import('./pages/Decisions').then((m) => ({ default: m.Decisions })));
 const Entries = lazyWithRetry(() => import('./pages/Entries').then((m) => ({ default: m.Entries })));
 const FeedDigests = lazyWithRetry(() => import('./pages/FeedDigests').then((m) => ({ default: m.FeedDigests })));
@@ -113,6 +114,7 @@ export function App() {
         { path: 'todos', element: <SuspenseLoader><Todos appName={appName} /></SuspenseLoader> },
         { path: 'reports', element: <SuspenseLoader><Reports appName={appName} /></SuspenseLoader> },
         { path: 'reports/:id', element: <SuspenseLoader><ReportView appName={appName} /></SuspenseLoader> },
+        { path: 'cron', element: <SuspenseLoader><CronBoard appName={appName} /></SuspenseLoader> },
         { path: 'feeds', element: <SuspenseLoader><FeedDigests appName={appName} /></SuspenseLoader> },
         { path: 'feeds/:id', element: <SuspenseLoader><FeedDigests appName={appName} /></SuspenseLoader> },
         { path: 'search', element: <SuspenseLoader><Search appName={appName} /></SuspenseLoader> },
